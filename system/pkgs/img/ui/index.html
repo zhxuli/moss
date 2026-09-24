@@ -24,75 +24,68 @@
         <span class="tb-path" id="tbPath"></span>
       </div>
       <div class="tb-right">
+        <span class="pill mute" id="pill">—</span>
         <button class="btn ghost" id="btnReveal">打开输出目录</button>
       </div>
     </header>
 
-    <div class="body">
-      <section class="detail">
-        <div class="card">
+    <section class="detail">
+      <div class="card">
 
-          <header class="d-head">
-            <div>
-              <h1 class="d-title">图片压缩 <span class="prefix">/ 转换</span></h1>
-              <p class="d-sub" id="sub">拖一个文件夹或几张图进来，或者点「选择」。</p>
+        <!-- ── 上半：挑图。占满剩余高度 —— 这是唯一的主动作 ───────────── -->
+        <div class="card-body">
+
+          <div class="srcbar">
+            <div class="seg mode-seg" id="segMode"></div>
+            <input type="text" id="src" class="mono" spellcheck="false" autocomplete="off"
+                   placeholder="D:\图片">
+            <button class="btn" id="btnPick">选择…</button>
+            <select id="history" class="hist" title="最近使用过的文件夹"></select>
+            <button class="btn" id="btnAddFiles" hidden>加文件…</button>
+            <button class="btn ghost" id="btnClearFiles" hidden>清空</button>
+            <button class="btn ghost icon" id="btnRefresh" title="刷新（Ctrl+R）">⟳</button>
+          </div>
+
+          <div class="typebar">
+            <span class="types" id="types"></span>
+            <span class="spacer"></span>
+            <span class="count" id="selCount"></span>
+            <button class="btn ghost" id="btnSelAll">全选</button>
+            <button class="btn ghost" id="btnSelNone">清除</button>
+          </div>
+
+          <!-- 缩略图网格（≤100 张）或紧凑列表（>100 张）。高度自适应 -->
+          <div class="picker" id="picker" tabindex="0">
+            <div class="picker-empty" id="pickerEmpty">
+              <b>把图片或文件夹拖进来</b>
+              <span>也可以点上面的「选择…」挑一个文件夹</span>
             </div>
-            <span class="pill mute" id="pill">—</span>
-          </header>
+            <div class="grid" id="grid" hidden></div>
+            <div class="marquee" id="marquee" hidden></div>
+          </div>
 
-          <div class="card-body">
+          <div class="field-note" id="srcNote"></div>
+        </div>
 
-            <!-- 源：缩略图选择器 -->
+        <!-- ── 下半：输出设置，压成薄薄几行 ─────────────────────────── -->
+        <div class="settings">
+          <span class="settings-label">输出</span>
+          <div class="seg fmt-seg" id="segFormat"></div>
+          <div class="slot" id="qualitySlot">
+            <input type="range" id="quality" min="1" max="100" step="1">
+            <span class="num" id="qualityNum">80%</span>
+          </div>
+          <div class="slot" id="icoSlot" hidden>
+            <span class="lead">尺寸</span>
+            <div class="checks" id="icoSizes"></div>
+          </div>
+        </div>
+
+        <!-- 摘要里直接写出当前值：不用展开也能看见，避免"藏起来就忘了" -->
+        <details class="advanced" id="advanced">
+          <summary>高级 <span class="digest" id="advDigest"></span></summary>
+          <div class="adv-grid">
             <div class="field">
-              <div class="label">源
-                <span class="acts">
-                  <span class="count" id="selCount"></span>
-                  <button class="btn ghost" id="btnSelAll">全选</button>
-                  <button class="btn ghost" id="btnSelNone">清除选择</button>
-                  <button class="btn ghost" id="btnRefresh">刷新</button>
-                </span>
-              </div>
-
-              <div class="seg mode-seg" id="segMode"></div>
-              <div class="alias-row" style="margin-top:8px">
-                <input type="text" id="src" class="mono" spellcheck="false" autocomplete="off"
-                       placeholder="D:\图片">
-                <button class="btn" id="btnPick">选择…</button>
-                <button class="btn" id="btnAddFiles">加文件…</button>
-              </div>
-              <select id="history" style="margin-top:8px"></select>
-
-              <!-- 缩略图网格（≤100 张）或紧凑列表（>100 张） -->
-              <div class="picker" id="picker" tabindex="0">
-                <div class="picker-empty" id="pickerEmpty">拖一个文件夹或几张图进来，或者点「选择…」。</div>
-                <div class="grid" id="grid" hidden></div>
-                <div class="marquee" id="marquee" hidden></div>
-              </div>
-
-              <div class="picker-foot">
-                <span class="types" id="types"></span>
-                <span class="lead" id="pickerNote"></span>
-              </div>
-              <div class="field-note" id="srcNote"></div>
-            </div>
-
-            <!-- 目标格式 -->
-            <div class="field">
-              <div class="label">目标格式</div>
-              <div class="seg" id="segFormat"></div>
-            </div>
-
-            <!-- 压缩质量 -->
-            <div class="field">
-              <div class="label">压缩质量 <span class="hint" id="qualityHint"></span></div>
-              <div class="range-row">
-                <input type="range" id="quality" min="1" max="100" step="1">
-                <span class="num" id="qualityNum">80%</span>
-              </div>
-            </div>
-
-            <!-- 目标宽度（ico 模式隐藏） -->
-            <div class="field" id="fieldWidth">
               <div class="label">目标宽度 <span class="hint">留空保持原始尺寸</span></div>
               <div class="alias-row">
                 <input type="text" id="width" class="mono" spellcheck="false" autocomplete="off"
@@ -101,55 +94,36 @@
               </div>
               <div class="field-note" id="widthNote"></div>
             </div>
-
-            <!-- ICO 尺寸（非 ico 模式隐藏） -->
-            <div class="field" id="fieldIco" hidden>
-              <div class="label">ICO 尺寸 <span class="hint">可多选</span></div>
-              <div class="checks" id="icoSizes"></div>
-              <div class="field-note">
-                Windows 按场景自动挑：任务栏 32、资源管理器 16/48、预览 256。
-              </div>
-            </div>
-
-            <!-- 保存模式 -->
             <div class="field">
               <div class="label">保存模式</div>
               <div class="seg" id="segSave"></div>
               <div class="field-note" id="saveNote"></div>
             </div>
-
           </div>
+        </details>
 
-          <!-- 日志：默认**折起来**（没内容时不该白占一大块），
-               一开工自动展开；标题行点一下可以手动收放 -->
-          <div class="field log-field" id="logField">
-            <div class="label">
-              <button class="log-toggle" id="btnLogToggle" type="button" title="展开 / 收起">
-                <span class="tri" id="logTri">▸</span>处理日志
-              </button>
-              <span class="acts">
-                <span class="hint" id="logHint"></span>
-                <span class="spinner" id="spin" hidden></span>
-                <span id="status">待命</span>
-              </span>
-            </div>
-            <div class="output boxed" id="logBox" hidden>
-              <pre id="log"></pre>
-            </div>
-          </div>
+        <!-- 危险模式常驻警告：藏起来的是**设置**，不是**警告** -->
+        <div class="warnbar" id="warnBar" hidden></div>
 
-          <div class="actions">
-            <span class="spacer"></span>
-            <button class="btn ghost" id="btnReset">重置</button>
-            <button class="btn primary" id="btnStart">开始处理</button>
-          </div>
+        <!-- 日志折叠时**零高度**，展开才占地方 -->
+        <div class="output boxed" id="logBox" hidden><pre id="log"></pre></div>
 
+        <div class="actions">
+          <button class="log-toggle" id="btnLogToggle" type="button" title="展开 / 收起日志">
+            <span class="tri" id="logTri">▸</span>处理日志
+          </button>
+          <span class="spinner" id="spin" hidden></span>
+          <span class="status" id="status">待命</span>
+          <span class="hint" id="logHint"></span>
+          <span class="spacer"></span>
+          <button class="btn ghost" id="btnReset">重置</button>
+          <button class="btn primary" id="btnStart">开始处理</button>
         </div>
-      </section>
-    </div>
+
+      </div>
+    </section>
   </div>
 
-  <!-- 拖放提示：整窗口的遮罩，松手就落到「源」里 -->
   <div class="drop-veil" id="dropVeil" hidden>
     <div class="drop-card">
       松开就把它加到「源」里

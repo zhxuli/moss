@@ -1,16 +1,13 @@
 /* app.js —— 图片工具前端
    ---------------------------------------------------------------------------
-   不引框架：界面骨架写在 index.html 里，JS 只做四件事 ——
+   不引框架：骨架写在 index.html 里，JS 只做四件事 ——
    渲染选择器、接事件、轮询日志、接拖放。
 
-   选择器（.picker）的交互模型，跟资源管理器对齐：
-     · 单击        = 选中它（清掉别的）
-     · Ctrl+单击   = 加选 / 取消这一个
-     · Shift+单击  = 从上一个锚点连选一段
-     · 空白处拖框  = 框选（按住 Ctrl 则并进原有选择）
-     · 双击        = 用系统默认程序打开
-     · Ctrl+A / Esc / Delete
-   被选中的那些就是**要处理的**；一个都没选 = 全都处理。
+   选择器交互跟资源管理器对齐：
+     单击 = 选中它 / Ctrl+单击 = 加选或取消 / Shift+单击 = 连选一段
+     空白处拖框 = 框选（按住 Ctrl 则并进原有选择）
+     双击 = 用系统默认程序打开 / Ctrl+A 全选 / Esc 清除 / Delete 从清单去掉
+   **选中的那几个就是要处理的；一个都没选 = 全部处理。**
 
    缩略图：≤ thumbLimit(100) 张画网格，超了画紧凑列表。
    （几千张图生成缩略图要几十秒、几十 MB 内存，而"挑几张来转"本来也不需要看几千张） */
@@ -25,22 +22,15 @@ const QUALITY_HINT = {
   jpg: '数值越高越清晰、文件越大',
   webp: '数值越高越清晰、文件越大',
   png: 'png 下映射成压缩级别：数值越压得越少',
-  ico: 'ico 不用这个值',
 };
 
 const MODE_LABELS = { folder: '文件夹', files: '文件清单' };
-const MODE_TITLES = {
-  folder: '处理一个文件夹里的图片',
-  files: '只处理手挑出来的这几个文件',
-};
+const MODE_TITLES = { folder: '处理一个文件夹里的图片', files: '只处理手挑出来的这几个文件' };
 
-const DEFAULTS = {
-  save_mode: 'separate', output_format: 'jpg', quality: 80,
-  width: '', ico_sizes: [], source_filter: {},
-};
+const DEFAULTS = { save_mode: 'separate', output_format: 'jpg', quality: 80, width: '', ico_sizes: [] };
 
-const THUMB_CHUNK = 20;        // 一次向后端要多少张缩略图
-const DRAG_THRESHOLD = 4;      // 超过这么多像素才算"框选"，否则算单击
+const THUMB_CHUNK = 20;
+const DRAG_THRESHOLD = 4;
 
 const $ = (id) => document.getElementById(id);
 
@@ -48,12 +38,11 @@ const state = {
   api: null, cfg: null, meta: null,
   history: [],
   mode: 'folder',
-  scan: null,                  // 文件夹扫描结果 {ok, exts, count, message}
-  filters: {},                 // ext -> bool（类型过滤）
+  scan: null,                  // 文件夹扫描结果 {ok, exts, count, files, message}
   dir: '',
   items: [],                   // 当前网格里的全部条目
   selected: new Set(),         // 选中的 path（小写）
-  anchor: null,                // Shift 连选的锚点
+  anchor: null,
   showThumbs: false,
   thumbDone: 0,
   running: false,
@@ -107,7 +96,7 @@ function applyAppearance(r) {
 
 const key = (p) => String(p).toLowerCase();
 
-/* ------------------------------------------------------------------ 渲染：静态块 */
+/* ------------------------------------------------------------------ 静态块 */
 function renderMode() {
   const box = $('segMode');
   box.textContent = '';
@@ -119,12 +108,19 @@ function renderMode() {
     b.onclick = () => {
       if (state.mode === m) return;
       state.mode = m;
+      if (m === 'files' && !state.items.length) { renderMode(); pickFiles(); return; }
       renderMode();
-      if (m === 'files' && !state.items.length) { pickFiles(); return; }
       rebuild();
     };
     box.appendChild(b);
   }
+  /* 模式决定这一行显示哪些控件：文件夹模式给路径+选择，文件清单模式给加/清 */
+  const folder = state.mode === 'folder';
+  $('src').hidden = !folder;
+  $('btnPick').hidden = !folder;
+  $('history').hidden = !folder;
+  $('btnAddFiles').hidden = folder;
+  $('btnClearFiles').hidden = folder || !state.items.length;
 }
 
 function renderFormat() {
@@ -164,7 +160,7 @@ function renderIcoSizes() {
       const picked = new Set(state.cfg.ico_sizes);
       if (cb.checked) picked.add(size); else picked.delete(size);
       state.cfg.ico_sizes = [...picked].sort((a, b) => a - b);
-      checkIco();
+      renderDigest();
     };
     label.appendChild(cb);
     label.appendChild(document.createTextNode(String(size)));
@@ -172,21 +168,10 @@ function renderIcoSizes() {
   }
 }
 
-function checkIco() {
-  const note = $('fieldIco').querySelector('.field-note');
-  if (!state.cfg.ico_sizes.length) {
-    note.classList.add('err');
-    note.textContent = '一个都没勾 —— 会按全部标准尺寸生成（16/24/32/48/64/128/256）。';
-  } else {
-    note.classList.remove('err');
-    note.textContent = 'Windows 按场景自动挑：任务栏 32、资源管理器 16/48、预览 256。';
-  }
-}
-
 function renderHistory() {
   const sel = $('history');
   sel.textContent = '';
-  const head = el('option', null, state.history.length ? '最近使用…' : '（暂无历史记录）');
+  const head = el('option', null, state.history.length ? '最近使用…' : '（无历史）');
   head.value = '';
   sel.appendChild(head);
   for (const p of state.history) {
@@ -197,42 +182,34 @@ function renderHistory() {
   sel.value = '';
 }
 
-/* 类型过滤：现在只对「文件夹」模式有意义（文件清单是你自己挑的） */
+/* 类型芯片 = **快捷选择**：点一下把这一类全选上（不再是"过滤"）。
+   这样"选中"只剩一套模型，不会和"全选/清除"打架。 */
 function renderTypes() {
   const box = $('types');
   box.textContent = '';
-  if (state.mode !== 'folder') { box.hidden = true; return; }
-  box.hidden = false;
   const exts = (state.scan && state.scan.exts) || [];
-  if (!exts.length) return;
-  box.appendChild(el('span', 'lead', '类型'));
+  if (state.mode !== 'folder' || !exts.length) { box.hidden = true; return; }
+  box.hidden = false;
   for (const item of exts) {
-    const on = state.filters[item.ext] !== false;
-    const chip = el('button', 'chip' + (on ? ' on' : ''));
+    const chip = el('button', 'chip');
     chip.type = 'button';
-    chip.title = on ? '点一下：不看这类' : '点一下：看这类';
-    chip.appendChild(el('span', null, item.ext.toUpperCase()));
+    const picked = state.items.filter((f) => f.ext === item.ext);
+    const allIn = picked.length && picked.every((f) => state.selected.has(key(f.path)));
+    if (allIn) chip.classList.add('on');
+    chip.title = allIn ? `取消选中全部 ${item.ext.toUpperCase()}` : `选中全部 ${item.ext.toUpperCase()}`;
+    chip.appendChild(el('span', null, item.ext.replace('.', '').toUpperCase()));
     chip.appendChild(el('span', 'n', String(item.count)));
-    chip.onclick = () => {
-      state.filters[item.ext] = !on;
-      rebuild();
-    };
+    chip.onclick = () => selectType(item.ext);
     box.appendChild(chip);
   }
 }
 
-/* ------------------------------------------------------------------ 渲染：选择器 */
-function visiblePaths() {
-  return state.items.map((f) => key(f.path));
-}
+/* ------------------------------------------------------------------ 选择器 */
+function visiblePaths() { return state.items.map((f) => key(f.path)); }
 
 function rebuild() {
-  /* 从「当前模式 + 来源 + 类型过滤」重新算出条目集合 */
   if (state.mode === 'folder') {
-    const on = new Set(Object.keys(state.filters).filter((e) => state.filters[e] !== false));
-    let all = (state.scan && state.scan.files) || [];
-    if (on.size) all = all.filter((f) => on.has(f.ext));
-    state.items = all;
+    state.items = (state.scan && state.scan.files) || [];
     pruneSelection();
   }
   state.showThumbs = state.items.length > 0 && state.items.length <= state.meta.thumbLimit;
@@ -247,13 +224,11 @@ function renderGrid() {
   grid.textContent = '';
   grid.classList.toggle('rows', !state.showThumbs);
   state.thumbDone = 0;
+  thumbQueue = [];
 
   if (!state.items.length) {
     grid.hidden = true;
     empty.hidden = false;
-    empty.textContent = state.mode === 'files'
-      ? '还没有文件。点「加文件…」，或者直接把图片拖进来。'
-      : ((state.scan && state.scan.message) || '拖一个文件夹或几张图进来，或者点「选择…」。');
     return;
   }
   empty.hidden = true;
@@ -268,45 +243,35 @@ function renderGrid() {
       const box = el('div', 'thumb');
       if (f.data) {
         const img = el('img');
-        img.src = f.data;
-        img.alt = '';
-        img.draggable = false;
+        img.src = f.data; img.alt = ''; img.draggable = false;
         box.appendChild(img);
         tile.classList.add('has-thumb');
       } else {
         box.appendChild(el('span', 'ph', '图片'));
-        queueThumb(tile, f);
+        queueThumb(f);
       }
       tile.appendChild(box);
       tile.appendChild(el('div', 'name', f.name));
     } else {
-      const ico = el('span', 'fico', (f.ext || '').replace('.', '').toUpperCase() || '?');
-      tile.appendChild(ico);
+      tile.appendChild(el('span', 'fico', (f.ext || '').replace('.', '').toUpperCase() || '?'));
       tile.appendChild(el('span', 'name', f.name));
       tile.appendChild(el('span', 'fdir', f.dir || ''));
       tile.appendChild(el('span', 'fsize', f.exists === false ? '已不在' : humanSize(f.size)));
     }
-
-    const badge = el('span', 'check-badge');
-    badge.appendChild(el('span', null, '✓'));
-    tile.appendChild(badge);
-
+    tile.appendChild(el('span', 'check-badge', '✓'));
     grid.appendChild(tile);
   }
   if (state.showThumbs) loadThumbs();
   applySelectionClasses();
 }
 
-/* 缩略图分批拉：界面先出来，图慢慢补齐 */
 let thumbQueue = [];
 let thumbBusy = false;
 
-function queueThumb(tile, item) {
-  thumbQueue.push({ path: item.path, item });
-}
+function queueThumb(item) { thumbQueue.push(item); }
 
 function loadThumbs() {
-  thumbQueue = thumbQueue.filter((q) => !q.item.data);
+  thumbQueue = thumbQueue.filter((q) => !q.data);
   if (thumbBusy || !thumbQueue.length) return;
   const batch = thumbQueue.splice(0, THUMB_CHUNK);
   thumbBusy = true;
@@ -316,56 +281,52 @@ function loadThumbs() {
       for (const t of got.thumbs) {
         const hit = batch.find((b) => key(b.path) === key(t.path));
         if (!hit) continue;
-        hit.item.data = t.data;
+        hit.data = t.data;
         const tile = $('grid').querySelector(`.tile[data-path="${cssEscape(key(t.path))}"]`);
         if (!tile) continue;
         const box = tile.querySelector('.thumb');
-        if (t.data) {
+        if (t.data && box) {
           box.textContent = '';
           const img = el('img');
-          img.src = t.data;
-          img.draggable = false;
+          img.src = t.data; img.draggable = false;
           box.appendChild(img);
           tile.classList.add('has-thumb');
         }
       }
     }
     state.thumbDone += batch.length;
-    renderPickerNote();
+    renderNote();
     if (thumbQueue.length) setTimeout(loadThumbs, 0);
   }).catch(() => { thumbBusy = false; });
 }
 
-function cssEscape(s) {
-  return String(s).replace(/["\\]/g, '\\$&');
-}
+function cssEscape(s) { return String(s).replace(/["\\]/g, '\\$&'); }
 
 function applySelectionClasses() {
   for (const tile of $('grid').children) {
-    const on = state.selected.has(tile.dataset.path);
-    tile.classList.toggle('sel', on);
+    tile.classList.toggle('sel', state.selected.has(tile.dataset.path));
   }
 }
 
 function renderSelection() {
   const total = state.items.length;
-  const n = state.selected.size;
-  $('selCount').textContent = total ? `已选 ${n} / ${total}` : '';
+  $('selCount').textContent = total ? `已选 ${state.selected.size} / ${total}` : '';
   applySelectionClasses();
-  renderPickerNote();
+  renderNote();
   renderSource();
+  renderTypes();
 }
 
-function renderPickerNote() {
+function renderNote() {
   const total = state.items.length;
   const n = state.selected.size;
   const parts = [];
-  if (!total) parts.push('—');
+  if (!total) parts.push('');
   else if (!n) parts.push(`不选 = 全部 ${total} 个`);
   else parts.push(`将处理 ${n} 个`);
   if (state.showThumbs && state.thumbDone < total) parts.push(`缩略图 ${state.thumbDone}/${total}`);
   if (total > state.meta.thumbLimit) parts.push('文件较多，用列表显示');
-  $('pickerNote').textContent = parts.join(' · ');
+  if (!$('srcNote').classList.contains('err')) $('srcNote').textContent = parts.join(' · ');
 }
 
 function renderSource() {
@@ -379,61 +340,82 @@ function renderSource() {
     : (state.dir || '');
   $('tbPath').textContent = where;
   $('tbPath').title = where;
-  $('sub').textContent = total
-    ? (n ? `已选 ${n} / ${total}，将处理这 ${n} 个` : `将处理全部 ${total} 个`)
-    : (state.mode === 'files' ? '点「加文件…」或把图片拖进来。' : '拖一个文件夹或几张图进来，或者点「选择…」。');
+  $('btnStart').textContent = state.running ? '正在处理…' : (effective ? `开始处理 (${effective})` : '开始处理');
+  $('btnClearFiles').hidden = state.mode !== 'files' || !total;
 
   const note = $('srcNote');
   const gone = state.items.filter((f) => f.exists === false).length;
   if (gone) {
     note.className = 'field-note err';
     note.textContent = `有 ${gone} 个文件已经不在了（灰掉的那些）—— 处理前会被拦下，点「刷新」清掉。`;
-  } else if (state.mode === 'files') {
-    note.className = 'field-note';
-    note.textContent = '文件可以来自不同文件夹；「保存到源文件夹」会写回各自所在的目录。';
   } else {
     note.className = 'field-note';
-    note.textContent = '';
   }
 }
 
+/* 格式 / 保存模式一变，整块跟着更新 */
 function renderConditional() {
   const fmt = state.cfg.output_format;
-  $('fieldWidth').hidden = fmt === 'ico';
-  $('fieldIco').hidden = fmt !== 'ico';
-  $('qualityHint').textContent = QUALITY_HINT[fmt] || '';
-  checkIco();
+  const isIco = fmt === 'ico';
+  /* 质量在 ico 下完全没用 —— 直接**换成 ico 尺寸**，不白占一行 */
+  $('qualitySlot').hidden = isIco;
+  $('icoSlot').hidden = !isIco;
+  renderIcoSizes();
+  renderDigest();
 
   const width = String(state.cfg.width || '').trim();
   const note = $('widthNote');
   if (width && !/^\d+$/.test(width)) {
-    note.className = 'field-note err';
-    note.textContent = '只认整数像素值，非数字会被忽略。';
+    note.className = 'field-note err'; note.textContent = '只认整数像素值，非数字会被忽略。';
   } else if (width && Number(width) === 0) {
-    note.className = 'field-note err';
-    note.textContent = '0 不是有效宽度。';
+    note.className = 'field-note err'; note.textContent = '0 不是有效宽度。';
   } else {
-    note.className = 'field-note';
-    note.textContent = '只缩不放：原图比它窄就保持原样。';
+    note.className = 'field-note'; note.textContent = '只缩不放：原图比它窄就保持原样。';
   }
 
   const saveNote = $('saveNote');
   const byFiles = state.mode === 'files';
   if (state.cfg.save_mode === 'separate') {
     saveNote.className = 'field-note';
-    saveNote.textContent = byFiles
-      ? '输出到「第一个文件所在目录」下的 compressed_output\\。'
-      : '输出到源文件夹下的 compressed_output\\。';
+    saveNote.textContent = byFiles ? '输出到「第一个文件所在目录」下的 compressed_output\\。'
+                                   : '输出到源文件夹下的 compressed_output\\。';
   } else if (state.cfg.save_mode === 'source') {
     saveNote.className = 'field-note warn';
-    saveNote.textContent = byFiles
-      ? '每个文件写回它自己所在的目录，同名会被覆盖。'
-      : '直接写回源文件夹，同名文件会被覆盖。';
+    saveNote.textContent = byFiles ? '每个文件写回它自己所在的目录，同名会被覆盖。'
+                                   : '直接写回源文件夹，同名文件会被覆盖。';
   } else {
     saveNote.className = 'field-note err';
-    saveNote.textContent = byFiles
-      ? '转换成功后永久删除源文件（各删各的），无法撤销。'
-      : '转换成功后永久删除源文件，无法撤销。';
+    saveNote.textContent = byFiles ? '转换成功后永久删除源文件（各删各的），无法撤销。'
+                                   : '转换成功后永久删除源文件，无法撤销。';
+  }
+
+  renderWarn();
+}
+
+/* 高级摘要：把当前值直接写出来，不展开也知道自己设了什么 */
+function renderDigest() {
+  const bits = [];
+  const w = String(state.cfg.width || '').trim();
+  bits.push(w ? `宽度 ${w}px` : '宽度 原尺寸');
+  bits.push(SAVE_LABELS[state.cfg.save_mode] || state.cfg.save_mode);
+  if (state.cfg.output_format === 'ico') bits.push(`ico ${state.cfg.ico_sizes.length} 档`);
+  $('advDigest').textContent = '· ' + bits.join(' · ');
+}
+
+/* 危险模式常驻警告：藏起来的是**设置**，不是**警告** */
+function renderWarn() {
+  const bar = $('warnBar');
+  const mode = state.cfg.save_mode;
+  if (mode === 'source_delete') {
+    bar.hidden = false;
+    bar.className = 'warnbar';
+    bar.textContent = '⚠ 转换成功后源文件会被删除，无法撤销。';
+  } else if (mode === 'source') {
+    bar.hidden = false;
+    bar.className = 'warnbar soft';
+    bar.textContent = '⚠ 直接写回源文件夹，同名文件会被覆盖。';
+  } else {
+    bar.hidden = true;
   }
 }
 
@@ -453,7 +435,13 @@ function toggleSelection(p) {
 function selectAll() { setSelection(visiblePaths(), false); }
 function clearSelection() { setSelection([], false); }
 
-/* 单击 / Ctrl / Shift —— 跟资源管理器一致 */
+function selectType(ext) {
+  const hit = state.items.filter((f) => f.ext === ext).map((f) => key(f.path));
+  const allIn = hit.length && hit.every((p) => state.selected.has(p));
+  if (allIn) { for (const p of hit) state.selected.delete(p); renderSelection(); }
+  else setSelection(hit, true);
+}
+
 function clickItem(pathKey, e) {
   if (e.shiftKey && state.anchor) {
     const all = visiblePaths();
@@ -488,7 +476,9 @@ function bindMarquee() {
     sx = p.x; sy = p.y;
     active = true; moved = false;
     base = new Set(state.selected);
-    picker.focus({ preventScroll: true });
+    /* 不主动 focus：键盘快捷键都挂在 document 上，不需要焦点。
+       主动 focus 会让整个网格套上一圈焦点环（看着像选中了全部）。
+       原生点击带来的焦点不会触发 :focus-visible，键盘 Tab 进来仍然有环。 */
     e.preventDefault();
   });
 
@@ -515,7 +505,7 @@ function bindMarquee() {
     state.selected = e.ctrlKey || e.metaKey ? new Set([...base, ...hit]) : new Set(hit);
     applySelectionClasses();
     $('selCount').textContent = state.items.length ? `已选 ${state.selected.size} / ${state.items.length}` : '';
-    renderPickerNote();
+    renderNote();
   });
 
   window.addEventListener('mouseup', (e) => {
@@ -528,7 +518,6 @@ function bindMarquee() {
     else if (!e.ctrlKey && !e.metaKey) clearSelection();
   });
 
-  // 双击打开
   picker.addEventListener('dblclick', (e) => {
     const tile = e.target.closest && e.target.closest('.tile');
     if (!tile) return;
@@ -548,15 +537,8 @@ function scanSig(scan) {
   return JSON.stringify([scan.ok, scan.count, (scan.exts || []).map((i) => [i.ext, i.count])]);
 }
 
-function applyScan(scan, keepFilters) {
+function applyScan(scan) {
   state.scan = scan || { ok: false, exts: [], count: 0, files: [], message: '请选择一个有效的文件夹。' };
-  const saved = (state.cfg && state.cfg.source_filter) || {};
-  const next = {};
-  for (const item of state.scan.exts || []) {
-    if (keepFilters && state.filters[item.ext] !== undefined) next[item.ext] = state.filters[item.ext];
-    else next[item.ext] = saved[item.ext] !== false;
-  }
-  state.filters = next;
   if (state.mode === 'folder') {
     state.items = state.scan.files || [];
     pruneSelection();
@@ -569,8 +551,7 @@ function pruneSelection() {
   for (const p of [...state.selected]) if (!alive.has(p)) state.selected.delete(p);
 }
 
-function setFileItems(files, replace) {
-  if (replace) state.items = [];
+function setFileItems(files) {
   const seen = new Set(state.items.map((f) => key(f.path)));
   let added = 0;
   for (const f of files) {
@@ -602,9 +583,11 @@ async function pickFiles() {
   const got = await state.api.pick_files(state.items.length ? state.items[0].dir : state.dir);
   if (!got || !got.ok) { toast((got && got.message) || '打开选择框失败。', true); return; }
   if (!got.files || !got.files.length) return;
-  if (state.mode !== 'files') { state.mode = 'files'; renderMode(); state.items = []; }
-  const added = setFileItems(got.files, false);
+  if (state.mode !== 'files') { state.mode = 'files'; state.items = []; }
+  const added = setFileItems(got.files);
+  renderMode();
   rebuild();
+  renderConditional();
   toast(added ? `已加入 ${added} 个文件。` : '这些文件已经在清单里了。');
 }
 
@@ -631,7 +614,7 @@ async function refresh(quiet) {
   const same = scanSig(scan) === scanSig(state.scan);
   const before = (state.scan && state.scan.count) || 0;
   if (!same) {
-    applyScan(scan, true);
+    applyScan(scan);
     if (scan && scan.history) { state.history = scan.history; renderHistory(); }
   }
   if (!quiet) {
@@ -645,19 +628,18 @@ async function refresh(quiet) {
 }
 
 /* ------------------------------------------------------------------ 运行 */
-/* 日志默认折着：没内容就不占地方。一开工自动展开，标题行可手动收放。 */
 function setLogOpen(open) {
   state.logOpen = !!open;
   $('logBox').hidden = !state.logOpen;
-  $('logField').classList.toggle('open', state.logOpen);
+  document.querySelector('.card').classList.toggle('log-open', state.logOpen);
 }
 
 function setRunning(on) {
   state.running = on;
   $('spin').hidden = !on;
   $('btnStart').disabled = on;
-  $('btnStart').textContent = on ? '正在处理…' : '开始处理';
   $('logHint').textContent = on ? '处理中' : '';
+  renderSource();
   if (on) setLogOpen(true);
 }
 
@@ -694,9 +676,11 @@ async function start() {
   if (state.running) return;
   const picked = targets();
   if (!picked.length) { toast('没有可处理的文件。', true); return; }
-  /* 文件夹模式 + 没勾选 → 交回后端扫目录（几千张也不会被前端的名单上限截断）；
+  /* 文件夹模式 + 没勾选 → 交回后端扫目录（几千张也不会被前端的名单上限截断），
+     过滤条件用"当前目录里出现的类型"（界面上已经没有类型过滤了）。
      只要动了选择，就按"明确的一批文件"来跑。 */
   const explicit = state.mode === 'files' || state.selected.size > 0;
+  const exts = ((state.scan && state.scan.exts) || []).map((i) => i.ext);
   const payload = {
     mode: explicit ? 'files' : 'folder',
     source_dir: state.dir,
@@ -706,7 +690,7 @@ async function start() {
     width: String($('width').value || '').trim(),
     save_mode: state.cfg.save_mode,
     ico_sizes: state.cfg.ico_sizes,
-    source_filter: { ...state.filters },
+    source_filter: exts,
   };
   const res = await state.api.start(payload);
   if (!res || !res.ok) { toast((res && res.message) || '启动失败。', true); return; }
@@ -749,12 +733,13 @@ function applyDrop(got) {
     toast('已切到「文件夹」：' + got.folder);
     return;
   }
-  if (state.mode !== 'files') { state.mode = 'files'; renderMode(); state.items = []; }
-  const added = setFileItems(got.files || [], false);
+  if (state.mode !== 'files') { state.mode = 'files'; state.items = []; }
+  const added = setFileItems(got.files || []);
+  renderMode();
   rebuild();
+  renderConditional();
   if (got.note) toast(got.note, true);
   else toast(added ? `已加入 ${added} 个文件。` : '这些文件已经在清单里了。');
-  renderConditional();
 }
 
 function showVeil() { $('dropVeil').hidden = false; }
@@ -773,6 +758,7 @@ function bind() {
   $('btnLogToggle').onclick = () => setLogOpen(!state.logOpen);
   $('btnPick').onclick = () => loadDir(state.dir, true);
   $('btnAddFiles').onclick = () => pickFiles();
+  $('btnClearFiles').onclick = () => { state.items = []; renderMode(); rebuild(); renderConditional(); };
   $('btnRefresh').onclick = () => refresh(false);
   $('btnSelAll').onclick = () => selectAll();
   $('btnSelNone').onclick = () => clearSelection();
@@ -799,11 +785,10 @@ function bind() {
     scanTimer = setTimeout(async () => {
       if (state.mode !== 'folder') return;
       const scan = await state.api.scan(state.dir);
-      applyScan(scan, true);
+      applyScan(scan);
       if (scan && scan.history) { state.history = scan.history; renderHistory(); }
     }, 350);
   };
-  $('src').onfocus = () => { if (state.mode !== 'folder') { state.mode = 'folder'; renderMode(); } };
 
   $('history').onchange = (e) => {
     const p = e.target.value;
@@ -819,13 +804,10 @@ function bind() {
     state.cfg.width = DEFAULTS.width;
     state.cfg.save_mode = DEFAULTS.save_mode;
     state.cfg.ico_sizes = [...state.meta.icoSizes];
-    state.filters = {};
-    for (const item of (state.scan && state.scan.exts) || []) state.filters[item.ext] = true;
     $('quality').value = state.cfg.quality;
     $('qualityNum').textContent = state.cfg.quality + '%';
     $('width').value = '';
-    renderFormat(); renderSaveMode(); renderIcoSizes();
-    rebuild(); renderConditional();
+    renderFormat(); renderSaveMode(); renderConditional();
     toast('已重置为默认设置。');
   };
 
@@ -864,16 +846,15 @@ async function boot() {
                  thumbLimit: r.thumbLimit || 100 };
   state.dir = r.sourceDir || '';
 
-  renderMode();
   renderFormat();
   renderSaveMode();
-  renderIcoSizes();
   $('quality').value = state.cfg.quality;
   $('qualityNum').textContent = state.cfg.quality + '%';
   $('width').value = state.cfg.width || '';
   $('src').value = state.dir;
   renderHistory();
   applyScan(r.scan);
+  renderMode();
   renderConditional();
   bind();
   bindMarquee();
@@ -892,10 +873,8 @@ window.addEventListener('error', (e) => {
   toast('界面脚本出错：' + (e.message || e.type), true);
 });
 
-/* 调试口子：开 MOSS_IMG_DEBUG=1 起窗口后，可以在 devtools 里
-   直接看状态、调选择函数。日常不影响任何东西。 */
+/* 调试口子：开 MOSS_IMG_DEBUG=1 起窗口后，可以在 devtools 里直接看状态。 */
 window.__img = {
   get state() { return state; },
-  selectAll, clearSelection, rebuild, refresh, start,
-  clickItem, targets,
+  selectAll, clearSelection, selectType, rebuild, refresh, start, clickItem, targets,
 };

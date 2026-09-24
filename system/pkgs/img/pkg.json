@@ -2,7 +2,7 @@
   "spec": 1,
   "id": "img",
   "kind": "app",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "name": { "zh-CN": "图片工具", "en": "Image tool" },
   "desc": { "zh-CN": "图片压缩 / 转换（jpg / png / webp / ico）。不带参数开界面，带参数走命令行", "en": "Compress and convert images" },
   "tags": ["图片", "压缩", "转换", "ico", "命令行"],

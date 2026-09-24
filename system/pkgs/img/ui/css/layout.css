@@ -1,7 +1,7 @@
 /* layout.css
-   窗口骨架：顶栏 + 单栏主体
-   —— 取自 exec/ui/css/layout.css，按 img 的实际结构裁剪：
-      img 是一个"工具表单"，没有分类树，所以没有 sidebar / tree 那几段。
+   窗口骨架：顶栏 + 卡片（挑图区吃满剩余高度，设置区压成薄薄几行）
+   —— 取自 exec/ui/css/layout.css，按 img 的实际结构重排：
+      img 没有分类树，主交互是"挑图"，所以纵向空间优先给缩略图网格。
       <link> 顺序即层叠顺序 */
 
 /* ============================================================================
@@ -20,12 +20,61 @@
   box-shadow: var(--edge);
 }
 .tb-left { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; }
-.tb-right { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
+.tb-right { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); }
 .tb-title { font: 640 var(--t-head)/1.35 var(--font-ui); letter-spacing: var(--t-head-ls); flex: none; }
 .tb-path {
   font-size: var(--t-sub); color: var(--text-3); min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left;
 }
+
+/* ============================================================================
+   详情：卡片撑满，内部按「挑图 / 设置 / 高级 / 警告 / 日志 / 动作」分段
+   ========================================================================== */
+.detail { position: relative; height: 100%; display: flex; padding: var(--sp-3); overflow: hidden; }
+
+.card {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+  width: 100%; max-width: 1080px; margin: 0 auto;
+  background: var(--surface); border-radius: var(--r-lg);
+  border: 1px solid var(--sep); box-shadow: var(--shadow-card);
+  padding: 14px var(--sp-4) 12px;
+}
+/* 挑图区：flex:1 —— 窗口多高，网格就多高 */
+.card-body {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+
+/* 源那一行：模式 + 路径 + 按钮全塞进一行（以前"最近使用"独占一整行） */
+.srcbar { display: flex; align-items: center; gap: var(--sp-2); flex: none; }
+.srcbar input[type=text] { flex: 1 1 auto; min-width: 0; }
+.srcbar .hist {
+  flex: none; width: 118px; height: 30px;
+  font-size: var(--t-sub); padding: 0 22px 0 8px;
+  background-position: right 7px center; background-size: 9px;
+}
+
+/* 类型 / 选择那一条 */
+.typebar {
+  display: flex; align-items: center; gap: var(--sp-2);
+  flex: none; margin-top: 7px; min-height: 24px; flex-wrap: wrap;
+}
+.typebar .spacer { flex: 1; }
+.typebar .count { font-size: var(--t-sub); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.typebar .btn { height: 24px; padding: 0 8px; font-size: var(--t-sub); }
+
+/* 设置行：一薄行装下 格式 + 质量（或 ico 尺寸） */
+.settings {
+  display: flex; align-items: center; gap: var(--sp-3);
+  flex: none; margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--sep);
+}
+.settings-label {
+  flex: none; font: 600 var(--t-sub)/1 var(--font-ui); letter-spacing: var(--t-sub-ls);
+  color: var(--text-2);
+}
+.settings .slot { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; flex: 1 1 auto; }
+.settings .slot[hidden] { display: none; }
 
 /* ============================================================================
    按钮
@@ -51,10 +100,5 @@
 .btn.ghost:hover { background: var(--field); }
 .btn.danger { background: transparent; border-color: transparent; box-shadow: none; color: var(--danger); }
 .btn.danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); }
-.btn.icon { width: 30px; padding: 0; justify-content: center; }
-.btn .kbd {
-  font: 500 10.5px/1 var(--font-ui); color: var(--text-3);
-  background: color-mix(in srgb, var(--text-3) 20%, transparent);
-  border-radius: 4px; padding: 2px 4px;
-}
-.btn.primary .kbd { color: inherit; opacity: .72; background: color-mix(in srgb, currentColor 20%, transparent); }
+.btn.icon { width: 30px; padding: 0; justify-content: center; font-size: 14px; }
+.btn[hidden] { display: none; }

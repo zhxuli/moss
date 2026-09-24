@@ -392,6 +392,21 @@ def _wire_drop(window, api):
     return True
 
 
+def _window_size():
+    """按屏幕高度自适应：小屏笔记本上别顶出屏幕，大屏上给足缩略图的地方。"""
+    w, h = 940, 1010
+    if os.name != 'nt':
+        return w, h
+    try:
+        import ctypes
+        screen_h = ctypes.windll.user32.GetSystemMetrics(1)
+        if screen_h:
+            h = max(620, min(h, screen_h - 150))
+    except Exception:
+        pass
+    return w, h
+
+
 def run_gui():
     """打开窗口。pywebview / WebView2 缺失时抛异常，由 main 决定怎么兜底。"""
     import webview
@@ -401,12 +416,13 @@ def run_gui():
     if not os.path.isfile(index):
         raise RuntimeError('界面文件缺失：%s' % index)
 
+    width, height = _window_size()
     window = webview.create_window(
         TITLE,
         url=index,
         js_api=api,
-        width=880, height=1010,
-        min_size=(680, 620),
+        width=width, height=height,
+        min_size=(720, 560),
         text_select=False,
     )
     api.attach(window)
