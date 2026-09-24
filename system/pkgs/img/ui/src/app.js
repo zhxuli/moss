@@ -107,8 +107,16 @@ function renderMode() {
     b.setAttribute('aria-selected', String(state.mode === m));
     b.onclick = () => {
       if (state.mode === m) return;
-      state.mode = m;
-      if (m === 'files' && !state.items.length) { renderMode(); pickFiles(); return; }
+      if (m === 'files') {
+        /* ★ 不要在这里先把 state.mode 改掉！
+           原来的写法是「先切模式 → 再弹对话框」，用户一取消，
+           模式已经变成 files 了：路径框、「选择…」、最近使用全被隐藏，
+           而清单是空的 —— 看着就是"点了选择、取消之后那个元素没了"，还回不去。
+           现在改成**挑到文件才切**，取消就留在原来的文件夹模式。 */
+        pickFiles();
+        return;
+      }
+      state.mode = 'folder';
       renderMode();
       rebuild();
     };
@@ -711,6 +719,7 @@ async function loadDir(dir, useDialog) {
 async function pickFiles() {
   const got = await state.api.pick_files(state.items.length ? state.items[0].dir : state.dir);
   if (!got || !got.ok) { toast((got && got.message) || '打开选择框失败。', true); return; }
+  /* 取消 = 什么都不动（包括模式）。这是"取消"该有的样子。 */
   if (!got.files || !got.files.length) return;
   if (state.mode !== 'files') { state.mode = 'files'; state.items = []; }
   const added = setFileItems(got.files);
@@ -887,7 +896,15 @@ function bind() {
   $('btnLogToggle').onclick = () => setLogOpen(!state.logOpen);
   $('btnPick').onclick = () => loadDir(state.dir, true);
   $('btnAddFiles').onclick = () => pickFiles();
-  $('btnClearFiles').onclick = () => { state.items = []; renderMode(); rebuild(); renderConditional(); };
+  $('btnClearFiles').onclick = () => {
+    state.items = [];
+    /* 清空之后文件清单就空了，留在那个模式没意义 —— 退回文件夹模式，
+       否则路径框和「选择…」会一直是隐藏的，用户就"回不去"了。 */
+    state.mode = 'folder';
+    renderMode();
+    rebuild();
+    renderConditional();
+  };
   $('btnRefresh').onclick = () => refresh(false);
   $('btnSelAll').onclick = () => selectAll();
   $('btnSelNone').onclick = () => clearSelection();
