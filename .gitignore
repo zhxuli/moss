@@ -3,3 +3,5 @@ __pycache__/
 user_data/
 dev/_tmp/
 *.log
+.idea/
+.vscode/

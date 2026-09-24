@@ -1,0 +1,8 @@
+# 统一换行，免得 git 一直提示 "LF will be replaced by CRLF"
+* text=auto eol=lf
+
+# 二进制，别碰
+*.exe binary
+*.ico binary
+*.png binary
+*.zip binary
