@@ -1,0 +1,76 @@
+{
+  "spec": 1,
+  "id": "md5",
+  "kind": "task",
+  "version": "1.0.0",
+  "name": {
+    "zh-CN": "MD5 计算",
+    "en": "MD5 hash"
+  },
+  "desc": {
+    "zh-CN": "算字符串、文件或文件夹的 MD5；结果自动进剪贴板；不填参数用剪贴板内容",
+    "en": "MD5 of a string, file or folder"
+  },
+  "tags": [
+    "哈希",
+    "md5",
+    "文件"
+  ],
+  "aliases": [
+    "md5"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "run.py"
+  },
+  "params": [
+    {
+      "name": "target",
+      "type": "string",
+      "required": false,
+      "desc": "文件/文件夹路径，或一段文本；带引号强制按字符串算；不填则用剪贴板",
+      "placeholder": "D:\\a.txt  或  \"一段文字\""
+    }
+  ],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "net": [],
+    "clipboard": [
+      "read",
+      "write"
+    ],
+    "fsRead": [
+      "{target}"
+    ],
+    "elevated": false
+  },
+  "output": {
+    "mode": "json",
+    "schema": {
+      "md5": "string[]"
+    }
+  },
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/user_data/exec/cmds/md5.json",
+    "at": "2026-09-25"
+  },
+  "ai": {
+    "expose": true,
+    "risk": "low",
+    "examples": [
+      {
+        "target": "D:\\a.txt"
+      },
+      {
+        "target": "hello"
+      }
+    ]
+  }
+}
