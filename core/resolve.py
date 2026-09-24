@@ -47,17 +47,35 @@ def _probe_for(base, target, rname, spec):
     })
 
 
-def _marker_hits(base, spec, depth):
-    """这个 runner 的"项目标记"在 base 或它上面几层里存在吗？"""
+def _marker_info(base, spec, depth):
+    """找这个 runner 的"项目标记"，返回 (最近距离, [标记名...])。
+
+    距离 0 = 就在候选所在目录；1 = 父目录；以此类推。None = 一个都没有。
+
+    ★ 为什么要记【距离】，而不是只记"有没有"：
+      标记要往上找（在 `proj/src/` 里跑要能找到 `proj/go.mod`），
+      但往上找会捞到**祖先目录里不相关的标记** —— 比如你的家目录或某个
+      上层仓库里有个 `venv`，那所有 Python 候选都会莫名拿一分，
+      把真正的项目类型（比如同目录的 `go.mod`）淹掉。
+
+      实测就撞上了：在 `moss/dev/demo` 里判定时，`main.py` 因为上层
+      `moss/venv/` 也拿到命中，和同目录有 `go.mod` 的 `main.go` 打平，
+      结果该直接选 `main.go` 的却去问用户了。
+
+      **就近的标记才算数** —— 这也是 go / cargo / npm 这类工具的做法：
+      往上走，第一个声明自己是项目的目录就定了。
+    """
     want = runners_mod.markers_of(spec)
     if not want:
-        return []
-    hits = []
-    for d in search_bases(base, depth):
+        return None, []
+    names, nearest = [], None
+    for dist, d in enumerate(search_bases(base, depth)):
         for m in want:
             if (d / m).exists():
-                hits.append(m)
-    return sorted(set(hits))
+                names.append(m)
+                if nearest is None or dist < nearest:
+                    nearest = dist
+    return nearest, sorted(set(names))
 
 
 def collect(base, name, runners, depth):
@@ -80,10 +98,11 @@ def collect(base, name, runners, depth):
             probe = _probe_for(base, entry, rname, spec)
             if not probe["available"]:
                 continue
+            mdist, mhits = _marker_info(base, spec, depth)
             cands.append({
                 "path": entry, "runner": rname, "spec": spec,
                 "probe": probe, "base": base, "from_dir": None,
-                "marker_hits": _marker_hits(base, spec, depth),
+                "marker_hits": mhits, "marker_dist": mdist,
             })
 
         elif entry.is_dir():
@@ -101,10 +120,11 @@ def collect(base, name, runners, depth):
                 probe = _probe_for(entry, f, rname, spec)
                 if not probe["available"]:
                     continue
+                mdist, mhits = _marker_info(entry, spec, depth)
                 cands.append({
                     "path": f, "runner": rname, "spec": spec,
                     "probe": probe, "base": entry, "from_dir": entry.name,
-                    "marker_hits": _marker_hits(entry, spec, depth),
+                    "marker_hits": mhits, "marker_dist": mdist,
                 })
     return cands
 
@@ -143,7 +163,9 @@ class Aborted(Exception):
 def _describe(c):
     extra = ""
     if c["marker_hits"]:
-        extra = "  ← 项目标记: " + ", ".join(c["marker_hits"])
+        d = c.get("marker_dist")
+        where = "本目录" if d == 0 else ("上层 %d 级" % d if d is not None else "?")
+        extra = "  ← 项目标记: %s（%s）" % (", ".join(c["marker_hits"]), where)
     via = c["probe"].get("why") or ""
     return "%-14s [%s]  %s%s" % (c["path"].name, c["runner"], via, extra)
 
@@ -183,11 +205,18 @@ def disambiguate(cands, base, name, depth):
     if len(cands) == 1:
         return cands[0], "唯一可用候选"
 
-    # 3 · 项目标记
-    ranked = sorted(cands, key=lambda c: (-len(c["marker_hits"]), c["path"].name.lower()))
+    # 3 · 项目标记（**就近优先**：同目录的标记压过上层祖先目录里的）
+    def _score(c):
+        dist = c.get("marker_dist")
+        if dist is None:
+            return (999, 0)                 # 没有标记，排最后
+        return (dist, -len(c["marker_hits"]))   # 距离越小越好；同距离标记多者优先
+
+    ranked = sorted(cands, key=lambda c: (_score(c), c["path"].name.lower()))
     top = ranked[0]
-    if top["marker_hits"] and (len(ranked) == 1 or len(top["marker_hits"]) > len(ranked[1]["marker_hits"])):
-        return top, "项目标记 " + ", ".join(top["marker_hits"])
+    if top["marker_hits"] and (len(ranked) == 1 or _score(top) < _score(ranked[1])):
+        where = "本目录" if top["marker_dist"] == 0 else "上层 %d 级" % top["marker_dist"]
+        return top, "项目标记 %s（%s）" % (", ".join(top["marker_hits"]), where)
 
     # 4 · 记忆
     last = (load_memory(base).get(name.lower()) or "")

@@ -119,7 +119,13 @@ def runtime_versions(family):
     """某家族下的所有版本，**用户层优先**（同版本用户层覆盖系统层）。
 
     目录结构：`<runtimes>/<family>/<版本>/`
+
+    ⚠️ family 为空必须直接返回空表 —— 大多数 runner（go / html / powershell /
+       shell / exe）**根本不依赖自带运行时**，spec 里没有 "runtime" 字段。
+       不挡这一下就会 `Path / None` 直接 TypeError 崩掉。
     """
+    if not family:
+        return []
     by_ver = {}
     for base, layer in ((paths.USER_RUNTIMES, "user"), (paths.SYSTEM_RUNTIMES, "system")):
         d = base / family
@@ -154,6 +160,10 @@ def default_version(family):
 def runtime_dir(family, requirement=None):
     """挑一个自带运行时目录，找不到返回 None。
 
+    ★ **family 为空 = 这个 runner 不用自带运行时**（go / html / powershell /
+      shell / exe 都是），直接返回 None。它们靠 `interpreters` 里的
+      `PATH:xxx` 或 builtin 去找自己的解释器。
+
     ★ 默认版本是**钉住的**（`default.json`），**不是自动取最高版本**。
       否则以后新装一个 3.14，所有没声明版本的包会在你毫无察觉的情况下换解释器。
       要换默认版本，必须显式改 `default.json` —— 那是一个有意识的决定。
@@ -161,6 +171,8 @@ def runtime_dir(family, requirement=None):
     ★ 包可以钉死自己的版本：`pkg.json` 里 `"requires": { "python": "3.12" }`。
       钉了但没装 → 返回 None，**绝不退而求其次用别的版本**。
     """
+    if not family:
+        return None
     versions = runtime_versions(family)
     if not versions:
         return None

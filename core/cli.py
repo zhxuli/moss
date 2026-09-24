@@ -258,7 +258,12 @@ def cmd_resolve(name, table):
         flag = "  ★ 命中，停在这一层" if (cands and base == hit_base) else ""
         print("  %s   候选 %d 个%s" % (base, len(cands), flag))
         for c in cands:
-            marks = ("  项目标记: " + ",".join(c["marker_hits"])) if c["marker_hits"] else ""
+            if c["marker_hits"]:
+                d = c.get("marker_dist")
+                where = "本目录" if d == 0 else ("上层 %d 级" % d if d is not None else "?")
+                marks = "  项目标记: %s（%s）" % (",".join(c["marker_hits"]), where)
+            else:
+                marks = ""
             print("      %-16s runner=%-10s %s%s"
                   % (c["path"].name, c["runner"], c["probe"].get("why"), marks))
         if hit_base is not None:
