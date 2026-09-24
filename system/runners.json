@@ -1,0 +1,53 @@
+{
+  "python": {
+    "label": "Python",
+    "ext": [".py", ".pyw"],
+    "markers": ["pyproject.toml", "requirements.txt", "setup.py", "venv", ".venv", "Pipfile"],
+    "interpreters": [
+      "{cwd}\\venv\\Scripts\\python.exe",
+      "{cwd}\\.venv\\Scripts\\python.exe",
+      "{home}\\system\\runtime\\python.exe",
+      "PATH:python",
+      "PATH:python3"
+    ],
+    "launch": ["{interpreter}", "{entry}"]
+  },
+
+  "go": {
+    "label": "Go",
+    "ext": [".go"],
+    "markers": ["go.mod", "go.sum"],
+    "interpreters": ["PATH:go"],
+    "launch": ["{interpreter}", "run", "{entry}"]
+  },
+
+  "html": {
+    "label": "网页",
+    "ext": [".html", ".htm"],
+    "markers": [],
+    "builtin": "openHtml"
+  },
+
+  "powershell": {
+    "label": "PowerShell",
+    "ext": [".ps1"],
+    "markers": [],
+    "interpreters": ["PATH:powershell", "PATH:pwsh"],
+    "launch": ["{interpreter}", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "{entry}"]
+  },
+
+  "shell": {
+    "label": "CMD",
+    "ext": [".bat", ".cmd"],
+    "markers": [],
+    "interpreters": ["PATH:cmd"],
+    "launch": ["{interpreter}", "/c", "{entry}"]
+  },
+
+  "exe": {
+    "label": "可执行文件",
+    "ext": [".exe"],
+    "markers": [],
+    "launch": ["{entry}"]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "spec": 1,
+  "id": "clock",
+  "kind": "task",
+  "version": "1.0.0",
+  "name": { "zh-CN": "全屏时钟", "en": "Fullscreen clock" },
+  "desc": { "zh-CN": "演示：html runner —— 包不一定是脚本，也可以是一个页面", "en": "Demo: html runner" },
+  "tags": ["demo", "html"],
+  "aliases": ["clock"],
+
+  "runner": "html",
+  "entry": { "file": "run.html" },
+
+  "params": [],
+
+  "env": { "cwd": "", "elevated": false },
+
+  "capabilities": { "run": ["html"], "net": [], "elevated": false },
+
+  "output": { "mode": "text" },
+
+  "origin": { "by": "builtin" }
+}

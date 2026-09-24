@@ -1,0 +1,28 @@
+{
+  "spec": 1,
+  "id": "hello-go",
+  "kind": "task",
+  "version": "1.0.0",
+  "name": { "zh-CN": "Go 版打招呼", "en": "Say hello (Go)" },
+  "desc": { "zh-CN": "演示：同一个包格式直接跑 Go —— 加语言只是加一条 runner 配置", "en": "Demo: Go via the same package format" },
+  "tags": ["demo", "go"],
+  "aliases": ["hellogo", "higo"],
+
+  "runner": "go",
+  "entry": { "file": "main.go" },
+
+  "params": [
+    { "name": "who", "type": "string", "default": "世界", "desc": "跟谁打招呼" },
+    { "name": "times", "type": "int", "default": 1, "desc": "说几遍（1-100）" }
+  ],
+
+  "env": { "cwd": "", "elevated": false },
+
+  "capabilities": { "run": ["go"], "net": [], "elevated": false },
+
+  "output": { "mode": "json", "schema": { "who": "string", "times": "int", "greeting": "string", "lang": "string" } },
+
+  "origin": { "by": "builtin" },
+
+  "ai": { "expose": true, "risk": "low", "examples": [{ "who": "moss", "times": 2 }] }
+}
