@@ -23,6 +23,11 @@ SYSTEM_DIR = HOME / "system"
 SYSTEM_PKGS = SYSTEM_DIR / "pkgs"
 SYSTEM_RUNNERS = SYSTEM_DIR / "runners.json"
 
+# 自带运行时（解释器）。一个运行时一个目录，**目录名 = runner 里 "runtime" 字段的值**。
+# 为什么是复数 `runtimes`：旧项目叫 `bin/runtime`，但里面其实只有 Python，
+# 从文件夹名字上看不出来。以后要加 Node / Lua，这里是它们的家。
+SYSTEM_RUNTIMES = SYSTEM_DIR / "runtimes"
+
 # 可写用户层（打包时整体排除）
 USER_DIR = HOME / "user_data"
 USER_PKGS = USER_DIR / "pkgs"
@@ -31,6 +36,8 @@ USER_CONFIG = USER_DIR / "config.json"
 REGISTRY_FILE = USER_DIR / "registry.json"
 HISTORY_DIR = USER_DIR / "history"
 STATE_DIR = USER_DIR / "state"
+# 用户层可以覆盖同名运行时（以后做"组件下载"时装到这里）
+USER_RUNTIMES = USER_DIR / "runtimes"
 
 # 开发层：**只在开发机上存在**。
 # 发行版里没有 dev/ 目录（打包只带 pa.exe + system/），所以用户永远看不到它。

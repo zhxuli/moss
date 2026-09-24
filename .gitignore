@@ -8,3 +8,7 @@ dev/_tmp/
 
 # 编译产物：开发固件里的 exe 由 build.cmd 现场生成，不进版本控制
 dev/pkgs/*/main.exe
+
+# 自带运行时：181MB / 7863 个文件的二进制，不进 git 历史。
+# 用 tools\拉取运行时.py 恢复。发行包里 system/ 会整体打包，不受影响。
+system/runtimes/*/

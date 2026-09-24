@@ -3,13 +3,25 @@
     "label": "Python",
     "ext": [".py", ".pyw"],
     "markers": ["pyproject.toml", "requirements.txt", "setup.py", "venv", ".venv", "Pipfile"],
-    "interpreters": [
-      "{cwd}\\venv\\Scripts\\python.exe",
-      "{cwd}\\.venv\\Scripts\\python.exe",
-      "{home}\\system\\runtime\\python.exe",
-      "PATH:python",
-      "PATH:python3"
-    ],
+
+    "runtime": "python",
+    "_runtimeNote": "自带运行时在 system/runtimes/python/。加别的解释器就再建 system/runtimes/<名字>/",
+
+    "interpreters": {
+      "_note": "两组顺序不同，照抄 pa.py 的既有语义：包调用先用自带的（保证依赖在），路径调用先尊重项目 venv",
+      "package": [
+        "{runtime}\\python.exe",
+        "PATH:python",
+        "PATH:python3"
+      ],
+      "path": [
+        "{cwd}\\venv\\Scripts\\python.exe",
+        "{cwd}\\.venv\\Scripts\\python.exe",
+        "{runtime}\\python.exe",
+        "PATH:python",
+        "PATH:python3"
+      ]
+    },
     "launch": ["{interpreter}", "{entry}"]
   },
 

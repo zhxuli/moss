@@ -149,11 +149,15 @@ def _fill_interpreter(inv, table):
         return inv, ("不认识 runner '%s'。检查 system\\runners.json，"
                      "或往 user_data\\runners.json 里加一条。" % inv.get("runner"))
 
+    # 包调用和路径调用用的解释器顺序不同（照抄 pa.py 的既有语义）：
+    #   包调用 → 先用自带的 Python（保证我们自己的依赖在）
+    #   路径调用 → 先尊重用户项目的 venv
+    kind = "package" if inv.get("kind") == "pkg" else "path"
     probe = runners_mod.probe(inv.get("runner"), spec, {
         "cwd": inv.get("cwd") or os.getcwd(),
         "home": str(paths.HOME),
         "entry": inv.get("target") or "",
-    })
+    }, kind=kind)
     if not probe.get("available"):
         return inv, ("这个包需要 '%s'，但本机用不了。\n"
                      "       原因：%s\n"
@@ -285,6 +289,18 @@ def cmd_selfcheck(table):
     print("  runner 表 : %d 个 runner —— %s"
           % (len(table), ", ".join(sorted(table.keys())) or "（空！）"))
     ok &= bool(table)
+
+    rts = runners_mod.list_runtimes()
+    print("  自带运行时: %d 个" % len(rts))
+    for r in rts:
+        exe = (Path(r["dir"]) / r["interpreter"]) if r["interpreter"] else None
+        good = bool(exe and exe.is_file())
+        print("     - %-8s %-8s %-9s [%s]  %s"
+              % (r["name"], r["label"], r["version"] or "?", r["layer"],
+                 "✔ " + str(exe) if good else "✗ 缺解释器"))
+    if not rts:
+        print("     （没有自带运行时，包会退化到用系统解释器）")
+
     recs = registry.scan_all()
     print("  包        : %d 个" % len(recs))
     for r in recs:
