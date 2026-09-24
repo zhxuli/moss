@@ -1,0 +1,43 @@
+{
+  "spec": 1,
+  "id": "img",
+  "kind": "app",
+  "version": "1.1.0",
+  "name": { "zh-CN": "图片工具", "en": "Image tool" },
+  "desc": { "zh-CN": "图片压缩 / 转换（jpg / png / webp / ico），Tkinter 界面，支持拖放文件夹", "en": "Compress and convert images" },
+  "tags": ["图片", "压缩", "转换", "ico"],
+
+  "aliases": ["img", "image"],
+
+  "runner": "python",
+  "entry": { "file": "main.py" },
+
+  "params": [],
+
+  "env": { "cwd": "", "elevated": false },
+
+  "capabilities": {
+    "run": ["python"],
+    "net": [],
+    "fsRead": ["{cwd}"],
+    "fsWrite": ["{cwd}"],
+    "elevated": false
+  },
+
+  "output": { "mode": "text" },
+
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/bin/soft/img",
+    "at": "2026-09-25",
+    "note": "GUI 版。ico 生成从【单尺寸】修成【多分辨率】（见 CHANGES）"
+  },
+
+  "ai": { "expose": false, "risk": "low" },
+
+  "changes": [
+    "ico 生成改为多分辨率：GUI 的尺寸选择从单选改成多选，默认 16/24/32/48/64/128/256 全选；保存时写全部勾选的尺寸。旧版只写一个尺寸，等于把 ico 当单张图用。",
+    "数据目录从 PA_PLUGIN_DATA_DIR 改为 MOSS_PLUGIN_DATA_DIR（两个都认）。",
+    "Tkinter 界面与全部业务逻辑未改动。"
+  ]
+}
