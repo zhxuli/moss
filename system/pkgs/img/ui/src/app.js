@@ -160,7 +160,6 @@ function renderIcoSizes() {
       const picked = new Set(state.cfg.ico_sizes);
       if (cb.checked) picked.add(size); else picked.delete(size);
       state.cfg.ico_sizes = [...picked].sort((a, b) => a - b);
-      renderDigest();
     };
     label.appendChild(cb);
     label.appendChild(document.createTextNode(String(size)));
@@ -357,49 +356,37 @@ function renderSource() {
 function renderConditional() {
   const fmt = state.cfg.output_format;
   const isIco = fmt === 'ico';
-  /* 质量在 ico 下完全没用 —— 直接**换成 ico 尺寸**，不白占一行 */
+  /* 质量在 ico 下完全没用 —— 直接把那一格**换成 ico 尺寸**，不白占地方 */
   $('qualitySlot').hidden = isIco;
   $('icoSlot').hidden = !isIco;
   renderIcoSizes();
-  renderDigest();
 
+  /* 宽度非法就直接把输入框标红，不再单独占一行提示 */
   const width = String(state.cfg.width || '').trim();
-  const note = $('widthNote');
-  if (width && !/^\d+$/.test(width)) {
-    note.className = 'field-note err'; note.textContent = '只认整数像素值，非数字会被忽略。';
-  } else if (width && Number(width) === 0) {
-    note.className = 'field-note err'; note.textContent = '0 不是有效宽度。';
-  } else {
-    note.className = 'field-note'; note.textContent = '只缩不放：原图比它窄就保持原样。';
-  }
+  const bad = !!width && (!/^\d+$/.test(width) || Number(width) === 0);
+  $('width').classList.toggle('invalid', bad);
+  $('width').title = bad
+    ? '只认正整数像素值（0 和字母会被忽略，等于保持原尺寸）'
+    : '只缩不放：原图比它窄就保持原样；留空 = 保持原始尺寸';
 
+  /* 保存模式那一行右边直接写清"会输出到哪" */
   const saveNote = $('saveNote');
   const byFiles = state.mode === 'files';
   if (state.cfg.save_mode === 'separate') {
-    saveNote.className = 'field-note';
-    saveNote.textContent = byFiles ? '输出到「第一个文件所在目录」下的 compressed_output\\。'
-                                   : '输出到源文件夹下的 compressed_output\\。';
+    saveNote.className = 'hint';
+    saveNote.textContent = byFiles ? '→ 第一个文件所在目录\\compressed_output\\'
+                                   : '→ 源目录\\compressed_output\\';
   } else if (state.cfg.save_mode === 'source') {
-    saveNote.className = 'field-note warn';
-    saveNote.textContent = byFiles ? '每个文件写回它自己所在的目录，同名会被覆盖。'
-                                   : '直接写回源文件夹，同名文件会被覆盖。';
+    saveNote.className = 'hint';
+    saveNote.textContent = byFiles ? '→ 每个文件各自所在的目录（同名覆盖）'
+                                   : '→ 源目录（同名覆盖）';
   } else {
-    saveNote.className = 'field-note err';
-    saveNote.textContent = byFiles ? '转换成功后永久删除源文件（各删各的），无法撤销。'
-                                   : '转换成功后永久删除源文件，无法撤销。';
+    saveNote.className = 'hint';
+    saveNote.textContent = byFiles ? '→ 每个文件各自所在的目录，转换后删源文件'
+                                   : '→ 源目录，转换后删源文件';
   }
 
   renderWarn();
-}
-
-/* 高级摘要：把当前值直接写出来，不展开也知道自己设了什么 */
-function renderDigest() {
-  const bits = [];
-  const w = String(state.cfg.width || '').trim();
-  bits.push(w ? `宽度 ${w}px` : '宽度 原尺寸');
-  bits.push(SAVE_LABELS[state.cfg.save_mode] || state.cfg.save_mode);
-  if (state.cfg.output_format === 'ico') bits.push(`ico ${state.cfg.ico_sizes.length} 档`);
-  $('advDigest').textContent = '· ' + bits.join(' · ');
 }
 
 /* 危险模式常驻警告：藏起来的是**设置**，不是**警告** */

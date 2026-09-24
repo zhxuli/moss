@@ -63,18 +63,22 @@
 .typebar .count { font-size: var(--t-sub); color: var(--text-2); font-variant-numeric: tabular-nums; }
 .typebar .btn { height: 24px; padding: 0 8px; font-size: var(--t-sub); }
 
-/* 设置行：一薄行装下 格式 + 质量（或 ico 尺寸） */
+/* 设置区：两行装完。格式/宽度/质量一行，保存模式一行。
+   这些是常用项，**不折叠** —— 折叠常用项等于每次多一次点击。 */
 .settings {
-  display: flex; align-items: center; gap: var(--sp-3);
-  flex: none; margin-top: 10px; padding-top: 10px;
+  display: flex; flex-direction: column; gap: 7px;
+  flex: none; margin-top: 9px; padding-top: 9px;
   border-top: 1px solid var(--sep);
 }
+.setrow { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; flex-wrap: wrap; }
 .settings-label {
-  flex: none; font: 600 var(--t-sub)/1 var(--font-ui); letter-spacing: var(--t-sub-ls);
+  flex: none; width: 30px;
+  font: 600 var(--t-sub)/1 var(--font-ui); letter-spacing: var(--t-sub-ls);
   color: var(--text-2);
 }
 .settings .slot { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; flex: 1 1 auto; }
 .settings .slot[hidden] { display: none; }
+.settings .hint { font-size: var(--t-sub); color: var(--text-3); min-width: 0; flex: 1 1 auto; }
 
 /* ============================================================================
    按钮

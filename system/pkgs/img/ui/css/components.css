@@ -174,7 +174,17 @@ html[data-theme="dark"] .seg button[aria-selected="true"] { background: var(--su
 .seg.mode-seg { flex: none; }
 .seg.mode-seg button { flex: none; padding: 5px 16px; }
 /* 格式那一段要宽一点，但别撑满整行 */
-.seg.fmt-seg { flex: 0 1 460px; }
+.seg.fmt-seg { flex: 0 1 340px; }
+/* 保存模式：三个中文长标签，给它需要的宽度 */
+.seg.save-seg { flex: 0 1 470px; }
+
+/* 宽度那个小输入框 */
+.width-wrap { display: flex; align-items: center; gap: 4px; flex: none; }
+.width-wrap input[type=text] {
+  width: 74px; padding: 6px 8px; text-align: right;
+  font-family: var(--font-mono); font-size: var(--t-code);
+}
+.width-wrap .lead { font-size: var(--t-sub); color: var(--text-3); }
 
 /* 下拉：最近使用过的文件夹 */
 select {
@@ -224,31 +234,6 @@ input[type=range]:active::-webkit-slider-thumb { transform: scale(1.06); }
 .field-note.err { color: var(--danger); }
 .field-note.warn { color: #d97706; }
 html[data-theme="dark"] .field-note.warn { color: #fbbf24; }
-
-/* ============================================================================
-   高级：默认折叠，但**摘要里写出当前值** —— 藏起来的是控件，不是信息
-   ========================================================================== */
-.advanced { margin-top: 8px; flex: none; }
-.advanced > summary {
-  cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
-  font: 600 var(--t-sub)/1.6 var(--font-ui); color: var(--text-2);
-  padding: 2px 0;
-}
-.advanced > summary::-webkit-details-marker { display: none; }
-.advanced > summary::before {
-  content: "▸"; display: inline-block; color: var(--text-3);
-  transition: transform var(--dur-base) var(--ease-out);
-}
-.advanced[open] > summary::before { transform: rotate(90deg); }
-.advanced .digest {
-  font-weight: 400; color: var(--text-3); letter-spacing: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.advanced .adv-grid {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
-  gap: var(--sp-4); padding: 10px 2px 2px;
-}
-.advanced .adv-grid .field { margin-top: 0; }
 
 /* ============================================================================
    警告条：只有选了危险模式才出现。藏起来的是设置，不是警告。

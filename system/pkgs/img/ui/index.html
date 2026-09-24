@@ -67,40 +67,38 @@
           <div class="field-note" id="srcNote"></div>
         </div>
 
-        <!-- ── 下半：输出设置，压成薄薄几行 ─────────────────────────── -->
+        <!-- ── 下半：输出设置。全部摊平，不藏 —— 这些是常用项。
+             两行装完：第一行 格式 / 宽度 / 质量(或 ico 尺寸)，第二行 保存模式 ── -->
         <div class="settings">
-          <span class="settings-label">输出</span>
-          <div class="seg fmt-seg" id="segFormat"></div>
-          <div class="slot" id="qualitySlot">
-            <input type="range" id="quality" min="1" max="100" step="1">
-            <span class="num" id="qualityNum">80%</span>
+          <div class="setrow">
+            <span class="settings-label">输出</span>
+            <div class="seg fmt-seg" id="segFormat"></div>
+
+            <span class="settings-label">宽度</span>
+            <span class="width-wrap">
+              <input type="text" id="width" class="mono" spellcheck="false" autocomplete="off"
+                     placeholder="原尺寸" title="留空 = 保持原始尺寸；填数字 = 等比缩到这个宽度">
+              <span class="lead">px</span>
+            </span>
+
+            <div class="slot" id="qualitySlot">
+              <span class="settings-label">质量</span>
+              <input type="range" id="quality" min="1" max="100" step="1">
+              <span class="num" id="qualityNum">80%</span>
+            </div>
+
+            <div class="slot" id="icoSlot" hidden>
+              <span class="settings-label">尺寸</span>
+              <div class="checks" id="icoSizes"></div>
+            </div>
           </div>
-          <div class="slot" id="icoSlot" hidden>
-            <span class="lead">尺寸</span>
-            <div class="checks" id="icoSizes"></div>
+
+          <div class="setrow">
+            <span class="settings-label">保存</span>
+            <div class="seg save-seg" id="segSave"></div>
+            <span class="hint" id="saveNote"></span>
           </div>
         </div>
-
-        <!-- 摘要里直接写出当前值：不用展开也能看见，避免"藏起来就忘了" -->
-        <details class="advanced" id="advanced">
-          <summary>高级 <span class="digest" id="advDigest"></span></summary>
-          <div class="adv-grid">
-            <div class="field">
-              <div class="label">目标宽度 <span class="hint">留空保持原始尺寸</span></div>
-              <div class="alias-row">
-                <input type="text" id="width" class="mono" spellcheck="false" autocomplete="off"
-                       placeholder="例如 1200">
-                <span class="lead">px</span>
-              </div>
-              <div class="field-note" id="widthNote"></div>
-            </div>
-            <div class="field">
-              <div class="label">保存模式</div>
-              <div class="seg" id="segSave"></div>
-              <div class="field-note" id="saveNote"></div>
-            </div>
-          </div>
-        </details>
 
         <!-- 危险模式常驻警告：藏起来的是**设置**，不是**警告** -->
         <div class="warnbar" id="warnBar" hidden></div>
