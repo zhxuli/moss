@@ -24,18 +24,21 @@
         <!-- ── 上半：挑图。占满剩余高度 —— 这是唯一的主动作 ───────────── -->
         <div class="card-body">
 
+          <!-- 第一行：模式 + 路径 + 按钮 -->
           <div class="srcbar">
             <div class="seg mode-seg" id="segMode"></div>
             <input type="text" id="src" class="mono" spellcheck="false" autocomplete="off"
                    placeholder="D:\图片">
             <button class="btn" id="btnPick">选择…</button>
-            <select id="history" class="hist" title="最近使用过的文件夹"></select>
             <button class="btn" id="btnAddFiles" hidden>加文件…</button>
             <button class="btn ghost" id="btnClearFiles" hidden>清空</button>
-            <button class="btn ghost icon" id="btnRefresh" title="刷新（Ctrl+R）">⟳</button>
           </div>
 
+          <!-- 第二行：历史上/刷新 挨着文件夹放左边，然后是类型快捷选择，最右是选择控制 -->
           <div class="typebar">
+            <select id="history" class="hist" title="最近使用过的文件夹"></select>
+            <button class="btn ghost icon" id="btnRefresh" title="刷新（Ctrl+R）">⟳</button>
+            <span class="vsep"></span>
             <span class="types" id="types"></span>
             <span class="spacer"></span>
             <span class="count" id="selCount"></span>

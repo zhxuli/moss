@@ -317,16 +317,17 @@ function renderSelection() {
   renderTypes();
 }
 
+/* 网格下面那行提示：**只在真有话说的时候出现**。
+   「不选 = 全部 N 个 / 将处理 N 个」不写了 —— 右上角有「已选 x / y」，
+   右下按钮上写着「开始处理 (N)」，说三遍是啰嗦。 */
 function renderNote() {
+  const note = $('srcNote');
+  if (note.classList.contains('err')) return;      // 出错信息优先，别被进度顶掉
   const total = state.items.length;
-  const n = state.selected.size;
   const parts = [];
-  if (!total) parts.push('');
-  else if (!n) parts.push(`不选 = 全部 ${total} 个`);
-  else parts.push(`将处理 ${n} 个`);
   if (state.showThumbs && state.thumbDone < total) parts.push(`缩略图 ${state.thumbDone}/${total}`);
   if (total > state.meta.thumbLimit) parts.push('文件较多，用列表显示');
-  if (!$('srcNote').classList.contains('err')) $('srcNote').textContent = parts.join(' · ');
+  note.textContent = parts.join(' · ');
 }
 
 function renderSource() {
@@ -343,6 +344,8 @@ function renderSource() {
     note.textContent = `有 ${gone} 个文件已经不在了（灰掉的那些）—— 处理前会被拦下，点「刷新」清掉。`;
   } else {
     note.className = 'field-note';
+    note.textContent = '';
+    renderNote();
   }
   syncTitle();
 }
