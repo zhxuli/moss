@@ -1,14 +1,31 @@
 __pycache__/
 *.pyc
+
+# 本地开发环境（按规范叫 venv）。不进 git —— 谁需要谁自己建。
+venv/
+.build-venv/
+
+# 用户的运行时数据
 user_data/
-dev/_tmp/
-*.log
+
+# nuitka 的中间产物
+moss.build/
+moss.dist/
+nuitka-crash-report.xml
+
+# 生成物：图标预览图，用 tools/图标优化.py 随时能再生成
+*.preview.png
+
+# 开发固件里编译出来的 exe（build.cmd 现场产出）
+dev/pkgs/*/main.exe
+
+# IDE
 .idea/
 .vscode/
 
-# 编译产物：开发固件里的 exe 由 build.cmd 现场生成，不进版本控制
-dev/pkgs/*/main.exe
-
-# 自带运行时：181MB / 7863 个文件的二进制，不进 git 历史。
-# 用 tools\拉取运行时.py 恢复。发行包里 system/ 会整体打包，不受影响。
+# 自带运行时：181MB / 7864 个文件的二进制，不进 git 历史。
+# 用 tools/拉取运行时.py 恢复。发行包里 system/ 会整体打包，不受影响。
 system/runtimes/*/
+
+dev/_tmp/
+*.log
