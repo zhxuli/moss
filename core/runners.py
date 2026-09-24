@@ -6,9 +6,9 @@
     **不改宿主代码，不重编 exe。**
 
 三层叠放：
-    system/runners.json   随版本走
-    user_data/runners.json 用户覆盖（优先）
-    自带的解释器放 system/runtimes/<名字>/（用户层可覆盖同名）
+    system/runners.json      随版本走
+    user_data/runners.json   用户覆盖（优先）
+    自带的解释器放 system/runtimes/<家族>/<版本>/（用户层可覆盖同名版本）
 
 **包不得自带 runner**（`K-09`）—— 否则"下载一个包"就等于
 "获得执行任意语言代码的能力"，安全等级要跳一大档。
@@ -67,21 +67,6 @@ def markers_of(spec):
 
 
 # ---------------------------------------------------------------- 自带运行时
-def runtime_dir(name):
-    """找一个自带运行时的目录：**用户层优先，然后出厂层**。
-
-    `system/runtimes/<名字>/`，目录名就是 runner 里 `"runtime"` 字段的值。
-    用户层可覆盖 —— 以后做"组件下载"时装到 `user_data/runtimes/` 就能盖掉出厂的。
-    """
-    if not name:
-        return None
-    for base in (paths.USER_RUNTIMES, paths.SYSTEM_RUNTIMES):
-        d = base / name
-        if d.is_dir():
-            return str(d)
-    return None
-
-
 def read_runtime_meta(directory):
     f = Path(directory) / "runtime.json"
     if f.is_file():
@@ -94,25 +79,123 @@ def read_runtime_meta(directory):
     return {}
 
 
-def list_runtimes():
-    """列出所有自带运行时（用户层 + 出厂层）。给自检用。"""
-    out, seen = [], set()
+def _ver_tuple(text):
+    """'3.12.11' → (3, 12, 11)，可比较。"""
+    out = []
+    for part in str(text).replace("-", ".").split("."):
+        if part.isdigit():
+            out.append(int(part))
+        else:
+            break
+    return tuple(out) or (0,)
+
+
+def _ver_matches(version, requirement):
+    """版本是否满足要求。
+
+        "3.12"  → 精确到 major.minor（前两段相同）
+        "3"     → 同主版本
+    """
+    if not requirement:
+        return False
+    req, ver = _ver_tuple(requirement), _ver_tuple(version)
+    if len(req) == 1:
+        return ver[:1] == req
+    return ver[:len(req)] == req
+
+
+def runtime_families():
+    """所有运行时家族名（python / node / …）。"""
+    fams = set()
+    for base in (paths.USER_RUNTIMES, paths.SYSTEM_RUNTIMES):
+        if base.is_dir():
+            for d in base.iterdir():
+                if d.is_dir():
+                    fams.add(d.name)
+    return sorted(fams)
+
+
+def runtime_versions(family):
+    """某家族下的所有版本，**用户层优先**（同版本用户层覆盖系统层）。
+
+    目录结构：`<runtimes>/<family>/<版本>/`
+    """
+    by_ver = {}
     for base, layer in ((paths.USER_RUNTIMES, "user"), (paths.SYSTEM_RUNTIMES, "system")):
-        if not base.is_dir():
+        d = base / family
+        if not d.is_dir():
             continue
-        for d in sorted(base.iterdir()):
-            if not d.is_dir() or d.name in seen:
+        for v in sorted(d.iterdir()):
+            if not v.is_dir():
                 continue
-            seen.add(d.name)
-            meta = read_runtime_meta(d)
+            meta = read_runtime_meta(v)
+            ver = str(meta.get("version") or v.name)
+            if ver in by_ver:
+                continue                       # 用户层已经占了
+            by_ver[ver] = {"version": ver, "dir": v, "layer": layer, "meta": meta}
+    return sorted(by_ver.values(), key=lambda r: _ver_tuple(r["version"]))
+
+
+def default_version(family):
+    """读 `default.json` 里**钉住**的默认版本（用户层优先）。"""
+    for f in (paths.USER_RUNTIMES / "default.json", paths.SYSTEM_RUNTIMES / "default.json"):
+        if f.is_file():
+            try:
+                with open(f, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                v = (data or {}).get(family)
+                if v:
+                    return str(v)
+            except Exception:
+                pass
+    return None
+
+
+def runtime_dir(family, requirement=None):
+    """挑一个自带运行时目录，找不到返回 None。
+
+    ★ 默认版本是**钉住的**（`default.json`），**不是自动取最高版本**。
+      否则以后新装一个 3.14，所有没声明版本的包会在你毫无察觉的情况下换解释器。
+      要换默认版本，必须显式改 `default.json` —— 那是一个有意识的决定。
+
+    ★ 包可以钉死自己的版本：`pkg.json` 里 `"requires": { "python": "3.12" }`。
+      钉了但没装 → 返回 None，**绝不退而求其次用别的版本**。
+    """
+    versions = runtime_versions(family)
+    if not versions:
+        return None
+
+    if requirement:
+        hit = [v for v in versions if _ver_matches(v["version"], requirement)]
+        if not hit:
+            return None
+        return max(hit, key=lambda v: _ver_tuple(v["version"]))["dir"]
+
+    want = default_version(family)
+    if want:
+        hit = [v for v in versions if _ver_matches(v["version"], want)]
+        if hit:
+            return max(hit, key=lambda v: _ver_tuple(v["version"]))["dir"]
+
+    # 没钉默认版本 → 用最高的（自检会提醒去钉一个）
+    return versions[-1]["dir"]
+
+
+def list_runtimes():
+    """列出所有自带运行时（家族 × 版本）。给自检用。"""
+    out = []
+    for fam in runtime_families():
+        for v in runtime_versions(fam):
+            meta = v["meta"]
             out.append({
-                "name": d.name,
-                "layer": layer,
-                "dir": d,
-                "version": meta.get("version", ""),
-                "label": meta.get("label", d.name),
+                "family": fam,
+                "version": v["version"],
+                "layer": v["layer"],
+                "dir": v["dir"],
+                "label": meta.get("label", fam),
                 "interpreter": meta.get("interpreter", ""),
                 "provides": (meta.get("provides") or {}).get("runner") or [],
+                "isDefault": _ver_matches(v["version"], default_version(fam)),
             })
     return out
 
@@ -167,14 +250,15 @@ def detect_venv(interpreter):
     return None
 
 
-def probe(name, spec, ctx, kind="path"):
+def probe(name, spec, ctx, kind="path", requirement=None):
     """探测这个 runner 在这台机器上能不能用。
 
-    kind: "package"（跑我们自己的包）| "path"（跑用户项目里的脚本）
-          两者的解释器顺序不同，见模块 docstring。
+    kind:        "package"（跑我们自己的包）| "path"（跑用户项目里的脚本）
+                两者解释器顺序不同，见模块 docstring。
+    requirement: 包钉的运行时版本，如 "3.12"。钉了但没装 → 直接不可用，
+                绝不退而求其次用别的版本。
 
-    返回 {"available": bool, "interpreter": str|None, "venv": str|None,
-          "runtime": str|None, "why": str}
+    返回 {"available", "interpreter", "venv", "runtime", "why"}
     """
     result = {"available": False, "interpreter": None, "venv": None,
               "runtime": None, "why": ""}
@@ -189,10 +273,18 @@ def probe(name, spec, ctx, kind="path"):
         result["why"] = "无需解释器"
         return result
 
+    family = spec.get("runtime")
     ctx = dict(ctx)
-    rd = runtime_dir(spec.get("runtime"))
+    rd = runtime_dir(family, requirement)
     ctx["runtime"] = rd or ""
     result["runtime"] = rd
+
+    # 钉了版本但没装 → 直接判定不可用。**不许静默换版本**。
+    if requirement and family and not rd:
+        have = ", ".join(v["version"] for v in runtime_versions(family)) or "一个都没有"
+        result["why"] = ("这个包要求 %s 版本 %s，但 runtimes\\%s\\ 下只有：%s"
+                         % (family, requirement, family, have))
+        return result
 
     tried = []
     for source, exe in _interp_candidates(spec, ctx, kind):

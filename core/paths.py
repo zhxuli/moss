@@ -10,13 +10,25 @@
   · `sys.argv[0]`     —— 无论直接跑脚本还是跑打包后的 exe，它都指向程序本身
 """
 import hashlib
+import os
 import sys
 from pathlib import Path
 
 # 照抄 pa.py:21 —— 程序被改名了也要能工作（pa.exe / moss.exe 都认）
 INVOCATION_NAME = Path(sys.argv[0]).stem if len(sys.argv) > 0 else "moss"
 
-HOME = Path(sys.argv[0]).resolve().parent
+# 安装根。
+#
+# ★ 照抄 pa.py（E-20）：用 `sys.argv[0]` 定位 —— 无论直接跑脚本还是跑打包后的
+#   exe，它都指向程序本身。不能用 `__file__`（nuitka onefile 下指向临时解包目录），
+#   也不能用 cwd（用户会在任意目录下敲 `moss m`）。
+#
+# ★ 加一层兜底：如果环境里已经有 MOSS_HOME，就用它。
+#   为什么需要：argv[0] 的口径只对"入口程序"成立。任何 import core 的辅助脚本
+#   （开发工具、测试脚本）如果不在安装根，算出来的 HOME 就是错的。
+#   宿主给子进程注入 MOSS_HOME，所以这个兜底和主路径口径一致，不会打架。
+_env_home = os.environ.get("MOSS_HOME")
+HOME = Path(_env_home).resolve() if _env_home else Path(sys.argv[0]).resolve().parent
 
 # 只读出厂层（随 exe 一起分发，打包时带上）
 SYSTEM_DIR = HOME / "system"

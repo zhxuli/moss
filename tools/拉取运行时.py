@@ -28,7 +28,7 @@ HERE = Path(__file__).resolve().parent
 HOME = HERE.parent
 
 DEFAULT_SRC = Path(r"D:\python\two\QuickTools\pa_soft\bin\runtime")
-DEFAULT_DST = HOME / "system" / "runtimes" / "python"
+DEFAULT_DST = HOME / "system" / "runtimes" / "python" / "3.12"
 
 
 def count(d):

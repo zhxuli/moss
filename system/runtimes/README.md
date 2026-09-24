@@ -1,52 +1,75 @@
 # system/runtimes —— 自带运行时（解释器）
 
-## 命名规则
+## 结构
 
 ```
 system/runtimes/
-├─ python/          ← 目录名 = runner 里 "runtime" 字段的值
-│  ├─ runtime.json      声明：是什么、什么版本、提供哪个 runner
-│  ├─ python.exe
-│  ├─ python312.zip     标准库
-│  └─ Lib/site-packages 第三方库
-├─ node/            ← 以后加 Node 就是这里
-└─ lua/             ← 再加 Lua 就是这里
+├─ default.json        ★ 各家族的【默认版本】（钉住的，不是自动取最高）
+├─ python/
+│  ├─ 3.12/
+│  │  ├─ runtime.json     声明：家族 / 版本 / 提供哪个 runner / 来源 / 可搬迁性
+│  │  ├─ python.exe
+│  │  ├─ python312.zip    标准库
+│  │  └─ Lib/site-packages 第三方库
+│  └─ 3.14/               ← 以后加新版本就是这里
+├─ node/                  ← 以后加别的语言就是这里
+│  └─ 20/
+└─ README.md
 ```
 
-**为什么叫 `runtimes`（复数）而不是旧项目那个 `runtime`：**
-旧项目的 `bin/runtime/` 里其实**只有 Python**，但从文件夹名字看不出来。
-以后可能还要带别的解释器（Node / Lua / …），所以：
+**命名规则**：`<家族>/<版本>/`
 
-- 顶层用**复数** `runtimes` —— 表示"这里是各种运行时"
-- 每个运行时**一个子目录，目录名就是它是什么** —— `python/`、`node/`
+- 顶层是**家族**（`python` / `node` / `lua`…）—— 旧的 `bin/runtime` 里其实只有 Python，
+  从文件夹名字看不出来，所以这里改成显式的家族名
+- 第二层是**版本** —— 同一个家族可以并存多个版本
 
-## 谁在用它们
+## 版本怎么选（这是关键规则）
 
-`system/runners.json` 里每个 runner 声明自己用哪个运行时：
+| 优先级 | 规则 |
+|---|---|
+| 1 | **包钉死的版本**：`pkg.json` 里 `"requires": { "python": "3.12" }` → 只用 3.12；**没装就报错，绝不改用别的版本** |
+| 2 | **`default.json` 钉住的默认版本** ← 绝大多数包走这条 |
+| 3 | 都没配 → 用最高的（`--selfcheck` 会提醒去钉一个） |
 
-```jsonc
-"python": {
-  "runtime": "python",                    // ← 对应 runtimes/python/
-  "interpreters": {
-    "package": ["{runtime}\\python.exe", "PATH:python"],   // 包调用：先用自带的
-    "path":    ["{cwd}\\venv\\...", "{runtime}\\python.exe", "PATH:python"]  // 路径调用：先尊重项目的 venv
-  }
-}
+> ### ⚠️ 默认版本是【钉住】的，不是"自动取最高"
+>
+> 假如以后你装了 3.14，如果默认是"取最高"，那么**所有没声明版本的包
+> 会在你毫无察觉的情况下换解释器** —— 某天某个包就莫名其妙坏了，
+> 而且你根本想不到是 Python 版本变了。
+>
+> 所以要换默认版本，**必须显式改 `default.json`**。那是一个有意识的决定。
+
+`"3.12"` 是**精确到 major.minor**（3.12.11 也算 3.12）；写 `"3"` 表示 3.x 里最高的那个。
+
+## 用户层可以覆盖
+
+```
+user_data/runtimes/<家族>/<版本>/      ← 同名版本优先于 system 层
+user_data/runtimes/default.json        ← 也能覆盖默认版本
 ```
 
-`{runtime}` 这个 token 会展开成 `system/runtimes/<名字>/`。
-查找顺序：**用户层 `user_data/runtimes/<名字>/` 优先，然后出厂层 `system/runtimes/<名字>/`**
-—— 所以以后做"组件下载"时，装到用户层就能覆盖出厂的那份。
+这是为**以后做"组件下载"留的位置**：装到用户层就能盖掉出厂的那份，不用动 `system/`。
 
-## 这里的二进制**不进 git**
+## 这里的二进制【不进 git】
 
-`python/` 有 **181.8 MB / 7863 个文件**。这种体量的二进制进 git 历史会让仓库不可用。
+`python/3.12/` 有 **181.8 MB / 7864 个文件**。这种体量的二进制进 git 历史会让仓库不可用。
 
-所以：
+- 仓库里只留**说明 + `runtime.json` + 拉取脚本**
+- 运行时本体靠 `python tools\拉取运行时.py` 现场复制
+- `.gitignore` 里排除了 `system/runtimes/*/*/`
 
-- 仓库里只留**说明 + `runtime.json` 模板 + 拉取脚本**
-- 运行时本体靠 `tools\拉取运行时.py` 现场复制
-- `.gitignore` 里排除了 `system/runtimes/*/`
-
-**这不影响发行** —— 发行包里 `system/` 是整体打包出去的，运行时会跟着走。
+**这不影响发行** —— 发行包里 `system/` 是整体打包出去的，运行时跟着走。
 只是"克隆仓库"和"拿到发行版"是两件事。
+
+## 体积备忘
+
+| 部分 | 大小 |
+|---|---|
+| 全部 | 181.8 MB |
+| numpy + numpy.libs | 41.0 MB |
+| matplotlib | 18.6 MB |
+| PIL | 14.1 MB |
+| fontTools | 10.2 MB |
+
+以后要瘦身，numpy / matplotlib / fontTools 是大头（约 70MB）。
+**先别删** —— 旧项目的插件依赖它们。

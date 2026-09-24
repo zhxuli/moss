@@ -113,6 +113,10 @@ def build_pkg_inv(rec, params, via="cli"):
         "via": via,
         "pkg_dir": str(pkg_dir),
     }
+    # 包可以钉死运行时版本：pkg.json 里 "requires": { "python": "3.12" }
+    req = (pkg.get("requires") or {}).get(pkg.get("runner"))
+    if req:
+        inv["runtimeRequirement"] = str(req)
     return inv, None
 
 
@@ -157,7 +161,7 @@ def _fill_interpreter(inv, table):
         "cwd": inv.get("cwd") or os.getcwd(),
         "home": str(paths.HOME),
         "entry": inv.get("target") or "",
-    }, kind=kind)
+    }, kind=kind, requirement=inv.get("runtimeRequirement"))
     if not probe.get("available"):
         return inv, ("这个包需要 '%s'，但本机用不了。\n"
                      "       原因：%s\n"
@@ -295,11 +299,15 @@ def cmd_selfcheck(table):
     for r in rts:
         exe = (Path(r["dir"]) / r["interpreter"]) if r["interpreter"] else None
         good = bool(exe and exe.is_file())
-        print("     - %-8s %-8s %-9s [%s]  %s"
-              % (r["name"], r["label"], r["version"] or "?", r["layer"],
-                 "✔ " + str(exe) if good else "✗ 缺解释器"))
+        pin = " ★默认" if r["isDefault"] else ""
+        print("     - %-8s %-9s [%s]%s  %s"
+              % (r["family"], r["version"], r["layer"], pin,
+                 "✔" if good else "✗ 缺解释器 " + r["interpreter"]))
     if not rts:
         print("     （没有自带运行时，包会退化到用系统解释器）")
+    for fam in runners_mod.runtime_families():
+        if not runners_mod.default_version(fam):
+            print("     ⚠ 家族 '%s' 没有在 default.json 里钉默认版本" % fam)
 
     recs = registry.scan_all()
     print("  包        : %d 个" % len(recs))
