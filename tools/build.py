@@ -10,7 +10,11 @@
 首次使用（venv 还不存在时）：
 
     py -3.12 -m venv venv
-    venv\\Scripts\\python.exe -m pip install nuitka
+    venv\\Scripts\\python.exe -m pip install nuitka pyautogui
+
+  ⚠️ pyautogui 也必须装在**构建环境**里：cd 功能用它模拟键盘输入，
+     不自带一份的话 nuitka 编不进 exe，打包后的 `moss cd` 会失效
+     （自带运行时里那份帮不上忙 —— 那是给包用的，不是给 exe 用的）。
 
 
 关于"命令写在两个地方"
@@ -133,7 +137,16 @@ def preflight():
         import nuitka  # noqa: F401
     except ImportError:
         return None, die("这个 Python 里没有 nuitka。装一下：\n"
-                         "       %s -m pip install nuitka" % sys.executable)
+                         "       %s -m pip install nuitka pyautogui" % sys.executable)
+
+    # pyautogui 是 cd 功能（模拟键盘输入）的依赖。自带运行时里有，
+    # 但**构建环境里也必须有一份**，否则 nuitka 编不进 exe，
+    # 打包后的 `moss cd` 会报"需要 pyautogui 库"。
+    try:
+        import pyautogui  # noqa: F401
+    except ImportError:
+        return None, die("这个 Python 里没有 pyautogui（cd 功能需要它，必须一起编进 exe）。装一下：\n"
+                         "       %s -m pip install pyautogui" % sys.executable)
 
     cmd = [
         sys.executable, "-m", "nuitka",

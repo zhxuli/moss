@@ -22,7 +22,12 @@
         "PATH:python3"
       ]
     },
-    "launch": ["{interpreter}", "{entry}"]
+    "launch": ["{interpreter}", "{runTarget}"],
+
+    "_shimWhy": "自带运行时是 Python 嵌入式发行版（目录里有 python312._pth），它处于隔离模式：【不会】把脚本所在目录加进 sys.path，而且 PYTHONPATH 被忽略。后果是脚本里 import 同目录模块会 ModuleNotFoundError。所以用自带运行时跑 .py 时改走 system/bootstrap.py 引导一下。系统/venv 的 Python 不需要，照旧直接跑。",
+    "shim": {
+      "launch": ["{interpreter}", "{home}\\system\\bootstrap.py", "{entry}"]
+    }
   },
 
   "go": {

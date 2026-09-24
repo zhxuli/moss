@@ -320,3 +320,77 @@ def probe_all(cwd, name, runners, depth=None):
         for c in candidates_at(base, name, runners, depth):
             rows.append((str(base), c))
     return rows
+
+
+# ---------------------------------------------------------------- 目录查找（cd 用）
+def _ask_dir(dirs, name):
+    """目录歧义时问用户（E-18：选完就用，不让重敲）。"""
+    print("[选择] '%s' 匹配到 %d 个目录：" % (name, len(dirs)))
+    for i, d in enumerate(dirs, 1):
+        print("   %d) %s" % (i, d.name))
+    print("   0) 取消")
+    try:
+        raw = input("请输入序号并回车（默认 1）: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        raise Aborted()
+    if raw == "0":
+        raise Aborted()
+    if not raw:
+        idx = 0
+    elif raw.isdigit():
+        idx = int(raw) - 1
+    else:
+        raise Aborted()
+    if not (0 <= idx < len(dirs)):
+        raise Aborted()
+    return dirs[idx]
+
+
+def _walk_dir(base, parts, depth):
+    """找目录：非最后一段必须是目录；最后一段目录优先，是文件就取它的父目录。
+
+    照抄 pa.py:829-831 的语义（`cd` 用的 find_mode='directory'）。
+    """
+    head, rest = parts[0], parts[1:]
+    if rest:
+        for d in _match_dirs(base, head):
+            hit = _walk_dir(d, rest, depth)
+            if hit:
+                return hit
+        return None
+
+    try:
+        entries = sorted(base.iterdir(), key=lambda p: p.name.lower())
+    except OSError:
+        return None
+
+    dirs = [e for e in entries if e.is_dir() and e.name.lower().startswith(head.lower())]
+    files = [e for e in entries if e.is_file() and e.name.lower().startswith(head.lower())]
+    exact = [d for d in dirs if d.name.lower() == head.lower()]
+
+    if len(exact) == 1:
+        return exact[0]
+    if len(dirs) == 1:
+        return dirs[0]
+    if not dirs and len(files) == 1:
+        return files[0].parent          # 照抄 pa.py:829-831
+    if dirs:
+        return _ask_dir(dirs, head)
+    return None
+
+
+def find_dir(expr, cwd, depth=None):
+    """给 `cd` 找目标目录。逐层向上搜，返回目录 Path 或 None。"""
+    parts = split_path_expr(expr)
+    if not parts:
+        return None
+    for base in search_bases(cwd, depth):
+        if not base.is_dir():
+            continue
+        try:
+            hit = _walk_dir(base, parts, depth)
+        except Aborted:
+            return None
+        if hit:
+            return hit
+    return None

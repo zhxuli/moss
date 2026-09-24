@@ -6,10 +6,12 @@
 
 pa 的入口和以后 exec 工作台、AI 调用，全都走这里。
 
-★ 照抄 pa.py 的部分（`E-20`）：
-  · `kill_process_tree()` —— `pa.py:210` 原样搬
-  · 环境的注入方式 —— `pa.py:234-238` 注入 `PA_*`，这里换成 `MOSS_*`
-  · 前台执行直接继承控制台 —— `pa.py` 的 `interactive` 模式
+★ 照抄 pa.py 的部分（`E-20` 照抄原则）：
+  · `kill_process_tree()`             —— pa.py:210
+  · `execute_command_robust()` 的全套 —— pa.py:219-313
+      清屏 / 起止横幅 / [执行] / [目录] / [PID] / 后台脱离 / 温和 Ctrl-C /
+      [运行总长] / 结束时间
+  · 环境的注入方式                    —— pa.py:234-238（`PA_*` → `MOSS_*`）
 
 ★ 统一中间表示 `Invocation`（`E-12`）：所有入口都归一到它再进引擎。
 """
@@ -21,15 +23,16 @@ import tempfile
 import time
 import webbrowser
 from pathlib import Path
-from urllib.parse import quote
 
-from . import events, paths, runners as runners_mod
+from . import config, events, out, paths, runners as runners_mod
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+_DETACHED = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+_NEW_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
 
 
 def kill_process_tree(pid):
-    """照抄 pa.py:210。"""
+    """照抄 pa.py:210-216。"""
     try:
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -39,6 +42,29 @@ def kill_process_tree(pid):
 
 
 # ---------------------------------------------------------------- 构造
+def _is_bundled_runtime(interp):
+    """这个解释器是不是我们自带的运行时？
+
+    自带的是 Python **嵌入式发行版**（带 `._pth`），处于隔离模式：
+    不会把脚本目录加进 sys.path，PYTHONPATH 也被忽略。
+    所以只有它需要走 `system/bootstrap.py` 引导。
+    venv / 系统 Python 不需要，照旧直接跑（照抄 pa.py 项目模式的行为）。
+    """
+    if not interp:
+        return False
+    try:
+        p = Path(interp).resolve()
+    except Exception:
+        return False
+    for base in (paths.SYSTEM_RUNTIMES, paths.USER_RUNTIMES):
+        try:
+            p.relative_to(base.resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 def build_argv(inv, spec):
     """按 runner 的 launch 模板拼命令。
 
@@ -49,6 +75,10 @@ def build_argv(inv, spec):
           `go run .`        跑整个包（多文件正确），但**必须有 go.mod**
       所以 runner 用 `runTarget` 字段声明这个判断，引擎只负责执行它 ——
       保持"执行方式变成数据"（F-19），不把某种语言的知识写死进引擎。
+
+    ★ `shim`：自带运行时是嵌入式发行版（`._pth` = 隔离模式），
+      不会把脚本目录加进 sys.path —— 同目录 import 会失败，PYTHONPATH 也没用。
+      所以 runner 可以声明：用自带运行时跑脚本时改走 `system/bootstrap.py`。
     """
     ctx = {
         "interpreter": inv.get("interpreter") or "",
@@ -72,22 +102,28 @@ def build_argv(inv, spec):
     else:
         ctx["runTarget"] = ctx["entry"]
 
+    shim = spec.get("shim") or {}
+    use_shim = bool(shim) and _is_bundled_runtime(inv.get("interpreter"))
+    templates = (shim.get("launch") if use_shim else None) or (spec.get("launch") or [])
+
     argv = []
-    for tpl in (spec.get("launch") or []):
+    for tpl in templates:
         try:
             argv.append(tpl.format(**ctx))
         except Exception:
             argv.append(tpl)
+
+    # 透传用户参数（照抄 pa.py execute_target 的 `+ args`）
+    argv.extend(str(a) for a in (inv.get("args") or []))
     return argv
 
 
 def build_env(inv):
-    """给子进程的环境。照抄 pa.py 的注入方式，换成 MOSS_* 前缀。"""
+    """给子进程的环境。照抄 pa.py:234-238 的注入方式，换成 MOSS_* 前缀。"""
     env = os.environ.copy()
     env["MOSS_HOME"] = str(paths.HOME)
     env["MOSS_USER_DATA_DIR"] = str(paths.USER_DIR)
 
-    # 路径调用没有包名，用 cwd 的稳定哈希当身份；包调用用包 id
     key = inv.get("id") or ("path:" + str(inv.get("cwd") or ""))
     state = paths.state_dir_for(key)
     env["MOSS_PLUGIN_DATA_DIR"] = str(state)
@@ -100,10 +136,23 @@ def build_env(inv):
     env["MOSS_VIA"] = inv.get("via") or "cli"
     if inv.get("venv"):
         env["MOSS_VENV"] = str(inv["venv"])
-
-    # 结构化返回（F-12）：包把结果写进这个文件，宿主读回来当 data
     env["MOSS_RESULT_FILE"] = inv["_result_file"]
     return env
+
+
+def _hide_window(inv):
+    """要不要隐藏子进程的窗口。照抄 pa.py:394 的规则。
+
+    path 调用：只有 `.pyw` 藏窗口（pa.py main() 里 ext=='.pyw' → background）
+    包调用  ：`kind=app` 的 `.pyw` / `.exe` 藏窗口
+              （pa.py handle_plugin_mode 里 type=='soft' → background）
+    """
+    ext = ""
+    if inv.get("target"):
+        ext = Path(inv["target"]).suffix.lower()
+    if inv.get("kind") == "pkg" and inv.get("pkg_kind") == "app":
+        return ext in (".pyw", ".exe")
+    return ext == ".pyw"
 
 
 # ---------------------------------------------------------------- 内置动作
@@ -131,15 +180,19 @@ def _run_builtin(inv, spec):
 
 
 # ---------------------------------------------------------------- 主流程
-def run(inv, runners_table):
+def run(inv, runners_table, detach=False):
     """执行一次调用。inv 是 Invocation 字典。返回 exit code。
 
-    流程对应 §21.2：第 6 步 before:run → 第 7/8 步执行 → 第 9 步 after:run。
+    流程照抄 pa.py:219-313 execute_command_robust：
+      清屏 → 起始横幅 → 起进程 → [PID] →（脱离 or 等结束）
+      → 结束横幅（总长 / 结束时间 / end_banner）
     """
     spec = runners_table.get(inv.get("runner")) or {}
     inv = dict(inv)
+    cfg = config.output_cfg()
 
-    # 结果文件：包可以往里写 JSON，宿主读回来当 data
+    out.conditional_clear_screen()
+
     fd, result_file = tempfile.mkstemp(prefix="moss_result_", suffix=".json")
     os.close(fd)
     inv["_result_file"] = result_file
@@ -149,42 +202,15 @@ def run(inv, runners_table):
 
     exit_code = 0
     data = None
+    proc = None
+    result_emitted = False
 
-    try:
-        if spec.get("builtin"):
-            exit_code, msg = _run_builtin(inv, spec)
-            print(("[完成] " if exit_code == 0 else "[错误] ") + msg)
-        else:
-            argv = build_argv(inv, spec)
-            if not argv:
-                print("[错误] runner '%s' 没有可用的 launch 模板。" % inv.get("runner"))
-                exit_code = 1
-            else:
-                cwd = inv.get("cwd") or os.getcwd()
-                print("[执行] %s" % " ".join('"%s"' % a if " " in a else a for a in argv))
-                print("[目录] %s" % cwd)
-                # 必须先 flush：子进程会继承同一个控制台，不 flush 的话它的输出会插到前面去
-                sys.stdout.flush()
-                try:
-                    proc = subprocess.Popen(argv, cwd=cwd, env=build_env(inv))
-                    while proc.poll() is None:
-                        time.sleep(0.05)
-                    exit_code = proc.returncode or 0
-                except KeyboardInterrupt:
-                    print("\n[中断] 正在强力终止进程树...")
-                    try:
-                        kill_process_tree(proc.pid)
-                    except Exception:
-                        pass
-                    exit_code = 130
-                except FileNotFoundError as e:
-                    print("[错误] 找不到可执行文件：%s" % e)
-                    exit_code = 1
-                except Exception as e:
-                    print("[错误] 执行失败：%s" % e)
-                    exit_code = 1
-    finally:
-        # 读结构化返回
+    def _emit_after(code):
+        nonlocal result_emitted
+        if result_emitted:
+            return
+        result_emitted = True
+        nonlocal data
         try:
             if os.path.getsize(result_file) > 0:
                 with open(result_file, "r", encoding="utf-8") as f:
@@ -195,13 +221,122 @@ def run(inv, runners_table):
             os.remove(result_file)
         except Exception:
             pass
-
-        ms = int((time.time() - started) * 1000)
         events.BUS.emit("after:run", {
             "invocation": inv,
-            "result": {"exit": exit_code, "ms": ms, "data": data},
+            "result": {"exit": code, "ms": int((time.time() - started) * 1000), "data": data},
         })
+
+    try:
+        if spec.get("builtin"):
+            exit_code, msg = _run_builtin(inv, spec)
+            out.print_cyan(("[完成] " if exit_code == 0 else "[错误] ") + msg)
+
+        else:
+            argv = build_argv(inv, spec)
+            if not argv:
+                out.print_cyan("[错误] runner '%s' 没有可用的 launch 模板。" % inv.get("runner"))
+                exit_code = 1
+            else:
+                cwd = inv.get("cwd") or os.getcwd()
+                # pa.py:225 —— 含空格的参数加引号只为显示好看
+                cmd_str = ' '.join('"%s"' % c for c in argv)
+                symbol = cfg.get("symbol", "")
+                if cfg.get("start_banner"):
+                    out.print_cyan(cfg["start_banner"])
+                if cfg.get("start_time"):
+                    out.print_cyan("%s  %s  %s" % (
+                        symbol, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), symbol))
+                if cfg.get("command"):
+                    out.print_cyan("[执行] %s" % cmd_str)
+                if cfg.get("directory"):
+                    out.print_cyan("[目录] %s" % cwd)
+                # 子进程继承同一个控制台，不 flush 它的输出会插到前面去
+                sys.stdout.flush()
+
+                cflags = 0
+                if _hide_window(inv):
+                    cflags |= _NO_WINDOW
+                if detach:
+                    cflags |= _DETACHED | _NEW_GROUP
+
+                kwargs = {"cwd": cwd, "creationflags": cflags, "env": build_env(inv)}
+                if detach:
+                    kwargs["stdin"] = subprocess.DEVNULL
+                    kwargs["stdout"] = subprocess.DEVNULL
+                    kwargs["stderr"] = subprocess.DEVNULL
+
+                try:
+                    proc = subprocess.Popen(argv, **kwargs)
+
+                    if cfg.get("pid"):
+                        out.print_cyan("[PID] %s" % proc.pid)
+                    print(out.RESET, end='')
+
+                    if detach:
+                        out.print_cyan("[后台脱离] 程序已剥离并转入独立后台运行，当前控制台已释放！")
+                        _emit_after(None)
+                        return 0
+
+                    force_kill = config.force_kill()
+                    gentle_done = False
+                    while True:
+                        try:
+                            while proc.poll() is None:
+                                time.sleep(0.1)
+                            break
+                        except KeyboardInterrupt:
+                            if (not force_kill) and not gentle_done:
+                                out.print_cyan("\n[中断] 温和模式: 尝试优雅停止...")
+                                try:
+                                    proc.terminate()
+                                except Exception:
+                                    pass
+                                time.sleep(0.6)
+                                if proc.poll() is None:
+                                    gentle_done = True
+                                    out.print_cyan("[提示] 进程未退出; 再按一次 Ctrl+C 将强制结束。")
+                                else:
+                                    out.print_cyan("[完成] 进程已优雅停止。")
+                                    break
+                            else:
+                                out.print_cyan("\n[中断] 正在强力终止进程树...")
+                                kill_process_tree(proc.pid)
+                                out.print_cyan("[完成] 进程已终止。")
+                                exit_code = 130
+                                break
+                    if exit_code == 0:
+                        exit_code = proc.returncode or 0
+                except FileNotFoundError as e:
+                    out.print_cyan("[执行错误] 找不到可执行文件：%s" % e)
+                    exit_code = 1
+                except Exception as e:
+                    out.print_cyan("[执行错误] %s" % e)
+                    exit_code = 1
+
+    except KeyboardInterrupt:
+        if proc:
+            out.print_cyan("\n[中断] 正在强力终止进程树...")
+            kill_process_tree(proc.pid)
+            out.print_cyan("[完成] 进程已终止。")
+        else:
+            out.print_cyan("\n[中断] 操作已取消。")
+        exit_code = 130
+
+    finally:
+        _emit_after(exit_code)
 
     if data is not None:
         print("[结果] %s" % json.dumps(data, ensure_ascii=False))
+
+    # pa.py:307-313 收尾横幅
+    ended = time.time()
+    symbol = cfg.get("symbol", "")
+    if cfg.get("duration"):
+        out.print_cyan("[运行总长] %.2f 秒" % (ended - started))
+    if cfg.get("end_time"):
+        out.print_cyan("%s  %s  %s" % (
+            symbol, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ended)), symbol))
+    if cfg.get("end_banner"):
+        out.print_cyan(cfg["end_banner"])
+
     return exit_code
