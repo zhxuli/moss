@@ -194,6 +194,23 @@ class Api:
                                          'name': os.path.basename(path)}}
         return {'ok': True, 'info': core.file_info(path)}
 
+    def report_error(self, text):
+        """前端把脚本异常报回来，落到 DATA_DIR 下的 ui-error.log。
+
+        为什么要走这一趟：WebView 里没有控制台，界面上一句红字用户看不懂、
+        也没法贴给我，窗口一关线索就没了。写进文件就能查。
+        """
+        try:
+            import time as _time
+            if not os.path.isdir(core.DATA_DIR):
+                os.makedirs(core.DATA_DIR, exist_ok=True)
+            with open(os.path.join(core.DATA_DIR, 'ui-error.log'), 'a', encoding='utf-8') as f:
+                f.write('\n=== %s ===\n%s\n' % (
+                    _time.strftime('%Y-%m-%d %H:%M:%S'), str(text)[:4000]))
+            return {'ok': True, 'file': os.path.join(core.DATA_DIR, 'ui-error.log')}
+        except Exception:
+            return {'ok': False}
+
     def set_title(self, text):
         """把当前目录/状态写进**窗口标题栏** —— 这样顶栏那一行就可以整条去掉。"""
         if self._window is None:

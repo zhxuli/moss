@@ -586,7 +586,7 @@ function bindHover() {
   });
 
   grid.addEventListener('mouseleave', hide);
-  $('#picker').addEventListener('scroll', hide, { passive: true });
+  $('picker').addEventListener('scroll', hide, { passive: true });
 }
 
 function placeCard(card, tile) {
@@ -945,11 +945,30 @@ function bind() {
 }
 
 /* ------------------------------------------------------------------ 启动 */
+/* 记录走到哪一步炸的。原来只报一句"界面初始化失败：<英文>"，
+   既不知道哪一步、也看不到细节 —— 用户没法贴给我，窗口一关线索就没了。 */
+let bootStage = '启动';
+
+/* 出错时：中文说清哪一步 + 原文附在后面，并且**写进后端日志** */
+function reportFailure(where, e) {
+  const raw = (e && e.message) ? e.message : String(e);
+  toast(`界面初始化失败（${where}）：${raw}`, true);
+  try {
+    if (state.api && state.api.report_error) {
+      state.api.report_error(`${where}: ${raw}\n${(e && e.stack) || ''}`);
+    }
+  } catch (_) { /* 报错通道本身不能再抛 */ }
+}
+
 async function boot() {
+  bootStage = '连接界面桥';
   state.api = await apiReady();
+
+  bootStage = '读取后端数据';
   const r = await state.api.bootstrap();
   if (!r || !r.ok) { toast('后端没有就绪。', true); return; }
 
+  bootStage = '应用外观';
   applyAppearance(r);
   state.cfg = r.config;
   state.history = r.history || [];
@@ -957,6 +976,7 @@ async function boot() {
                  thumbLimit: r.thumbLimit || 100 };
   state.dir = r.sourceDir || '';
 
+  bootStage = '渲染界面';
   renderFormat();
   renderSaveMode();
   $('quality').value = state.cfg.quality;
@@ -967,22 +987,41 @@ async function boot() {
   applyScan(r.scan);
   renderMode();
   renderConditional();
+
+  bootStage = '绑定交互';
   bind();
   bindMarquee();
   bindHover();
   bindDrop();
 
+  bootStage = '';
   $('status').textContent = '待命';
   if (r.log) $('logHint').textContent = r.log;
   setLogOpen(false);
 }
 
-boot().catch((e) => toast('界面初始化失败：' + e, true));
+boot().catch((e) => reportFailure(bootStage, e));
 
-/* 脚本一出错就显出来。WebView 里没有控制台，静默失败最难查
+/* 任何脚本错误都显出来并记档。WebView 里没有控制台，静默失败最难查
    （踩过：绑事件时抛异常 → 点哪儿都没反应，界面上却看不出任何异常）。 */
 window.addEventListener('error', (e) => {
-  toast('界面脚本出错：' + (e.message || e.type), true);
+  const where = '脚本运行时';
+  toast(`界面脚本出错：${e.message || e.type}`, true);
+  try {
+    if (state.api && state.api.report_error) {
+      state.api.report_error(`${where}: ${e.message || e.type}\n${e.filename || ''}:${e.lineno || 0}`);
+    }
+  } catch (_) { /* ignore */ }
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e && e.reason;
+  const raw = (r && r.message) ? r.message : String(r);
+  toast(`界面有个异步操作失败了：${raw}`, true);
+  try {
+    if (state.api && state.api.report_error) {
+      state.api.report_error(`未处理的 Promise 拒绝: ${raw}\n${(r && r.stack) || ''}`);
+    }
+  } catch (_) { /* ignore */ }
 });
 
 /* 调试口子：开 MOSS_IMG_DEBUG=1 起窗口后，可以在 devtools 里直接看状态。 */
