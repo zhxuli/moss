@@ -3,13 +3,49 @@
 
 ★ 照抄 pa.py:39-50（print_cyan / CYAN / RESET）和 pa.py:201-207（清屏）。
   pa.py 的控制台配色和"自动清屏"是用户天天在看的，原样搬过来。
+
+★ 另外在这里统一做一次**控制台 UTF-8 兜底**（见 `ensure_utf8_console`）：
+  程序里到处是 ✔ ✗ ⚠ 这类符号，Windows 中文控制台默认 cp936 编码，
+  `print('✔')` 会直接 UnicodeEncodeError 把程序崩掉。
 """
 import os
+import sys
 
 from . import config
 
 CYAN = '\033[36;1m'
 RESET = '\033[0m'
+
+
+def ensure_utf8_console():
+    """让控制台吃得下 ✔ ✗ ⚠ 这类符号。两步，缺一不可：
+
+      1. 把**控制台代码页**切成 UTF-8（65001）—— 只改 Python 这边的话，
+         字节到了控制台还是花屏；
+      2. 把 `sys.stdout/stderr` 重设成 UTF-8 —— 只改代码页的话，
+         Python 仍按 cp936 编码，照样抛 UnicodeEncodeError。
+
+    任一步失败都不抛异常：`errors='replace'` 兜底，最坏情况显示成 `?`，
+    **绝不允许因为一个符号把整个程序崩掉**。
+
+    实测事故：`moss --selfcheck` 在中文控制台上必崩 ——
+    `gbk codec can't encode character '\\u2714'`，而它检查的东西全是好的。
+    """
+    if os.name == 'nt':
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+        except Exception:
+            pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+ensure_utf8_console()
 
 
 def print_cyan(*args, **kwargs):

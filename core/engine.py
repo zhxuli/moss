@@ -24,7 +24,7 @@ import time
 import webbrowser
 from pathlib import Path
 
-from . import config, events, out, paths, runners as runners_mod
+from . import appearance, config, events, out, paths, runners as runners_mod
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _DETACHED = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
@@ -137,6 +137,19 @@ def build_env(inv):
     if inv.get("venv"):
         env["MOSS_VENV"] = str(inv["venv"])
     env["MOSS_RESULT_FILE"] = inv["_result_file"]
+
+    # 系统外观（深浅模式 + 强调色）。包跑在自带运行时里，是独立进程，
+    # **不能 import 宿主的 core**，所以这类"每台机器不同的动态值"走环境变量 ——
+    # 和 MOSS_HOME / MOSS_PKG_PARAMS 同一个套路。WebView 界面用它注入 CSS 变量。
+    env["MOSS_APPEARANCE"] = appearance.as_env()
+
+    # ★ 让子进程的 stdio 编码跟宿主的控制台一致。
+    #   宿主启动时把控制台代码页切成了 UTF-8（`out.ensure_utf8_console`），
+    #   但 Python 子进程**输出到管道时**不看控制台代码页，只看 locale ——
+    #   于是子进程写 GBK、宿主写 UTF-8，同一屏里两套编码，接管道时必花屏
+    #   （实测：直接看是好的，`moss :img webp > log.txt` 就乱）。
+    #   用 setdefault：用户自己设过就尊重他的。
+    env.setdefault("PYTHONIOENCODING", "utf-8")
     return env
 
 

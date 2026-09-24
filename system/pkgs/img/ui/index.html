@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>图片工具</title>
+<!-- 主题：先用系统偏好顶上，避免首帧闪一下；boot 时再用后端读到的值覆盖 -->
+<script>
+  document.documentElement.dataset.theme =
+    (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+</script>
+<link rel="stylesheet" href="./css/tokens.css">
+<link rel="stylesheet" href="./css/base.css">
+<link rel="stylesheet" href="./css/layout.css">
+<link rel="stylesheet" href="./css/components.css">
+</head>
+<body>
+<div id="app">
+  <div class="window">
+
+    <header class="toolbar">
+      <div class="tb-left">
+        <span class="tb-title">图片工具</span>
+        <span class="tb-path" id="tbPath"></span>
+      </div>
+      <div class="tb-right">
+        <button class="btn ghost" id="btnReveal">打开输出目录</button>
+      </div>
+    </header>
+
+    <div class="body">
+      <section class="detail">
+        <div class="card">
+
+          <header class="d-head">
+            <div>
+              <h1 class="d-title">图片压缩 <span class="prefix">/ 转换</span></h1>
+              <p class="d-sub" id="sub">选择一个文件夹，然后开始处理。</p>
+            </div>
+            <span class="pill mute" id="pill">—</span>
+          </header>
+
+          <div class="card-body">
+
+            <!-- 源文件夹 -->
+            <div class="field">
+              <div class="label">源文件夹</div>
+              <div class="alias-row">
+                <input type="text" id="src" class="mono" spellcheck="false" autocomplete="off"
+                       placeholder="D:\图片">
+                <button class="btn" id="btnPick">选择…</button>
+              </div>
+              <select id="history" style="margin-top:8px"></select>
+              <div class="field-note" id="srcNote"></div>
+            </div>
+
+            <!-- 目标格式 -->
+            <div class="field">
+              <div class="label">目标格式</div>
+              <div class="seg" id="segFormat"></div>
+            </div>
+
+            <!-- 压缩质量 -->
+            <div class="field">
+              <div class="label">压缩质量 <span class="hint" id="qualityHint"></span></div>
+              <div class="range-row">
+                <input type="range" id="quality" min="1" max="100" step="1">
+                <span class="num" id="qualityNum">80%</span>
+              </div>
+            </div>
+
+            <!-- 目标宽度（ico 模式隐藏） -->
+            <div class="field" id="fieldWidth">
+              <div class="label">目标宽度 <span class="hint">留空保持原始尺寸</span></div>
+              <div class="alias-row">
+                <input type="text" id="width" class="mono" spellcheck="false" autocomplete="off"
+                       placeholder="例如 1200">
+                <span class="lead">px</span>
+              </div>
+              <div class="field-note" id="widthNote"></div>
+            </div>
+
+            <!-- ICO 尺寸（非 ico 模式隐藏） -->
+            <div class="field" id="fieldIco" hidden>
+              <div class="label">ICO 尺寸 <span class="hint">可多选</span></div>
+              <div class="checks" id="icoSizes"></div>
+              <div class="field-note">
+                Windows 按场景自动挑：任务栏 32、资源管理器 16/48、预览 256。
+              </div>
+            </div>
+
+            <!-- 保存模式 -->
+            <div class="field">
+              <div class="label">保存模式</div>
+              <div class="seg" id="segSave"></div>
+              <div class="field-note" id="saveNote"></div>
+            </div>
+
+            <!-- 源文件过滤 -->
+            <div class="field">
+              <div class="label">源文件过滤
+                <span class="acts">
+                  <button class="btn ghost" id="btnAll">全选</button>
+                  <button class="btn ghost" id="btnNone">全不选</button>
+                </span>
+              </div>
+              <div class="checks" id="filters"></div>
+              <div class="field-note" id="filterNote"></div>
+            </div>
+
+          </div>
+
+          <!-- 日志放在 card-body **外面**：表单滚动时它始终可见
+               （处理过程要盯着看，滚到底才发现就没意义了） -->
+          <div class="field log-field">
+            <div class="label">处理日志 <span class="hint" id="logHint"></span></div>
+            <div class="output boxed">
+              <div class="output-head">
+                <span class="spinner" id="spin" hidden></span>
+                <span id="status">待命</span>
+              </div>
+              <pre id="log"></pre>
+            </div>
+          </div>
+
+          <div class="actions">
+            <span class="spacer"></span>
+            <button class="btn ghost" id="btnReset">重置</button>
+            <button class="btn primary" id="btnStart">开始处理</button>
+          </div>
+
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="toast-wrap" id="toasts"></div>
+</div>
+
+<script type="module" src="./src/app.js"></script>
+</body>
+</html>

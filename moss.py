@@ -54,6 +54,13 @@ from pathlib import Path
 # 保证从任意 cwd 运行都能 import core
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# ★ 第一件事就把控制台切成 UTF-8。
+#   程序里到处是 ✔ ✗ ⚠ 这类符号，Windows 中文控制台默认 cp936，
+#   `moss --selfcheck` 会直接 `gbk codec can't encode character '\u2714'` 崩掉。
+#   放在 import core 之前是最保险的位置（out 模块 import 时也会再兜一次）。
+from core import out as _out     # noqa: E402
+_out.ensure_utf8_console()
+
 from core import cli       # noqa: E402
 
 

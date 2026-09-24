@@ -1,0 +1,222 @@
+/* components.css
+   组件：卡片、字段、分段控件、勾选、日志抽屉、提示条
+   —— 取自 exec/ui/css/components.css，按 img 实际用到的部分裁剪。
+      被裁掉的都是 exec 特有的东西：命令树(.row/.grp/.dot)、代码编辑器(.editor)、
+      语法高亮(.hljs-*)、新建弹层(.sheet/.tile)、HTML 预览(.preview-frame)。
+      <link> 顺序即层叠顺序 */
+
+/* ============================================================================
+   主体
+   ========================================================================== */
+.body { display: block; overflow: hidden; }
+
+/* ============================================================================
+   详情
+   ========================================================================== */
+.detail {
+  position: relative; height: 100%; display: flex;
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--content-bg);
+  overflow: hidden;
+}
+
+.card {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+  width: 100%; max-width: 800px; margin: 0 auto;
+  background: var(--surface); border-radius: var(--r-xl);
+  border: 1px solid var(--sep); box-shadow: var(--shadow-card);
+  padding: 22px var(--sp-5) 18px;
+}
+.card-body { flex: 1 1 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+
+.d-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-4); }
+.d-title {
+  font: 640 var(--t-title)/1.2 var(--font-ui); letter-spacing: var(--t-title-ls);
+  margin: 0; word-break: break-all;
+}
+.d-sub { margin: 5px 0 0; font-size: var(--t-sub); color: var(--text-2); word-break: break-all; }
+
+.pill {
+  display: inline-flex; align-items: center; flex: none;
+  height: 22px; padding: 0 9px; border-radius: 11px;
+  font: 600 11px/1 var(--font-ui); letter-spacing: .01em;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: color-mix(in srgb, var(--accent) 68%, var(--text));
+}
+.pill.mute {
+  background: var(--field); color: var(--text-3);
+}
+
+/* ============================================================================
+   字段
+   ========================================================================== */
+.field { margin-top: 16px; }
+.label {
+  display: flex; align-items: baseline; gap: 6px;
+  font: 600 var(--t-sub)/1 var(--font-ui); letter-spacing: var(--t-sub-ls);
+  color: var(--text-2); margin-bottom: 7px;
+}
+.label .hint { font-weight: 400; color: var(--text-3); letter-spacing: 0; margin-left: auto; text-align: right; }
+/* 标题行右侧的小按钮组（全选 / 全不选） */
+.label .acts { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.label .acts .btn { height: 20px; padding: 0 7px; font-size: var(--t-sub); font-weight: 500; }
+
+input[type=text] {
+  width: 100%; background: var(--field); border: 1px solid transparent;
+  border-radius: var(--r-sm); padding: 7px 10px; outline: none; user-select: text;
+  transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out);
+}
+input[type=text]:focus { background: var(--surface); border-color: var(--ring); box-shadow: 0 0 0 3px var(--field-focus); }
+input[type=text].invalid { border-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent); }
+input.mono { font-family: var(--font-mono); font-size: var(--t-code); }
+
+/* 分段控件：选项少才点得舒服 */
+.seg { display: flex; padding: 2px; gap: 2px; width: 100%; background: var(--field); border-radius: var(--r-sm); }
+.seg button {
+  flex: 1; min-width: 0; border: none; background: transparent; cursor: pointer;
+  padding: 5px 4px; border-radius: 5px; color: var(--text-2); font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.seg button:hover { color: var(--text); }
+.seg button:active { transform: scale(.97); }
+.seg button[aria-selected="true"] {
+  background: var(--surface); color: var(--text);
+  box-shadow: 0 1px 2px rgba(0,0,0,.12), 0 0 0 .5px rgba(0,0,0,.04);
+}
+html[data-theme="dark"] .seg button[aria-selected="true"] { background: var(--surface-3); }
+/* 危险项被选中时给点颜色，别让人点完才发现是"删源文件" */
+.seg button.warn[aria-selected="true"] { color: var(--danger); }
+
+/* 下拉：历史记录那种"从列表里挑一个"的次要字段 */
+select {
+  width: 100%; height: 30px; padding: 0 26px 0 10px;
+  background-color: var(--field); border: 1px solid transparent; border-radius: var(--r-sm);
+  outline: none; cursor: pointer; appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%2386868b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat; background-position: right 9px center; background-size: 10px;
+  transition: background-color var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out);
+}
+select:focus { background-color: var(--surface); border-color: var(--ring); box-shadow: 0 0 0 3px var(--field-focus); }
+
+/* 拖动条：原生 range 太丑，这里按字段的观感重画一遍 */
+input[type=range] {
+  width: 100%; height: 30px; margin: 0; padding: 0;
+  background: var(--field); border-radius: var(--r-sm);
+  appearance: none; -webkit-appearance: none; outline: none; cursor: pointer;
+  transition: background var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+}
+input[type=range]:focus { box-shadow: 0 0 0 3px var(--field-focus); }
+input[type=range]::-webkit-slider-runnable-track {
+  height: 30px; background: transparent; border-radius: var(--r-sm);
+}
+input[type=range]::-webkit-slider-thumb {
+  appearance: none; -webkit-appearance: none;
+  width: 18px; height: 18px; margin-top: 6px; border-radius: 50%;
+  background: var(--surface); border: 1px solid var(--btn-border);
+  box-shadow: 0 1px 3px rgba(0,0,0,.24);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+input[type=range]:active::-webkit-slider-thumb { transform: scale(1.06); }
+.range-row { display: flex; align-items: center; gap: var(--sp-3); }
+.range-row input[type=range] { flex: 1; min-width: 0; }
+.range-row .num {
+  flex: none; width: 46px; text-align: right; font-variant-numeric: tabular-nums;
+  font-weight: 590; color: var(--text);
+}
+
+/* 勾选：一行能放下就直接横排 */
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-sub); color: var(--text-2); cursor: pointer; }
+.check input { accent-color: var(--accent); margin: 0; }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px;
+  background: var(--field); font-size: var(--t-sub); color: var(--text-2);
+  cursor: pointer; user-select: none;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.chip:hover { color: var(--text); }
+.chip input { accent-color: var(--accent); margin: 0; width: 12px; height: 12px; }
+.chip.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text); }
+.chip .n { color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+.alias-row { display: flex; align-items: center; gap: var(--sp-2); }
+.alias-row .lead { color: var(--text-3); font-weight: 500; flex: none; white-space: nowrap; }
+
+.field-note { margin-top: 6px; font-size: var(--t-sub); color: var(--text-3); min-height: 15px; }
+.field-note.err { color: var(--danger); }
+.field-note.warn { color: #d97706; }
+html[data-theme="dark"] .field-note.warn { color: #fbbf24; }
+
+/* 高级选项：默认折叠 —— 常用的先露出来，冷门的往下一层 */
+.advanced { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--sep); }
+.advanced > summary {
+  cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
+  font: 600 var(--t-sub)/1 var(--font-ui); color: var(--text-2);
+}
+.advanced > summary::-webkit-details-marker { display: none; }
+.advanced > summary::before {
+  content: "▸"; display: inline-block; color: var(--text-3);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.advanced[open] > summary::before { transform: rotate(90deg); }
+.advanced[open] > summary { margin-bottom: 14px; }
+
+.actions {
+  display: flex; align-items: center; gap: var(--sp-2); flex: none;
+  margin-top: var(--sp-4); padding-top: var(--sp-4); border-top: 1px solid var(--sep);
+}
+.actions .spacer { flex: 1; }
+
+/* ============================================================================
+   日志抽屉
+   ========================================================================== */
+.output { display: flex; flex-direction: column; min-height: 0; }
+/* 日志是常驻的（不是 exec 那种"跑完才拉开的抽屉"）：给死高度，
+   否则它会跟着内容一起把整张卡片撑长、把上面的表单顶出屏幕 */
+.output.boxed { height: 170px; }
+/* 日志区在 card-body 外面，不跟着表单滚 —— 它自己 flex:none 占固定高度 */
+.log-field { flex: none; margin-top: var(--sp-4); }
+.output-head { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: 7px; flex: none; }
+.spinner {
+  width: 11px; height: 11px; border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent); animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.output pre {
+  margin: 0; flex: 1; min-height: 0; overflow: auto; padding: 10px 12px;
+  background: var(--code-bg); border: 1px solid var(--sep); border-radius: var(--r-sm);
+  font: var(--t-code)/var(--t-code-lh) var(--font-mono);
+  white-space: pre-wrap; word-break: break-word; user-select: text; color: var(--text);
+}
+.output pre:empty::before { content: "（暂无输出）"; color: var(--text-3); }
+
+/* ============================================================================
+   提示条
+   ========================================================================== */
+.toast-wrap { position: fixed; top: 62px; left: 0; right: 0; display: grid; justify-items: center; pointer-events: none; z-index: 50; }
+.toast {
+  display: flex; align-items: center; gap: 7px; margin-bottom: 6px;
+  padding: 7px 14px; border-radius: 999px;
+  background: var(--material-solid); border: 1px solid var(--sep);
+  box-shadow: 0 6px 22px rgba(0,0,0,.16);
+  font-size: var(--t-body); font-weight: 500;
+  animation: rise var(--dur-base) var(--ease-spring) both;
+}
+.toast.bad { color: var(--danger); }
+
+@keyframes rise { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
+.card { animation: materialize var(--dur-base) var(--ease-out) both; }
+@keyframes materialize { from { opacity: 0; transform: scale(.985) translateY(6px); filter: blur(2px); }
+                         to   { opacity: 1; transform: none; filter: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  .card { animation: none; filter: none; }
+}

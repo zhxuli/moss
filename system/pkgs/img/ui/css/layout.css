@@ -1,0 +1,60 @@
+/* layout.css
+   窗口骨架：顶栏 + 单栏主体
+   —— 取自 exec/ui/css/layout.css，按 img 的实际结构裁剪：
+      img 是一个"工具表单"，没有分类树，所以没有 sidebar / tree 那几段。
+      <link> 顺序即层叠顺序 */
+
+/* ============================================================================
+   窗口骨架
+   ========================================================================== */
+.window { height: 100%; display: grid; grid-template-rows: 52px 1fr; }
+
+.toolbar {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; gap: var(--sp-3);
+  padding: 0 var(--sp-4);
+  background: var(--material);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  border-bottom: 1px solid var(--sep);
+  box-shadow: var(--edge);
+}
+.tb-left { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; }
+.tb-right { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
+.tb-title { font: 640 var(--t-head)/1.35 var(--font-ui); letter-spacing: var(--t-head-ls); flex: none; }
+.tb-path {
+  font-size: var(--t-sub); color: var(--text-3); min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left;
+}
+
+/* ============================================================================
+   按钮
+   ========================================================================== */
+.btn {
+  height: 30px; padding: 0 var(--sp-3); border-radius: var(--r-sm);
+  border: 1px solid var(--btn-border); cursor: pointer; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--btn-bg); color: var(--text); box-shadow: var(--btn-shadow);
+  transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out), opacity var(--dur-base) var(--ease-out);
+}
+.btn:hover { background: var(--btn-bg-hover); }
+.btn:active { transform: scale(.97); }
+.btn:disabled { opacity: .38; cursor: default; transform: none; }
+.btn.primary {
+  background: var(--accent); color: var(--accent-fg); font-weight: 590;
+  border-color: transparent; box-shadow: 0 .5px 2px rgba(0,0,0,.18);
+}
+.btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #fff); }
+.btn.primary:active { background: var(--accent-press); }
+.btn.ghost { background: transparent; border-color: transparent; box-shadow: none; }
+.btn.ghost:hover { background: var(--field); }
+.btn.danger { background: transparent; border-color: transparent; box-shadow: none; color: var(--danger); }
+.btn.danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.btn.icon { width: 30px; padding: 0; justify-content: center; }
+.btn .kbd {
+  font: 500 10.5px/1 var(--font-ui); color: var(--text-3);
+  background: color-mix(in srgb, var(--text-3) 20%, transparent);
+  border-radius: 4px; padding: 2px 4px;
+}
+.btn.primary .kbd { color: inherit; opacity: .72; background: color-mix(in srgb, currentColor 20%, transparent); }

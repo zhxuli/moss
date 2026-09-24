@@ -54,6 +54,22 @@ import subprocess
 import sys
 from pathlib import Path
 
+# ★ 控制台编码：Windows 中文系统的控制台默认 cp936(GBK)，
+#   本文件里有 ✔ ✗ 这类符号，print 时直接 UnicodeEncodeError 崩在半路
+#   （踩过：前置检查明明通过了，却报 "gbk codec can't encode character '\u2714'"）。
+#   改成 UTF-8 并让控制台跟着切页；真出不来也只会变成 ?，不会中断打包。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+if os.name == "nt":
+    try:
+        subprocess.run(["chcp", "65001"], shell=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
 HOME = Path(__file__).resolve().parent.parent
 REQUIRED = (3, 12)
 DOC_SOURCE = "moss.py"          # 注释里留了一份命令的那个文件

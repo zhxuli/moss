@@ -2,17 +2,23 @@
   "spec": 1,
   "id": "img",
   "kind": "app",
-  "version": "1.1.0",
+  "version": "1.3.0",
   "name": { "zh-CN": "图片工具", "en": "Image tool" },
-  "desc": { "zh-CN": "图片压缩 / 转换（jpg / png / webp / ico），Tkinter 界面，支持拖放文件夹", "en": "Compress and convert images" },
-  "tags": ["图片", "压缩", "转换", "ico"],
+  "desc": { "zh-CN": "图片压缩 / 转换（jpg / png / webp / ico）。不带参数开界面，带参数走命令行", "en": "Compress and convert images" },
+  "tags": ["图片", "压缩", "转换", "ico", "命令行"],
 
   "aliases": ["img", "image"],
 
   "runner": "python",
   "entry": { "file": "main.py" },
 
-  "params": [],
+  "_paramsWhy": "rest:true = 宿主把包名后面那一整串原样塞进这一个字段，包自己解析（写法要短、顺序随便）。不标 rest 的话宿主只取第一个位置参数，多余的会静默丢掉。",
+  "params": [
+    { "name": "args", "type": "string", "rest": true, "required": false,
+      "desc": "留空 = 打开界面；填了 = 命令行参数：格式(必须) [质量%] [宽度px] [文件/通配符...] [/] [-o 输出目录]",
+      "placeholder": "webp 60% 1200 *.png",
+      "examples": ["webp", "webp 60% 1200", "png *.jpg", "ico *.png", "jpg 90% /"] }
+  ],
 
   "env": { "cwd": "", "elevated": false },
 
@@ -30,14 +36,21 @@
     "by": "imported",
     "from": "QuickTools/bin/soft/img",
     "at": "2026-09-25",
-    "note": "GUI 版。ico 生成从【单尺寸】修成【多分辨率】（见 CHANGES）"
+    "note": "GUI 版 + 命令行版合成一个包；ico 生成从【单尺寸】修成【多分辨率】"
   },
 
-  "ai": { "expose": false, "risk": "low" },
+  "ai": { "expose": true, "risk": "low",
+          "examples": [{ "args": "webp 60% 1200 *.png" }] },
 
   "changes": [
-    "ico 生成改为多分辨率：GUI 的尺寸选择从单选改成多选，默认 16/24/32/48/64/128/256 全选；保存时写全部勾选的尺寸。旧版只写一个尺寸，等于把 ico 当单张图用。",
+    "一个包两种用法：不带参数打开界面，带参数走命令行（原 imgcli 包已并入，不再单独存在）。",
+    "命令行参数变短：% 和 px 后缀可省（裸数字 ≤100 当质量、>100 当宽度），顺序随便。",
+    "命令行支持通配符：*.png、logo*.jpg、D:\\图\\*.jpg、**/*.webp，以及老写法 jpg;png。",
+    "命令行支持 ico（多分辨率）与 -o 指定输出目录、-s 指定 ico 尺寸、-y 免确认。",
+    "界面改成 exec 那种 WebView 外观（pywebview + WebView2 + CSS 设计令牌），Tkinter 界面保留为退路。",
+    "业务逻辑抽到 core.py：界面、命令行共用同一份实现，不再各自抄一遍。日志不再用全局 sys.stdout 重定向。",
+    "ico 生成改为多分辨率：默认 16/24/32/48/64/128/256 全要，也可 -s 指定。旧版只写一个尺寸，等于把 ico 当单张图用。",
     "数据目录从 PA_PLUGIN_DATA_DIR 改为 MOSS_PLUGIN_DATA_DIR（两个都认）。",
-    "Tkinter 界面与全部业务逻辑未改动。"
+    "WebView 界面拿不到拖进来的文件的真实路径（Chromium 的 File 对象不给 path，pywebview 也没开放 AllowExternalDrop），所以拖放只在 Tkinter 界面里有；WebView 用「选择…」按钮。"
   ]
 }

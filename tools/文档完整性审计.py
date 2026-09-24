@@ -23,8 +23,24 @@
 前缀既可以是 `## ` 开头（排除整节），也可以是任意行首（排除若干行）。
 """
 import io
+import os
 import re
 import sys
+
+# ★ 控制台编码：本文件要打 ✅ ❌ ⬜ ⭐ ⚠ 这些符号，而 Windows 中文控制台
+#   默认 cp936(GBK)，print 上去直接 UnicodeEncodeError 崩掉。
+#   独立工具不 import core（那会连带读 user_data），所以就地兜一下。
+if os.name == "nt":
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+    except Exception:
+        pass
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
 
 # ---------------------------------------------------------------- 已声明的排除
 # 这些是"我们明确知道不要的"，不是丢失。
@@ -178,7 +194,7 @@ def check_declared(path):
     actual = {"✅": 0, "❌": 0, "⬜": 0}
     seen = set()
     for ln in text.splitlines():
-        mm = re.match(r"^\|\s*([A-Z]-\d{2})\s*\|.*?\|\s*(✅|❌|⬜)\s*\|", ln)
+        mm = re.match(r"^\|\s*([A-Z]{1,3}-\d{2})\s*\|.*?\|\s*(✅|❌|⬜)\s*\|", ln)
         if mm and mm.group(1) not in seen:
             seen.add(mm.group(1))
             actual[mm.group(2)] += 1

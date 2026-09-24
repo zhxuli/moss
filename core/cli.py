@@ -49,6 +49,8 @@ USAGE = """moss —— 多语言启动器
 
 说明:
   · 参数写法二选一：位置参数（按 params 顺序）或 key=value
+  · 包可以把某个参数标成 rest:true，表示「剩下的参数全归我，我自己解释」
+    （img 就是这种：`moss :img webp 60% 1200 *.png`）
   · 环境变量 MOSS_HOME / MOSS_PLUGIN_DATA_DIR 会注入给子进程
   · 配置在 user_data\\config.json（输出横幅、清屏、max_parent_depth、Ctrl-C 策略）
 """
@@ -72,7 +74,18 @@ def _coerce(spec, value):
 
 
 def parse_params(pkg, args):
-    """把命令行参数映射到包声明的 params 上（类型化参数，F-08）。"""
+    """把命令行参数映射到包声明的 params 上（类型化参数，F-08）。
+
+    ★ `rest: true` —— 吞掉「剩下的全部位置参数」，原样拼成一个字符串交给包。
+      为什么需要它：像 img 这种「自己有一套小语法」的包
+      （`moss :img webp 60% 1200 *.png`），参数个数和含义都由包自己定，
+      宿主没法预先声明成几个具名参数。
+
+      没有这个标记时宿主**只取前 N 个位置参数、多余的静默丢掉** ——
+      用户多打一个词就悄无声息地没了，这种坑比报错难查得多。
+
+      `rest` 参数应当声明在 params 的**最后**（它后面再写位置参数就永远轮不到）。
+    """
     spec = pkg.get("params") or []
     named, positional = {}, []
     for a in args:
@@ -93,6 +106,10 @@ def parse_params(pkg, args):
     for p in spec:
         n = p.get("name")
         if not n or n in named:
+            continue
+        if p.get("rest"):
+            params[n] = _coerce(p, " ".join(positional[pi:]))
+            pi = len(positional)
             continue
         if pi < len(positional):
             params[n] = _coerce(p, positional[pi])
