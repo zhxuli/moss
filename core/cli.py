@@ -252,7 +252,7 @@ def cmd_resolve(name, table):
     depth = config.max_parent_depth()
     hit_base, hit_cands = None, []
     for base in resolve.search_bases(Path.cwd(), depth):
-        cands = resolve.collect(base, name, table, depth)
+        cands = resolve.candidates_at(base, name, table, depth)
         if cands and hit_base is None:
             hit_base, hit_cands = base, cands
         flag = "  ★ 命中，停在这一层" if (cands and base == hit_base) else ""

@@ -22,6 +22,7 @@
   5. 还不行才问用户，并且**选完就跑**（`E-18`）+ 记住这次选择
 """
 import json
+from pathlib import Path
 
 from . import config, paths, runners as runners_mod
 
@@ -160,21 +161,36 @@ class Aborted(Exception):
     """用户取消了选择（比如按了 Ctrl-C 或输入非法）。"""
 
 
-def _describe(c):
+def _describe(c, root=None):
+    """一行描述一个候选。
+
+    root 给定时，会在文件名前带上**相对 root 的目录** ——
+    多级路径（`moss s/t`）里候选可能来自不同子目录，
+    只显示文件名的话用户根本分不清该选哪个。
+    """
+    label = c["path"].name
+    if root is not None:
+        try:
+            rel = c["base"].resolve().relative_to(Path(root).resolve())
+            if str(rel) not in (".", ""):
+                label = "%s\\%s" % (rel, label)
+        except Exception:
+            pass
+
     extra = ""
     if c["marker_hits"]:
         d = c.get("marker_dist")
         where = "本目录" if d == 0 else ("上层 %d 级" % d if d is not None else "?")
         extra = "  ← 项目标记: %s（%s）" % (", ".join(c["marker_hits"]), where)
     via = c["probe"].get("why") or ""
-    return "%-14s [%s]  %s%s" % (c["path"].name, c["runner"], via, extra)
+    return "%-30s [%s]  %s%s" % (label, c["runner"], via, extra)
 
 
 def _ask(cands, base, name):
     """让用户选，**选完就跑**（E-18），并把选择记住。"""
     print("[选择] '%s' 有 %d 个可用的目标：" % (name, len(cands)))
     for i, c in enumerate(cands, 1):
-        print("   %d) %s" % (i, _describe(c)))
+        print("   %d) %s" % (i, _describe(c, base)))
     print("   0) 取消")
     try:
         raw = input("请输入序号并回车（默认 1）: ").strip()
@@ -229,15 +245,68 @@ def disambiguate(cands, base, name, depth):
     return _ask(cands, base, name)
 
 
+def split_path_expr(expr):
+    """把 `b/m`、`s/t/main` 这种写法拆成段。
+
+    ★ 照抄 pa.py:720 —— `resolve_target` 是按 `/` 拆段、逐级往下走的。
+      我在重写解析器时把这个能力丢了，只留了"单段前缀匹配"，
+      结果 `moss b/m` 报"没找到以 'b/m' 开头的目标"。**这是违反 E-20 照抄原则的。**
+      反斜杠也当分隔符（Windows 习惯）。
+    """
+    return [p for p in str(expr).replace("\\", "/").split("/") if p]
+
+
+def _match_dirs(base, head):
+    """在当前层找名字以 head 开头的目录。精确同名优先。"""
+    try:
+        entries = list(base.iterdir())
+    except OSError:
+        return []
+    dirs = [e for e in entries if e.is_dir() and e.name.lower().startswith(head.lower())]
+    exact = [d for d in dirs if d.name.lower() == head.lower()]
+    return exact if len(exact) == 1 else sorted(dirs, key=lambda p: p.name.lower())
+
+
+def _walk(base, parts, runners, depth):
+    """按路径段逐级往下走，最后一段交给 collect 收候选。
+
+    非最后一段**必须**是目录（照抄 pa.py 的语义）；
+    最后一段可以是文件，也可以是目录（是目录就往里找默认入口）。
+    """
+    head, rest = parts[0], parts[1:]
+    if not rest:
+        return collect(base, head, runners, depth)
+    out = []
+    for d in _match_dirs(base, head):
+        out.extend(_walk(d, rest, runners, depth))
+    return out
+
+
+def candidates_at(base, name, runners, depth):
+    """在 base 这一层收候选。自动区分单段（`m`）和路径式多段（`b/m`、`s/t/main`）。
+
+    ⚠️ 外面（比如 `--resolve`）**必须用这个**，不要直接调 `collect` ——
+       否则多段写法会收不到候选，出现"能跑但 --resolve 说找不到"的矛盾。
+    """
+    parts = split_path_expr(name)
+    if len(parts) >= 2:
+        return _walk(base, parts, runners, depth)
+    return collect(base, name, runners, depth)
+
+
 def find(name, cwd, runners, depth=None):
-    """按 pa.py 的方式逐层搜索，返回 (候选, 依据) 或 (None, None)。"""
+    """逐层搜索，返回 (候选, 依据) 或 (None, None)。
+
+    单个词（`moss m`）和带斜杠的路径式（`moss b/m`、`moss s/t/main`）都支持。
+    """
     for base in search_bases(cwd, depth):
         if not base.is_dir():
             continue
-        cands = collect(base, name, runners, depth)
+        cands = candidates_at(base, name, runners, depth)
         if not cands:
             continue
         try:
+            # 多段时用完整表达式做记忆键和提示，这样 `b/m` 和 `x/m` 不会互相串
             return disambiguate(cands, base, name, depth)
         except Aborted:
             return None, "用户取消"
@@ -248,6 +317,6 @@ def probe_all(cwd, name, runners, depth=None):
     """调试用：把每一层的候选都列出来，不做消歧。"""
     rows = []
     for base in search_bases(cwd, depth):
-        for c in collect(base, name, runners, depth):
+        for c in candidates_at(base, name, runners, depth):
             rows.append((str(base), c))
     return rows
