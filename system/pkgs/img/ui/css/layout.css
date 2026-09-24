@@ -12,16 +12,19 @@
 .window { height: 100%; display: flex; flex-direction: column; }
 
 /* ============================================================================
-   详情：卡片撑满，内部按「挑图 / 设置 / 警告 / 日志 / 动作」分段
+   详情：卡片**铺满整个窗口**。
+   原来卡片四周留了 8px、还带圆角和描边 —— 于是"窗口一圈框 + 卡片一圈框"，
+   看着是边框套边框（用户指出）。现在彻底铺平：不留边距、不圆角、不描边、不投影，
+   整扇窗口只剩系统自己那一圈框。
    ========================================================================== */
-.detail { position: relative; flex: 1 1 auto; min-height: 0; display: flex; padding: var(--sp-2); overflow: hidden; }
+.detail { position: relative; flex: 1 1 auto; min-height: 0; display: flex; padding: 0; overflow: hidden; }
 
 .card {
   flex: 1; display: flex; flex-direction: column; overflow: hidden;
-  width: 100%; max-width: 1080px; margin: 0 auto;
-  background: var(--surface); border-radius: var(--r-lg);
-  border: 1px solid var(--sep); box-shadow: var(--shadow-card);
-  padding: 14px var(--sp-4) 12px;
+  width: 100%; margin: 0;
+  background: var(--surface);
+  border: none; border-radius: 0; box-shadow: none;
+  padding: 12px 14px 10px;
 }
 /* 挑图区：flex:1 —— 窗口多高，网格就多高 */
 .card-body {
