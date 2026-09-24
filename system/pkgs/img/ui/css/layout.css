@@ -5,32 +5,16 @@
       <link> 顺序即层叠顺序 */
 
 /* ============================================================================
-   窗口骨架
+   窗口骨架：**没有顶栏** —— 原来的「图片工具 + 目录 + N 个 + 打开输出目录」
+   那一行整条去掉：标题和目录写进系统标题栏，数量在类型行已经有了，
+   打开输出目录挪到动作栏。省下的 52px 全给缩略图。
    ========================================================================== */
-.window { height: 100%; display: grid; grid-template-rows: 52px 1fr; }
-
-.toolbar {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center; gap: var(--sp-3);
-  padding: 0 var(--sp-4);
-  background: var(--material);
-  backdrop-filter: blur(30px) saturate(180%);
-  -webkit-backdrop-filter: blur(30px) saturate(180%);
-  border-bottom: 1px solid var(--sep);
-  box-shadow: var(--edge);
-}
-.tb-left { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; }
-.tb-right { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); }
-.tb-title { font: 640 var(--t-head)/1.35 var(--font-ui); letter-spacing: var(--t-head-ls); flex: none; }
-.tb-path {
-  font-size: var(--t-sub); color: var(--text-3); min-width: 0;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left;
-}
+.window { height: 100%; display: flex; flex-direction: column; }
 
 /* ============================================================================
-   详情：卡片撑满，内部按「挑图 / 设置 / 高级 / 警告 / 日志 / 动作」分段
+   详情：卡片撑满，内部按「挑图 / 设置 / 警告 / 日志 / 动作」分段
    ========================================================================== */
-.detail { position: relative; height: 100%; display: flex; padding: var(--sp-3); overflow: hidden; }
+.detail { position: relative; flex: 1 1 auto; min-height: 0; display: flex; padding: var(--sp-2); overflow: hidden; }
 
 .card {
   flex: 1; display: flex; flex-direction: column; overflow: hidden;

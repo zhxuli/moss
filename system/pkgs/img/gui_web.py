@@ -184,6 +184,26 @@ class Api:
             out.append({'path': p, 'data': got})
         return {'ok': True, 'thumbs': out}
 
+    def file_info(self, path):
+        """悬停时按需取一个文件的详情（宽高 / 格式 / 大小 / 修改时间）。"""
+        path = str(path or '')
+        if not path:
+            return {'ok': False, 'message': '没有路径。'}
+        if not os.path.isfile(path):
+            return {'ok': True, 'info': {'path': path, 'exists': False,
+                                         'name': os.path.basename(path)}}
+        return {'ok': True, 'info': core.file_info(path)}
+
+    def set_title(self, text):
+        """把当前目录/状态写进**窗口标题栏** —— 这样顶栏那一行就可以整条去掉。"""
+        if self._window is None:
+            return {'ok': False}
+        try:
+            self._window.title = str(text or TITLE)
+        except Exception as e:
+            return {'ok': False, 'message': str(e)}
+        return {'ok': True}
+
     def open_file(self, path):
         """双击缩略图 = 用系统默认程序打开它。"""
         path = str(path or '')

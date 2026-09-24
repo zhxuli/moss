@@ -18,17 +18,6 @@
 <div id="app">
   <div class="window">
 
-    <header class="toolbar">
-      <div class="tb-left">
-        <span class="tb-title">图片工具</span>
-        <span class="tb-path" id="tbPath"></span>
-      </div>
-      <div class="tb-right">
-        <span class="pill mute" id="pill">—</span>
-        <button class="btn ghost" id="btnReveal">打开输出目录</button>
-      </div>
-    </header>
-
     <section class="detail">
       <div class="card">
 
@@ -114,6 +103,7 @@
           <span class="status" id="status">待命</span>
           <span class="hint" id="logHint"></span>
           <span class="spacer"></span>
+          <button class="btn ghost" id="btnReveal">打开输出目录</button>
           <button class="btn ghost" id="btnReset">重置</button>
           <button class="btn primary" id="btnStart">开始处理</button>
         </div>
@@ -126,6 +116,17 @@
     <div class="drop-card">
       松开就把它加到「源」里
       <span>文件夹 → 整个文件夹；文件 → 文件清单</span>
+    </div>
+  </div>
+
+  <!-- 悬停某个图片时的详情卡片（跟着鼠标走） -->
+  <div class="hovercard" id="hoverCard" hidden>
+    <div class="hc-thumb" id="hcThumb"></div>
+    <div class="hc-body">
+      <div class="hc-name" id="hcName"></div>
+      <div class="hc-path" id="hcPath"></div>
+      <div class="hc-meta" id="hcMeta"></div>
+      <div class="hc-time" id="hcTime"></div>
     </div>
   </div>
 

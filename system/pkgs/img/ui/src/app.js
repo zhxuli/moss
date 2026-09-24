@@ -236,7 +236,8 @@ function renderGrid() {
   for (const f of state.items) {
     const tile = el('div', 'tile' + (f.exists === false ? ' gone' : ''));
     tile.dataset.path = key(f.path);
-    tile.title = f.path + (f.size != null ? '\n' + humanSize(f.size) : '');
+    /* 不用原生 title：那个要停 1 秒才出、样式也不能改。
+       详情走自己的悬停卡片（见 bindHover）。 */
 
     if (state.showThumbs) {
       const box = el('div', 'thumb');
@@ -332,13 +333,6 @@ function renderSource() {
   const total = state.items.length;
   const n = state.selected.size;
   const effective = n || total;
-  $('pill').textContent = total ? `${effective} 个` : '—';
-  $('pill').classList.toggle('mute', !total);
-  const where = state.mode === 'files'
-    ? (total ? `文件清单：${total} 个` : '还没有文件')
-    : (state.dir || '');
-  $('tbPath').textContent = where;
-  $('tbPath').title = where;
   $('btnStart').textContent = state.running ? '正在处理…' : (effective ? `开始处理 (${effective})` : '开始处理');
   $('btnClearFiles').hidden = state.mode !== 'files' || !total;
 
@@ -350,6 +344,24 @@ function renderSource() {
   } else {
     note.className = 'field-note';
   }
+  syncTitle();
+}
+
+/* 标题栏写"图片工具 — 目录"：原来顶栏那一行整条去掉之后，
+   目录信息就靠系统标题栏承载（用户提的） */
+let lastTitle = '';
+function syncTitle() {
+  const total = state.items.length;
+  const n = state.selected.size;
+  let where;
+  if (state.mode === 'files') where = total ? `文件清单（${total} 个）` : '文件清单（空）';
+  else where = state.dir || '未选择目录';
+  const count = n ? ` · 选 ${n}` : '';
+  const title = `图片工具 — ${where}${count}`;
+  if (title === lastTitle) return;
+  lastTitle = title;
+  document.title = title;
+  if (state.api && state.api.set_title) state.api.set_title(title);
 }
 
 /* 格式 / 保存模式一变，整块跟着更新 */
@@ -516,6 +528,90 @@ function bindMarquee() {
 async function openFile(path) {
   const got = await state.api.open_file(path);
   if (!got || !got.ok) toast((got && got.message) || '打不开这个文件。', true);
+}
+
+/* ------------------------------------------------------------------ 悬停详情 */
+let hoverTimer = null;
+let hoverPath = null;
+
+function bindHover() {
+  const grid = $('grid');
+  const card = $('hoverCard');
+
+  const hide = () => {
+    clearTimeout(hoverTimer);
+    hoverPath = null;
+    card.hidden = true;
+  };
+
+  grid.addEventListener('mousemove', (e) => {
+    const tile = e.target.closest && e.target.closest('.tile');
+    if (!tile) { hide(); return; }
+    const p = tile.dataset.path;
+    if (p === hoverPath) { placeCard(card, tile); return; }
+
+    hoverPath = p;
+    card.hidden = true;
+    clearTimeout(hoverTimer);
+    /* 停一下才查：鼠标扫过一排时不要每张都去问后端 */
+    hoverTimer = setTimeout(() => showCard(tile, p), 180);
+  });
+
+  grid.addEventListener('mouseleave', hide);
+  $('#picker').addEventListener('scroll', hide, { passive: true });
+}
+
+function placeCard(card, tile) {
+  /* 默认贴在瓦片右边，出界就翻到左边 / 收进窗口内 */
+  const r = tile.getBoundingClientRect();
+  const w = card.offsetWidth || 380;
+  const h = card.offsetHeight || 100;
+  let x = r.right + 10;
+  if (x + w > window.innerWidth - 8) x = r.left - w - 10;
+  if (x < 8) x = Math.min(window.innerWidth - w - 8, Math.max(8, r.left));
+  let y = r.top;
+  if (y + h > window.innerHeight - 8) y = window.innerHeight - h - 8;
+  if (y < 8) y = 8;
+  card.style.left = Math.round(x) + 'px';
+  card.style.top = Math.round(y) + 'px';
+}
+
+async function showCard(tile, pathKey) {
+  if (hoverPath !== pathKey) return;                 // 期间鼠标已经移开了
+  const item = state.items.find((f) => key(f.path) === pathKey);
+  if (!item) return;
+
+  /* 先把已知的画出来（缩略图 + 名字），别等后端 */
+  const thumb = $('hcThumb');
+  thumb.textContent = '';
+  if (item.data) {
+    const img = el('img');
+    img.src = item.data; img.draggable = false;
+    thumb.appendChild(img);
+  }
+  $('hcName').textContent = item.name;
+  $('hcPath').textContent = item.dir || '';
+  $('hcMeta').textContent = item.exists === false ? '文件已经不在了' : humanSize(item.size);
+  $('hcTime').textContent = '';
+  $('hoverCard').hidden = false;
+  placeCard($('hoverCard'), tile);
+
+  const got = await state.api.file_info(item.path);
+  if (hoverPath !== pathKey || !got || !got.ok) return;
+  const i = got.info || {};
+  $('hcName').textContent = i.name || item.name;
+  $('hcPath').textContent = i.dir || item.dir || '';
+  if (i.exists === false) {
+    $('hcMeta').textContent = '文件已经不在了（点「刷新」清掉）';
+  } else {
+    const bits = [];
+    if (i.width && i.height) bits.push(`${i.width} × ${i.height}`);
+    if (i.format) bits.push(i.format + (i.mode && i.mode !== 'RGB' ? ` ${i.mode}` : ''));
+    bits.push(humanSize(i.size));
+    $('hcMeta').textContent = bits.join(' · ');
+    $('hcTime').textContent = i.mtime_text ? '修改于 ' + i.mtime_text : '';
+  }
+  placeCard($('hoverCard'), tile);
 }
 
 /* ------------------------------------------------------------------ 数据 */
@@ -767,7 +863,7 @@ function bind() {
   let scanTimer = null;
   $('src').oninput = () => {
     state.dir = $('src').value;
-    $('tbPath').textContent = state.dir;
+    syncTitle();
     clearTimeout(scanTimer);
     scanTimer = setTimeout(async () => {
       if (state.mode !== 'folder') return;
@@ -845,6 +941,7 @@ async function boot() {
   renderConditional();
   bind();
   bindMarquee();
+  bindHover();
   bindDrop();
 
   $('status').textContent = '待命';

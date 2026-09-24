@@ -373,6 +373,34 @@ def expand_dropped(paths, source_filter=None):
     return {'mode': 'files', 'folder': None, 'files': out, 'note': note}
 
 
+def file_info(path):
+    """一个文件的详细信息（给悬停卡片用）。
+
+    宽高要开图才知道，但 PIL 的 `Image.open` 是**懒**的：只读文件头、
+    不解码像素 —— 所以哪怕是 9 MB 的大图，这里也就几毫秒。
+    """
+    info = dict(file_entry(path))
+    info.pop('data', None)
+    if not info['exists']:
+        return info
+    try:
+        with Image.open(info['path']) as im:
+            info['width'] = im.width
+            info['height'] = im.height
+            info['format'] = im.format or ''
+            info['mode'] = im.mode
+    except Exception:
+        info['width'] = info['height'] = None
+        info['format'] = ''
+        info['mode'] = ''
+    try:
+        info['mtime_text'] = time.strftime('%Y-%m-%d %H:%M:%S',
+                                           time.localtime(info['mtime']))
+    except Exception:
+        info['mtime_text'] = ''
+    return info
+
+
 def default_output_dir(files, save_mode):
     """文件清单模式的默认输出目录：以**第一个文件所在目录**为基准。"""
     if not files:

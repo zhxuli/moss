@@ -301,6 +301,40 @@ html[data-theme="dark"] .warnbar.soft { color: #fbbf24; }
 .pill.mute { background: var(--field); color: var(--text-3); }
 
 /* ============================================================================
+   悬停详情卡片：鼠标停在缩略图上时出现，跟着鼠标走
+   ========================================================================== */
+.hovercard {
+  position: fixed; z-index: 60; pointer-events: none;
+  display: flex; gap: 10px; max-width: 420px;
+  padding: 10px;
+  background: var(--material-solid); border: 1px solid var(--sep);
+  border-radius: var(--r-md);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);
+  animation: rise var(--dur-fast) var(--ease-out) both;
+}
+.hovercard[hidden] { display: none; }
+.hc-thumb {
+  flex: none; width: 76px; height: 76px; border-radius: var(--r-xs);
+  overflow: hidden; background: var(--surface-2);
+  display: grid; place-items: center;
+  box-shadow: inset 0 0 0 1px var(--sep);
+}
+.hc-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hc-body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.hc-name {
+  font-weight: 590; font-size: var(--t-body); color: var(--text);
+  word-break: break-all;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.hc-path {
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-3);
+  word-break: break-all;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.hc-meta { font-size: var(--t-sub); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.hc-time { font-size: var(--t-sub); color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+/* ============================================================================
    提示条
    ========================================================================== */
 .toast-wrap { position: fixed; top: 62px; left: 0; right: 0; display: grid; justify-items: center; pointer-events: none; z-index: 50; }
