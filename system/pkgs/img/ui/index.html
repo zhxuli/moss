@@ -35,22 +35,44 @@
           <header class="d-head">
             <div>
               <h1 class="d-title">图片压缩 <span class="prefix">/ 转换</span></h1>
-              <p class="d-sub" id="sub">选择一个文件夹，然后开始处理。</p>
+              <p class="d-sub" id="sub">拖一个文件夹或几张图进来，或者点「选择」。</p>
             </div>
             <span class="pill mute" id="pill">—</span>
           </header>
 
           <div class="card-body">
 
-            <!-- 源文件夹 -->
+            <!-- 源：缩略图选择器 -->
             <div class="field">
-              <div class="label">源文件夹</div>
-              <div class="alias-row">
+              <div class="label">源
+                <span class="acts">
+                  <span class="count" id="selCount"></span>
+                  <button class="btn ghost" id="btnSelAll">全选</button>
+                  <button class="btn ghost" id="btnSelNone">清除选择</button>
+                  <button class="btn ghost" id="btnRefresh">刷新</button>
+                </span>
+              </div>
+
+              <div class="seg mode-seg" id="segMode"></div>
+              <div class="alias-row" style="margin-top:8px">
                 <input type="text" id="src" class="mono" spellcheck="false" autocomplete="off"
                        placeholder="D:\图片">
                 <button class="btn" id="btnPick">选择…</button>
+                <button class="btn" id="btnAddFiles">加文件…</button>
               </div>
               <select id="history" style="margin-top:8px"></select>
+
+              <!-- 缩略图网格（≤100 张）或紧凑列表（>100 张） -->
+              <div class="picker" id="picker" tabindex="0">
+                <div class="picker-empty" id="pickerEmpty">拖一个文件夹或几张图进来，或者点「选择…」。</div>
+                <div class="grid" id="grid" hidden></div>
+                <div class="marquee" id="marquee" hidden></div>
+              </div>
+
+              <div class="picker-foot">
+                <span class="types" id="types"></span>
+                <span class="lead" id="pickerNote"></span>
+              </div>
               <div class="field-note" id="srcNote"></div>
             </div>
 
@@ -96,29 +118,22 @@
               <div class="field-note" id="saveNote"></div>
             </div>
 
-            <!-- 源文件过滤 -->
-            <div class="field">
-              <div class="label">源文件过滤
-                <span class="acts">
-                  <button class="btn ghost" id="btnAll">全选</button>
-                  <button class="btn ghost" id="btnNone">全不选</button>
-                </span>
-              </div>
-              <div class="checks" id="filters"></div>
-              <div class="field-note" id="filterNote"></div>
-            </div>
-
           </div>
 
-          <!-- 日志放在 card-body **外面**：表单滚动时它始终可见
-               （处理过程要盯着看，滚到底才发现就没意义了） -->
-          <div class="field log-field">
-            <div class="label">处理日志 <span class="hint" id="logHint"></span></div>
-            <div class="output boxed">
-              <div class="output-head">
+          <!-- 日志：默认**折起来**（没内容时不该白占一大块），
+               一开工自动展开；标题行点一下可以手动收放 -->
+          <div class="field log-field" id="logField">
+            <div class="label">
+              <button class="log-toggle" id="btnLogToggle" type="button" title="展开 / 收起">
+                <span class="tri" id="logTri">▸</span>处理日志
+              </button>
+              <span class="acts">
+                <span class="hint" id="logHint"></span>
                 <span class="spinner" id="spin" hidden></span>
                 <span id="status">待命</span>
-              </div>
+              </span>
+            </div>
+            <div class="output boxed" id="logBox" hidden>
               <pre id="log"></pre>
             </div>
           </div>
@@ -131,6 +146,14 @@
 
         </div>
       </section>
+    </div>
+  </div>
+
+  <!-- 拖放提示：整窗口的遮罩，松手就落到「源」里 -->
+  <div class="drop-veil" id="dropVeil" hidden>
+    <div class="drop-card">
+      松开就把它加到「源」里
+      <span>文件夹 → 整个文件夹；文件 → 文件清单</span>
     </div>
   </div>
 

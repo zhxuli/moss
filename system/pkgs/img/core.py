@@ -233,11 +233,15 @@ def process_single_image(filepath, output_format, quality, width, output_dir, sa
 
 
 def run_files(files, output_format, quality, width, output_dir, save_mode, ico_sizes,
-              log=_noop, cancel=None, total=None):
+              log=_noop, cancel=None, total=None, output_dir_per_file=False):
     """对一份**已确定**的文件清单干活。
 
     界面模式（给一个目录 + 扩展名过滤）和命令行模式（给通配符）
     最后都归到这里 —— 处理逻辑只能有一份。
+
+    `output_dir_per_file=True`：每个文件写回**它自己所在的目录**。
+    ★ 文件清单里的文件可能来自不同目录（拖进来的、多选的），
+      这时"保存到源目录"必须按文件各自算，不能全塞进一个目录。
     """
     started = time.time()
     files = [str(f) for f in files]
@@ -255,7 +259,10 @@ def run_files(files, output_format, quality, width, output_dir, save_mode, ico_s
             stopped = True
             break
         log(f"--- [进度: {i+1}/{len(files)}] ---\n")
-        if process_single_image(path, output_format, quality, width, output_dir,
+        target = os.path.dirname(path) if output_dir_per_file else output_dir
+        if target and not os.path.isdir(target):
+            os.makedirs(target, exist_ok=True)
+        if process_single_image(path, output_format, quality, width, target,
                                 save_mode, ico_sizes, log=log):
             done += 1
         else:
@@ -268,19 +275,159 @@ def run_files(files, output_format, quality, width, output_dir, save_mode, ico_s
             'output_dir': output_dir, 'elapsed': time.time() - started, 'cancelled': stopped}
 
 
+def list_images(source_dir, source_filter=None):
+    """列出目录下符合扩展名过滤的图片（绝对路径，按名字排序）。"""
+    picked = set(normalize_exts(source_filter) or SUPPORTED_EXTS)
+    try:
+        names = os.listdir(source_dir)
+    except OSError:
+        return []
+    out = []
+    for name in sorted(names):
+        full = os.path.join(source_dir, name)
+        if os.path.isfile(full) and os.path.splitext(name)[1].lower() in picked:
+            out.append(full)
+    return out
+
+
 def run_tasks(source_dir, output_format, quality, width, source_filter, save_mode, ico_sizes,
               log=_noop, cancel=None):
-    """界面模式的入口：扫一个目录，按扩展名过滤，然后交给 run_files。"""
+    """界面「文件夹模式」的入口：扫一个目录，按扩展名过滤，然后交给 run_files。"""
     output_dir = source_dir if save_mode in ["source", "source_delete"] \
         else os.path.join(source_dir, "compressed_output")
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
-    files = [os.path.join(source_dir, f) for f in os.listdir(source_dir)
-             if os.path.isfile(os.path.join(source_dir, f))
-             and os.path.splitext(f)[1].lower() in source_filter]
-    return run_files(files, output_format, quality, width, output_dir, save_mode, ico_sizes,
-                     log=log, cancel=cancel)
+    return run_files(list_images(source_dir, source_filter), output_format, quality, width,
+                     output_dir, save_mode, ico_sizes, log=log, cancel=cancel)
+
+
+# ==============================================================================
+# 文件清单模式（多选文件 / 拖放）
+# ==============================================================================
+
+# 拖进来的文件夹展开成清单时最多收这么多个文件，防止手一抖拖进整个磁盘
+MAX_EXPAND = 2000
+
+
+def file_entry(path):
+    """文件清单里的一行。拿不到 stat 就是"文件不在了"（界面画红）。"""
+    full = os.path.abspath(str(path))
+    try:
+        st = os.stat(full)
+        size, mtime, exists = st.st_size, st.st_mtime, True
+    except OSError:
+        size, mtime, exists = None, None, False
+    return {'path': full, 'name': os.path.basename(full), 'dir': os.path.dirname(full),
+            'ext': os.path.splitext(full)[1].lower(),
+            'size': size, 'mtime': mtime, 'exists': exists}
+
+
+def describe_files(paths):
+    """把一串路径整理成文件清单（去重、补属性、标出已消失的）。"""
+    out, seen = [], set()
+    for p in (paths or []):
+        full = os.path.abspath(str(p))
+        key = full.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(file_entry(full))
+    return out
+
+
+def expand_dropped(paths, source_filter=None):
+    """拖进来的东西 → 该用什么模式、处理哪些文件。
+
+    规则（2026-09-25 商定）：
+      · **只有一个文件夹** → 文件夹模式，源 = 那个文件夹
+      · **文件 / 多个文件夹 / 混合** → 文件清单模式：
+        散着的文件直接进清单；文件夹按当前扩展名过滤展开后一起并进去
+
+    返回 {'mode', 'folder', 'files', 'note'}。
+    """
+    dirs, files = [], []
+    for p in (paths or []):
+        full = os.path.abspath(str(p))
+        if os.path.isdir(full):
+            dirs.append(full)
+        elif os.path.isfile(full):
+            files.append(full)
+
+    if len(dirs) == 1 and not files:
+        return {'mode': 'folder', 'folder': dirs[0], 'files': [], 'note': ''}
+
+    out, truncated = list(files), False
+    for d in dirs:
+        for f in list_images(d, source_filter):
+            out.append(f)
+            if len(out) >= MAX_EXPAND:
+                truncated = True
+                break
+        if truncated:
+            break
+
+    note = ''
+    if truncated:
+        note = '文件夹展开超过 %d 个文件，只取了前 %d 个。' % (MAX_EXPAND, MAX_EXPAND)
+    return {'mode': 'files', 'folder': None, 'files': out, 'note': note}
+
+
+def default_output_dir(files, save_mode):
+    """文件清单模式的默认输出目录：以**第一个文件所在目录**为基准。"""
+    if not files:
+        return ''
+    base = os.path.dirname(os.path.abspath(str(files[0])))
+    if save_mode in ('source', 'source_delete'):
+        return base
+    return os.path.join(base, 'compressed_output')
+
+
+# ==============================================================================
+# 缩略图（界面用；生成一次缓存住，别每次重画都重解码）
+# ==============================================================================
+
+THUMB_BOX = 240          # 最长边像素。界面按 ~104px 显示，多余的是给高分屏留的
+THUMB_QUALITY = 72
+# 图片数 ≤ 这个值就画缩略图网格；超了改画紧凑列表。
+# 为什么要有这条线：几千张图生成缩略图要几十秒、还要几十 MB 内存，
+# 而"挑几张来转"这个动作本来就不需要看几千张缩略图。
+THUMB_LIMIT = 100
+
+
+def make_thumb(path, box=THUMB_BOX, quality=THUMB_QUALITY):
+    """把一张图变成 JPEG 的 data URL（直接塞进 <img src>）。
+
+    几个大小上的取舍：
+      · `draft()` 是 JPEG 专用的快速降采样 —— 一张 6000×4000 的照片
+        能在解码阶段就降到 1/8，不然光解码就要几百毫秒
+      · 透明的 PNG 合成到**白底**：缩略图格子小，白底最干净
+      · 失败一律返回 None（界面画个占位方块），绝不让一张坏图把整个网格卡住
+    """
+    import base64
+    import io
+
+    try:
+        with Image.open(path) as im:
+            try:
+                im.draft('RGB', (box, box))
+            except Exception:
+                pass
+            if im.mode in ('RGBA', 'LA') or (im.mode == 'P' and 'transparency' in im.info):
+                im = im.convert('RGBA')
+                flat = Image.new('RGB', im.size, (255, 255, 255))
+                flat.paste(im, (0, 0), im)
+                im = flat
+            else:
+                im = im.convert('RGB')
+            im.thumbnail((box, box), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            im.save(buf, 'JPEG', quality=quality, optimize=True)
+        return 'data:image/jpeg;base64,' + base64.b64encode(buf.getvalue()).decode('ascii')
+    except Exception:
+        return None
+
+
 
 
 # ==============================================================================
@@ -400,18 +547,29 @@ class Job:
         return self
 
     def _work(self):
+        p = self.params
         try:
-            self.summary = run_tasks(
-                source_dir=self.params.get('source_dir') or '',
-                output_format=self.params.get('output_format') or 'jpg',
-                quality=int(self.params.get('quality') or 80),
-                width=self.params.get('width'),
-                source_filter=self.params.get('source_filter') or [],
-                save_mode=self.params.get('save_mode') or 'separate',
-                ico_sizes=self.params.get('ico_sizes') or ICO_SIZES_DEFAULT,
+            common = dict(
+                output_format=p.get('output_format') or 'jpg',
+                quality=int(p.get('quality') or 80),
+                width=p.get('width'),
+                save_mode=p.get('save_mode') or 'separate',
+                ico_sizes=p.get('ico_sizes') or ICO_SIZES_DEFAULT,
                 log=self.log,
                 cancel=self.cancel_event,
             )
+            if p.get('mode') == 'files':
+                # 文件清单模式：文件可能来自不同目录
+                files = [str(x) for x in (p.get('files') or [])]
+                per_file = common['save_mode'] in ('source', 'source_delete')
+                self.summary = run_files(
+                    files, output_dir=p.get('output_dir') or default_output_dir(files, common['save_mode']),
+                    output_dir_per_file=per_file, **common)
+            else:
+                self.summary = run_tasks(
+                    source_dir=p.get('source_dir') or '',
+                    source_filter=p.get('source_filter') or [],
+                    **common)
             if self.cancel_event.is_set():
                 self.returncode = 130
             elif self.summary.get('failed'):
