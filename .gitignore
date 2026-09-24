@@ -8,6 +8,9 @@ venv/
 # 用户的运行时数据
 user_data/
 
+# 构建产物：由 tools/build.py 现场产出，不进 git
+# （解放行版时把 moss.exe + system\ 一起拷走即可）
+moss.exe
 # nuitka 的中间产物
 moss.build/
 moss.dist/

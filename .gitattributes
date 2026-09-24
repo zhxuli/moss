@@ -1,8 +1,16 @@
-# 统一换行，免得 git 一直提示 "LF will be replaced by CRLF"
+# 统一换行。默认 LF —— 源码、文档都用 LF。
 * text=auto eol=lf
+
+# ⚠️ Windows 批处理必须是 CRLF。
+#    cmd.exe 期望 CRLF；用 LF 会让它解析错乱（REM 注释里的英文单词会被当命令执行）。
+#    这条必须放在上面那条 eol=lf 之后 —— git 的规则是后面的覆盖前面的。
+*.cmd text eol=crlf
+*.bat text eol=crlf
 
 # 二进制，别碰
 *.exe binary
 *.ico binary
 *.png binary
+*.jpg binary
+*.jpeg binary
 *.zip binary
