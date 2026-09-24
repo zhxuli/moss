@@ -43,53 +43,8 @@
           "examples": [{ "args": "webp 60% 1200 *.png" }] },
 
   "changes": [
-    "修 `$('#picker')` 写错：`{
-  "spec": 1,
-  "id": "img",
-  "kind": "app",
-  "version": "1.6.3",
-  "name": { "zh-CN": "图片工具", "en": "Image tool" },
-  "desc": { "zh-CN": "图片压缩 / 转换（jpg / png / webp / ico）。不带参数开界面，带参数走命令行", "en": "Compress and convert images" },
-  "tags": ["图片", "压缩", "转换", "ico", "命令行"],
-
-  "aliases": ["img", "image"],
-
-  "runner": "python",
-  "entry": { "file": "main.py" },
-
-  "_paramsWhy": "rest:true = 宿主把包名后面那一整串原样塞进这一个字段，包自己解析（写法要短、顺序随便）。不标 rest 的话宿主只取第一个位置参数，多余的会静默丢掉。",
-  "params": [
-    { "name": "args", "type": "string", "rest": true, "required": false,
-      "desc": "留空 = 打开界面；填了 = 命令行参数：格式(必须) [质量%] [宽度px] [文件/通配符...] [/] [-o 输出目录]",
-      "placeholder": "webp 60% 1200 *.png",
-      "examples": ["webp", "webp 60% 1200", "png *.jpg", "ico *.png", "jpg 90% /"] }
-  ],
-
-  "env": { "cwd": "", "elevated": false },
-
-  "capabilities": {
-    "run": ["python"],
-    "net": [],
-    "fsRead": ["{cwd}"],
-    "fsWrite": ["{cwd}"],
-    "elevated": false
-  },
-
-  "output": { "mode": "text" },
-
-  "origin": {
-    "by": "imported",
-    "from": "QuickTools/bin/soft/img",
-    "at": "2026-09-25",
-    "note": "GUI 版 + 命令行版合成一个包；ico 生成从【单尺寸】修成【多分辨率】"
-  },
-
-  "ai": { "expose": true, "risk": "low",
-          "examples": [{ "args": "webp 60% 1200 *.png" }] },
-
-   是 getElementById 的简写，传 '#picker' 返回 null → bindHover 抛异常 → boot 挂掉弹「界面初始化失败」。**连带后果：它后面的 bindDrop() 从来没执行过，真实拖放一直没反应就是这个原因。**",
-    "初始化失败不再只说一句英文：现在会报出**卡在哪一步**（连接界面桥/读取后端数据/渲染界面/绑定交互）+ 原文，并写进 user_data/state/<包>/ui-error.log。",
-    "补上 unhandledrejection 的捕获，异步失败也会显出来并记档。",
+    "修一个必然发生的启动崩溃：`bindHover` 里把选择器写成了 `$('#picker')`，而 `$` 是 getElementById 的简写 → 返回 null → 抛异常 → boot 挂掉，弹「界面初始化失败 + 英文」。**连带后果：它在 bindDrop 之前，一抛后面就不再执行 —— 真实拖放一直没反应就是这个原因，不是 WebView2 不支持。**",
+    "初始化失败不再只说一句英文：报出**卡在哪一步**（连接界面桥 / 读取后端数据 / 渲染界面 / 绑定交互）+ 异常原文，并写进 user_data/state/<包>/ui-error.log；补上 unhandledrejection 捕获。",
     "「文件夹|文件清单」和「最近使用 / 刷新」互换位置：第一行 历史/刷新/路径/选择，第二行 模式开关 + 类型芯片 + 选择控制。",
     "空状态分两种语气：没选目录 = 引导；选了但没图片 = 「这个文件夹里没有图片」+ 列出支持的格式。**目录里没有图片不再报红**（那不是错误），去掉那条 toast。",
     "「最近使用」下拉和刷新按钮挪到**文件夹下面靠左**，和类型芯片合成一条工具行（不额外占行）。",
