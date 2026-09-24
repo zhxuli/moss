@@ -266,11 +266,14 @@ function renderGrid() {
 
     if (state.showThumbs) {
       const box = el('div', 'thumb');
+      const k = tile.dataset.path;
+      if (!f.data && thumbCache.has(k)) f.data = thumbCache.get(k);   // 命中缓存，不闪
       if (f.data) {
         const img = el('img');
         img.src = f.data; img.alt = ''; img.draggable = false;
         box.appendChild(img);
         tile.classList.add('has-thumb');
+        state.thumbDone += 1;
       } else {
         box.appendChild(el('span', 'ph', '图片'));
         queueThumb(f);
@@ -293,10 +296,24 @@ function renderGrid() {
 let thumbQueue = [];
 let thumbBusy = false;
 
+/* 缩略图缓存，按路径存。
+   ★ 为什么必须有：后端每次 scan 返回的都是**全新的对象**，
+     旧对象上挂着的缩略图 data 会跟着一起丢掉。没有这层缓存的话，
+     每次刷新 / 窗口重新获得焦点，整个网格都会**先清空再一张张补回来**
+     （看着就像"图没了"）。 */
+const thumbCache = new Map();
+const THUMB_CACHE_MAX = 1200;
+
 function queueThumb(item) { thumbQueue.push(item); }
 
+function cacheThumb(pathKey, data) {
+  if (!data) return;
+  if (thumbCache.size > THUMB_CACHE_MAX) thumbCache.clear();
+  thumbCache.set(pathKey, data);
+}
+
 function loadThumbs() {
-  thumbQueue = thumbQueue.filter((q) => !q.data);
+  thumbQueue = thumbQueue.filter((q) => !q.data && !thumbCache.has(key(q.path)));
   if (thumbBusy || !thumbQueue.length) return;
   const batch = thumbQueue.splice(0, THUMB_CHUNK);
   thumbBusy = true;
@@ -307,6 +324,7 @@ function loadThumbs() {
         const hit = batch.find((b) => key(b.path) === key(t.path));
         if (!hit) continue;
         hit.data = t.data;
+        cacheThumb(key(t.path), t.data);
         const tile = $('grid').querySelector(`.tile[data-path="${cssEscape(key(t.path))}"]`);
         if (!tile) continue;
         const box = tile.querySelector('.thumb');

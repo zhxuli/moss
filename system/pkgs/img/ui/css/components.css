@@ -14,11 +14,13 @@
   position: relative; flex: 1 1 auto; min-height: 96px;
   margin-top: 8px; overflow: auto;
   padding: 8px; border-radius: var(--r-md);
-  background: var(--content-bg); border: 1px solid var(--sep);
+  /* 边框去掉了（用户要求）：卡片本身就是个容器，里面再套一个带框的容器是多余的 */
+  border: none;
+  background: var(--content-bg);
   outline: none;
-  transition: border-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+  transition: background var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
 }
-.picker:focus-visible { border-color: var(--ring); box-shadow: 0 0 0 3px var(--field-focus); }
+.picker:focus-visible { box-shadow: 0 0 0 2px var(--ring); }
 .picker-empty {
   height: 100%; display: grid; place-content: center; justify-items: center; gap: 6px;
   text-align: center; font-size: var(--t-sub); color: var(--text-3); padding: 0 var(--sp-5);
