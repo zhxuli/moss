@@ -62,18 +62,28 @@ def _scan_layer(base_dir, layer):
     return found
 
 
-def scan_all():
-    """系统层 + 用户层。用户层同名的遮蔽系统层（H-08）。"""
-    system = _scan_layer(paths.SYSTEM_PKGS, "system")
-    user = _scan_layer(paths.USER_PKGS, "user")
+def layers():
+    """扫描顺序 = 优先级**从低到高**（后扫的遮蔽先扫的）。
 
+    层优先级：dev > user > system
+      · `dev` 层只在开发机上存在（`dev/pkgs`）。发行版里没有 `dev/` 目录，
+        所以用户永远看不到它 —— 演示包、测试固件放这里，**绝不进 `system/pkgs`**。
+      · `system/pkgs` 是要随程序分发给所有用户的出厂包。
+    """
+    out = [(paths.SYSTEM_PKGS, "system"), (paths.USER_PKGS, "user")]
+    if paths.DEV_PKGS.is_dir():
+        out.append((paths.DEV_PKGS, "dev"))
+    return out
+
+
+def scan_all():
+    """把所有层的包扫出来，同名的后扫的遮蔽先扫的（H-08 遮蔽语义）。"""
     by_id = {}
-    for rec in system:
-        by_id[rec["id"]] = rec
-    for rec in user:
-        if rec["id"] in by_id:
-            rec["shadowed"] = by_id[rec["id"]]["layer"]
-        by_id[rec["id"]] = rec          # 用户层覆盖
+    for base, layer in layers():
+        for rec in _scan_layer(base, layer):
+            if rec["id"] in by_id:
+                rec["shadowed"] = by_id[rec["id"]]["layer"]
+            by_id[rec["id"]] = rec
     return sorted(by_id.values(), key=lambda r: r["id"])
 
 

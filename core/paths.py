@@ -32,6 +32,13 @@ REGISTRY_FILE = USER_DIR / "registry.json"
 HISTORY_DIR = USER_DIR / "history"
 STATE_DIR = USER_DIR / "state"
 
+# 开发层：**只在开发机上存在**。
+# 发行版里没有 dev/ 目录（打包只带 pa.exe + system/），所以用户永远看不到它。
+# 演示包、测试固件一律放这里，**绝不进 system/pkgs** ——
+# system/pkgs 是要随程序分发给所有用户的东西。
+DEV_DIR = HOME / "dev"
+DEV_PKGS = DEV_DIR / "pkgs"
+
 
 def ensure_user_dirs():
     """懒创建：只有真要写数据时才建目录。

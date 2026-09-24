@@ -5,3 +5,6 @@ dev/_tmp/
 *.log
 .idea/
 .vscode/
+
+# 编译产物：开发固件里的 exe 由 build.cmd 现场生成，不进版本控制
+dev/pkgs/*/main.exe

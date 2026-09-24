@@ -52,17 +52,19 @@ def all_exts(table):
 
 
 def _interp_candidates(spec, ctx):
-    """把一个 runner 的 interpreters 模板展开成实际路径列表，带顺序。"""
+    """把一个 runner 的 interpreters 模板展开成 (来源说明, 实际路径) 序列。
+
+    ⚠️ 即使没找到也要 yield（exe 为 None）—— 否则 probe() 收集不到
+       "试过哪些地方"，报出来的错会变成误导性的"没有配 interpreters"。
+    """
     for tpl in spec.get("interpreters") or []:
         if tpl.startswith("PATH:"):
-            exe = shutil.which(tpl[5:])
-            if exe:
-                yield ("PATH:" + tpl[5:], exe)
+            yield ("PATH:" + tpl[5:], shutil.which(tpl[5:]))
         else:
             try:
                 yield (tpl, tpl.format(**ctx))
             except Exception:
-                continue
+                yield (tpl, None)
 
 
 def detect_venv(interpreter):

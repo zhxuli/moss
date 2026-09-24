@@ -133,18 +133,35 @@ def build_path_inv(cand, args, via="cli"):
 
 
 def _fill_interpreter(inv, table):
-    """给调用补上解释器（跑之前或重跑时都可能需要）。"""
+    """给调用补上解释器，**顺带检查这个 runner 在本机到底能不能用**。
+
+    返回 (inv, 错误信息或 None)。
+
+    为什么要查可用性：包声明的是 `"runner": "go"`，但如果用户没装 Go，
+    直接拼命令会得到一个空的可执行路径，报出来的错是莫名其妙的
+    FileNotFoundError。这里提前拦下，给一句人能看懂的话。
+    """
     if inv.get("interpreter"):
-        return inv
-    spec = table.get(inv.get("runner")) or {}
+        return inv, None
+
+    spec = table.get(inv.get("runner"))
+    if spec is None:
+        return inv, ("不认识 runner '%s'。检查 system\\runners.json，"
+                     "或往 user_data\\runners.json 里加一条。" % inv.get("runner"))
+
     probe = runners_mod.probe(inv.get("runner"), spec, {
         "cwd": inv.get("cwd") or os.getcwd(),
         "home": str(paths.HOME),
         "entry": inv.get("target") or "",
     })
+    if not probe.get("available"):
+        return inv, ("这个包需要 '%s'，但本机用不了。\n"
+                     "       原因：%s\n"
+                     "       装好它，或往 user_data\\runners.json 里补一条可用的解释器路径。"
+                     % (inv.get("runner"), probe.get("why")))
     inv["interpreter"] = probe.get("interpreter")
     inv["venv"] = probe.get("venv")
-    return inv
+    return inv, None
 
 
 # ---------------------------------------------------------------- 子命令
@@ -154,15 +171,15 @@ def cmd_list(table):
         print("[信息] 还没有安装任何包。包放在 %s" % paths.SYSTEM_PKGS)
         return 0
     print("已安装的包（%d）：" % len(recs))
-    print("  %-12s %-8s %-6s %-7s %s" % ("别名", "类型", "版本", "层", "说明"))
-    print("  " + "-" * 66)
+    print("  %-16s %-8s %-6s %-7s %s" % ("别名", "类型", "版本", "层", "说明"))
+    print("  " + "-" * 72)
     for r in recs:
         p = r["pkg"]
         alias = ",".join(p.get("aliases") or []) or p["id"]
         layer = r["layer"] + ("→遮蔽" + r["shadowed"] if r.get("shadowed") else "")
-        print("  %-12s %-8s %-6s %-7s %s" % (
-            alias[:12], p.get("kind", ""), str(p.get("version", ""))[:6], layer,
-            str(p.get("desc", ""))[:34]))
+        print("  %-16s %-8s %-6s %-7s %s" % (
+            alias[:16], p.get("kind", ""), str(p.get("version", ""))[:6], layer,
+            str(p.get("desc", ""))[:30]))
     return 0
 
 
@@ -210,7 +227,10 @@ def cmd_rerun(idx, table):
             "target": target, "cwd": cwd,
             "params": {}, "args": r.get("args") or [], "via": "history",
         }
-        _fill_interpreter(inv, table)
+        inv, err = _fill_interpreter(inv, table)
+        if err:
+            print("[错误] %s" % err)
+            return 1
     return engine.run(inv, table)
 
 
@@ -350,7 +370,10 @@ def main(argv):
         if err:
             print("[错误] %s" % err)
             return 1
-        _fill_interpreter(inv, table)
+        inv, err = _fill_interpreter(inv, table)
+        if err:
+            print("[错误] %s" % err)
+            return 1
         return engine.run(inv, table)
 
     # ---- 路径调用 ----
