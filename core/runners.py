@@ -66,6 +66,33 @@ def markers_of(spec):
     return [m.lower() for m in (spec.get("markers") or [])]
 
 
+def has_marker_near(base, markers, depth=None):
+    """`base` 或它的祖先目录里有没有这些标记文件？
+
+    用途：判断"这是不是一个（模块化的）项目" —— 比如 Go 有 go.mod 就说明
+    该用 `go run .` 跑整个包，没有就只能 `go run <文件>`。
+
+    和 resolve 里的项目标记一样，**要往上找**（在 `proj/cmd/` 里跑，
+    `proj/go.mod` 也得算数）。
+    """
+    from . import config
+    depth = config.max_parent_depth() if depth is None else depth
+    if not markers:
+        return False
+    try:
+        cur = Path(base).resolve()
+    except Exception:
+        return False
+    for _ in range(depth + 1):
+        for m in markers:
+            if (cur / m).exists():
+                return True
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return False
+
+
 # ---------------------------------------------------------------- 自带运行时
 def read_runtime_meta(directory):
     f = Path(directory) / "runtime.json"

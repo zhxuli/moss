@@ -40,13 +40,38 @@ def kill_process_tree(pid):
 
 # ---------------------------------------------------------------- 构造
 def build_argv(inv, spec):
-    """按 runner 的 launch 模板拼命令。"""
+    """按 runner 的 launch 模板拼命令。
+
+    ★ `{runTarget}`：有些语言"跑单个文件"和"跑整个包"是两条路。
+      最典型的是 Go —— 实测：
+          `go run main.go`  只编译那一个文件，多文件项目直接
+                            `undefined: xxx`；没有 go.mod 时它才管用
+          `go run .`        跑整个包（多文件正确），但**必须有 go.mod**
+      所以 runner 用 `runTarget` 字段声明这个判断，引擎只负责执行它 ——
+      保持"执行方式变成数据"（F-19），不把某种语言的知识写死进引擎。
+    """
     ctx = {
         "interpreter": inv.get("interpreter") or "",
         "entry": str(inv.get("target") or ""),
         "cwd": inv.get("cwd") or "",
         "home": str(paths.HOME),
     }
+
+    rt = spec.get("runTarget") or {}
+    if rt:
+        markers = rt.get("packageIf") or []
+        base = inv.get("cwd") or os.getcwd()
+        if markers and runners_mod.has_marker_near(base, markers):
+            ctx["runTarget"] = rt.get("package") or "."
+        else:
+            raw = str(rt.get("default") or "{entry}")
+            try:
+                ctx["runTarget"] = raw.format(**ctx)
+            except Exception:
+                ctx["runTarget"] = ctx["entry"]
+    else:
+        ctx["runTarget"] = ctx["entry"]
+
     argv = []
     for tpl in (spec.get("launch") or []):
         try:

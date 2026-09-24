@@ -30,7 +30,14 @@
     "ext": [".go"],
     "markers": ["go.mod", "go.sum"],
     "interpreters": ["PATH:go"],
-    "launch": ["{interpreter}", "run", "{entry}"]
+
+    "_runTargetWhy": "go run <文件> 只编译那一个文件，多文件项目会 undefined；有 go.mod 时必须 go run . 跑整个包。反过来，没有 go.mod 时 go run . 会报 go.mod not found，只能跑单文件。所以按有没有 go.mod 分两种。",
+    "launch": ["{interpreter}", "run", "{runTarget}"],
+    "runTarget": {
+      "packageIf": ["go.mod"],
+      "package": ".",
+      "default": "{entry}"
+    }
   },
 
   "html": {
