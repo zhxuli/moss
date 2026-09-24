@@ -24,6 +24,7 @@
   text-align: center; font-size: var(--t-sub); color: var(--text-3); padding: 0 var(--sp-5);
 }
 .picker-empty b { font-size: var(--t-head); font-weight: 590; color: var(--text-2); letter-spacing: var(--t-head-ls); }
+.picker-empty span { max-width: 420px; line-height: 1.6; }
 /* ★ 凡是自己写了 display 的元素，用 hidden 隐藏时都必须补这条 ——
    作者样式表里的 display 会盖掉浏览器默认的 [hidden]{display:none}。
    踩过两次：.drop-veil 和这里。这里那次很隐蔽：占位文字没消失，

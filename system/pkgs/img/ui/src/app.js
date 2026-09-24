@@ -217,6 +217,30 @@ function rebuild() {
   renderSelection();
 }
 
+/* 空状态。**分两种**，语气完全不同：
+     · 还没选目录      → 引导（"把图片拖进来"）
+     · 目录里没有图片  → 这只是"这里没东西"，不是错误，别报红、别说"失败"
+   支持的格式直接列出来，省得用户猜为什么他的图不算数。 */
+const SUPPORTED_TEXT = '支持 jpg / jpeg / png / webp / bmp / gif / tiff';
+
+function renderEmpty() {
+  const title = $('peTitle');
+  const sub = $('peSub');
+  if (state.mode === 'files') {
+    title.textContent = '文件清单是空的';
+    sub.textContent = '点左上角「加文件…」挑几张，或者直接把图片拖进来';
+    return;
+  }
+  const scan = state.scan;
+  if (!scan || !scan.ok) {
+    title.textContent = '把图片或文件夹拖进来';
+    sub.textContent = '也可以点上面的「选择…」挑一个文件夹';
+  } else {
+    title.textContent = '这个文件夹里没有图片';
+    sub.textContent = `${SUPPORTED_TEXT}。换一个文件夹，或者直接把图片拖进来`;
+  }
+}
+
 function renderGrid() {
   const grid = $('grid');
   const empty = $('pickerEmpty');
@@ -228,6 +252,7 @@ function renderGrid() {
   if (!state.items.length) {
     grid.hidden = true;
     empty.hidden = false;
+    renderEmpty();
     return;
   }
   empty.hidden = true;
@@ -662,7 +687,7 @@ async function loadDir(dir, useDialog) {
   const scan = await state.api.scan(state.dir);
   applyScan(scan);
   if (scan && scan.history) { state.history = scan.history; renderHistory(); }
-  if (scan && scan.ok && !(scan.exts || []).length) toast(scan.message, true);
+  /* 目录里没有图片**不是错误** —— 空状态里已经好好说了，不再弹红字 */
 }
 
 async function pickFiles() {

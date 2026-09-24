@@ -24,9 +24,10 @@
         <!-- ── 上半：挑图。占满剩余高度 —— 这是唯一的主动作 ───────────── -->
         <div class="card-body">
 
-          <!-- 第一行：模式 + 路径 + 按钮 -->
+          <!-- 第一行：历史 / 刷新 靠左（原来是"文件夹|文件清单"，和它们换了位置） -->
           <div class="srcbar">
-            <div class="seg mode-seg" id="segMode"></div>
+            <select id="history" class="hist" title="最近使用过的文件夹"></select>
+            <button class="btn ghost icon" id="btnRefresh" title="刷新（Ctrl+R）">⟳</button>
             <input type="text" id="src" class="mono" spellcheck="false" autocomplete="off"
                    placeholder="D:\图片">
             <button class="btn" id="btnPick">选择…</button>
@@ -34,10 +35,9 @@
             <button class="btn ghost" id="btnClearFiles" hidden>清空</button>
           </div>
 
-          <!-- 第二行：历史上/刷新 挨着文件夹放左边，然后是类型快捷选择，最右是选择控制 -->
+          <!-- 第二行：文件夹 / 文件清单 这个模式开关，然后是类型快捷选择 -->
           <div class="typebar">
-            <select id="history" class="hist" title="最近使用过的文件夹"></select>
-            <button class="btn ghost icon" id="btnRefresh" title="刷新（Ctrl+R）">⟳</button>
+            <div class="seg mode-seg" id="segMode"></div>
             <span class="vsep"></span>
             <span class="types" id="types"></span>
             <span class="spacer"></span>
@@ -49,8 +49,8 @@
           <!-- 缩略图网格（≤100 张）或紧凑列表（>100 张）。高度自适应 -->
           <div class="picker" id="picker" tabindex="0">
             <div class="picker-empty" id="pickerEmpty">
-              <b>把图片或文件夹拖进来</b>
-              <span>也可以点上面的「选择…」挑一个文件夹</span>
+              <b id="peTitle">把图片或文件夹拖进来</b>
+              <span id="peSub">也可以点上面的「选择…」挑一个文件夹</span>
             </div>
             <div class="grid" id="grid" hidden></div>
             <div class="marquee" id="marquee" hidden></div>
