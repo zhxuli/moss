@@ -20,7 +20,7 @@ try:
 except ImportError:
     pyautogui = None
 
-from . import (config, engine, events, history, out, paths, pkg as pkg_mod,
+from . import (clip, config, engine, events, history, out, paths, pkg as pkg_mod,
                registry, resolve, runners as runners_mod)
 
 USAGE = """moss —— 多语言启动器
@@ -334,6 +334,7 @@ def cmd_selfcheck(table):
             r["id"], r["pkg"].get("runner"),
             (e.name if e else ("inline" if pkg_mod.inline_code(r["pkg"]) else "✗ 缺失"))))
     print("  pyautogui : %s   （cd 功能需要它）" % ("可用" if pyautogui else "✗ 缺失"))
+    print("  剪贴板    : %s   （cd 到中文路径时需要它）" % clip.describe())
     print("=" * 60)
     out.print_cyan("结论: %s" % ("✅ 自检通过" if ok else "✗ 自检失败"))
     return 0 if ok else 1
@@ -399,8 +400,45 @@ def handle_pick(table, detach=False):
 
 
 # ---------------------------------------------------------------- cd
+def _type_command(text):
+    """把命令"打"进当前活动窗口。返回 (方式, 错误信息)。
+
+    ⚠️ `pyautogui.typewrite()` **打不了非 ASCII 字符** —— 中文没有键位映射，
+       会被**静默丢弃**。实测（用户真实撞到的）：
+
+           输入 : cd "D:\\study\\GO\\学习\\基础知识\\BMI"
+           打出 : cd "D:\\study\\GO\\\\\\BMI"     ← 汉字整段消失
+
+       这是 `pa.py:845` 就有的 bug（照抄时一起搬过来了）。
+
+    所以分两条路：
+      · 纯 ASCII 路径 -> 照旧 typewrite（**不碰用户剪贴板**）
+      · 含中文等    -> 剪贴板 + Ctrl+V，**用完把剪贴板还回去**
+    """
+    if all(ord(c) < 128 for c in text):
+        pyautogui.typewrite(text)
+        return "typewrite", None
+
+    if not clip.available():
+        return None, "路径含非 ASCII 字符，需要 pyperclip 走剪贴板，但它不可用"
+
+    saved = clip.get()
+    if not clip.set(text):
+        return None, "写入剪贴板失败"
+    time.sleep(0.05)
+    pyautogui.hotkey('ctrl', 'v')
+    time.sleep(0.08)
+    pyautogui.press('enter')
+    time.sleep(0.4)          # 等控制台把粘贴内容吃完，再把剪贴板还回去
+    clip.set(saved)
+    return "clipboard", None
+
+
 def handle_cd(target_str):
-    """智能找目录并切换。照抄 pa.py:810-853（用 pyautogui 模拟键盘输入）。"""
+    """智能找目录并切换。照抄 pa.py:810-853（用模拟键盘输入切目录）。
+
+    增量：含中文的路径改走剪贴板粘贴（见 `_type_command` 的说明）。
+    """
     if pyautogui is None:
         out.print_cyan("[错误] 'cd' 功能需要 'pyautogui' 库。")
         out.print_cyan("请先安装: pip install pyautogui")
@@ -408,27 +446,36 @@ def handle_cd(target_str):
 
     target_path = resolve.find_dir(target_str, Path.cwd())
 
-    if target_path:
-        abs_path = target_path.resolve()
-        command = 'cd "%s"' % abs_path
-
+    if not target_path:
         out.conditional_clear_screen()
-        out.print_cyan("[切换目录] 准备执行: %s" % command)
-        out.print_cyan("[注意] 0.1秒后将模拟键盘输入, 请确保命令行窗口是当前活动窗口!")
+        out.print_cyan("[错误] 未找到目标目录: %s" % target_str)
+        return 1
 
-        try:
-            time.sleep(0.1)
-            pyautogui.typewrite(command)
-            pyautogui.press('enter')
-        except Exception as e:
-            out.print_cyan("[错误] 模拟键盘输入失败: %s" % e)
-            out.print_cyan("您可以手动复制并粘贴以下命令:")
-            out.print_cyan(command)
-        return 0
+    abs_path = target_path.resolve()
+    command = 'cd "%s"' % abs_path
+    ascii_only = all(ord(c) < 128 for c in command)
 
     out.conditional_clear_screen()
-    out.print_cyan("[错误] 未找到目标目录: %s" % target_str)
-    return 1
+    out.print_cyan("[切换目录] 准备执行: %s" % command)
+    if ascii_only:
+        out.print_cyan("[注意] 0.1秒后将模拟键盘输入, 请确保命令行窗口是当前活动窗口!")
+    else:
+        out.print_cyan("[注意] 路径含中文，将用「剪贴板 + Ctrl+V」输入"
+                       "（临时占用剪贴板，用完还原）")
+        out.print_cyan("[注意] 请确保命令行窗口是当前活动窗口!")
+
+    try:
+        time.sleep(0.1)
+        how, err = _type_command(command)
+        if err:
+            raise RuntimeError(err)
+        if how == "clipboard":
+            out.print_cyan("[完成] 已用剪贴板方式输入（剪贴板已还原）。")
+    except Exception as e:
+        out.print_cyan("[错误] 模拟键盘输入失败: %s" % e)
+        out.print_cyan("您可以手动复制并粘贴以下命令:")
+        out.print_cyan(command)
+    return 0
 
 
 # ---------------------------------------------------------------- 主入口
