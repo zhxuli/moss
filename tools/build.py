@@ -103,6 +103,9 @@ def main():
     ]
     print("  产物   : %s" % (HOME / "moss.exe"))
     print("=" * 62)
+    print("实际执行的命令（这是唯一出处，别在别处再抄一份）：")
+    print("  %s -m nuitka %s" % (sys.executable, " ".join(cmd[3:])))
+    print("=" * 62)
     print("开始编译。首次运行会下载约 100MB 的 C 编译器到用户缓存（之后不再下载），")
     print("之后每次约 1-3 分钟。")
     print("=" * 62)
