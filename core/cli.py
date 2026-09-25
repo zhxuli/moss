@@ -38,6 +38,12 @@ USAGE = """moss —— 多语言启动器
   moss :                       打开交互式选择（上下键 + 回车）
 
   moss cd <目标>               智能找目录并切换（模拟键盘输入，窗口要激活）
+  moss cd --print <目标>       只打印绝对路径，不做模拟输入（给 shell 包装函数用）
+                               PowerShell 里这样获得可靠的 cd：
+                                 function mosscd { $env:MOSS_CD_PRINT='1'
+                                                   $p = & moss cd @args
+                                                   $env:MOSS_CD_PRINT=''
+                                                   if ($p) { Set-Location $p } }
   moss pick | select | menu    交互式选择要运行的包
 
   moss --list                  列出已安装的包
@@ -451,24 +457,53 @@ def _type_command(text):
     return "clipboard", None
 
 
-def handle_cd(target_str):
-    """智能找目录并切换。照抄 pa.py:810-853（用模拟键盘输入切目录）。
+def handle_cd(target_str, print_only=False):
+    """智能找目录并切换。
 
-    增量：含中文的路径改走剪贴板粘贴（见 `_type_command` 的说明）。
+    ★ 两条路，区别在**谁来执行那条 cd**：
+
+      · `print_only=False`（默认）：moss 用**模拟键盘输入**，往当前活动控制台里
+        打一条 `cd "..."` 并回车。父 shell 真的换了目录 —— 因为那条命令是
+        **父 shell 自己**收到并执行的。
+
+      · `print_only=True`：moss **只把绝对路径打到 stdout**，别的什么都不打印，
+        由调用方的 shell 包装函数去 `Set-Location`。没有模拟输入、不看窗口焦点、
+        不碰剪贴板。PowerShell 里一行就够：
+
+            function mosscd { $env:MOSS_CD_PRINT='1'; $p = & moss cd @args;
+                              $env:MOSS_CD_PRINT=''; if ($p) { Set-Location $p } }
+
+    ★ 为什么必须有第二条路：**子进程改不了父进程的工作目录**，这是操作系统的
+      进程隔离，不是实现偷懒。`os.chdir()` 只影响 moss 自己，它一退出就没了。
+      所以"换目录"这件事只能由父 shell 做，moss 能做的是**把目录找出来交给它**。
+      模拟输入是"借父 shell 的手"，包装函数是"让父 shell 主动做" —— 后者可靠得多。
     """
+    target_path = resolve.find_dir(target_str, Path.cwd())
+
+    if not target_path:
+        msg = "未找到目标目录: %s" % target_str
+        if print_only:
+            # 打印模式下错误必须走 stderr —— stdout 是给调用方捕获路径用的
+            print("[错误] %s" % msg, file=sys.stderr)
+            return 1
+        out.conditional_clear_screen()
+        out.print_cyan("[错误] %s" % msg)
+        return 1
+
+    abs_path = str(target_path.resolve())
+
+    if print_only:
+        # ★ 只吐这一行。调用方是 `$p = & moss cd @args`，
+        #   多打一行横幅就会把路径污染掉（用户拿到的会是 "[执行] ..." 之类）。
+        print(abs_path)
+        return 0
+
+    # 模拟输入要 pyautogui；打印模式不需要，所以这个检查放在后面
     if pyautogui is None:
         out.print_cyan("[错误] 'cd' 功能需要 'pyautogui' 库。")
         out.print_cyan("请先安装: pip install pyautogui")
         return 1
 
-    target_path = resolve.find_dir(target_str, Path.cwd())
-
-    if not target_path:
-        out.conditional_clear_screen()
-        out.print_cyan("[错误] 未找到目标目录: %s" % target_str)
-        return 1
-
-    abs_path = target_path.resolve()
     command = 'cd "%s"' % abs_path
     ascii_only = all(ord(c) < 128 for c in command)
 
@@ -531,8 +566,13 @@ def main(argv):
 
     # ---- cd（照抄 pa.py:876-881） ----
     if first.lower() == 'cd':
+        # `--print` / 环境变量 MOSS_CD_PRINT=1 → 只吐路径，不做模拟输入。
+        # 环境变量这条路是给 shell 包装函数用的（见 handle_cd 的说明）：
+        # 包装函数设好变量再调 moss，moss 就只输出路径让 shell 自己 cd。
+        print_only = ('--print' in rest) or (os.environ.get('MOSS_CD_PRINT') == '1')
+        rest = [a for a in rest if a != '--print']
         if rest:
-            return handle_cd(rest[0])
+            return handle_cd(rest[0], print_only=print_only)
         out.print_cyan("[错误] 'cd' 命令需要一个目标路径。用法: moss cd <目标>")
         return 1
 

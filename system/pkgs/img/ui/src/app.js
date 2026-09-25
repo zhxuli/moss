@@ -547,6 +547,8 @@ function renderConditional() {
   const separate = state.cfg.save_mode === 'separate';
   $('outDirWrap').hidden = !separate;
   if (separate) $('outDir').value = state.cfg.output_dir || '';
+  /* 设过自定目录才给「恢复默认」—— 没设过就没有可恢复的，按钮别占位 */
+  $('btnOutDirReset').hidden = !(state.cfg.output_dir || '').trim();
   renderWarn();
 }
 
@@ -1091,6 +1093,15 @@ function bind() {
     state.cfg.output_dir = picked.path;
     $('outDir').value = picked.path;
     renderConditional();
+  };
+  /* 恢复默认 = 把自定输出目录清掉，回到「源目录\compressed_output」。
+     拖放设过一次之后没办法undo，这条是补上的退路。 */
+  $('btnOutDirReset').onclick = () => {
+    state.cfg.output_dir = '';
+    $('outDir').value = '';
+    state.outputDir = '';          // 上次跑出来的那个也别再记着
+    renderConditional();
+    toast('输出目录已恢复默认。');
   };
 
   let scanTimer = null;

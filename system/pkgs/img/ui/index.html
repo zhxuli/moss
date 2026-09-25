@@ -104,6 +104,9 @@
               <input type="text" id="outDir" class="mono" spellcheck="false" autocomplete="off"
                      placeholder="默认：源目录\compressed_output">
               <button class="btn ghost" id="btnOutDir"><span data-icon="folder"></span>选择…</button>
+              <!-- 只在设过自定目录时出现：把它清掉就回到默认 -->
+              <button class="btn ghost icon" id="btnOutDirReset" hidden
+                      title="恢复默认（源目录\compressed_output）"><span data-icon="undo"></span></button>
             </span>
             <span class="warn-inline" id="warnInline" hidden></span>
           </div>
