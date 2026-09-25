@@ -81,7 +81,12 @@
   flex: none; margin-top: 9px; padding-top: 9px;
   border-top: 1px solid var(--sep);
 }
-.setrow { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; flex-wrap: wrap; }
+.setrow { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; flex-wrap: wrap; min-height: 34px; }
+/* ★ 保存这一行**高度定死**。
+   右侧那格是两个状态轮流住的：输出目录（输入框+按钮+虚框，约 37px）和警告（一行文字，约 16px）。
+   不钉死高度的话，切保存模式时行高会在两者之间跳，界面跟着抖（用户实测到的）。
+   钉死之后两个槽位都撑满这一行，切换时一行都不动。 */
+#saveRow { height: 34px; min-height: 34px; }
 .settings-label {
   flex: none; width: 30px;
   font: 600 var(--t-sub)/1 var(--font-ui); letter-spacing: var(--t-sub-ls);
