@@ -238,12 +238,23 @@ function pickHistory(path) {
 }
 
 function bindHistory() {
+  /* 打开下拉。**focus 和 click 都要挂** ——
+     focus 只在"获得焦点"那一刻触发；如果输入框本来就还有焦点（比如点空白处收起下拉时，
+     框选逻辑 preventDefault 了 mousedown，输入框根本没失焦），再点它不会再有 focus 事件，
+     下拉就永远出不来了（用户实测到的）。所以 click 上再补一次。 */
+  const openIfClosed = () => {
+    if ($('histMenu').hidden) {
+      openHistory($('src').value === state.dir ? '' : $('src').value);
+    }
+  };
+  $('src').onfocus = openIfClosed;
+  $('src').onclick = openIfClosed;
+
   $('btnHist').onclick = (e) => {
     e.preventDefault();
     if ($('histMenu').hidden) { $('src').focus(); openHistory(''); }
     else closeHistory();
   };
-  $('src').onfocus = () => openHistory($('src').value === state.dir ? '' : $('src').value);
   $('src').onkeydown = (e) => {
     if (e.key === 'Escape') { closeHistory(); $('src').blur(); return; }
     if (!$('histMenu').hidden) {
