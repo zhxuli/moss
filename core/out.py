@@ -8,6 +8,7 @@
   程序里到处是 ✔ ✗ ⚠ 这类符号，Windows 中文控制台默认 cp936 编码，
   `print('✔')` 会直接 UnicodeEncodeError 把程序崩掉。
 """
+import ctypes
 import os
 import sys
 
@@ -65,6 +66,98 @@ def clear_screen():
 
 ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
 STD_OUTPUT_HANDLE = -11
+
+
+class _COORD(ctypes.Structure):
+    _fields_ = [("X", ctypes.c_short), ("Y", ctypes.c_short)]
+
+
+class _SMALL_RECT(ctypes.Structure):
+    _fields_ = [("Left", ctypes.c_short), ("Top", ctypes.c_short),
+                ("Right", ctypes.c_short), ("Bottom", ctypes.c_short)]
+
+
+class _CSBI(ctypes.Structure):
+    _fields_ = [("dwSize", _COORD), ("dwCursorPosition", _COORD),
+                ("wAttributes", ctypes.c_ushort), ("srWindow", _SMALL_RECT),
+                ("dwMaximumWindowSize", _COORD)]
+
+
+def _stdout_handle():
+    if os.name != 'nt':
+        return None
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        k32.GetStdHandle.restype = ctypes.c_void_p
+        k32.GetStdHandle.argtypes = [ctypes.c_int]
+        return k32, k32.GetStdHandle(STD_OUTPUT_HANDLE)
+    except Exception:
+        return None
+
+
+def _screen_info():
+    got = _stdout_handle()
+    if not got:
+        return None
+    k32, h = got
+    try:
+        import ctypes
+        k32.GetConsoleScreenBufferInfo.argtypes = [ctypes.c_void_p,
+                                                   ctypes.POINTER(_CSBI)]
+        info = _CSBI()
+        if k32.GetConsoleScreenBufferInfo(ctypes.c_void_p(h), ctypes.byref(info)):
+            return info
+    except Exception:
+        pass
+    return None
+
+
+def console_size():
+    """可见窗口的（列数, 行数）。取不到返回 None。
+
+    ★ **权威来源是控制台自己**，不能用 `shutil.get_terminal_size()` ——
+      它优先信 `COLUMNS`/`LINES` 环境变量，一旦那个值比真实窗口宽，
+      打出来的行就会**折行**，而折行会让"原地重画"的行数算错、整屏错位（实测踩过）。
+    """
+    info = _screen_info()
+    if not info:
+        return None
+    w = info.srWindow.Right - info.srWindow.Left + 1
+    h = info.srWindow.Bottom - info.srWindow.Top + 1
+    return (w, h) if w > 0 and h > 0 else None
+
+
+def cursor_pos():
+    """当前光标（列, 行）。取不到返回 None。"""
+    info = _screen_info()
+    return (info.dwCursorPosition.X, info.dwCursorPosition.Y) if info else None
+
+
+def gotoxy(x, y):
+    """把光标挪到 (列, 行)。**不用 ANSI 转义** —— 转义在"\\n 不回车"的控制台上
+    会把原地重画画到半行上去（实测整屏糊掉），走 Win32 API 没这个问题。"""
+    got = _stdout_handle()
+    if not got:
+        return False
+    k32, h = got
+    try:
+        import ctypes
+        k32.SetConsoleCursorPosition.argtypes = [ctypes.c_void_p, _COORD]
+        return bool(k32.SetConsoleCursorPosition(ctypes.c_void_p(h), _COORD(x, y)))
+    except Exception:
+        return False
+
+
+def write_block(lines, width):
+    """把一组行铺满屏宽写出（**补齐空格 = 擦掉上一帧的残留**），行尾用 `\\r\\n`。
+
+    为什么不用 `\\033[K` + `\\n`：开了 VT 的控制台上 Python 的 `\\n` 有可能
+    只下移不回车，于是"原地重画"落在半行上 —— 实测就是这个把界面糊了。
+    """
+    pad = max(1, width - 1)
+    sys.stdout.write("\r\n".join(str(ln)[:pad].ljust(pad) for ln in lines))
+    sys.stdout.flush()
 
 
 def enable_ansi():

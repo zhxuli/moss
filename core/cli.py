@@ -220,6 +220,10 @@ def cmd_list(table, skip_clear=False):
 
 
 def _term_size():
+    """（列, 行）。优先问控制台自己，问不到再退回环境变量/默认值。"""
+    size = out.console_size()
+    if size:
+        return max(20, size[0]), max(8, size[1])
     try:
         s = shutil.get_terminal_size((100, 30))
         return max(20, s.columns), max(8, s.lines)
@@ -232,22 +236,49 @@ def _hist_time(r):
     return ts[11:19] if len(ts) >= 19 else ts
 
 
+def _hist_args(r):
+    """这条记录**到底跑了什么参数** —— 去重是按它们算的，必须显示出来，
+    否则"同包不同参数"的多条记录看起来就像没去重。"""
+    if r.get("kind") == "pkg":
+        p = r.get("params") or {}
+        if not p:
+            return ""
+        if len(p) == 1 and "args" in p:      # rest:true 的包（比如 img）
+            return str(p["args"])
+        return " ".join("%s=%s" % (k, p[k]) for k in sorted(p))
+    return " ".join(str(x) for x in (r.get("args") or []))
+
+
+def _hist_dur(r):
+    ms = r.get("ms")
+    return "%.2fs" % (ms / 1000.0) if isinstance(ms, (int, float)) else "-"
+
+
+def _hist_mark(r):
+    ex = r.get("exit")
+    if ex == 0:
+        return "✔"
+    return "✗?" if ex is None else "✗%s" % (ex,)
+
+
 def _hist_row(i, r, width):
-    """一条记录排成一行。列宽按控制台实际宽度裁，别让长路径把行冲乱。"""
+    """一条记录排成一行，**必须 ≤ width**（折行会让原地重画错位）。"""
     tag = "[包]" if r.get("kind") == "pkg" else "[路径]"
     what = str(r.get("id") or r.get("target") or "?")
-    if len(what) > 22:
-        what = what[-22:]
-    ms = r.get("ms")
-    tail = "%-7s %s" % ("%.2fs" % (ms / 1000.0) if isinstance(ms, (int, float)) else "-",
-                        "✔" if r.get("exit") == 0 else "✗%s" % (r.get("exit"),))
-    head = "%4d) %s %s %-26s" % (i, _hist_time(r), tag, what)
-    room = max(12, width - len(head) - len(tail) - 4)
+    if len(what) > 14:
+        what = what[-14:]
+    head = "%4d) %s %s %-14s" % (i, _hist_time(r), tag, what)
+    tail = " %6s %s" % (_hist_dur(r), _hist_mark(r))
+    args = _hist_args(r)[:20].ljust(20)
     cwd = str(r.get("cwd") or "-")
-    if len(cwd) > room:
-        cwd = "…" + cwd[-(room - 1):]
-    line = "%s %-*s  %s" % (head, room, cwd, tail)
-    # 窄窗口下宁可把尾巴切掉，也不能让一行折行 —— 折行会让"原地重画"错位
+    # 目录是弹性列：够宽就多给，挤不下就整个舍掉（参数比目录重要）
+    room = width - len(head) - len(tail) - len(args) - 2
+    if room >= 8:
+        if len(cwd) > room:
+            cwd = "…" + cwd[-(room - 1):]
+        line = head + " " + args + " " + cwd.ljust(room) + tail
+    else:
+        line = head + " " + args.rstrip() + tail
     return line if len(line) <= width else line[:width]
 
 
@@ -269,18 +300,20 @@ def _print_history(rows):
 def _history_browser(rows, table):
     """方向键浏览 + **回车一键重跑**（V-12）。
 
-    用 ANSI 光标控制原地重画；万一这个控制台不支持（被重定向等），
-    退回"整屏清 + 重画"（会闪，但能用）。
+    ★ 重画用的是 **Win32 光标定位 + 整行补齐空格**，不用 ANSI 转义：
+      实测在开了 VT 的控制台上，Python 的 `\\n` 有可能只下移不回车，
+      于是 `\\033[A` 上移之后落在**半行**上、`\\033[K` 也只擦右边 ——
+      整个列表就糊成一团（表头重复、行粘在一起）。
     """
     import msvcrt
-    ansi = out.enable_ansi()
+    out.enable_ansi()                       # 只为配色，定位不靠它
     idx = 0
-    drawn = 0
+    block_y = 0
 
     def paint(redraw):
-        nonlocal drawn, idx
+        nonlocal block_y
         width, height = _term_size()
-        vh = max(5, min(height - 5, 22))
+        vh = max(5, min(height - 3, 25))
         top = _scroll_top(idx, len(rows), vh)
         lines = ["  最近启动（去重后 %d 条）   当前 %d/%d"
                  % (len(rows), idx + 1, len(rows))]
@@ -288,24 +321,19 @@ def _history_browser(rows, table):
             j = top + k
             if j < len(rows):
                 lines.append("%s%s" % ("\u25b6" if j == idx else " ",
-                                       _hist_row(j + 1, rows[j], width - 1)))
+                                       _hist_row(j + 1, rows[j], width - 2)))
             else:
                 lines.append("")
         lines.append("  ↑↓ 选择   PgUp/PgDn 翻页   Home/End 首尾   "
                      "回车 一键重跑   Esc 退出")
-        if redraw and ansi and drawn:
-            sys.stdout.write("\033[%dA" % drawn)
-            for ln in lines:
-                sys.stdout.write("\033[K" + ln + "\n")
+        if redraw:
+            out.gotoxy(0, block_y)
         else:
-            if redraw:
-                out.clear_screen()
-            for ln in lines:
-                print(ln)
-        sys.stdout.flush()
-        drawn = len(lines)
+            out.clear_screen()
+            pos = out.cursor_pos()
+            block_y = pos[1] if pos else 0
+        out.write_block(lines, width)
 
-    out.clear_screen()
     paint(False)
     while True:
         try:
@@ -323,7 +351,7 @@ def _history_browser(rows, table):
             except Exception:
                 return 1
             _, height = _term_size()
-            vh = max(5, min(height - 5, 22))
+            vh = max(5, min(height - 3, 25))
             if ch2 in ("H", "A"):
                 idx = max(0, idx - 1)
             elif ch2 in ("P", "B"):
@@ -349,8 +377,6 @@ def _history_browser(rows, table):
             # 重跑本身会写一条新历史，去重后它会顶到最前
             rows[:] = history.recent_unique()
             idx = 0
-            drawn = 0
-            out.clear_screen()
             paint(False)
             continue
 
