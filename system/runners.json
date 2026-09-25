@@ -1,6 +1,9 @@
 {
+  "_priorityWhy": "同一层里多个候选打平时的类型优先级（数字越小越优先）。依据不是语言流行度，而是【这个文件被放在这里当入口的故意程度】：1 shell(.bat/.cmd) 是作者手写的启动脚本，往往还会先激活 venv、设好环境，直接跑源码反而缺环境；2 powershell(.ps1) 同样是脚本；3 exe 是编译好的成品；4/5 python/go 是源码；6 html 是「打开一个页面」，最被动。没写 priority 的一律排最后 —— 这样以后加一门语言只改这个文件，不用动宿主代码（F-19）。注意：它排在【项目标记】和【上次选过】之后，压不过那两者。",
+
   "python": {
     "label": "Python",
+    "priority": 4,
     "ext": [".py", ".pyw"],
     "markers": ["pyproject.toml", "requirements.txt", "setup.py", "venv", ".venv", "Pipfile"],
 
@@ -32,6 +35,7 @@
 
   "go": {
     "label": "Go",
+    "priority": 5,
     "ext": [".go"],
     "markers": ["go.mod", "go.sum"],
     "interpreters": ["PATH:go"],
@@ -47,6 +51,7 @@
 
   "html": {
     "label": "网页",
+    "priority": 6,
     "ext": [".html", ".htm"],
     "markers": [],
     "builtin": "openHtml"
@@ -54,6 +59,7 @@
 
   "powershell": {
     "label": "PowerShell",
+    "priority": 2,
     "ext": [".ps1"],
     "markers": [],
     "interpreters": ["PATH:powershell", "PATH:pwsh"],
@@ -62,6 +68,7 @@
 
   "shell": {
     "label": "CMD",
+    "priority": 1,
     "ext": [".bat", ".cmd"],
     "markers": [],
     "interpreters": ["PATH:cmd"],
@@ -70,6 +77,7 @@
 
   "exe": {
     "label": "可执行文件",
+    "priority": 3,
     "ext": [".exe"],
     "markers": [],
     "launch": ["{entry}"]

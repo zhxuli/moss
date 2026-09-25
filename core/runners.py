@@ -29,7 +29,15 @@ from . import paths
 
 # ---------------------------------------------------------------- 注册表
 def load():
-    """系统层 + 用户层叠加，用户优先。"""
+    """系统层 + 用户层叠加，用户优先。
+
+    ★ 跳过 `_` 开头的键和任何非字典的值。
+      为什么必须有这道过滤：`runners.json` 是给人手改的文件，忍不住会写注释键
+      （本文件自己就有一个 `_priorityWhy`）。原来 `table.update(data)` 会把
+      注释字符串也当成 runner 塞进表里，之后 `by_ext` 对它调 `.get()` 直接崩，
+      **整套 runner 表全废** —— 加一行说明就把程序搞挂，这个代价太大了。
+      实测踩到：加 `_priorityWhy` 的当天就崩在 `find()` 里。
+    """
     table = {}
     for f in (paths.SYSTEM_RUNNERS, paths.USER_RUNNERS):
         if f.is_file():
@@ -37,18 +45,27 @@ def load():
                 with open(f, "r", encoding="utf-8") as fh:
                     data = json.load(fh)
                 if isinstance(data, dict):
-                    table.update(data)
+                    for name, spec in data.items():
+                        if name.startswith("_") or not isinstance(spec, dict):
+                            continue      # 注释键 / 写坏了的值，忽略掉
+                        table[name] = spec
             except Exception:
                 pass
     return table
 
 
 def by_ext(table, ext):
-    """扩展名 → (runner 名, runner 定义)。查表，不是写死的 if/elif。"""
+    """扩展名 → (runner 名, runner 定义)。查表，不是写死的 if/elif。
+
+    再兜一层 `isinstance(spec, dict)`：万一有别的路径把脏值塞进表里，
+    这里是"整个解析流程的必经之地"，不能让它崩。
+    """
     ext = (ext or "").lower()
     if not ext:
         return None, None
     for name, spec in table.items():
+        if not isinstance(spec, dict):
+            continue
         exts = [e.lower() for e in (spec.get("ext") or [])]
         if ext in exts:
             return name, spec
@@ -64,6 +81,28 @@ def all_exts(table):
 
 def markers_of(spec):
     return [m.lower() for m in (spec.get("markers") or [])]
+
+
+def priority_of(spec):
+    """同一层里多个候选打平时的**类型优先级**（数字越小越优先）。
+
+    ★ 顺序的依据不是"语言流行度"，而是**这个文件被放在这里当入口的故意程度**：
+        1  shell(.bat/.cmd)  作者手写的启动脚本 —— 往往还会先激活 venv、设好环境，
+                             直接跑源码反而缺环境
+        2  powershell(.ps1)  同样是脚本
+        3  exe               编译好的成品
+        4  python / 5 go     源码
+        6  html              「打开一个页面」，最被动
+        99 没写 priority 的   新加一门语言不用改宿主代码
+
+    ★ 顺序来自 `runners.json` 的 `priority` 字段，**不写死在这里** ——
+      这是 F-19「执行方式变成数据」：加语言只改 JSON。
+      没写就排最后，所以以后新增 runner 忘填也不会插到别人前面。
+    """
+    try:
+        return int(spec.get("priority", 99))
+    except (TypeError, ValueError):
+        return 99
 
 
 def has_marker_near(base, markers, depth=None):

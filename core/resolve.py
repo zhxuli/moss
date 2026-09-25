@@ -16,10 +16,14 @@
 
 四级顺序（越靠前越不打扰）：
   1. **可用性过滤** —— 没装 Go，`main.go` 直接出局（`E-15`）
-  2. 唯一候选直接跑
-  3. **项目标记** —— 有 `go.mod` 就是 Go 项目（`E-17`）
-  4. **记住上次的选择**
-  5. 还不行才问用户，并且**选完就跑**（`E-18`）+ 记住这次选择
+  2. **精确名字匹配** —— 文件名主干完全等于你输的词，且唯一
+  3. 唯一候选直接跑
+  4. **项目标记** —— 有 `go.mod` 就是 Go 项目（`E-17`），**就近优先**
+  5. **记住上次的选择**
+  6. **类型优先级** —— 同层多个候选打平时按 `runners.json` 的 `priority`
+     （shell > powershell > exe > python > go > html），依据是"这个文件被放在
+     这里当入口的故意程度"，不是语言流行度
+  7. 还打平才问用户，并且**选完就跑**（`E-18`）+ 记住这次选择
 """
 import json
 from pathlib import Path
@@ -241,7 +245,20 @@ def disambiguate(cands, base, name, depth):
             if c["path"].name.lower() == last.lower():
                 return c, "上次选过"
 
-    # 5 · 问
+    # 5 · 类型优先级（数据来自 runners.json 的 priority）
+    #     为什么排在【项目标记】和【上次选过】之后：
+    #       同目录有 go.mod 就说明这是 Go 项目，那比"bat 通常优先"这种通用偏好可信；
+    #       你自己在这个目录里亲手选过一次，同样比通用偏好可信。
+    #     为什么排在【问】之前：这个优先级存在的意义就是让常见情况不必打断你。
+    #     只有前几名**打平**（比如同目录有 main.bat 和 main.cmd，都是 shell）才问。
+    def _pri(c):
+        return runners_mod.priority_of(c["spec"])
+
+    by_type = sorted(cands, key=lambda c: (_pri(c), c["path"].name.lower()))
+    if len(by_type) == 1 or _pri(by_type[0]) < _pri(by_type[1]):
+        return by_type[0], "类型优先级 %s" % by_type[0]["runner"]
+
+    # 6 · 问
     return _ask(cands, base, name)
 
 
