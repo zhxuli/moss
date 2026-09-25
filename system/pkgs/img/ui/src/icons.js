@@ -41,6 +41,9 @@ const PATHS = {
   checkCircle: '<circle cx="12" cy="12" r="8.6"/><path d="M8.2 12.3l2.7 2.7 4.9-5.4"/>',
   xCircle: '<circle cx="12" cy="12" r="8.6"/>'
          + '<path d="M9.3 9.3l5.4 5.4"/><path d="M14.7 9.3l-5.4 5.4"/>',
+  help: '<circle cx="12" cy="12" r="8.6"/>'
+      + '<path d="M9.7 9.5a2.5 2.5 0 0 1 4.9.5c0 1.7-2.4 2.1-2.4 3.7"/>'
+      + '<path d="M12 17h.01"/>',
 };
 
 export function svg(name, cls) {

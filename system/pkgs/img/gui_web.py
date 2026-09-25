@@ -154,6 +154,30 @@ class Api:
             self._remember(files[0]['dir'])
         return {'ok': True, 'files': files}
 
+    def help(self):
+        """帮助面板要显示的内容。
+
+        ★ 用法文本**直接从 cli.py 取**，不在这里再抄一份 ——
+          命令行那套语法只在 cli.py 里有一份真相，抄一遍早晚对不上
+          （这正是本项目的 W 章纪律：重复可以，漂移不行）。
+        """
+        import cli
+        return {
+            'ok': True,
+            'usage': cli.USAGE,
+            'formats': core.FORMATS,
+            'description': '带参数＝命令行模式；不带参数＝打开这个界面。',
+        }
+
+    def copy(self, text):
+        """把文本放进剪贴板（帮助面板的「复制用法」）。"""
+        try:
+            import pyperclip
+            pyperclip.copy(str(text or ''))
+            return {'ok': True}
+        except Exception as e:
+            return {'ok': False, 'message': '写入剪贴板失败：%s' % e}
+
     def check_path(self, path):
         """问一下某个路径是文件还是目录 —— 拖放落点要靠它判断怎么处理。
 

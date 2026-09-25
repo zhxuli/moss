@@ -1148,6 +1148,32 @@ function bind() {
   });
 }
 
+/* ------------------------------------------------------------------ 帮助 */
+async function openHelp() {
+  const sheet = $('helpSheet');
+  sheet.hidden = false;
+  if (!$('helpUsage').textContent) {
+    const got = await state.api.help();
+    $('helpUsage').textContent = (got && got.usage) || '（取不到用法文本）';
+  }
+}
+
+function closeHelp() { $('helpSheet').hidden = true; }
+
+function bindHelp() {
+  $('btnHelp').onclick = () => openHelp();
+  $('btnHelpClose').onclick = () => closeHelp();
+  $('helpScrim').onclick = () => closeHelp();
+  $('btnHelpCopy').onclick = async () => {
+    const res = await state.api.copy($('helpUsage').textContent);
+    if (!res || !res.ok) { toast((res && res.message) || '复制失败。', true); return; }
+    toast('用法已复制到剪贴板。');
+  };
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('helpSheet').hidden) closeHelp();
+  });
+}
+
 /* ------------------------------------------------------------------ 启动 */
 /* 记录走到哪一步炸的。原来只报一句"界面初始化失败：<英文>"，
    既不知道哪一步、也看不到细节 —— 用户没法贴给我，窗口一关线索就没了。 */
@@ -1199,6 +1225,7 @@ async function boot() {
   bindMarquee();
   bindHover();
   bindDrop();
+  bindHelp();
 
   bootStage = '装图标';
   mountIcons();

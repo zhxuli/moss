@@ -122,6 +122,7 @@
           <span class="status" id="status">待命</span>
           <span class="hint" id="logHint"></span>
           <span class="spacer"></span>
+          <button class="btn ghost icon" id="btnHelp" title="帮助：命令行怎么用"><span data-icon="help"></span></button>
           <button class="btn ghost" id="btnReveal"><span data-icon="folder"></span>打开输出目录</button>
           <button class="btn ghost" id="btnReset"><span data-icon="undo"></span>重置</button>
           <button class="btn primary" id="btnStart"><span data-icon="play"></span><span id="startLabel">开始处理</span></button>
@@ -150,6 +151,29 @@
   </div>
 
   <div class="toast-wrap" id="toasts"></div>
+
+  <!-- 帮助：命令行怎么用。用法文本是后端从 cli.py 直接取的 ——
+       命令行那套东西只在 cli.py 里写了一份，帮助面板不能自己再抄一遍。 -->
+  <div class="sheet-wrap" id="helpSheet" hidden>
+    <div class="scrim" id="helpScrim"></div>
+    <div class="sheet">
+      <h2>命令行怎么用</h2>
+      <p>同一个包，两种用法：<b>不带参数</b>就是打开这个界面，<b>带上参数</b>就走命令行。</p>
+      <pre class="sheet-pre" id="helpUsage"></pre>
+      <h3>界面里的操作</h3>
+      <ul class="sheet-list">
+        <li><b>拖放</b>：文件夹或图片拖到中间那块 → 设为「源」；文件夹拖到「保存」行右边那格 → 设为输出目录</li>
+        <li><b>选择</b>：单击选中 · <kbd>Ctrl</kbd>+单击加选/取消 · <kbd>Shift</kbd>+单击连选一段 · 空白处按住拖 = 框选</li>
+        <li><b>双击</b>缩略图 = 用系统默认程序打开它</li>
+        <li><b>快捷键</b>：<kbd>Ctrl</kbd>+<kbd>A</kbd> 全选 · <kbd>Esc</kbd> 清除选择 · <kbd>Delete</kbd> 从文件清单去掉 · <kbd>Ctrl</kbd>+<kbd>R</kbd> 刷新 · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 开始处理</li>
+        <li><b>不选 = 全部处理</b>；选了就只处理选中的那几个</li>
+      </ul>
+      <div class="sheet-foot">
+        <button class="btn ghost" id="btnHelpCopy"><span data-icon="file"></span>复制用法</button>
+        <button class="btn primary" id="btnHelpClose">知道了</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script type="module" src="./src/app.js"></script>
