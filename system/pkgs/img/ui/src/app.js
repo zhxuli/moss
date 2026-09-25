@@ -79,7 +79,9 @@ function humanSize(n) {
 
 function toast(message, bad) {
   if (!message) return;
-  const node = el('div', 'toast' + (bad ? ' bad' : ''), message);
+  const node = el('div', 'toast' + (bad ? ' bad' : ''));
+  node.innerHTML = svg(bad ? 'xCircle' : 'checkCircle');
+  node.appendChild(el('span', null, message));
   $('toasts').appendChild(node);
   setTimeout(() => {
     node.style.transition = 'opacity .2s';
@@ -103,9 +105,11 @@ function renderMode() {
   const box = $('segMode');
   box.textContent = '';
   for (const m of ['folder', 'files']) {
-    const b = el('button', null, MODE_LABELS[m]);
+    const b = el('button');
     b.type = 'button';
     b.title = MODE_TITLES[m];
+    b.innerHTML = svg(m === 'folder' ? 'folder' : 'file')
+                + '<span>' + MODE_LABELS[m] + '</span>';
     b.setAttribute('aria-selected', String(state.mode === m));
     b.onclick = () => {
       if (state.mode === m) return;
@@ -473,7 +477,9 @@ function renderSource() {
   const total = state.items.length;
   const n = state.selected.size;
   const effective = n || total;
-  $('btnStart').textContent = state.running ? '正在处理…' : (effective ? `开始处理 (${effective})` : '开始处理');
+  /* 只改文字那一截 —— 直接写 btnStart.textContent 会把左边的图标抹掉 */
+  $('startLabel').textContent = state.running ? '正在处理…'
+                              : (effective ? `开始处理 (${effective})` : '开始处理');
   $('btnClearFiles').hidden = state.mode !== 'files' || !total;
 
   const note = $('srcNote');
@@ -547,17 +553,13 @@ function renderConditional() {
 function renderWarn() {
   const bar = $('warnBar');
   const mode = state.cfg.save_mode;
-  if (mode === 'source_delete') {
-    bar.hidden = false;
-    bar.className = 'warnbar';
-    bar.textContent = '⚠ 转换成功后源文件会被删除，无法撤销。';
-  } else if (mode === 'source') {
-    bar.hidden = false;
-    bar.className = 'warnbar soft';
-    bar.textContent = '⚠ 直接写回源文件夹，同名文件会被覆盖。';
-  } else {
-    bar.hidden = true;
-  }
+  if (mode === 'separate') { bar.hidden = true; return; }
+  bar.hidden = false;
+  bar.className = mode === 'source_delete' ? 'warnbar' : 'warnbar soft';
+  bar.innerHTML = svg('alert')
+                + '<span>' + (mode === 'source_delete'
+                    ? '转换成功后源文件会被删除，无法撤销。'
+                    : '直接写回源文件夹，同名文件会被覆盖。') + '</span>';
 }
 
 /* ------------------------------------------------------------------ 选择 */

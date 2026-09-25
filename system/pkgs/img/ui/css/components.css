@@ -237,6 +237,14 @@ input[type=range]:active::-webkit-slider-thumb { transform: scale(1.06); }
    图标：统一尺寸与描边，颜色跟随 currentColor
    ========================================================================== */
 .btn.icon svg { width: 15px; height: 15px; display: block; }
+/* 按钮里的图标：固定尺寸 + 不参与压缩，文字长短变化时图标不会跟着变形 */
+.btn > svg { width: 14px; height: 14px; display: block; flex: none; }
+.btn.ghost > svg { opacity: .8; }
+.seg button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.seg button > svg { width: 14px; height: 14px; display: block; flex: none; opacity: .85; }
+.seg button[aria-selected="true"] > svg { opacity: 1; }
+.warnbar > svg { width: 15px; height: 15px; display: block; flex: none; }
+.toast > svg { width: 15px; height: 15px; display: block; flex: none; }
 .combo-btn svg { width: 13px; height: 13px; display: block; }
 .log-toggle .tri svg { width: 12px; height: 12px; display: block; }
 .tile .check-badge svg { width: 11px; height: 11px; display: block; }

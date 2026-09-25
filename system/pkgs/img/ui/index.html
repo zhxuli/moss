@@ -35,9 +35,9 @@
                       data-icon="chevronDown"></button>
               <div class="combo-menu" id="histMenu" hidden></div>
             </div>
-            <button class="btn" id="btnPick">选择…</button>
-            <button class="btn" id="btnAddFiles" hidden>加文件…</button>
-            <button class="btn ghost" id="btnClearFiles" hidden>清空</button>
+            <button class="btn" id="btnPick"><span data-icon="folder"></span>选择…</button>
+            <button class="btn" id="btnAddFiles" hidden><span data-icon="filePlus"></span>加文件…</button>
+            <button class="btn ghost" id="btnClearFiles" hidden><span data-icon="trash"></span>清空</button>
           </div>
 
           <!-- 第二行：文件夹 / 文件清单 这个模式开关，然后是类型快捷选择 -->
@@ -47,8 +47,8 @@
             <span class="types" id="types"></span>
             <span class="spacer"></span>
             <span class="count" id="selCount"></span>
-            <button class="btn ghost" id="btnSelAll">全选</button>
-            <button class="btn ghost" id="btnSelNone">清除</button>
+            <button class="btn ghost" id="btnSelAll"><span data-icon="checkSquare"></span>全选</button>
+            <button class="btn ghost" id="btnSelNone"><span data-icon="xSquare"></span>清除</button>
           </div>
 
           <!-- 缩略图网格（≤100 张）或紧凑列表（>100 张）。高度自适应 -->
@@ -112,9 +112,9 @@
           <span class="status" id="status">待命</span>
           <span class="hint" id="logHint"></span>
           <span class="spacer"></span>
-          <button class="btn ghost" id="btnReveal">打开输出目录</button>
-          <button class="btn ghost" id="btnReset">重置</button>
-          <button class="btn primary" id="btnStart">开始处理</button>
+          <button class="btn ghost" id="btnReveal"><span data-icon="folder"></span>打开输出目录</button>
+          <button class="btn ghost" id="btnReset"><span data-icon="undo"></span>重置</button>
+          <button class="btn primary" id="btnStart"><span data-icon="play"></span><span id="startLabel">开始处理</span></button>
         </div>
 
       </div>
