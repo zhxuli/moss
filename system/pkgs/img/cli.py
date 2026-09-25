@@ -36,22 +36,23 @@ USAGE = """图片工具 · 命令行
   文件   *.png  logo*.jpg  D:\\图\\*.jpg  **/*.webp
          不写 = 当前目录下全部图片
   目录   D:\\图              （给了目录，通配符就相对它解析）
-  选项   /                  输出到源目录（原地覆盖，会问一次）
-         -o <目录>          指定输出目录
+  选项   /                  写回源目录（覆盖原图，会问一次）
+         -o <目录>          输出到指定目录（原图不动）
+         **两个都不写 → 弹出菜单让你自己选；菜单里直接回车 = 取消**
          -s 16,32,256       ico 尺寸（默认 16/24/32/48/64/128/256 全要）
          -y                 覆盖时不再询问
          -h                 本帮助
 
 参数顺序随便，只填你会用到的那几个就行。例子
-  moss :img ico                  当前所有图 → 多分辨率 ico（只要这两个词）
+  moss :img ico                  当前所有图 → 多分辨率 ico（然后菜单里选输出到哪）
+  moss :img ico -o D:\\out        同上，输出到 D:\\out
+  moss :img ico /                同上，原地覆盖
   moss :img png                  当前所有图 → png 80%
   moss :img 1200                 当前所有图等比缩到 1200 宽，格式不动
   moss :img 60%                  当前所有图按 60% 质量重压，格式不动
   moss :img webp 60 1200         质量 60、宽 1200
   moss :img png *.jpg            只挑当前目录的 jpg
-  moss :img ico -s 16,32 *.png   只要 16 和 32 两档的 ico
-  moss :img webp -o D:\\out       换输出目录
-  moss :img jpg 90% / -y         原地覆盖，不问"""
+  moss :img ico -s 16,32 *.png   只要 16 和 32 两档的 ico"""
 
 _RE_QUALITY_PCT = re.compile(r'^(\d{1,3})%$')
 _RE_WIDTH_PX = re.compile(r'^(\d{1,5})px$')
@@ -193,6 +194,118 @@ def _confirm_overwrite(files, output_dir, output_format, assume_yes):
     return True
 
 
+_OUT_MODES = [
+    ('source',        '覆盖原图', '直接写回源目录，同名文件会被覆盖'),
+    ('source_delete', '删除原图', '转换成功后删除源文件，无法撤销'),
+    ('separate',      '新文件夹', '输出到 compressed_output\\，原图不动'),
+]
+
+
+def _enable_vt():
+    """让 Windows 控制台认得 ANSI 转义（重画菜单要用）。失败返回 False。"""
+    if os.name != 'nt':
+        return True
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        h = k.GetStdHandle(-11)          # STD_OUTPUT_HANDLE
+        mode = ctypes.c_ulong()
+        if not k.GetConsoleMode(h, ctypes.byref(mode)):
+            return False
+        return bool(k.SetConsoleMode(h, mode.value | 0x0004))   # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    except Exception:
+        return False
+
+
+def _choose_output_mode():
+    """让用户上下选输出模式。返回 'source'/'source_delete'/'separate'；取消返回 None。
+
+    ★ **不预选**：光标一开始不在任何一项上，必须先按 ↑↓ 再回车；
+      直接回车 = 取消整个操作。这样"随手一个回车就把原图覆盖/删掉"不会发生。
+      （用户定的规则。）
+
+    自己用 msvcrt 画，不引 questionary —— 少一个依赖就少一个装不上的理由。
+    控制台不支持 ANSI 时退化成"输入序号"。
+    """
+    print('输出到哪？（没有默认值，请自己选）')
+
+    if os.name == 'nt' and _enable_vt():
+        import msvcrt
+
+        cur = -1                     # -1 = 一项都没选
+
+        def draw(first=False):
+            if not first:
+                sys.stdout.write('\x1b[%dA' % (len(_OUT_MODES) + 1))
+            for i, (_, name, tip) in enumerate(_OUT_MODES):
+                mark = '>' if i == cur else ' '
+                sys.stdout.write('\x1b[2K   %s %-9s %s\n' % (mark, name, tip))
+            sys.stdout.write('\x1b[2K   ↑↓ 选择 · 回车确认 · Esc 取消\n')
+            sys.stdout.flush()
+
+        draw(first=True)
+        while True:
+            ch = msvcrt.getch()
+            if ch in (b'\x00', b'\xe0'):          # 方向键的前导字节
+                k = msvcrt.getch()
+                if k == b'H':                      # ↑
+                    cur = len(_OUT_MODES) - 1 if cur <= 0 else cur - 1
+                elif k == b'P':                    # ↓
+                    cur = 0 if cur >= len(_OUT_MODES) - 1 else cur + 1
+                draw()
+            elif ch == b'\x03':
+                raise KeyboardInterrupt
+            elif ch == b'\x1b':                    # Esc
+                sys.stdout.write('\n')
+                return None
+            elif ch in (b'\r', b'\n'):
+                sys.stdout.write('\n')
+                return _OUT_MODES[cur][0] if cur >= 0 else None
+
+    # 退化：纯文本序号。**同样不预选**，回车即取消。
+    for i, (_, name, tip) in enumerate(_OUT_MODES, 1):
+        print('   %d) %s —— %s' % (i, name, tip))
+    try:
+        answer = input('   请输入序号（直接回车 = 取消）: ').strip()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        return None
+    if not answer:
+        return None
+    try:
+        n = int(answer)
+    except ValueError:
+        return None
+    return _OUT_MODES[n - 1][0] if 1 <= n <= len(_OUT_MODES) else None
+
+
+def _resolve_output(opts, source_dir, cwd):
+    """定输出：显式给了就用；没给就**让用户自己选**，不替他猜。
+
+    返回 (output_dir, save_mode, error)。取消时 error 是特殊值。
+    """
+    if opts['output_dir']:
+        od = opts['output_dir']
+        return (od if os.path.isabs(od) else os.path.abspath(os.path.join(cwd, od))), 'separate', None
+
+    if opts['in_place']:
+        return source_dir, 'source', None
+
+    # 两个都没写 —— 不设默认值，问。
+    if not sys.stdin.isatty():
+        return None, None, (
+            '没有终端可以交互，必须明确指定输出位置：\n'
+            '        moss :img ... /              写回源目录（覆盖原图）\n'
+            '        moss :img ... -o <目录>      输出到指定目录（原图不动）')
+
+    mode = _choose_output_mode()
+    if mode is None:
+        return None, None, 'CANCELLED'
+    if mode in ('source', 'source_delete'):
+        return source_dir, mode, None
+    return os.path.join(source_dir, 'compressed_output'), 'separate', None
+
+
 def run(tokens, cwd=None):
     """命令行模式的入口。返回退出码。"""
     cwd = cwd or os.getcwd()
@@ -231,18 +344,22 @@ def run(tokens, cwd=None):
     fmt = opts['format'] or ''
     width = None if fmt == 'ico' else opts['width']
     in_place = opts['in_place']
-    if opts['output_dir']:
-        od = opts['output_dir']
-        output_dir = od if os.path.isabs(od) else os.path.abspath(os.path.join(cwd, od))
-    elif in_place:
-        output_dir = source_dir
-    else:
-        output_dir = os.path.join(source_dir, 'compressed_output')
-    save_mode = 'source' if in_place else 'separate'
+
+    output_dir, save_mode, err = _resolve_output(opts, source_dir, cwd)
+    if err == 'CANCELLED':
+        print('已取消，什么都没做。')
+        return 130
+    if err:
+        print('[错误] %s' % err)
+        return 2
+    # 从菜单里选出来的（没写 / 也没写 -o）算**已经明确同意**，
+    # 不再多问一遍"确定要覆盖吗" —— 菜单里那一行就是后果说明。
+    chosen_from_menu = not opts['output_dir'] and not in_place
 
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
+    mode_name = dict((k, n) for k, n, _ in _OUT_MODES).get(save_mode, save_mode)
     print('---')
     print('任务确认:')
     print('  - 目标格式: %s' % (fmt or '保持原格式（各存各的）'))
@@ -252,10 +369,11 @@ def run(tokens, cwd=None):
         print('  - ICO 尺寸: %s' % ', '.join(
             str(s) for s in core.checked_ico_sizes(opts['ico_sizes'])))
     print('  - 待处理文件: %d 个（当前目录下所有支持的图片格式）' % len(files))
+    print('  - 输出模式: %s' % mode_name)
     print('  - 输出位置: %s' % output_dir)
     print('---')
 
-    if save_mode == 'source' and not _confirm_overwrite(
+    if save_mode == 'source' and not chosen_from_menu and not _confirm_overwrite(
             files, output_dir, fmt, opts['assume_yes']):
         return 130
 
