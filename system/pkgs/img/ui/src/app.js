@@ -529,13 +529,20 @@ function renderConditional() {
     ? '只认正整数像素值（0 和字母会被忽略，等于保持原尺寸）'
     : '只缩不放：原图比它窄就保持原样；留空 = 保持原始尺寸';
 
-  /* 保存模式那一行右边直接写清"会输出到哪" */
+  /* 保存模式那一行：separate 才显示「输出目录」，另外两种按源目录走 */
+  const separate = state.cfg.save_mode === 'separate';
+  $('outDirWrap').hidden = !separate;
+  if (separate) $('outDir').value = state.cfg.output_dir || '';
+
   const saveNote = $('saveNote');
   const byFiles = state.mode === 'files';
-  if (state.cfg.save_mode === 'separate') {
+  const custom = (state.cfg.output_dir || '').trim();
+  /* separate 模式下，输出目标就写在那个输入框里（空着＝占位符写着默认路径），
+     再单占一行文字说明是多余的 —— 省掉这行。另两种模式没有输入框，才需要这行。 */
+  $('saveNoteRow').hidden = separate;
+  if (separate) {
     saveNote.className = 'hint';
-    saveNote.textContent = byFiles ? '→ 第一个文件所在目录\\compressed_output\\'
-                                   : '→ 源目录\\compressed_output\\';
+    saveNote.textContent = '';
   } else if (state.cfg.save_mode === 'source') {
     saveNote.className = 'hint';
     saveNote.textContent = byFiles ? '→ 每个文件各自所在的目录（同名覆盖）'
@@ -919,6 +926,7 @@ async function start() {
     save_mode: state.cfg.save_mode,
     ico_sizes: state.cfg.ico_sizes,
     source_filter: exts,
+    output_dir: state.cfg.save_mode === 'separate' ? (state.cfg.output_dir || '') : '',
   };
   const res = await state.api.start(payload);
   if (!res || !res.ok) { toast((res && res.message) || '启动失败。', true); return; }
@@ -932,21 +940,60 @@ async function start() {
 }
 
 /* ------------------------------------------------------------------ 拖放 */
+/* ★ 现在有**两个**拖放目标，靠"松手时鼠标压在哪个元素上"来分：
+     · 压在「输出」那一格上 → 设为输出目录（大遮罩隐藏，只高亮那一格）
+     · 压在其它任何地方   → 还是给「源」
+   位置在 dragover 时记下来，drop 到达时直接用 —— 后端只把路径递过来，
+   不带坐标，所以这个判断必须在前端做。 */
+let dropZone = 'source';
+
+function setDropZone(zone) {
+  if (dropZone === zone) return;
+  dropZone = zone;
+  const wrap = $('outDirWrap');
+  if (zone === 'output') {
+    hideVeil();
+    wrap.classList.add('over');
+    $('outDirLabel').textContent = '松开设为';
+  } else {
+    wrap.classList.remove('over');
+    $('outDirLabel').textContent = '输出';
+  }
+}
+
 function onDropEvent() {
+  $('outDirWrap').classList.remove('over');
   hideVeil();
+  const zone = dropZone;
+  dropZone = 'source';
   let tries = 0;
   const tick = async () => {
     tries += 1;
     const got = await state.api.take_drop();
-    if (got && got.pending) { applyDrop(got); return; }
+    if (got && got.pending) { applyDrop(got, zone); return; }
     if (tries < 25) state.dropTimer = setTimeout(tick, 120);
     else toast('没拿到拖进来的内容（拖放可能没接上）。', true);
   };
   tick();
 }
 
-function applyDrop(got) {
+async function applyDrop(got, zone) {
   if (got.history) { state.history = got.history; renderHistory(); }
+
+  if (zone === 'output') {
+    const first = (got.files && got.files[0] && got.files[0].path)
+      || (got.folder || '');
+    if (!first) { toast('没拿到拖进来的路径。', true); return; }
+    const info = await state.api.check_path(first);
+    const dir = (info && info.isdir) ? first : ((info && info.parent) || '');
+    if (!dir) { toast('拖进来的东西不是一个文件夹。', true); return; }
+    state.cfg.output_dir = dir;
+    $('outDir').value = dir;
+    renderConditional();
+    toast('输出目录已设为：' + dir);
+    return;
+  }
+
   if (got.mode === 'folder') {
     state.mode = 'folder';
     renderMode();
@@ -975,9 +1022,20 @@ function hideVeil() { $('dropVeil').hidden = true; }
 
 function bindDrop() {
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
-  window.addEventListener('dragover', (e) => { stop(e); showVeil(); });
-  window.addEventListener('dragenter', (e) => { stop(e); showVeil(); });
-  window.addEventListener('dragleave', (e) => { stop(e); if (e.relatedTarget === null) hideVeil(); });
+  /* dragover 必须 preventDefault，否则浏览器根本不派发 drop。
+     顺便在这里判定落点 —— 输出那一格优先。 */
+  window.addEventListener('dragover', (e) => {
+    stop(e);
+    const wrap = $('outDirWrap');
+    const overOutput = !wrap.hidden && wrap.contains(e.target);
+    setDropZone(overOutput ? 'output' : 'source');
+    if (!overOutput) showVeil();
+  });
+  window.addEventListener('dragenter', (e) => { stop(e); });
+  window.addEventListener('dragleave', (e) => {
+    stop(e);
+    if (e.relatedTarget === null) { hideVeil(); $('outDirWrap').classList.remove('over'); }
+  });
   window.addEventListener('drop', (e) => { stop(e); onDropEvent(); });
 }
 
@@ -1012,6 +1070,18 @@ function bind() {
     state.cfg.width = $('width').value;
     renderConditional();
   };
+  $('outDir').oninput = () => {
+    state.cfg.output_dir = $('outDir').value.trim();
+    renderConditional();
+  };
+  $('btnOutDir').onclick = async () => {
+    const picked = await state.api.pick_dir(state.cfg.output_dir || state.dir);
+    if (!picked || !picked.ok) { toast((picked && picked.message) || '打开选择框失败。', true); return; }
+    if (!picked.path) return;
+    state.cfg.output_dir = picked.path;
+    $('outDir').value = picked.path;
+    renderConditional();
+  };
 
   let scanTimer = null;
   $('src').oninput = () => {
@@ -1040,6 +1110,8 @@ function bind() {
     $('quality').value = state.cfg.quality;
     $('qualityNum').textContent = state.cfg.quality + '%';
     $('width').value = '';
+    state.cfg.output_dir = '';
+    $('outDir').value = '';
     renderFormat(); renderSaveMode(); renderConditional();
     toast('已重置为默认设置。');
   };
@@ -1104,6 +1176,7 @@ async function boot() {
   $('quality').value = state.cfg.quality;
   $('qualityNum').textContent = state.cfg.quality + '%';
   $('width').value = state.cfg.width || '';
+  $('outDir').value = state.cfg.output_dir || '';
   $('src').value = state.dir;
   renderHistory();
   applyScan(r.scan);

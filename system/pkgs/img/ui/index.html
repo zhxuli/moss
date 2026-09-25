@@ -94,6 +94,17 @@
           <div class="setrow">
             <span class="settings-label">保存</span>
             <div class="seg save-seg" id="segSave"></div>
+            <!-- 只在「保存到单独文件夹」时出现：另外两种模式按源目录走，跟它无关。
+                 它自己是**第二个拖放目标** —— 拖一个文件夹到这一格上就是"设为输出目录"，
+                 拖到别处仍然是给「源」。 -->
+            <span class="outdir" id="outDirWrap" hidden>
+              <span class="outdir-label" id="outDirLabel">输出</span>
+              <input type="text" id="outDir" class="mono" spellcheck="false" autocomplete="off"
+                     placeholder="默认：源目录\compressed_output">
+              <button class="btn ghost" id="btnOutDir"><span data-icon="folder"></span>选择…</button>
+            </span>
+          </div>
+          <div class="setrow" id="saveNoteRow">
             <span class="hint" id="saveNote"></span>
           </div>
         </div>

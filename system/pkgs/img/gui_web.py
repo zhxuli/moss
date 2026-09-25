@@ -154,6 +154,17 @@ class Api:
             self._remember(files[0]['dir'])
         return {'ok': True, 'files': files}
 
+    def check_path(self, path):
+        """问一下某个路径是文件还是目录 —— 拖放落点要靠它判断怎么处理。
+
+        拖进来的可能是文件夹（直接当输出目录 / 当源目录），
+        也可能是文件（那就取它所在的目录）。
+        """
+        p = str(path or '')
+        return {'ok': True, 'path': p,
+                'isdir': os.path.isdir(p), 'isfile': os.path.isfile(p),
+                'parent': os.path.dirname(p)}
+
     def scan_files(self, paths):
         """重新核一遍文件清单（「刷新」用）：还在不在、多大。"""
         return {'ok': True, 'files': core.describe_files(paths or [])}
@@ -312,6 +323,13 @@ class Api:
             'save_mode': cfg.get('save_mode') or 'separate',
             'ico_sizes': core.checked_ico_sizes(cfg.get('ico_sizes')),
         }
+        # 自定义输出目录：只在「保存到单独文件夹」下有意义
+        # （另外两种模式是写回源目录 / 各文件自己的目录，跟它没关系）
+        custom_out = str(state.get('output_dir') or '').strip()
+        if common['save_mode'] != 'separate' or not custom_out:
+            custom_out = ''
+        elif not os.path.isdir(custom_out):
+            return {'ok': False, 'message': '输出目录不存在：%s' % custom_out}
 
         if mode == 'files':
             files = [f.get('path') for f in (state.get('files') or []) if isinstance(f, dict)]
@@ -323,17 +341,17 @@ class Api:
                 return {'ok': False, 'message': '有 %d 个文件已经不在了，先点「刷新」清掉。'
                                                  % len(missing)}
             params = dict(common, source_dir='', source_filter=[], files=files,
-                          output_dir=core.default_output_dir(files, common['save_mode']))
+                          output_dir=custom_out or core.default_output_dir(files, common['save_mode']))
             out_dir = params['output_dir']
         else:
             source_dir = str(state.get('source_dir') or '')
             filters = [e for e, on in (cfg.get('source_filter') or {}).items() if on]
             params = dict(common, source_dir=source_dir, source_filter=filters, files=[],
-                          output_dir=None)
+                          output_dir=custom_out or None)
             bad = core.validate(params)
             if bad:
                 return {'ok': False, 'message': bad}
-            out_dir = _expected_output_dir(params)
+            out_dir = custom_out or _expected_output_dir(params)
             self._remember(source_dir)
 
         cfg['history'] = self._history

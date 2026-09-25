@@ -51,6 +51,7 @@ DEFAULT_CONFIG = {
     'ico_sizes': list(ICO_SIZES_DEFAULT),
     'source_filter': {},
     'history': [],
+    'output_dir': '',        # 自定义输出目录；空 = 用默认（源目录\compressed_output）
 }
 
 
@@ -97,6 +98,7 @@ def normalize_config(cfg):
     hist = cfg.get('history')
     if isinstance(hist, list):
         out['history'] = [str(p) for p in hist if p][:HISTORY_LIMIT]
+    out['output_dir'] = str(cfg.get('output_dir') or '').strip()
     return out
 
 
@@ -291,15 +293,23 @@ def list_images(source_dir, source_filter=None):
 
 
 def run_tasks(source_dir, output_format, quality, width, source_filter, save_mode, ico_sizes,
-              log=_noop, cancel=None):
-    """界面「文件夹模式」的入口：扫一个目录，按扩展名过滤，然后交给 run_files。"""
-    output_dir = source_dir if save_mode in ["source", "source_delete"] \
-        else os.path.join(source_dir, "compressed_output")
-    if not os.path.isdir(output_dir):
-        os.makedirs(output_dir, exist_ok=True)
+              log=_noop, cancel=None, output_dir=None):
+    """界面「文件夹模式」的入口：扫一个目录，按扩展名过滤，然后交给 run_files。
+
+    `output_dir` 给了就用它（用户在界面上指定的输出目录）；
+    没给就按老规矩：写到源目录，或源目录下的 compressed_output。
+    """
+    if output_dir:
+        target = output_dir
+    elif save_mode in ["source", "source_delete"]:
+        target = source_dir
+    else:
+        target = os.path.join(source_dir, "compressed_output")
+    if not os.path.isdir(target):
+        os.makedirs(target, exist_ok=True)
 
     return run_files(list_images(source_dir, source_filter), output_format, quality, width,
-                     output_dir, save_mode, ico_sizes, log=log, cancel=cancel)
+                     target, save_mode, ico_sizes, log=log, cancel=cancel)
 
 
 # ==============================================================================
@@ -590,13 +600,15 @@ class Job:
                 # 文件清单模式：文件可能来自不同目录
                 files = [str(x) for x in (p.get('files') or [])]
                 per_file = common['save_mode'] in ('source', 'source_delete')
+                out_dir = p.get('output_dir') or default_output_dir(files, common['save_mode'])
                 self.summary = run_files(
-                    files, output_dir=p.get('output_dir') or default_output_dir(files, common['save_mode']),
+                    files, output_dir=out_dir,
                     output_dir_per_file=per_file, **common)
             else:
                 self.summary = run_tasks(
                     source_dir=p.get('source_dir') or '',
                     source_filter=p.get('source_filter') or [],
+                    output_dir=p.get('output_dir') or None,
                     **common)
             if self.cancel_event.is_set():
                 self.returncode = 130
