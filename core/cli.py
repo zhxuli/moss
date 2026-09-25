@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import sys
+import unicodedata
 from pathlib import Path
 
 from . import (config, engine, events, history, out, paths, pkg as pkg_mod,
@@ -236,6 +237,41 @@ def _hist_time(r):
     return ts[11:19] if len(ts) >= 19 else ts
 
 
+# ---------------------------------------------------------------- 显示宽度
+# ★ 排版必须按**显示宽度**算，不能用 len()：中文 / 全角字符在终端里占两列。
+#   而且 `▶ … ✔ ·` 这类符号的宽度是"不确定"的（East Asian Ambiguous，
+#   有的字体按 1 列、有的按 2 列）—— 你屏幕上 `▶` 后面就多出一格。
+#   所以下面只用宽度确定的字符：ASCII 一定 1 列，汉字 / 全角标点一定 2 列。
+def _cw(ch):
+    return 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+
+
+def _w(s):
+    """字符串在控制台上的显示宽度。"""
+    return sum(_cw(ch) for ch in str(s))
+
+
+def _pad(s, w):
+    """补齐 / 截断到恰好 w 列（超了从尾部截）。"""
+    s = str(s)
+    while s and _w(s) > w:
+        s = s[:-1]
+    return s + " " * max(0, w - _w(s))
+
+
+def _tail(s, w):
+    """保留尾部（路径的信息量在末尾），截掉的部分用 `<` 提示。"""
+    s = str(s)
+    if _w(s) <= w:
+        return s
+    out = ""
+    for ch in reversed(s):
+        if _w(out) + _cw(ch) > w - 1:
+            break
+        out = ch + out
+    return "<" + out
+
+
 def _hist_args(r):
     """这条记录**到底跑了什么参数** —— 去重是按它们算的，必须显示出来，
     否则"同包不同参数"的多条记录看起来就像没去重。"""
@@ -249,37 +285,47 @@ def _hist_args(r):
     return " ".join(str(x) for x in (r.get("args") or []))
 
 
-def _hist_dur(r):
-    ms = r.get("ms")
-    return "%.2fs" % (ms / 1000.0) if isinstance(ms, (int, float)) else "-"
+def _hist_name(r):
+    if r.get("id"):
+        return str(r["id"])
+    # 路径调用：只显示文件名 —— 目录已经在右边那一列了，塞整条路径只会被截成
+    # "C:\\Users\\Adminis" 这种没用的半截
+    t = str(r.get("target") or "?").replace("/", "\\")
+    return t.rsplit("\\", 1)[-1] or t
 
 
-def _hist_mark(r):
-    ex = r.get("exit")
-    if ex == 0:
-        return "✔"
-    return "✗?" if ex is None else "✗%s" % (ex,)
+def _hist_failed(r):
+    return r.get("exit") not in (0, None)
 
 
-def _hist_row(i, r, width):
-    """一条记录排成一行，**必须 ≤ width**（折行会让原地重画错位）。"""
-    tag = "[包]" if r.get("kind") == "pkg" else "[路径]"
-    what = str(r.get("id") or r.get("target") or "?")
-    if len(what) > 14:
-        what = what[-14:]
-    head = "%4d) %s %s %-14s" % (i, _hist_time(r), tag, what)
-    tail = " %6s %s" % (_hist_dur(r), _hist_mark(r))
-    args = _hist_args(r)[:20].ljust(20)
-    cwd = str(r.get("cwd") or "-")
-    # 目录是弹性列：够宽就多给，挤不下就整个舍掉（参数比目录重要）
-    room = width - len(head) - len(tail) - len(args) - 2
-    if room >= 8:
-        if len(cwd) > room:
-            cwd = "…" + cwd[-(room - 1):]
-        line = head + " " + args + " " + cwd.ljust(room) + tail
+# 列宽（显示列）：序号 3 / 时间 8 / 名称 16 / 参数 20
+_HIST_FIXED = 1 + 1 + 3 + 2 + 8 + 2 + 16 + 1 + 20 + 1
+
+
+def _hist_head(width, with_args=True):
+    """表头。跟数据行同一套列宽，才叫"规整"。"""
+    head = " " * 2 + _pad("#", 3) + "  " + _pad("时间", 8) + "  " + _pad("名称", 16)
+    if with_args:
+        head += " " + _pad("参数", 20)
+        room = width - 1 - _w(head) - 1
     else:
-        line = head + " " + args.rstrip() + tail
-    return line if len(line) <= width else line[:width]
+        room = width - 1 - _w(head) - 1
+    return head + " " + _pad("目录", max(4, room))
+
+
+def _hist_row(i, r, width, marker=" "):
+    """一条记录排成一行，**显示宽度必须 ≤ width**（折行会让原地重画错位）。"""
+    with_args = width - _HIST_FIXED >= 10
+    line = "%s %3d  %s  %s" % (marker, i, _pad(_hist_time(r), 8),
+                               _pad(_hist_name(r), 16))
+    if with_args:
+        line += " " + _pad(_hist_args(r), 20)
+    room = width - 1 - _w(line) - (2 if _hist_failed(r) else 0)
+    if room >= 6:
+        line += " " + _pad(_tail(r.get("cwd") or "-", room), room)
+    if _hist_failed(r):
+        line += " !"
+    return line if _w(line) <= width else _pad(line, width)
 
 
 def _scroll_top(idx, total, vh):
@@ -289,8 +335,9 @@ def _scroll_top(idx, total, vh):
 
 
 def _print_history(rows):
-    out.print_cyan("最近 %d 条启动记录（已去重，同一件事只留最新一条）" % len(rows))
     width, _ = _term_size()
+    out.print_cyan("最近 %d 条启动记录（已去重，同一件事只留最新一条）" % len(rows))
+    print(_hist_head(width, width - _HIST_FIXED >= 10))
     for i, r in enumerate(rows, 1):
         print(_hist_row(i, r, width))
     print("\n用 `moss --rerun <序号>` 可以重跑（不用先 cd 回去）。")
@@ -313,19 +360,20 @@ def _history_browser(rows, table):
     def paint(redraw):
         nonlocal block_y
         width, height = _term_size()
-        vh = max(5, min(height - 3, 25))
+        inner = width - 2                       # 两侧各留一列余量
+        with_args = inner - _HIST_FIXED >= 10
+        vh = max(3, min(height - 5, len(rows)))
         top = _scroll_top(idx, len(rows), vh)
-        lines = ["  最近启动（去重后 %d 条）   当前 %d/%d"
-                 % (len(rows), idx + 1, len(rows))]
+        lines = ["  最近启动（已去重 %d 条）" % len(rows),
+                 _hist_head(inner, with_args)]
         for k in range(vh):
             j = top + k
             if j < len(rows):
-                lines.append("%s%s" % ("\u25b6" if j == idx else " ",
-                                       _hist_row(j + 1, rows[j], width - 2)))
+                lines.append(_hist_row(j + 1, rows[j], inner,
+                                       ">" if j == idx else " "))
             else:
                 lines.append("")
-        lines.append("  ↑↓ 选择   PgUp/PgDn 翻页   Home/End 首尾   "
-                     "回车 一键重跑   Esc 退出")
+        lines.append("  方向键 选择    回车 重跑    Esc 退出")
         if redraw:
             out.gotoxy(0, block_y)
         else:
@@ -351,7 +399,7 @@ def _history_browser(rows, table):
             except Exception:
                 return 1
             _, height = _term_size()
-            vh = max(5, min(height - 3, 25))
+            vh = max(3, min(height - 5, len(rows)))
             if ch2 in ("H", "A"):
                 idx = max(0, idx - 1)
             elif ch2 in ("P", "B"):

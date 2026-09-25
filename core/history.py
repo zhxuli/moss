@@ -12,8 +12,8 @@ from datetime import datetime
 
 from . import paths
 
-# 列表里最多留多少条（**去重之后**的条数）；为了凑够这些，最多往回读多少原始记录。
-MAX_SHOW = 225
+# 列表里最多显示多少条（**去重之后**的条数）；为了凑够这些，最多往回读多少原始记录。
+MAX_SHOW = 20
 READ_RAW = 5000
 
 
