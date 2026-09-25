@@ -193,23 +193,17 @@ html[data-theme="dark"] .seg button[aria-selected="true"] { background: var(--su
 .width-wrap .lead { font-size: var(--t-sub); color: var(--text-3); }
 
 /* ============================================================================
-   输出目录：**第二个拖放目标**。
-   拖放怎么分清给谁：松手那一刻鼠标压在哪个元素上就归谁 —— 压在这一格上是"设为输出
-   目录"，压在别处仍然是给「源」。所以这里要有非常明确的悬停反馈，
-   否则用户分不清到底会落到哪边。
+   保存行右侧的**共用槽位**：选「新文件夹」时是输出目录，选危险模式时是警告。
+   两者互斥且高度一致 —— 切换保存模式时整块高度不跳。
    ========================================================================== */
 .outdir {
   display: flex; align-items: center; gap: 6px;
   flex: 1 1 auto; min-width: 0;
-  padding: 2px 2px 2px 8px; border-radius: var(--r-sm);
+  padding: 2px; border-radius: var(--r-sm);
   border: 1.5px dashed transparent;
   transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
 .outdir[hidden] { display: none; }
-.outdir-label {
-  flex: none; font: 600 var(--t-sub)/1 var(--font-ui); letter-spacing: var(--t-sub-ls);
-  color: var(--text-3); white-space: nowrap;
-}
 .outdir input[type=text] {
   flex: 1 1 auto; min-width: 0; padding: 6px 9px;
   font-family: var(--font-mono); font-size: var(--t-code);
@@ -219,7 +213,17 @@ html[data-theme="dark"] .seg button[aria-selected="true"] { background: var(--su
   border-color: var(--accent); border-style: solid;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-.outdir.over .outdir-label { color: var(--accent); }
+
+.warn-inline {
+  display: flex; align-items: center; gap: 6px;
+  flex: 1 1 auto; min-width: 0;
+  font-size: var(--t-sub); font-weight: 500; color: var(--danger);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.warn-inline > svg { width: 15px; height: 15px; display: block; flex: none; }
+.warn-inline.soft { color: #b45309; }
+html[data-theme="dark"] .warn-inline.soft { color: #fbbf24; }
+.warn-inline[hidden] { display: none; }
 
 /* 下拉：最近使用过的文件夹 */select {
   background-color: var(--field); border: 1px solid transparent; border-radius: var(--r-sm);

@@ -12,11 +12,22 @@
    缩略图：≤ thumbLimit(100) 张画网格，超了画紧凑列表。
    （几千张图生成缩略图要几十秒、几十 MB 内存，而"挑几张来转"本来也不需要看几千张） */
 
+/* 保存模式：短标签 + 完整说明放 tooltip。
+   原来写「保存到源文件夹 (覆盖)」「转换并删除源文件」，三个标签占掉一整行 470px，
+   又长又啰嗦；现在三个词就够了。
+   顺序也是刻意的：**把「新文件夹」放最后**，因为它选中时右边会冒出「输出目录 + 选择」，
+   挨着放才顺手（用户要求）。 */
 const SAVE_LABELS = {
-  separate: '保存到单独文件夹',
-  source: '保存到源文件夹 (覆盖)',
-  source_delete: '转换并删除源文件',
+  source: '覆盖原图',
+  source_delete: '删除原图',
+  separate: '新文件夹',
 };
+const SAVE_TITLES = {
+  separate: '另存到一个单独的文件夹，位置可以自选，也可以把文件夹拖到右边那格上',
+  source: '直接写回源文件夹，同名文件会被覆盖',
+  source_delete: '转换成功后删除源文件，无法撤销',
+};
+const SAVE_ORDER = ['source', 'source_delete', 'separate'];
 
 const QUALITY_HINT = {
   jpg: '数值越高越清晰、文件越大',
@@ -152,10 +163,12 @@ function renderFormat() {
 function renderSaveMode() {
   const box = $('segSave');
   box.textContent = '';
-  for (const mode of state.meta.saveModes) {
+  const order = SAVE_ORDER.filter((m) => state.meta.saveModes.includes(m));
+  for (const m of state.meta.saveModes) if (!order.includes(m)) order.push(m);
+  for (const mode of order) {
     const b = el('button', mode === 'source_delete' ? 'warn' : null, SAVE_LABELS[mode] || mode);
     b.type = 'button';
-    b.title = SAVE_LABELS[mode] || mode;
+    b.title = SAVE_TITLES[mode] || SAVE_LABELS[mode] || mode;
     b.setAttribute('aria-selected', String(state.cfg.save_mode === mode));
     b.onclick = () => { state.cfg.save_mode = mode; renderSaveMode(); renderConditional(); };
     box.appendChild(b);
@@ -529,44 +542,27 @@ function renderConditional() {
     ? '只认正整数像素值（0 和字母会被忽略，等于保持原尺寸）'
     : '只缩不放：原图比它窄就保持原样；留空 = 保持原始尺寸';
 
-  /* 保存模式那一行：separate 才显示「输出目录」，另外两种按源目录走 */
+  /* 保存行右侧那个共用槽位：separate → 输出目录，危险模式 → 警告。
+     两者互斥、高度一致，所以切来切去整块不会跳。 */
   const separate = state.cfg.save_mode === 'separate';
   $('outDirWrap').hidden = !separate;
   if (separate) $('outDir').value = state.cfg.output_dir || '';
-
-  const saveNote = $('saveNote');
-  const byFiles = state.mode === 'files';
-  const custom = (state.cfg.output_dir || '').trim();
-  /* separate 模式下，输出目标就写在那个输入框里（空着＝占位符写着默认路径），
-     再单占一行文字说明是多余的 —— 省掉这行。另两种模式没有输入框，才需要这行。 */
-  $('saveNoteRow').hidden = separate;
-  if (separate) {
-    saveNote.className = 'hint';
-    saveNote.textContent = '';
-  } else if (state.cfg.save_mode === 'source') {
-    saveNote.className = 'hint';
-    saveNote.textContent = byFiles ? '→ 每个文件各自所在的目录（同名覆盖）'
-                                   : '→ 源目录（同名覆盖）';
-  } else {
-    saveNote.className = 'hint';
-    saveNote.textContent = byFiles ? '→ 每个文件各自所在的目录，转换后删源文件'
-                                   : '→ 源目录，转换后删源文件';
-  }
-
   renderWarn();
 }
 
-/* 危险模式常驻警告：藏起来的是**设置**，不是**警告** */
+/* 危险模式的警告：占**保存行右侧那个槽位**，不单独起一行。
+   藏起来的是设置，不是警告 —— 所以只要选中了就一定看得见。 */
 function renderWarn() {
-  const bar = $('warnBar');
+  const box = $('warnInline');
   const mode = state.cfg.save_mode;
-  if (mode === 'separate') { bar.hidden = true; return; }
-  bar.hidden = false;
-  bar.className = mode === 'source_delete' ? 'warnbar' : 'warnbar soft';
-  bar.innerHTML = svg('alert')
-                + '<span>' + (mode === 'source_delete'
-                    ? '转换成功后源文件会被删除，无法撤销。'
-                    : '直接写回源文件夹，同名文件会被覆盖。') + '</span>';
+  const byFiles = state.mode === 'files';
+  if (mode === 'separate') { box.hidden = true; box.textContent = ''; return; }
+  const text = mode === 'source_delete'
+    ? (byFiles ? '各文件转换后，源文件会被删除' : '源文件转换后会被删除，无法撤销')
+    : (byFiles ? '写回各自目录，同名文件会被覆盖' : '写回源目录，同名文件会被覆盖');
+  box.hidden = false;
+  box.className = 'warn-inline' + (mode === 'source_delete' ? '' : ' soft');
+  box.innerHTML = svg('alert') + '<span>' + text + '</span>';
 }
 
 /* ------------------------------------------------------------------ 选择 */
@@ -954,10 +950,8 @@ function setDropZone(zone) {
   if (zone === 'output') {
     hideVeil();
     wrap.classList.add('over');
-    $('outDirLabel').textContent = '松开设为';
   } else {
     wrap.classList.remove('over');
-    $('outDirLabel').textContent = '输出';
   }
 }
 
