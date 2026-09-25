@@ -4,6 +4,10 @@
 它由**内建订阅者**写，不依赖钩子（T-05 原则）：
     "审计不能依赖一个可以被禁用、可以被写坏、可以被卸载的东西。"
 
+★ **两次记账**：启动时先记一条（`before:run`，`state="start"`），
+  结束时再记一条（`after:run`，带 `exit`/`ms`），列表里靠去重合成一条。
+  为什么要先记：长驻程序（服务器/界面）在跑着的时候不能"查无此人"。
+
 记录里最关键的两个字段是 **target 和 cwd** ——
 没有 cwd，就实现不了"不用先 cd 就能重启"（V-11）。
 """
@@ -106,14 +110,9 @@ def recent_unique(limit=MAX_SHOW, raw=READ_RAW):
     return dedup(recent(raw))[:limit]
 
 
-def on_after_run(payload):
-    """内建订阅者：`after:run` → 写一条历史。
-
-    ⚠️ 这个函数是**内核行为**，不是钩子。见模块 docstring。
-    """
-    inv = (payload or {}).get("invocation") or {}
-    result = (payload or {}).get("result") or {}
-    return append({
+def _entry_from(inv, result=None, state=None):
+    """把一次 Invocation 变成一条历史记录。"""
+    entry = {
         "via": inv.get("via", "cli"),
         "kind": inv.get("kind"),
         "id": inv.get("id"),
@@ -122,6 +121,34 @@ def on_after_run(payload):
         "runner": inv.get("runner"),
         "args": inv.get("args") or [],
         "params": inv.get("params") or {},
-        "exit": result.get("exit"),
-        "ms": result.get("ms"),
-    })
+    }
+    if result is not None:
+        entry["exit"] = result.get("exit")
+        entry["ms"] = result.get("ms")
+    if state:
+        entry["state"] = state
+    return entry
+
+
+def on_before_run(payload):
+    """内建订阅者：`before:run` → **先记一条**（`state="start"`）。
+
+    ★ 为什么必须"先记"：长驻程序（服务器 / 界面 / 后台服务）在它**跑着的那段时间**里，
+      只靠"结束时记账"就**根本看不到它** —— 实测：启动 uvicorn 之后
+      `moss --history` 里没有它，用户以为记录坏了。
+      跑完再补一条，两条靠去重合成一条（去重保留**后出现**的那条，
+      正好就是带 `exit`/`ms` 的那条）。
+
+    ⚠️ 这个函数也是**内核行为**，不是钩子（`T-05`）。
+    """
+    inv = (payload or {}).get("invocation") or {}
+    return append(_entry_from(inv, state="start"))
+
+
+def on_after_run(payload):
+    """内建订阅者：`after:run` → 收尾那条（带结果与耗时）。
+
+    ⚠️ 这个函数是**内核行为**，不是钩子。见模块 docstring。
+    """
+    inv = (payload or {}).get("invocation") or {}
+    return append(_entry_from(inv, result=(payload or {}).get("result") or {}))

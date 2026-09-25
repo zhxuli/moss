@@ -750,6 +750,8 @@ def main(argv):
     paths.ensure_user_dirs()
 
     # 内建订阅者：历史（不是钩子！见 T-05）
+    # ★ 两次记账：启动时先记一条，跑完再补一条（长驻程序跑着的时候也得看得见）
+    events.BUS.on("before:run", history.on_before_run, name="history-start")
     events.BUS.on("after:run", history.on_after_run, name="history")
 
     table = runners_mod.load()
