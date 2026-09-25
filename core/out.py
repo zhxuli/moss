@@ -63,6 +63,34 @@ def clear_screen():
     os.system('cls')
 
 
+ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+STD_OUTPUT_HANDLE = -11
+
+
+def enable_ansi():
+    """打开 ANSI 光标控制（`\\033[A` 上移、`\\033[K` 清到行尾）。返回是否可用。
+
+    为什么必须有：历史列表要**原地重画**二十来行，靠 `cls` 整屏清会闪得没法用。
+    Python 3.6+ 通常已经替我们开了这个模式，但不能假定 ——
+    被重定向、老 conhost、或者宿主改过控制台模式时就不生效。
+    """
+    if os.name != 'nt':
+        return True
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.GetStdHandle(STD_OUTPUT_HANDLE)
+        mode = ctypes.c_uint32()
+        if not k32.GetConsoleMode(h, ctypes.byref(mode)):
+            return False                      # 输出不是控制台（被重定向了）
+        if mode.value & ENABLE_VIRTUAL_TERMINAL_PROCESSING:
+            return True
+        return bool(k32.SetConsoleMode(
+            h, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING))
+    except Exception:
+        return False
+
+
 def conditional_clear_screen():
     """照抄 pa.py:205-207：受 output.auto_clear_screen 控制。"""
     if config.auto_clear():

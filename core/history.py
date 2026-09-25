@@ -12,7 +12,9 @@ from datetime import datetime
 
 from . import paths
 
-MAX_READ = 200
+# 列表里最多留多少条（**去重之后**的条数）；为了凑够这些，最多往回读多少原始记录。
+MAX_SHOW = 225
+READ_RAW = 5000
 
 
 def _file_for_now():
@@ -58,6 +60,50 @@ def recent(n=20):
             if len(out) >= n:
                 return out
     return out
+
+
+def dedup_key(r):
+    """去重的键：**同一件事只算一条**。
+
+    键 = `kind` + （包 id 或目标路径）+ 参数 + 透传参数。
+
+    ★ **不含 cwd**：路径调用的目标本身就是绝对路径（不同项目天然区分开）；
+      包调用则按"哪个包 + 什么参数"算同一件事 —— 你在 A 目录和 B 目录都跑过
+      `moss :hello`，列表里只该出现一条，重跑时用**最新那条记录里的 cwd** 回去。
+    """
+    return "|".join([
+        str(r.get("kind") or ""),
+        str(r.get("id") or r.get("target") or ""),
+        json.dumps(r.get("params") or {}, sort_keys=True, ensure_ascii=False),
+        json.dumps(r.get("args") or [], ensure_ascii=False),
+    ])
+
+
+def dedup(rows):
+    """同一件事只留**最新**那条（保留后出现的、丢掉先出现的）。
+
+    ★ 内部先按 `ts` 从新到旧排一遍 —— **不依赖调用方给的顺序**。
+      为什么较真：这个规则一旦被反着喂数据就会**悄悄**变成"留旧的"，
+      而列表看起来照样正常，很难发现。多一次排序换掉这个隐患，值。
+    """
+    ordered = sorted(rows, key=lambda r: str(r.get("ts") or ""), reverse=True)
+    seen = set()
+    out = []
+    for r in ordered:
+        k = dedup_key(r)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(r)
+    return out
+
+
+def recent_unique(limit=MAX_SHOW, raw=READ_RAW):
+    """去重后的最近记录（新的在前），最多 limit 条。
+
+    为了凑够 limit 条**去重后**的记录，原始记录要多往回读一些（raw 条）。
+    """
+    return dedup(recent(raw))[:limit]
 
 
 def on_after_run(payload):

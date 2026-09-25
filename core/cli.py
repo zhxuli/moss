@@ -11,6 +11,7 @@
 """
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -38,8 +39,9 @@ USAGE = """moss —— 多语言启动器
   moss pick | select | menu    交互式选择要运行的包
 
   moss --list                  列出已安装的包
-  moss --history [条数]        看最近的启动记录（默认 10 条）
-  moss --rerun <序号>          重跑历史里的第 N 条（不用先 cd 回去）
+  moss --history               最近启动记录：**方向键选择，回车一键重跑**（去重，最多 225 条）
+  moss --history <条数>        只打印不交互（管道 / 脚本用这种）
+  moss --rerun <序号>          重跑列表里的第 N 条（不用先 cd 回去）
   moss --resolve <名字>        只看解析结果，不执行
   moss --selfcheck             自检：安装根 / runner 表 / 包 / 运行时
   moss -h | --help             本帮助
@@ -217,23 +219,160 @@ def cmd_list(table, skip_clear=False):
     return 0
 
 
-def cmd_history(n):
-    rows = history.recent(n)
-    if not rows:
-        out.print_cyan("[信息] 还没有任何启动记录。")
+def _term_size():
+    try:
+        s = shutil.get_terminal_size((100, 30))
+        return max(20, s.columns), max(8, s.lines)
+    except Exception:
+        return 100, 30
+
+
+def _hist_time(r):
+    ts = str(r.get("ts") or "")
+    return ts[11:19] if len(ts) >= 19 else ts
+
+
+def _hist_row(i, r, width):
+    """一条记录排成一行。列宽按控制台实际宽度裁，别让长路径把行冲乱。"""
+    tag = "[包]" if r.get("kind") == "pkg" else "[路径]"
+    what = str(r.get("id") or r.get("target") or "?")
+    if len(what) > 22:
+        what = what[-22:]
+    ms = r.get("ms")
+    tail = "%-7s %s" % ("%.2fs" % (ms / 1000.0) if isinstance(ms, (int, float)) else "-",
+                        "✔" if r.get("exit") == 0 else "✗%s" % (r.get("exit"),))
+    head = "%4d) %s %s %-26s" % (i, _hist_time(r), tag, what)
+    room = max(12, width - len(head) - len(tail) - 4)
+    cwd = str(r.get("cwd") or "-")
+    if len(cwd) > room:
+        cwd = "…" + cwd[-(room - 1):]
+    line = "%s %-*s  %s" % (head, room, cwd, tail)
+    # 窄窗口下宁可把尾巴切掉，也不能让一行折行 —— 折行会让"原地重画"错位
+    return line if len(line) <= width else line[:width]
+
+
+def _scroll_top(idx, total, vh):
+    if total <= vh:
         return 0
-    out.print_cyan("最近 %d 条启动记录：" % len(rows))
+    return max(0, min(idx - vh // 2, total - vh))
+
+
+def _print_history(rows):
+    out.print_cyan("最近 %d 条启动记录（已去重，同一件事只留最新一条）" % len(rows))
+    width, _ = _term_size()
     for i, r in enumerate(rows, 1):
-        what = r.get("id") or r.get("target") or "?"
-        print("  %2d) [%s] %-22s cwd=%s  exit=%s  %sms"
-              % (i, r.get("via", "?"), str(what)[-22:], r.get("cwd") or "-",
-                 r.get("exit"), r.get("ms")))
+        print(_hist_row(i, r, width))
     print("\n用 `moss --rerun <序号>` 可以重跑（不用先 cd 回去）。")
     return 0
 
 
-def cmd_rerun(idx, table):
-    rows = history.recent(50)
+def _history_browser(rows, table):
+    """方向键浏览 + **回车一键重跑**（V-12）。
+
+    用 ANSI 光标控制原地重画；万一这个控制台不支持（被重定向等），
+    退回"整屏清 + 重画"（会闪，但能用）。
+    """
+    import msvcrt
+    ansi = out.enable_ansi()
+    idx = 0
+    drawn = 0
+
+    def paint(redraw):
+        nonlocal drawn, idx
+        width, height = _term_size()
+        vh = max(5, min(height - 5, 22))
+        top = _scroll_top(idx, len(rows), vh)
+        lines = ["  最近启动（去重后 %d 条）   当前 %d/%d"
+                 % (len(rows), idx + 1, len(rows))]
+        for k in range(vh):
+            j = top + k
+            if j < len(rows):
+                lines.append("%s%s" % ("\u25b6" if j == idx else " ",
+                                       _hist_row(j + 1, rows[j], width - 1)))
+            else:
+                lines.append("")
+        lines.append("  ↑↓ 选择   PgUp/PgDn 翻页   Home/End 首尾   "
+                     "回车 一键重跑   Esc 退出")
+        if redraw and ansi and drawn:
+            sys.stdout.write("\033[%dA" % drawn)
+            for ln in lines:
+                sys.stdout.write("\033[K" + ln + "\n")
+        else:
+            if redraw:
+                out.clear_screen()
+            for ln in lines:
+                print(ln)
+        sys.stdout.flush()
+        drawn = len(lines)
+
+    out.clear_screen()
+    paint(False)
+    while True:
+        try:
+            ch = msvcrt.getwch()
+        except KeyboardInterrupt:
+            return 0
+        except Exception:
+            return 1
+        if ch in ("\x1b", "q", "Q"):
+            out.clear_screen()
+            return 0
+        if ch in ("\x00", "\xe0"):
+            try:
+                ch2 = msvcrt.getwch()
+            except Exception:
+                return 1
+            _, height = _term_size()
+            vh = max(5, min(height - 5, 22))
+            if ch2 in ("H", "A"):
+                idx = max(0, idx - 1)
+            elif ch2 in ("P", "B"):
+                idx = min(len(rows) - 1, idx + 1)
+            elif ch2 == "I":
+                idx = max(0, idx - vh)
+            elif ch2 == "Q":
+                idx = min(len(rows) - 1, idx + vh)
+            elif ch2 == "G":
+                idx = 0
+            elif ch2 == "O":
+                idx = len(rows) - 1
+            paint(True)
+            continue
+        if ch in ("\r", "\n"):
+            out.clear_screen()
+            cmd_rerun(idx + 1, table, rows=rows)
+            print("\n  —— 按任意键回到列表 ——")
+            try:
+                msvcrt.getwch()
+            except Exception:
+                return 1
+            # 重跑本身会写一条新历史，去重后它会顶到最前
+            rows[:] = history.recent_unique()
+            idx = 0
+            drawn = 0
+            out.clear_screen()
+            paint(False)
+            continue
+
+
+def cmd_history(n=None, table=None):
+    rows = history.recent_unique()
+    if not rows:
+        out.print_cyan("[信息] 还没有任何启动记录。")
+        return 0
+    # 不带条数 + 真在控制台里 -> 交互式浏览（方向键 + 回车重跑）
+    # 带了条数、或者输出被重定向 -> 老老实实打印（管道/脚本要的是文本）
+    if n is None and table is not None and sys.stdout.isatty():
+        return _history_browser(rows, table)
+    if n is not None:
+        rows = rows[:n]
+    return _print_history(rows)
+
+
+def cmd_rerun(idx, table, rows=None):
+    """重跑历史里的第 N 条（序号以**去重后**的列表为准，和界面上看到的一致）。"""
+    if rows is None:
+        rows = history.recent_unique()
     if not (1 <= idx <= len(rows)):
         out.print_cyan("[错误] 序号超范围（1-%d）。" % len(rows))
         return 1
@@ -586,13 +725,13 @@ def main(argv):
     if first == "--selfcheck":
         return cmd_selfcheck(table)
     if first == "--history":
-        n = 10
+        n = None
         if rest:
             try:
                 n = max(1, int(rest[0]))
             except ValueError:
-                pass
-        return cmd_history(n)
+                n = None
+        return cmd_history(n, table)
     if first == "--rerun":
         if not rest:
             out.print_cyan("[错误] --rerun 需要一个序号。先看 `moss --history`。")
