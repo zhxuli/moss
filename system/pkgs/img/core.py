@@ -41,6 +41,9 @@ ICO_SIZES_DEFAULT = [16, 24, 32, 48, 64, 128, 256]
 
 SUPPORTED_EXTS = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp')
 FORMATS = ['jpg', 'png', 'webp', 'ico']
+# 能作为**输出**的格式（比 FORMATS 宽：界面只让人手选那 4 种，
+# 但"保持原格式"时可能落到 bmp/gif/tiff 上）
+SAVE_FORMATS = ('jpg', 'jpeg', 'png', 'webp', 'ico', 'bmp', 'gif', 'tiff')
 SAVE_MODES = ['separate', 'source', 'source_delete']
 
 DEFAULT_CONFIG = {
@@ -179,43 +182,62 @@ def scan_source(source_dir):
 # 核心处理逻辑（照抄旧版，只把 print 换成注入的 log）
 # ==============================================================================
 
+def resolve_format(filepath, output_format):
+    """定这一张图要存成什么格式。
+
+    ★ `output_format` 为空（或 'same'）= **保持原格式**。
+      这样命令行里 `moss :img 1200` 就能表达"全部等比缩到 1200 宽、格式不动"，
+      `moss :img 60%` 就是"全部按 60% 重压" —— 用户不用先记住有哪些格式可写。
+      （不写格式＝转成全部格式是不行的：一张图变四个文件，ico 那个尤其怪。）
+    """
+    fmt = str(output_format or '').strip().lower()
+    if fmt and fmt not in ('same', '原样'):
+        return 'jpg' if fmt == 'jpeg' else fmt
+    ext = os.path.splitext(str(filepath))[1].lstrip('.').lower()
+    ext = 'jpg' if ext == 'jpeg' else ext
+    return ext if ext in SAVE_FORMATS else 'png'
+
+
 def process_single_image(filepath, output_format, quality, width, output_dir, save_mode,
                          ico_sizes, log=_noop):
     """处理一张图。返回 True/False（旧版只打印不返回，这里补一个给统计用）。"""
     name = os.path.basename(filepath)
+    fmt = resolve_format(filepath, output_format)
     try:
         with Image.open(filepath) as img:
             log(f"\n- 正在处理: {name} ({img.width}x{img.height})\n")
             img_copy = img.copy()
 
-        if output_format != 'ico' and width and img_copy.width > width:
+        if fmt != 'ico' and width and img_copy.width > width:
             aspect_ratio = img_copy.height / img_copy.width
             new_height = int(width * aspect_ratio)
             log(f"  - 调整尺寸为: {width}x{new_height}\n")
             img_copy = img_copy.resize((width, new_height), Image.Resampling.LANCZOS)
 
         base_name, _ = os.path.splitext(name)
-        output_filename = f"{base_name}.{output_format}"
+        output_filename = f"{base_name}.{fmt}"
         output_path = os.path.join(output_dir, output_filename)
 
-        if output_format == 'jpg' and img_copy.mode in ('RGBA', 'P'):
+        # jpg / bmp 不吃透明通道，先压到白底（bmp 直接存 RGBA 会报错）
+        if fmt in ('jpg', 'bmp') and img_copy.mode in ('RGBA', 'P', 'LA'):
             log("  - 转换透明背景为白色\n")
+            img_copy = img_copy.convert('RGBA') if img_copy.mode != 'RGBA' else img_copy
             background = Image.new('RGB', img_copy.size, (255, 255, 255))
             if 'A' in img_copy.getbands():
                 background.paste(img_copy, (0, 0), img_copy.getchannel('A'))
             else:
                 background.paste(img_copy, (0, 0))
             img_copy = background
-        elif img_copy.mode != 'RGB' and output_format == 'jpg':
+        elif fmt in ('jpg', 'bmp') and img_copy.mode != 'RGB':
             img_copy = img_copy.convert('RGB')
 
         save_options = {}
-        if output_format in ('jpg', 'jpeg', 'webp'):
+        if fmt in ('jpg', 'jpeg', 'webp'):
             save_options['quality'] = quality
-        elif output_format == 'png':
+        elif fmt == 'png':
             save_options['compress_level'] = int((100 - quality) / 100 * 9)
             save_options['optimize'] = True
-        elif output_format == 'ico':
+        elif fmt == 'ico':
             sizes = sorted({int(s) for s in (ico_sizes or ICO_SIZES_DEFAULT) if s})
             log("  - ICO 多分辨率: %s\n" % ", ".join(str(s) for s in sizes))
             save_options['sizes'] = [(s, s) for s in sizes]

@@ -26,12 +26,13 @@ FORMATS_CLI = ['jpg', 'png', 'webp', 'ico']
 DEFAULT_QUALITY = 80
 
 USAGE = """图片工具 · 命令行
-用法: moss :img <格式> [质量] [宽度] [文件/通配符...] [选项]
+用法: moss :img [格式] [质量] [宽度] [文件/通配符...] [选项]
       moss :img                    不带参数就是打开界面
 
   格式   jpg | png | webp | ico
+         **不写 = 保持原格式**（只改质量 / 尺寸，最适合"批量重压一批图"）
   质量   60% 或 60          （≤100 的裸数字，默认 80%）
-  宽度   1200 或 1200px     （>100 的裸数字，默认保持原尺寸）
+  宽度   1200 或 1200px     （>100 的裸数字；ico 不用宽度）
   文件   *.png  logo*.jpg  D:\\图\\*.jpg  **/*.webp
          不写 = 当前目录下全部图片
   目录   D:\\图              （给了目录，通配符就相对它解析）
@@ -41,12 +42,16 @@ USAGE = """图片工具 · 命令行
          -y                 覆盖时不再询问
          -h                 本帮助
 
-例子
-  moss :img webp                 当前目录所有图 → webp 80%
-  moss :img webp 60% 1200        质量 60、宽 1200
+参数顺序随便，只填你会用到的那几个就行。例子
+  moss :img ico                  当前所有图 → 多分辨率 ico（只要这两个词）
+  moss :img png                  当前所有图 → png 80%
+  moss :img 1200                 当前所有图等比缩到 1200 宽，格式不动
+  moss :img 60%                  当前所有图按 60% 质量重压，格式不动
+  moss :img webp 60 1200         质量 60、宽 1200
   moss :img png *.jpg            只挑当前目录的 jpg
-  moss :img webp "D:\\图\\*.png"   指定目录 + 通配符
-  moss :img ico *.png            生成多分辨率 ico"""
+  moss :img ico -s 16,32 *.png   只要 16 和 32 两档的 ico
+  moss :img webp -o D:\\out       换输出目录
+  moss :img jpg 90% / -y         原地覆盖，不问"""
 
 _RE_QUALITY_PCT = re.compile(r'^(\d{1,3})%$')
 _RE_WIDTH_PX = re.compile(r'^(\d{1,5})px$')
@@ -157,11 +162,16 @@ def _pick_files(opts, base_dir, note):
 
 
 def _confirm_overwrite(files, output_dir, output_format, assume_yes):
-    """原地覆盖时先列出来问一句（照抄旧版命令行版的做法）。"""
+    """原地覆盖时先列出来问一句（照抄旧版命令行版的做法）。
+
+    目标文件名要按**每张图各自解析出来的格式**算 —— 不写格式时是"各存各的"，
+    固定用同一个扩展名会算错（把不会覆盖的当成会覆盖，或者反过来）。
+    """
     at_risk = []
     for path in files:
         base, _ = os.path.splitext(os.path.basename(path))
-        target = os.path.join(output_dir, base + '.' + output_format)
+        fmt = core.resolve_format(path, output_format)
+        target = os.path.join(output_dir, base + '.' + fmt)
         if os.path.abspath(target).lower() == os.path.abspath(path).lower():
             at_risk.append(os.path.basename(path))
     if not at_risk:
@@ -198,12 +208,6 @@ def run(tokens, cwd=None):
         print(USAGE)
         return 0
 
-    if not opts['format']:
-        print('[错误] 要指定一个目标格式（%s）。想开界面就别带参数。'
-              % ' / '.join(FORMATS_CLI))
-        print(USAGE)
-        return 1
-
     if opts['unknown']:
         print('提示: 已忽略无法识别的参数: %s' % ', '.join(opts['unknown']))
 
@@ -223,7 +227,8 @@ def run(tokens, cwd=None):
         print('\n提示: 未找到符合条件的图片。')
         return 1
 
-    fmt = opts['format']
+    # 不写格式 = 保持原格式（由 core.resolve_format 逐张判定）
+    fmt = opts['format'] or ''
     width = None if fmt == 'ico' else opts['width']
     in_place = opts['in_place']
     if opts['output_dir']:
@@ -240,13 +245,13 @@ def run(tokens, cwd=None):
 
     print('---')
     print('任务确认:')
-    print('  - 目标格式: %s' % fmt)
+    print('  - 目标格式: %s' % (fmt or '保持原格式（各存各的）'))
     print('  - 压缩质量: %d%%' % opts['quality'])
     print('  - 目标宽度: %s' % ('%dpx' % width if width else '保持原始尺寸'))
     if fmt == 'ico':
         print('  - ICO 尺寸: %s' % ', '.join(
             str(s) for s in core.checked_ico_sizes(opts['ico_sizes'])))
-    print('  - 待处理文件: %d 个' % len(files))
+    print('  - 待处理文件: %d 个（当前目录下所有支持的图片格式）' % len(files))
     print('  - 输出位置: %s' % output_dir)
     print('---')
 
