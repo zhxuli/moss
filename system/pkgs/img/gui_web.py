@@ -248,15 +248,34 @@ class Api:
         return self._scan(source_dir)
 
     def reveal(self, path):
-        """在资源管理器里打开输出目录。"""
-        path = str(path or '')
-        if not path or not os.path.isdir(path):
-            return {'ok': False, 'message': '目录不存在：%s' % path}
+        """在资源管理器里打开输出目录。
+
+        ★ 目录**还没生成**时不要报"不存在" —— 往上一层找第一个存在的打开就行。
+          最典型：选了「新文件夹」但一次都还没跑过，compressed_output 当然不存在，
+          这时候用户真正想看的是**源目录**（用户指出）。
+          自定输出目录 D:\\out\\sub 还没建时，打开 D:\\out 也同样是想要的。
+        """
+        raw = str(path or '')
+        if not raw:
+            return {'ok': False, 'message': '还不知道输出目录。'}
+        target = os.path.abspath(raw)
+
+        probe = target
+        for _ in range(40):
+            if os.path.isdir(probe):
+                break
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                break
+            probe = parent
+        if not os.path.isdir(probe):
+            return {'ok': False, 'message': '路径不存在：%s' % raw}
         try:
-            os.startfile(path)          # noqa: S606  (Windows 专用，照抄旧项目做法)
+            os.startfile(probe)          # noqa: S606  (Windows 专用，照抄旧项目做法)
         except Exception as e:
             return {'ok': False, 'message': '打开失败：%s' % e}
-        return {'ok': True}
+        return {'ok': True, 'opened': probe,
+                'fellBack': os.path.normcase(probe) != os.path.normcase(target)}
 
     def _remember(self, path):
         if self._cfg is None or not path:

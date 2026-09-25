@@ -1034,6 +1034,19 @@ function bindDrop() {
 }
 
 /* ------------------------------------------------------------------ 事件 */
+/* 「打开输出目录」到底该开哪：
+   · 跑过一次 → 用那次真实的输出目录
+   · 还没跑过 → 按当前设置推一个（自定输出目录，否则源目录）。
+     推出来的那个可能还不存在，没关系 —— 后端会往上找第一个存在的打开，
+     所以「新文件夹」没生成时会开源目录，正是用户想要的。 */
+function outputTarget() {
+  if (state.outputDir) return state.outputDir;
+  const custom = (state.cfg.output_dir || '').trim();
+  if (custom) return custom;
+  if (state.mode === 'files') return state.items.length ? (state.items[0].dir || '') : '';
+  return state.dir || '';
+}
+
 function bind() {
   $('btnLogToggle').onclick = () => setLogOpen(!state.logOpen);
   $('btnPick').onclick = () => loadDir(state.dir, true);
@@ -1051,8 +1064,11 @@ function bind() {
   $('btnSelAll').onclick = () => selectAll();
   $('btnSelNone').onclick = () => clearSelection();
   $('btnReveal').onclick = async () => {
-    const res = await state.api.reveal(state.outputDir);
-    if (!res || !res.ok) toast((res && res.message) || '还不知道输出目录。', true);
+    const target = outputTarget();
+    if (!target) { toast('还没有能打开的目录。', true); return; }
+    const res = await state.api.reveal(target);
+    if (!res || !res.ok) { toast((res && res.message) || '打开失败。', true); return; }
+    if (res.fellBack) toast('这个目录还没生成，已打开上层：' + res.opened);
   };
   $('btnStart').onclick = start;
 
