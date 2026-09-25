@@ -27,6 +27,8 @@ const QUALITY_HINT = {
 const MODE_LABELS = { folder: '文件夹', files: '文件清单' };
 const MODE_TITLES = { folder: '处理一个文件夹里的图片', files: '只处理手挑出来的这几个文件' };
 
+import { svg, mountIcons } from './icons.js';
+
 const DEFAULTS = { save_mode: 'separate', output_format: 'jpg', quality: 80, width: '', ico_sizes: [] };
 
 const THUMB_CHUNK = 20;
@@ -126,7 +128,7 @@ function renderMode() {
   const folder = state.mode === 'folder';
   $('src').hidden = !folder;
   $('btnPick').hidden = !folder;
-  $('history').hidden = !folder;
+  $('combo').hidden = !folder;   // 地址栏（含自带的下拉）在文件清单模式下不适用
   $('btnAddFiles').hidden = folder;
   $('btnClearFiles').hidden = folder || !state.items.length;
 }
@@ -175,18 +177,93 @@ function renderIcoSizes() {
   }
 }
 
-function renderHistory() {
-  const sel = $('history');
-  sel.textContent = '';
-  const head = el('option', null, state.history.length ? '最近使用…' : '（无历史）');
-  head.value = '';
-  sel.appendChild(head);
-  for (const p of state.history) {
-    const o = el('option', null, p);
-    o.value = p;
-    sel.appendChild(o);
+/* 地址栏自带的下拉：最近使用过的文件夹。
+   原来是独立的一个 <select>，现在并进地址栏 —— 少一个控件、少占一段宽度，
+   而且"我要去哪"和"我去过哪"本来就是同一件事。
+   点它 / 点小三角 → 展开；打字 → 边打边过滤；↑↓ 选、回车确认、Esc 关掉。 */
+let histIndex = -1;
+
+function histMatches(filter) {
+  const f = String(filter || '').trim().toLowerCase();
+  if (!f) return state.history.slice();
+  return state.history.filter((p) => p.toLowerCase().includes(f));
+}
+
+function renderHistory() {   // 保持这个名字：很多地方在调它
+  if (!$('histMenu').hidden) openHistory($('src').value);
+}
+
+function openHistory(filter) {
+  const menu = $('histMenu');
+  const items = histMatches(filter);
+  menu.textContent = '';
+  histIndex = -1;
+  if (!items.length) {
+    menu.appendChild(el('div', 'empty',
+      state.history.length ? '没有匹配的最近记录' : '还没有历史记录'));
+  } else {
+    items.forEach((p, i) => {
+      const b = el('button', 'item', p);
+      b.type = 'button';
+      b.title = p;
+      b.dataset.path = p;
+      b.onmousedown = (e) => { e.preventDefault(); pickHistory(p); };   // 别让 input 先 blur
+      b.onmouseenter = () => setHistIndex(i);
+      menu.appendChild(b);
+    });
   }
-  sel.value = '';
+  menu.hidden = false;
+  $('combo').classList.add('open');
+}
+
+function closeHistory() {
+  $('histMenu').hidden = true;
+  $('combo').classList.remove('open');
+  histIndex = -1;
+}
+
+function setHistIndex(i) {
+  const items = [...$('histMenu').querySelectorAll('.item')];
+  if (!items.length) return;
+  histIndex = (i + items.length) % items.length;
+  items.forEach((n, k) => n.classList.toggle('on', k === histIndex));
+  items[histIndex].scrollIntoView({ block: 'nearest' });
+}
+
+function pickHistory(path) {
+  closeHistory();
+  if (state.mode !== 'folder') { state.mode = 'folder'; renderMode(); }
+  $('src').value = path;
+  loadDir(path, false);
+}
+
+function bindHistory() {
+  $('btnHist').onclick = (e) => {
+    e.preventDefault();
+    if ($('histMenu').hidden) { $('src').focus(); openHistory(''); }
+    else closeHistory();
+  };
+  $('src').onfocus = () => openHistory($('src').value === state.dir ? '' : $('src').value);
+  $('src').onkeydown = (e) => {
+    if (e.key === 'Escape') { closeHistory(); $('src').blur(); return; }
+    if (!$('histMenu').hidden) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setHistIndex(histIndex + 1); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setHistIndex(histIndex - 1); return; }
+      if (e.key === 'Enter') {
+        const items = [...$('histMenu').querySelectorAll('.item')];
+        if (histIndex >= 0 && items[histIndex]) {
+          e.preventDefault();
+          pickHistory(items[histIndex].dataset.path);
+          return;
+        }
+      }
+    }
+    if (e.key === 'Enter') { e.preventDefault(); closeHistory(); loadDir($('src').value, false); }
+  };
+  /* 点别处就收起来 */
+  document.addEventListener('mousedown', (e) => {
+    if (!$('combo').contains(e.target)) closeHistory();
+  });
 }
 
 /* 类型芯片 = **快捷选择**：点一下把这一类全选上（不再是"过滤"）。
@@ -294,7 +371,7 @@ function renderGrid() {
       tile.appendChild(el('span', 'fdir', f.dir || ''));
       tile.appendChild(el('span', 'fsize', f.exists === false ? '已不在' : humanSize(f.size)));
     }
-    tile.appendChild(el('span', 'check-badge', '✓'));
+    tile.appendChild(el('span', 'check-badge')).innerHTML = svg('check');
     grid.appendChild(tile);
   }
   if (state.showThumbs) loadThumbs();
@@ -927,6 +1004,11 @@ function bind() {
   $('src').oninput = () => {
     state.dir = $('src').value;
     syncTitle();
+    /* 边打字边过滤最近使用 —— 找不到就自动收起来，别挡着 */
+    if (!$('histMenu').hidden) {
+      const hit = histMatches(state.dir);
+      if (hit.length) openHistory(state.dir); else closeHistory();
+    }
     clearTimeout(scanTimer);
     scanTimer = setTimeout(async () => {
       if (state.mode !== 'folder') return;
@@ -934,15 +1016,7 @@ function bind() {
       applyScan(scan);
       if (scan && scan.history) { state.history = scan.history; renderHistory(); }
     }, 350);
-  };
-
-  $('history').onchange = (e) => {
-    const p = e.target.value;
-    e.target.value = '';
-    if (!p) return;
-    if (state.mode !== 'folder') { state.mode = 'folder'; renderMode(); }
-    loadDir(p, false);
-  };
+  };   // 地址栏的下拉/键盘逻辑见 bindHistory()
 
   $('btnReset').onclick = () => {
     state.cfg.output_format = DEFAULTS.output_format;
@@ -1025,9 +1099,13 @@ async function boot() {
 
   bootStage = '绑定交互';
   bind();
+  bindHistory();
   bindMarquee();
   bindHover();
   bindDrop();
+
+  bootStage = '装图标';
+  mountIcons();
 
   bootStage = '';
   $('status').textContent = '待命';
@@ -1063,4 +1141,5 @@ window.addEventListener('unhandledrejection', (e) => {
 window.__img = {
   get state() { return state; },
   selectAll, clearSelection, selectType, rebuild, refresh, start, clickItem, targets,
+  openHistory, closeHistory, histMatches, renderHistory,
 };

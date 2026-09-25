@@ -233,6 +233,15 @@ input[type=range]:active::-webkit-slider-thumb { transform: scale(1.06); }
 .alias-row .lead { color: var(--text-3); font-weight: 500; flex: none; white-space: nowrap; }
 .slot .lead { color: var(--text-3); font-weight: 500; flex: none; white-space: nowrap; font-size: var(--t-sub); }
 
+/* ============================================================================
+   图标：统一尺寸与描边，颜色跟随 currentColor
+   ========================================================================== */
+.btn.icon svg { width: 15px; height: 15px; display: block; }
+.combo-btn svg { width: 13px; height: 13px; display: block; }
+.log-toggle .tri svg { width: 12px; height: 12px; display: block; }
+.tile .check-badge svg { width: 11px; height: 11px; display: block; }
+.picker-empty .pe-ico svg { width: 34px; height: 34px; display: block; color: var(--text-3); opacity: .7; }
+
 .field-note { margin-top: 5px; font-size: var(--t-sub); color: var(--text-3); }
 /* 没话说的时候**不占高度** —— 「将处理 N 个」这种和右上角、按钮上的数量重复，
    已经在代码里不写了；这里保证空的时候是 0 高度。 */

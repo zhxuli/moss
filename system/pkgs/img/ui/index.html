@@ -24,12 +24,17 @@
         <!-- ── 上半：挑图。占满剩余高度 —— 这是唯一的主动作 ───────────── -->
         <div class="card-body">
 
-          <!-- 第一行：历史 / 刷新 靠左（原来是"文件夹|文件清单"，和它们换了位置） -->
+          <!-- 第一行：刷新 / 地址栏（自带最近使用下拉）/ 选择 -->
           <div class="srcbar">
-            <select id="history" class="hist" title="最近使用过的文件夹"></select>
-            <button class="btn ghost icon" id="btnRefresh" title="刷新（Ctrl+R）">⟳</button>
-            <input type="text" id="src" class="mono" spellcheck="false" autocomplete="off"
-                   placeholder="D:\图片">
+            <button class="btn ghost icon" id="btnRefresh" title="刷新（Ctrl+R）"
+                    data-icon="refresh"></button>
+            <div class="combo" id="combo">
+              <input type="text" id="src" class="mono" spellcheck="false" autocomplete="off"
+                     placeholder="D:\图片">
+              <button class="combo-btn" id="btnHist" type="button" title="最近使用过的文件夹"
+                      data-icon="chevronDown"></button>
+              <div class="combo-menu" id="histMenu" hidden></div>
+            </div>
             <button class="btn" id="btnPick">选择…</button>
             <button class="btn" id="btnAddFiles" hidden>加文件…</button>
             <button class="btn ghost" id="btnClearFiles" hidden>清空</button>
@@ -49,6 +54,7 @@
           <!-- 缩略图网格（≤100 张）或紧凑列表（>100 张）。高度自适应 -->
           <div class="picker" id="picker" tabindex="0">
             <div class="picker-empty" id="pickerEmpty">
+              <span class="pe-ico" data-icon="image"></span>
               <b id="peTitle">把图片或文件夹拖进来</b>
               <span id="peSub">也可以点上面的「选择…」挑一个文件夹</span>
             </div>
@@ -100,7 +106,7 @@
 
         <div class="actions">
           <button class="log-toggle" id="btnLogToggle" type="button" title="展开 / 收起日志">
-            <span class="tri" id="logTri">▸</span>处理日志
+            <span class="tri" id="logTri" data-icon="chevronRight"></span>处理日志
           </button>
           <span class="spinner" id="spin" hidden></span>
           <span class="status" id="status">待命</span>
