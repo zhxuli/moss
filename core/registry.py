@@ -9,6 +9,7 @@
 遮蔽规则（H-08）：**用户层同名包遮蔽系统层，系统层原件保留**，不是替换。
 """
 import json
+import sys
 from datetime import datetime
 
 from . import paths, pkg as pkg_mod
@@ -56,6 +57,14 @@ def _scan_layer(base_dir, layer):
             continue
         p = pkg_mod.load(d)
         if p is None:
+            # ★ 目录在、清单读不出来，**绝不能静默跳过**。
+            #   静默跳过的后果是：包从扫描结果里消失 → sync 把它判成 orphan
+            #   → is_enabled 判 false → 用户看到「包已被禁用」，而真正的原因
+            #   是自己那个 pkg.json 有个 JSON 语法错。这个坑真踩过（PowerShell
+            #   把 pkg.json 写坏 → img 被"禁用"，查了半天）。
+            if (d / "pkg.json").is_file():
+                print("[警告] %s 的 pkg.json 解析失败（JSON 语法错误？），"
+                      "这个包会被当成不存在。" % d, file=sys.stderr)
             continue
         pkg_mod.display_name(p)
         found.append({"id": p["id"], "layer": layer, "dir": d, "pkg": p})
@@ -102,7 +111,7 @@ def find_alias(alias):
 def sync(reg):
     """与磁盘对账。返回 (added, missing)。"""
     on_disk = {rec["id"]: rec for rec in scan_all()}
-    added, missing = [], []
+    added, missing, restored = [], [], []
 
     for pid, rec in on_disk.items():
         if pid not in reg["packages"]:
@@ -115,6 +124,15 @@ def sync(reg):
             }
             added.append(pid)
         else:
+            # ★ 包又回到磁盘上了 —— 必须把 orphan 恢复成 enabled。
+            #   原来这里只更新 layer/version，**从不改 state**，于是 orphan
+            #   成了一个"一旦进去就出不来"的状态：哪怕包完完整整地在那儿，
+            #   也永远显示「已被禁用」。（真踩过：pkg.json 被写坏 → img 变 orphan
+            #   → 修好 pkg.json 之后依然起不来。）
+            #   只恢复 orphan；用户**主动**禁用过的是 "disabled"，那种不动。
+            if reg["packages"][pid].get("state") == "orphan":
+                reg["packages"][pid]["state"] = "enabled"
+                restored.append(pid)
             reg["packages"][pid]["layer"] = rec["layer"]
             reg["packages"][pid]["version"] = rec["pkg"].get("version")
 
@@ -126,6 +144,9 @@ def sync(reg):
     reg["host"]["version"] = HOST_VERSION
     reg["host"]["lastStart"] = datetime.now().isoformat(timespec="seconds")
     save(reg)
+    if restored:
+        print("[提示] 这些包之前被标成 orphan，现在磁盘上又有了，已恢复启用：%s"
+              % "、".join(restored))
     return added, missing
 
 
