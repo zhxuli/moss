@@ -12,16 +12,10 @@
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
-try:
-    import pyautogui
-except ImportError:
-    pyautogui = None
-
-from . import (clip, config, engine, events, history, out, paths, pkg as pkg_mod,
-               registry, resolve, runners as runners_mod)
+from . import (config, engine, events, history, out, paths, pkg as pkg_mod,
+               registry, resolve, runners as runners_mod, shell)
 
 USAGE = """moss —— 多语言启动器
 
@@ -37,13 +31,10 @@ USAGE = """moss —— 多语言启动器
                                例: moss :md5 hello
   moss :                       打开交互式选择（上下键 + 回车）
 
-  moss cd <目标>               智能找目录并切换（模拟键盘输入，窗口要激活）
-  moss cd --print <目标>       只打印绝对路径，不做模拟输入（给 shell 包装函数用）
-                               PowerShell 里这样获得可靠的 cd：
-                                 function mosscd { $env:MOSS_CD_PRINT='1'
-                                                   $p = & moss cd @args
-                                                   $env:MOSS_CD_PRINT=''
-                                                   if ($p) { Set-Location $p } }
+  moss cd <目标>               智能找目录并切过去（认出父 shell 后把命令注入控制台）
+  moss cd --install            把 cd 包装函数写进 PowerShell 配置 → 屏幕上不留回显
+  moss cd --uninstall          删掉那个包装函数
+  moss cd --print <目标>       只打印绝对路径，不做注入（包装函数用的就是它）
   moss pick | select | menu    交互式选择要运行的包
 
   moss --list                  列出已安装的包
@@ -356,8 +347,16 @@ def cmd_selfcheck(table):
         print("     - %-12s runner=%-10s 入口=%s" % (
             r["id"], r["pkg"].get("runner"),
             (e.name if e else ("inline" if pkg_mod.inline_code(r["pkg"]) else "✗ 缺失"))))
-    print("  pyautogui : %s   （cd 功能需要它）" % ("可用" if pyautogui else "✗ 缺失"))
-    print("  剪贴板    : %s   （cd 到中文路径时需要它）" % clip.describe())
+    cd_ok, cd_why = shell.console_available()
+    who = shell.parent_shell()
+    print("  cd 注入   : %s   （%s）" % ("可用" if cd_ok else "✗ 不可用", cd_why))
+    print("  父 shell  : %s   （沿父进程链: %s）"
+          % (who or "✗ 没认出来",
+             " ← ".join("%s" % n for n, _ in shell.parent_chain()[:5])))
+    for label, p, has in shell.installed_state():
+        print("  %-9s: %s   （%s）" % (label, "已装包装函数" if has else "未装包装函数", p))
+    print("            装了包装函数的话，`moss cd` 在屏幕上不留任何回显；"
+          "没装则用注入（命令会显示出来）")
     print("=" * 60)
     out.print_cyan("结论: %s" % ("✅ 自检通过" if ok else "✗ 自检失败"))
     return 0 if ok else 1
@@ -423,60 +422,24 @@ def handle_pick(table, detach=False):
 
 
 # ---------------------------------------------------------------- cd
-def _type_command(text):
-    """把命令"打"进当前活动窗口。返回 (方式, 错误信息)。
-
-    ⚠️ `pyautogui.typewrite()` **打不了非 ASCII 字符** —— 中文没有键位映射，
-       会被**静默丢弃**。实测（用户真实撞到的）：
-
-           输入 : cd "D:\\study\\GO\\学习\\基础知识\\BMI"
-           打出 : cd "D:\\study\\GO\\\\\\BMI"     ← 汉字整段消失
-
-       这是 `pa.py:845` 就有的 bug（照抄时一起搬过来了）。
-
-    所以分两条路：
-      · 纯 ASCII 路径 -> 照旧 typewrite（**不碰用户剪贴板**）
-      · 含中文等    -> 剪贴板 + Ctrl+V，**用完把剪贴板还回去**
-    """
-    if all(ord(c) < 128 for c in text):
-        pyautogui.typewrite(text)
-        return "typewrite", None
-
-    if not clip.available():
-        return None, "路径含非 ASCII 字符，需要 pyperclip 走剪贴板，但它不可用"
-
-    saved = clip.get()
-    if not clip.set(text):
-        return None, "写入剪贴板失败"
-    time.sleep(0.05)
-    pyautogui.hotkey('ctrl', 'v')
-    time.sleep(0.08)
-    pyautogui.press('enter')
-    time.sleep(0.4)          # 等控制台把粘贴内容吃完，再把剪贴板还回去
-    clip.set(saved)
-    return "clipboard", None
-
-
 def handle_cd(target_str, print_only=False):
     """智能找目录并切换。
 
-    ★ 两条路，区别在**谁来执行那条 cd**：
+    ★ 三条路，区别在**谁来执行那条 cd**（详见 core/shell.py 的模块说明）：
 
-      · `print_only=False`（默认）：moss 用**模拟键盘输入**，往当前活动控制台里
-        打一条 `cd "..."` 并回车。父 shell 真的换了目录 —— 因为那条命令是
-        **父 shell 自己**收到并执行的。
+      · `print_only=True`（`--print` / `MOSS_CD_PRINT=1`）：**只把绝对路径打到
+        stdout**，别的什么都不打印。给 PowerShell 的包装函数用 —— 它拿到路径
+        自己 `Set-Location`，于是**屏幕上没有任何回显**。
 
-      · `print_only=True`：moss **只把绝对路径打到 stdout**，别的什么都不打印，
-        由调用方的 shell 包装函数去 `Set-Location`。没有模拟输入、不看窗口焦点、
-        不碰剪贴板。PowerShell 里一行就够：
+      · 否则：把 `Set-Location -LiteralPath '...'`（cmd 里是 `cd /d "..."`）
+        当成**真键盘记录**注入当前控制台输入缓冲区，父 shell 读到就自己执行。
+        零配置、不看窗口焦点、不碰剪贴板、中文不用旁路。
+        ⚠️ 代价：那条命令会**显示在屏幕上**并进历史（这是已知取舍，E-25）。
 
-            function mosscd { $env:MOSS_CD_PRINT='1'; $p = & moss cd @args;
-                              $env:MOSS_CD_PRINT=''; if ($p) { Set-Location $p } }
+      · 认不出父 shell / 没有真控制台：打印路径 + 提示装包装函数，**不猜不乱试**。
 
-    ★ 为什么必须有第二条路：**子进程改不了父进程的工作目录**，这是操作系统的
-      进程隔离，不是实现偷懒。`os.chdir()` 只影响 moss 自己，它一退出就没了。
-      所以"换目录"这件事只能由父 shell 做，moss 能做的是**把目录找出来交给它**。
-      模拟输入是"借父 shell 的手"，包装函数是"让父 shell 主动做" —— 后者可靠得多。
+    ★ 为什么不能直接 chdir：**子进程改不了父 shell 的工作目录**，这是进程隔离，
+      不是实现偷懒。所以只能"让 shell 自己执行"。
     """
     target_path = resolve.find_dir(target_str, Path.cwd())
 
@@ -498,35 +461,68 @@ def handle_cd(target_str, print_only=False):
         print(abs_path)
         return 0
 
-    # 模拟输入要 pyautogui；打印模式不需要，所以这个检查放在后面
-    if pyautogui is None:
-        out.print_cyan("[错误] 'cd' 功能需要 'pyautogui' 库。")
-        out.print_cyan("请先安装: pip install pyautogui")
+    who = shell.parent_shell()
+    if who is None:
+        out.print_cyan("[错误] 认不出当前是哪个 shell（父进程链里既没有 PowerShell 也没有 cmd）。")
+        out.print_cyan("目录是: %s" % abs_path)
+        out.print_cyan("想彻底解决（而且屏幕上不留回显）: moss cd --install")
         return 1
 
-    command = 'cd "%s"' % abs_path
-    ascii_only = all(ord(c) < 128 for c in command)
+    ok, why = shell.inject(shell.cd_command(who, abs_path))
+    if not ok:
+        out.print_cyan("[错误] 注入按键失败: %s" % why)
+        out.print_cyan("目录是: %s" % abs_path)
+        out.print_cyan("想彻底解决（而且屏幕上不留回显）: moss cd --install")
+        return 1
 
+    # 成功时**刻意什么都不打印**：那条命令本来就由 shell 显示在屏幕上（E-25 的已知代价），
+    # 再打一行 "[切换目录] ..." 只是重复噪声。
+    return 0
+
+
+def cmd_cd_install():
+    """把 `function moss` 写进 PowerShell 的 $PROFILE（零回显走这条路）。"""
     out.conditional_clear_screen()
-    out.print_cyan("[切换目录] 准备执行: %s" % command)
-    if ascii_only:
-        out.print_cyan("[注意] 0.1秒后将模拟键盘输入, 请确保命令行窗口是当前活动窗口!")
-    else:
-        out.print_cyan("[注意] 路径含中文，将用「剪贴板 + Ctrl+V」输入"
-                       "（临时占用剪贴板，用完还原）")
-        out.print_cyan("[注意] 请确保命令行窗口是当前活动窗口!")
-
-    try:
-        time.sleep(0.1)
-        how, err = _type_command(command)
+    out.print_cyan("把 moss 的 cd 包装函数写进 PowerShell 配置（屏幕上不留回显）")
+    results = shell.install_cd()
+    bad = 0
+    for label, path, result, err in results:
+        flag = "✗" if err else "·"
         if err:
-            raise RuntimeError(err)
-        if how == "clipboard":
-            out.print_cyan("[完成] 已用剪贴板方式输入（剪贴板已还原）。")
-    except Exception as e:
-        out.print_cyan("[错误] 模拟键盘输入失败: %s" % e)
-        out.print_cyan("您可以手动复制并粘贴以下命令:")
-        out.print_cyan(command)
+            bad += 1
+        print("  %s %-22s %s" % (flag, label, result))
+        print("      %s" % path)
+    if bad:
+        out.print_cyan("有 %d 个文件没写成功，上面有原因。" % bad)
+        return 1
+    out.print_cyan("装好了。**新开一个 PowerShell 窗口**才生效（老窗口执行 . $PROFILE 也行）。")
+    out.print_cyan("之后 `moss cd <目标>` 屏幕上不会出现任何命令；"
+                   "cmd 窗口没有等价物，仍走注入。")
+    out.print_cyan("不想要了: moss cd --uninstall")
+    return 0
+
+
+def cmd_cd_uninstall():
+    """把包装函数从 $PROFILE 里删掉，cd 回到"注入按键"。"""
+    out.conditional_clear_screen()
+    out.print_cyan("从 PowerShell 配置里删掉 cd 包装函数")
+    results = shell.uninstall_cd()
+    bad = 0
+    removed = 0
+    for label, path, result, err in results:
+        if err:
+            bad += 1
+        if result == "已移除":
+            removed += 1
+        print("  %s %-22s %s" % ("✗" if err else "·", label, result))
+        print("      %s" % path)
+    if bad:
+        out.print_cyan("有 %d 个文件没弄成功，上面有原因。" % bad)
+        return 1
+    if not removed:
+        out.print_cyan("这两个配置文件里本来就没装过包装函数，没动它们。")
+        return 0
+    out.print_cyan("已移除。新开窗口后 `moss cd` 回到注入方式（命令会显示在屏幕上）。")
     return 0
 
 
@@ -566,14 +562,18 @@ def main(argv):
 
     # ---- cd（照抄 pa.py:876-881） ----
     if first.lower() == 'cd':
-        # `--print` / 环境变量 MOSS_CD_PRINT=1 → 只吐路径，不做模拟输入。
-        # 环境变量这条路是给 shell 包装函数用的（见 handle_cd 的说明）：
+        args = [a for a in rest if a != '--print']
+        # `--install` / `--uninstall`：装/卸 PowerShell 的包装函数（③，零回显）
+        if args and args[0] in ('--install', '--uninstall'):
+            return cmd_cd_install() if args[0] == '--install' else cmd_cd_uninstall()
+        # `--print` / 环境变量 MOSS_CD_PRINT=1 → 只吐路径，不做注入。
+        # 环境变量这条路是给包装函数用的（见 handle_cd 的说明）：
         # 包装函数设好变量再调 moss，moss 就只输出路径让 shell 自己 cd。
         print_only = ('--print' in rest) or (os.environ.get('MOSS_CD_PRINT') == '1')
-        rest = [a for a in rest if a != '--print']
-        if rest:
-            return handle_cd(rest[0], print_only=print_only)
+        if args:
+            return handle_cd(args[0], print_only=print_only)
         out.print_cyan("[错误] 'cd' 命令需要一个目标路径。用法: moss cd <目标>")
+        out.print_cyan("       （想屏幕上不留回显: moss cd --install）")
         return 1
 
     # ---- pick / select / menu（照抄 pa.py:883-886） ----
