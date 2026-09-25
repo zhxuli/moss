@@ -36,22 +36,23 @@ USAGE = """图片工具 · 命令行
   文件   *.png  logo*.jpg  D:\\图\\*.jpg  **/*.webp
          不写 = 当前目录下全部图片
   目录   D:\\图              （给了目录，通配符就相对它解析）
-  选项   /                  写回源目录（覆盖原图，会问一次）
+  选项   /                  写回源目录（覆盖原图）
          -o <目录>          输出到指定目录（原图不动）
          **两个都不写 → 弹出菜单让你自己选；菜单里直接回车 = 取消**
          -s 16,32,256       ico 尺寸（默认 16/24/32/48/64/128/256 全要）
-         -y                 覆盖时不再询问
          -h                 本帮助
+         （-y 仍接受但已无意义：指定了 / 或 -o 就是已经确认过，不会再问）
 
 参数顺序随便，只填你会用到的那几个就行。例子
+  moss :img ico a.png -o D:\\out   只把 a.png 转成 ico，放到 D:\\out
+  moss :img ico a.png b.png -o D:\\out   只转这两个
+  moss :img ico *.png -o D:\\out   只转当前目录的 png
   moss :img ico                  当前所有图 → 多分辨率 ico（然后菜单里选输出到哪）
-  moss :img ico -o D:\\out        同上，输出到 D:\\out
   moss :img ico /                同上，原地覆盖
   moss :img png                  当前所有图 → png 80%
   moss :img 1200                 当前所有图等比缩到 1200 宽，格式不动
   moss :img 60%                  当前所有图按 60% 质量重压，格式不动
   moss :img webp 60 1200         质量 60、宽 1200
-  moss :img png *.jpg            只挑当前目录的 jpg
   moss :img ico -s 16,32 *.png   只要 16 和 32 两档的 ico"""
 
 _RE_QUALITY_PCT = re.compile(r'^(\d{1,3})%$')
@@ -160,38 +161,6 @@ def _pick_files(opts, base_dir, note):
              if os.path.isfile(os.path.join(base_dir, f))
              and os.path.splitext(f)[1].lower() in picked]
     return files, None
-
-
-def _confirm_overwrite(files, output_dir, output_format, assume_yes):
-    """原地覆盖时先列出来问一句（照抄旧版命令行版的做法）。
-
-    目标文件名要按**每张图各自解析出来的格式**算 —— 不写格式时是"各存各的"，
-    固定用同一个扩展名会算错（把不会覆盖的当成会覆盖，或者反过来）。
-    """
-    at_risk = []
-    for path in files:
-        base, _ = os.path.splitext(os.path.basename(path))
-        fmt = core.resolve_format(path, output_format)
-        target = os.path.join(output_dir, base + '.' + fmt)
-        if os.path.abspath(target).lower() == os.path.abspath(path).lower():
-            at_risk.append(os.path.basename(path))
-    if not at_risk:
-        return True
-    print('\n!!! 警告 !!! 以下文件将被原地覆盖:')
-    for name in at_risk:
-        print('  - %s' % name)
-    if assume_yes:
-        print('（-y 已指定，直接继续）')
-        return True
-    try:
-        answer = input('您确定要继续吗? (输入 y 或 yes 继续): ')
-    except (KeyboardInterrupt, EOFError):
-        print('\n操作已由用户取消。')
-        return False
-    if answer.strip().lower() not in ('y', 'yes'):
-        print('操作已由用户取消。')
-        return False
-    return True
 
 
 _OUT_MODES = [
@@ -352,10 +321,9 @@ def run(tokens, cwd=None):
     if err:
         print('[错误] %s' % err)
         return 2
-    # 从菜单里选出来的（没写 / 也没写 -o）算**已经明确同意**，
-    # 不再多问一遍"确定要覆盖吗" —— 菜单里那一行就是后果说明。
-    chosen_from_menu = not opts['output_dir'] and not in_place
-
+    # 输出位置是**已经明确表达过**的（写了 / 或 -o，或者从菜单里选过），
+    # 不再多问一遍"确定要覆盖吗" —— 那三种表达本身就是确认，再问是啰嗦。
+    # 后果都写在 help / 菜单文字里了。
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
@@ -368,14 +336,13 @@ def run(tokens, cwd=None):
     if fmt == 'ico':
         print('  - ICO 尺寸: %s' % ', '.join(
             str(s) for s in core.checked_ico_sizes(opts['ico_sizes'])))
-    print('  - 待处理文件: %d 个（当前目录下所有支持的图片格式）' % len(files))
+    # 待处理文件这句话要说准：指定了文件/通配符时就不能再说"所有图片格式"
+    picked_note = ('按你指定的文件 / 通配符挑的' if opts['patterns']
+                   else '当前目录下所有支持的图片格式')
+    print('  - 待处理文件: %d 个（%s）' % (len(files), picked_note))
     print('  - 输出模式: %s' % mode_name)
     print('  - 输出位置: %s' % output_dir)
     print('---')
-
-    if save_mode == 'source' and not chosen_from_menu and not _confirm_overwrite(
-            files, output_dir, fmt, opts['assume_yes']):
-        return 130
 
     summary = core.run_files(files, fmt, opts['quality'], width, output_dir, save_mode,
                              core.checked_ico_sizes(opts['ico_sizes']), log=lambda s: print(s, end=''))
