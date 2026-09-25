@@ -157,6 +157,9 @@ input.mono { font-family: var(--font-mono); font-size: var(--t-code); }
 
 /* 分段控件：选项少才点得舒服 */
 .seg { display: flex; padding: 2px; gap: 2px; background: var(--field); border-radius: var(--r-sm); }
+.seg button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.seg button > svg { width: 14px; height: 14px; opacity: .85; }
+.seg button[aria-selected="true"] > svg { opacity: 1; }
 .seg button {
   flex: 1; min-width: 0; border: none; background: transparent; cursor: pointer;
   padding: 5px 4px; border-radius: 5px; color: var(--text-2); font-weight: 500;
@@ -237,18 +240,24 @@ input[type=range]:active::-webkit-slider-thumb { transform: scale(1.06); }
    图标：统一尺寸与描边，颜色跟随 currentColor
    ========================================================================== */
 .btn.icon svg { width: 15px; height: 15px; display: block; }
-/* 按钮里的图标：固定尺寸 + 不参与压缩，文字长短变化时图标不会跟着变形 */
-.btn > svg { width: 14px; height: 14px; display: block; flex: none; }
-.btn.ghost > svg { opacity: .8; }
-.seg button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
-.seg button > svg { width: 14px; height: 14px; display: block; flex: none; opacity: .85; }
-.seg button[aria-selected="true"] > svg { opacity: 1; }
-.warnbar > svg { width: 15px; height: 15px; display: block; flex: none; }
-.toast > svg { width: 15px; height: 15px; display: block; flex: none; }
-.combo-btn svg { width: 13px; height: 13px; display: block; }
-.log-toggle .tri svg { width: 12px; height: 12px; display: block; }
-.tile .check-badge svg { width: 11px; height: 11px; display: block; }
-.picker-empty .pe-ico svg { width: 34px; height: 34px; display: block; color: var(--text-3); opacity: .7; }
+/* ★ 必须是**后代**选择器 `.btn svg`，不能是 `.btn > svg`。
+   按钮上的图标是塞在 <span data-icon="..."> 里的（脱离 DOM 就不知道它是什么图标），
+   实际结构是 `.btn > span > svg` —— 写 `>` 一个都匹配不上，
+   而没有 CSS 尺寸的 <svg viewBox> 会按浏览器默认的 300×150 渲染，界面直接炸。
+   加个兜底：所有图标容器一律 inline-flex，不让 span 自己撑出空隙。 */
+.btn svg, .seg button svg, .warnbar svg, .toast svg, .log-toggle svg {
+  display: block; flex: none;
+}
+.btn svg { width: 14px; height: 14px; }
+.btn.icon svg { width: 15px; height: 15px; }
+.btn.ghost svg { opacity: .85; }
+.btn > [data-icon] { display: inline-flex; flex: none; }
+.warnbar > svg { width: 15px; height: 15px; }
+.toast > svg { width: 15px; height: 15px; }
+.combo-btn svg { width: 13px; height: 13px; }
+.log-toggle .tri svg { width: 12px; height: 12px; }
+.tile .check-badge svg { width: 11px; height: 11px; }
+.picker-empty .pe-ico svg { width: 34px; height: 34px; color: var(--text-3); opacity: .7; }
 
 .field-note { margin-top: 5px; font-size: var(--t-sub); color: var(--text-3); }
 /* 没话说的时候**不占高度** —— 「将处理 N 个」这种和右上角、按钮上的数量重复，
