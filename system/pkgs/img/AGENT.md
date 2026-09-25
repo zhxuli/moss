@@ -1,6 +1,8 @@
 # img —— 给 AI / 脚本看的调用契约
 
-> 这份文件是**机器可读的调用说明**，人和 AI 都按它来。
+> 这是 moss 包标准里的 **`AGENT.md`**（在 `pkg.json` 的 `docs.agent` 里声明）：
+> `README.md` 给人看、**`AGENT.md` 给 AI 看**（用法 / 副作用 / 失败模式，可长文）。
+>
 > 语法只有一份真相在 `cli.py` 的 `USAGE` 里，这份是把它摊开讲清楚；
 > **两者不一致时以 `cli.py` 的 USAGE 为准**（`moss :img -h` 打印的就是它）。
 

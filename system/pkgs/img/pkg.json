@@ -15,9 +15,10 @@
   "_paramsWhy": "rest:true = 宿主把包名后面那一整串原样塞进这一个字段，包自己解析（写法要短、顺序随便）。不标 rest 的话宿主只取第一个位置参数，多余的会静默丢掉。",
   "params": [
     { "name": "args", "type": "string", "rest": true, "required": false,
-      "desc": "留空 = 打开界面；填了 = 命令行参数：格式(必须) [质量%] [宽度px] [文件/通配符...] [/] [-o 输出目录]",
-      "placeholder": "webp 60% 1200 *.png",
-      "examples": ["webp", "webp 60% 1200", "png *.jpg", "ico *.png", "jpg 90% /"] }
+      "desc": "留空 = 打开界面；填了 = 命令行参数：[格式] [质量%] [宽度px] [文件/通配符...] 输出位置（必须给一个：/ 写回源目录，或 -o <目录> 输出到指定目录）。不写格式 = 保持原格式。详见 AGENT.md",
+      "placeholder": "ico a.png -o D:\\out",
+      "examples": ["ico a.png -o D:\\out", "webp 60% 1200 *.png -o D:\\out",
+                   "1200 -o D:\\out", "jpg 90% /"] }
   ],
 
   "env": { "cwd": "", "elevated": false },
@@ -42,10 +43,6 @@
   "ai": {
     "expose": true,
     "risk": "low",
-    "doc": "AI.md",
-    "_docWhy": "给 AI / 脚本看的调用契约单独放一份文件，别塞进 JSON：那里要写参数表、退出码、注意事项和例子，塞进 JSON 只会变成一坨转义。语法唯一真相仍在 cli.py 的 USAGE。",
-    "mustSpecifyOutput": true,
-    "_mustWhy": "不写 / 也不写 -o 时会弹交互菜单；非交互环境下会直接失败（退出码 2）。所以 AI / 脚本调用必须带 -o <目录>（非破坏性，推荐）或 /（覆盖原图）。",
     "examples": [
       { "args": "ico a.png -o D:\\out", "note": "只把 a.png 转成 ico 放到 D:\\out" },
       { "args": "webp 60% 1200 *.png -o D:\\out", "note": "当前目录的 png 转 webp，质量 60、宽 1200" },
@@ -53,6 +50,8 @@
       { "args": "ico -s 16,32 *.png -o D:\\out", "note": "只要 16 和 32 两档的 ico" }
     ]
   },
+
+  "docs": { "agent": "AGENT.md" },
 
   "changes": [
     "命令行不再替用户猜输出模式：没写 / 也没写 -o 时**弹出上下选择菜单**（覆盖原图 / 删除原图 / 新文件夹），自己选。菜单**不预选** —— 光标一开始不在任何一项上，必须先按 ↑↓ 再回车；**直接回车 = 取消整个操作**（用户定的规则，避免随手一个回车就把原图覆盖或删掉）。",
