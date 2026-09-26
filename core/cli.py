@@ -552,11 +552,19 @@ def cmd_selfcheck(table):
 
     recs = registry.scan_all()
     print("  包        : %d 个" % len(recs))
+    layers = {}
+    for r in recs:
+        layers[r.get("layer") or "?"] = layers.get(r.get("layer") or "?", 0) + 1
     for r in recs:
         e = pkg_mod.entry_path(r["pkg"], Path(r["dir"]))
-        print("     - %-12s runner=%-10s 入口=%s" % (
-            r["id"], r["pkg"].get("runner"),
+        print("     - %-12s [%-6s] runner=%-10s 入口=%s" % (
+            r["id"], r.get("layer") or "?", r["pkg"].get("runner"),
             (e.name if e else ("inline" if pkg_mod.inline_code(r["pkg"]) else "✗ 缺失"))))
+    # ★ 必须把"层"打出来：不然根本分不清哪些会随发行版发给用户
+    #   （`system` = 出厂件，随 exe 分发；`dev` = **只在开发机上**，发行版没有这个目录）
+    if layers.get("dev"):
+        print("     （层说明：system = 随 exe 发给用户；dev = 只在开发机上，"
+              "发行版里没有它 —— 本机 dev 包 %d 个）" % layers["dev"])
     cd_ok, cd_why = shell.console_available()
     who = shell.parent_shell()
     print("  cd 注入   : %s   （%s）" % ("可用" if cd_ok else "✗ 不可用", cd_why))
