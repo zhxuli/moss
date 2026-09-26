@@ -129,7 +129,10 @@ def build_env(inv):
     if inv.get("id"):
         data = paths.pkg_state_dir(inv["id"])
     else:
-        data = paths.path_state_dir("path:" + str(inv.get("cwd") or ""))
+        # 路径调用：key 直接用 cwd（以前拼过 `path:` 前缀避免和包 id 撞，
+        # 现在两者分别在 `state/<id>` 和 `state/_path/` 下，前缀没必要了 ——
+        # 留着还会漏进目录名里变成 `path-D--python-...`）
+        data = paths.path_state_dir(inv.get("cwd") or "")
     env["MOSS_PLUGIN_DATA_DIR"] = str(data)
     # 约定好的子目录（设计与决策 §6.1）。★ 宿主**不预建**它们：包用哪个自己建，
     # 免得给每个跑过一次的包都留一堆空目录（paths.py 的"懒创建"原则）。

@@ -86,6 +86,25 @@ def _short_hash(key):
     return hashlib.sha1(str(key).encode("utf-8")).hexdigest()[:12]
 
 
+def _readable_tag(key):
+    """把一段路径变成**看得懂**的目录名前缀（`D:\\a\\b` → `D--a-b`）。
+
+    ★ 它只负责"能看懂"，**不负责唯一性** —— 唯一性交给后面拼上去的短哈希。
+      所以这里可以放心截断、放心替换非法字符。
+    为什么要有它：光用哈希命名（`0b5ffe4aad83`）时，你在 `user_data` 里
+    看到一个目录根本不知道是谁的，删除、排障、清缓存都无从下手。
+    """
+    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", str(key))
+    s = s.strip(" .-")            # 首尾的点和空格在 Windows 目录名里非法/会被吞
+    if len(s) > 60:
+        s = s[-60:]               # 深路径保留**尾部**：认项目靠的是最后几段
+    return s or "dir"
+
+
+def _readable_dir(key):
+    return "%s__%s" % (_readable_tag(key), _short_hash(key))
+
+
 def pkg_state_dir(pid):
     """包的数据目录 = `user_data/state/<id>/`。
 
@@ -101,17 +120,18 @@ def pkg_state_dir(pid):
 
 
 def path_state_dir(key):
-    """**路径调用**（没有包 id）的数据目录：`user_data/state/_path/<短哈希>/`。
+    """**路径调用**（没有包 id）的数据目录：`user_data/state/_path/<目录名>__<短哈希>/`。
 
-    这里只能用哈希：路径里有反斜杠、冒号、中文，不适合当目录名。
+    用"看得懂的前缀 + 短哈希"而不是纯哈希：路径里有反斜杠、冒号、中文，
+    不能原样当目录名，但**全换成哈希就等于看不懂是谁的**（`_path/ed028ad05bf1`）。
     放 `_path/` 下面是为了跟"按包 id 命名"的那些一眼区分开。
     """
-    return STATE_DIR / "_path" / _short_hash(key)
+    return STATE_DIR / "_path" / _readable_dir(key)
 
 
 def resolve_dir_for(key):
-    """宿主的目录记忆（`choices.json`）落在哪。"""
-    return RESOLVE_DIR / _short_hash(key)
+    """宿主的目录记忆（`choices.json`）落在哪：`user_data/resolve/<目录名>__<短哈希>/`。"""
+    return RESOLVE_DIR / _readable_dir(key)
 
 
 def describe():
