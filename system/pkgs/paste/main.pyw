@@ -114,7 +114,10 @@ def _setup_api():
     u.SendMessageW.restype = LRESULT
     u.GetCursorPos.argtypes = [ctypes.POINTER(POINT)]
     u.GetCursorPos.restype = ctypes.c_int
-    u.MonitorFromPoint.argtypes = [ctypes.POINTER(POINT), ctypes.c_ulong]
+    # ★ POINT 是【按值传结构体】(HMONITOR MonitorFromPoint(POINT pt, DWORD dwFlags))，
+    #   写成 POINTER(POINT) 会把指针当两个 int 塞进寄存器 -> 点变成垃圾值 ->
+    #   永远返回同一块显示器（多屏贴边就全错了；单屏因为兜底到主屏所以看不出来）。
+    u.MonitorFromPoint.argtypes = [POINT, ctypes.c_ulong]
     u.MonitorFromPoint.restype = ctypes.c_void_p
     u.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(MONITORINFO)]
     u.GetMonitorInfoW.restype = ctypes.c_int
@@ -2739,8 +2742,8 @@ class EdgePasteApp:
         return (0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1))
 
     def _monitor_rect_at(self, x, y):
-        pt = POINT(int(x), int(y))
-        hmon = user32.MonitorFromPoint(ctypes.byref(pt), 2)
+        # ★ 按值传 POINT（见 _setup_api 里的说明）；不要再写 byref。
+        hmon = user32.MonitorFromPoint(POINT(int(x), int(y)), 2)
         if not hmon: return None
         mi = MONITORINFO()
         mi.cbSize = ctypes.sizeof(MONITORINFO)
