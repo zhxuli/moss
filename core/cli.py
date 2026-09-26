@@ -45,6 +45,8 @@ USAGE = """moss —— 多语言启动器
   moss --history               最近启动记录：**方向键选择，回车直接再跑一次**（去重，最多 20 条）
                                回车进入程序后，程序退出就**彻底退出**，不会再回到列表
   moss --history <条数>        只打印不交互（管道 / 脚本用这种）
+  moss --spec                  打印「插件契约」：怎么写一个插件（★ AI 请先读它）
+  moss --new <id>              生成一个能跑的插件骨架到 user_data/pkgs/<id>/
   moss --resolve <名字>        只看解析结果，不执行（排障用：为什么选中它 / 为什么没找到）
   moss --selfcheck             自检：安装根 / runner 表 / 包 / 自带运行时 / cd 注入
 
@@ -477,6 +479,149 @@ def cmd_rerun_record(r, table):
     return engine.run(inv, table)
 
 
+def cmd_spec():
+    """打印**插件契约**。
+
+    ★ 为什么要做成命令而不是"把契约塞进帮助文本"：
+      · 帮助是给人扫的，塞两百行没人看，还会和契约文件漂移成两份；
+      · 契约文件随 exe 分发，`moss --spec` 拿到的**永远和当前版本一致**；
+      · 对 AI 来说，"跑一条命令拿到全文" 比"猜文件在哪" 可靠得多。
+    """
+    f = paths.SPEC_FILE
+    if not f.is_file():
+        out.print_cyan("[错误] 找不到插件契约：%s" % f)
+        out.print_cyan("       发行版里它应该在 system/spec/ 下。")
+        return 1
+    try:
+        print(f.read_text(encoding="utf-8"))
+    except Exception as e:                                      # noqa: BLE001
+        out.print_cyan("[错误] 契约文件读不出来：%s" % e)
+        return 1
+    return 0
+
+
+# ---- `moss --new` 生成的骨架。用 __ID__ 占位，避免和代码里的花括号打架 ----
+NEW_PKG_JSON = {
+    "spec": 1,
+    "id": "__ID__",
+    "kind": "task",
+    "version": "0.1.0",
+    "name": {"zh-CN": "新建插件 __ID__"},
+    "desc": {"zh-CN": "一句话说明这个插件干什么（会被列在 moss 的包列表里）"},
+    "tags": [],
+    "aliases": ["__ID__"],
+    "runner": "python",
+    "entry": {"file": "run.py"},
+    "params": [
+        {"name": "text", "type": "string", "default": "你好",
+         "desc": "示例参数：要重复的内容"},
+        {"name": "times", "type": "int", "default": 1, "desc": "示例参数：重复几遍"},
+    ],
+    "env": {"cwd": "", "elevated": False},
+    "capabilities": {"run": ["python"], "net": [], "elevated": False},
+    "output": {"mode": "json", "schema": {"text": "string", "times": "int"}},
+    "origin": {"by": "user"},
+    "ai": {"expose": False, "risk": "low"},
+}
+
+NEW_RUN_PY = '''# -*- coding: utf-8 -*-
+"""__ID__ —— 由 `moss --new` 生成的骨架。
+
+三件事，照抄就行：
+  1. 参数从 `MOSS_PKG_PARAMS` 读（宿主按 pkg.json 的 params 解析好，以 JSON 注入）
+  2. 数据写 `MOSS_PLUGIN_DATA_DIR`（**不要**写自己包目录 —— 升级包会冲掉）
+  3. 结构化结果写 `MOSS_RESULT_FILE`（给人看的照常 print）
+"""
+import json
+import os
+
+# ---- 1. 读参数 ----
+params = json.loads(os.environ.get("MOSS_PKG_PARAMS") or "{}")
+text = str(params.get("text") or "你好")
+try:
+    times = max(1, min(int(params.get("times") or 1), 100))
+except Exception:
+    times = 1
+
+# ---- 2. 数据目录（宿主只给路径，目录要自己建）----
+data_dir = os.environ.get("MOSS_PLUGIN_DATA_DIR") or "."
+os.makedirs(data_dir, exist_ok=True)
+
+# ---- 干活 ----
+for _ in range(times):
+    print(text)
+
+# ---- 3. 结构化结果 ----
+result_file = os.environ.get("MOSS_RESULT_FILE")
+if result_file:
+    with open(result_file, "w", encoding="utf-8") as f:
+        json.dump({"text": text, "times": times}, f, ensure_ascii=False)
+'''
+
+NEW_AGENT_MD = '''# __ID__ · 给 AI 看的说明
+
+> 这个文件是**给 AI / Agent 读的**（人看 README.md）。写清楚"怎么调、有什么副作用、会怎么失败"，
+> 别人才敢让它自动跑。
+
+## 干什么
+一句话：……
+
+## 怎么调
+```
+moss :__ID__ text=你好 times=3
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `text` | string | 否 | 要重复的内容（默认"你好"） |
+| `times` | int | 否 | 重复几遍（1-100，默认 1） |
+
+## 返回（结构化）
+`MOSS_RESULT_FILE` 里是 JSON：`{"text": ..., "times": ...}`
+
+## 副作用
+- 写文件：无 / 写到哪：……
+- 联网：无
+- 剪贴板：无
+
+## 失败模式
+- 参数非法 → 用默认值，退出码 0
+'''
+
+
+def cmd_new(pid, kind="task"):
+    """生成一个能跑的插件骨架（`user_data/pkgs/<id>/`）。"""
+    pid = str(pid or "").strip().lower()
+    if not paths.valid_id(pid):
+        out.print_cyan("[错误] id 不合法：'%s'（只允许 %s）" % (pid, paths.ID_RE.pattern))
+        out.print_cyan("       规则：小写字母开头，只含小写字母/数字/-/_，不超过 32 字符。")
+        return 1
+    target = paths.USER_PKGS / pid
+    if target.exists():
+        out.print_cyan("[错误] 已经存在：%s" % target)
+        return 1
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        pkg = json.loads(json.dumps(NEW_PKG_JSON).replace("__ID__", pid))
+        pkg["kind"] = kind
+        (target / "pkg.json").write_text(
+            json.dumps(pkg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        (target / "run.py").write_text(NEW_RUN_PY.replace("__ID__", pid), encoding="utf-8")
+        (target / "AGENT.md").write_text(NEW_AGENT_MD.replace("__ID__", pid), encoding="utf-8")
+    except Exception as e:                                      # noqa: BLE001
+        out.print_cyan("[错误] 生成失败：%s" % e)
+        return 1
+    out.print_cyan("生成好了：%s" % target)
+    for n in ("pkg.json", "run.py", "AGENT.md"):
+        print("     - %s" % n)
+    out.print_cyan("下一步：")
+    print("     1) 改 pkg.json 里的 name / desc / params")
+    print("     2) 改 run.py 干活（参数读 MOSS_PKG_PARAMS，结果写 MOSS_RESULT_FILE）")
+    print("     3) 跑：moss :%s 你好 3" % pid)
+    out.print_cyan("契约（字段含义、环境变量、数据放哪）：moss --spec")
+    return 0
+
+
 def cmd_resolve(name, table):
     """只看解析结果，不执行。
 
@@ -801,6 +946,13 @@ def main(argv):
         return handle_pick(table, detach=detach)
 
     # ---- moss 自己的选项 ----
+    if first == "--spec":
+        return cmd_spec()
+    if first == "--new":
+        if not rest:
+            out.print_cyan("[错误] --new 需要一个包 id。例：moss --new my-first")
+            return 1
+        return cmd_new(rest[0])
     if first == "--selfcheck":
         return cmd_selfcheck(table)
     if first == "--history":

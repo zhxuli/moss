@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "moss/pkg.schema.json",
+  "title": "moss 插件清单 pkg.json（spec 1）",
+  "description": "moss 插件的声明文件。规则：只许加字段，不许改语义（V-09）。未知字段必须被保留（F-21）—— 所以这里 additionalProperties 一律为 true。",
+  "type": "object",
+  "required": ["id", "kind", "version", "name", "runner", "entry"],
+  "additionalProperties": true,
+  "properties": {
+    "spec": {
+      "type": "integer",
+      "description": "格式版本，现在固定 1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+      "description": "机器身份：目录名 / 台账键 / 数据目录名。发布后不能改（F-26）"
+    },
+    "kind": {
+      "enum": ["task", "app", "agent", "bundle"],
+      "description": "task 跑完就结束；app 界面型（会藏控制台窗口）；agent/bundle 预留"
+    },
+    "version": {
+      "type": "string",
+      "description": "包自己的版本，与 moss 版本无关"
+    },
+    "name": { "$ref": "#/$defs/i18n" },
+    "desc": { "$ref": "#/$defs/i18n" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "aliases": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9_-]{1,32}$" },
+      "description": "命令行里敲的短名，可多个"
+    },
+    "runner": {
+      "type": "string",
+      "description": "内置：python / go / html / exe / shell / powershell。用户在 user_data/runners.json 里可以自己加（E-19），所以这里不用 enum，免得把合法的自定义 runner 判成非法"
+    },
+    "entry": {
+      "type": "object",
+      "properties": { "file": { "type": "string", "description": "相对包目录的入口文件" } },
+      "additionalProperties": true
+    },
+    "params": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/param" }
+    },
+    "env": {
+      "type": "object",
+      "properties": {
+        "cwd": { "type": "string", "description": "工作目录；空＝调用者所在目录" },
+        "elevated": { "type": "boolean", "description": "预留：要不要管理员权限" }
+      },
+      "additionalProperties": true
+    },
+    "capabilities": {
+      "type": "object",
+      "description": "能力声明（net/clipboard/fsRead/elevated…）。目前只保留，宿主还没有门禁",
+      "additionalProperties": true
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string" },
+        "schema": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "verify": { "type": "object", "description": "自检（自我迭代闭环用，宿主尚未执行）", "additionalProperties": true },
+    "origin": { "type": "object", "description": "来源与派生谱系（by/from/at）", "additionalProperties": true },
+    "ai": {
+      "type": "object",
+      "properties": {
+        "expose": { "type": "boolean", "description": "是否暴露给 AI 工具面" },
+        "risk": { "type": "string" },
+        "examples": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "docs": { "type": "object", "description": "readme / agent 指向文件", "additionalProperties": true },
+    "accepts": { "type": "object", "description": "能接受什么输入（拖放匹配用）", "additionalProperties": true }
+  },
+  "$defs": {
+    "i18n": {
+      "description": "多语言文本：短文本用内联对象，也可以只有一个字符串（F-23）",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "object", "additionalProperties": { "type": "string" } }
+      ]
+    },
+    "param": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "enum": ["string", "int", "float", "bool"] },
+        "required": { "type": "boolean" },
+        "default": {},
+        "placeholder": { "type": "string" },
+        "desc": { "$ref": "#/$defs/i18n" },
+        "rest": {
+          "type": "boolean",
+          "description": "true = 剩下的参数整串交给这个包自己解释（宿主不做 argv 数组、不做引号转义）"
+        }
+      }
+    }
+  }
+}

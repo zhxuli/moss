@@ -35,6 +35,10 @@ HOME = Path(_env_home).resolve() if _env_home else Path(sys.argv[0]).resolve().p
 SYSTEM_DIR = HOME / "system"
 SYSTEM_PKGS = SYSTEM_DIR / "pkgs"
 SYSTEM_RUNNERS = SYSTEM_DIR / "runners.json"
+# 对外承诺：插件契约（随 exe 分发，人和 AI 都读它）。`moss --spec` 打印的就是它。
+SPEC_DIR = SYSTEM_DIR / "spec"
+SPEC_FILE = SPEC_DIR / "插件契约.md"
+SPEC_SCHEMA = SPEC_DIR / "pkg.schema.json"
 
 # 自带运行时（解释器）。一个运行时一个目录，**目录名 = runner 里 "runtime" 字段的值**。
 # 为什么是复数 `runtimes`：旧项目叫 `bin/runtime`，但里面其实只有 Python，
