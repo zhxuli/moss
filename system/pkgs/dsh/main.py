@@ -1577,18 +1577,19 @@ def _dsh_cwd() -> str:
     """
     env = os.environ.get("DSH_BRIDGE_CWD")
     if env and os.path.isdir(env):
+        LOG.info("DSH 工作目录 = %s（来自环境变量 DSH_BRIDGE_CWD）", env)
         return env
     legacy = r"D:\soft\deepseek-harness"
     if os.path.isdir(legacy):
+        # 这台机器上 DSH 的检出目录；**本机就走这一条**，行为与迁移前一致。
         return legacy
-    for cmd in DSH_LAUNCHERS:
-        for part in cmd:
-            if isinstance(part, str) and part.lower().endswith("bin.js"):
-                # …/node_modules/@deepseek-ai/dsh/lib/bin.js → 往上两层 = 这个包的目录
-                pkg_dir = os.path.dirname(os.path.dirname(part))
-                if os.path.isdir(pkg_dir):
-                    return pkg_dir
-    return os.getcwd()
+    # ③ 别人机器上的兜底：用「你敲 moss :dsh 时所在的那个目录」。
+    #    为什么不从启动器反推：那会得到 node_modules\@deepseek-ai\dsh 这种安装目录，
+    #    拿它当工作区既怪又难找；而「我在哪个目录启动的」是命令行工具的通用直觉。
+    cwd = os.getcwd()
+    LOG.info("DSH 工作目录 = %s（没有专用配置，取当前目录；可用环境变量 "
+             "DSH_BRIDGE_CWD 固定下来）", cwd)
+    return cwd
 
 
 DSH_CWD = _dsh_cwd()
