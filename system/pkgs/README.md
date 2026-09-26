@@ -32,5 +32,6 @@ Go / Rust / C 这类语言的包，**出厂时应该带编译好的 `exe`，而�
 
 所以：源码留在 `src/`，用 `build.cmd` 产出 exe，`pkg.json` 的 `entry` 指向 exe。
 
-`hello-go`（源码 + `go` runner）和 `hello-exe`（编译产物 + `exe` runner）两个演示包
-放在 `dev/pkgs/` 里，就是为了把这件事摆清楚 —— 它们**不该进这里**。
+（早先有两个演示包 `hello-go` / `hello-exe` 放在 `dev/pkgs/` 里专门演示这件事，
+2026-09-27 已删除 —— 它们只会让包列表变乱。要参考的话在 git 里：
+`git checkout 89801ad -- dev/pkgs/hello-exe`。）
