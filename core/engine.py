@@ -17,6 +17,7 @@ pa 的入口和以后 exec 工作台、AI 调用，全都走这里。
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -29,6 +30,13 @@ from . import appearance, config, events, out, paths, runners as runners_mod
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _DETACHED = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
 _NEW_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+
+# ★ 形似凭据的环境变量名（`X-15`）。
+#   照抄 DSH `@deepseek-ai/dsh-subprocess` 的启发式：`/KEY|PASSWORD|SECRET|TOKEN/i`
+#   （原注释：the harness's own `<VENDOR>_API_KEY`/secrets must not leak into a
+#    spawned process implicitly）。
+#   ⚠️ 启发式一定会有误杀，所以留了 `config.security.keep_env` 白名单。
+SENSITIVE_ENV_RE = re.compile(r"KEY|PASSWORD|SECRET|TOKEN", re.I)
 
 
 def kill_process_tree(pid):
@@ -118,9 +126,72 @@ def build_argv(inv, spec):
     return argv
 
 
+def _scrub_sets():
+    cfg = config.security_cfg()
+    keep = {str(x).upper() for x in (cfg.get("keep_env") or [])}
+    extra = {str(x).upper() for x in (cfg.get("scrub_extra") or [])}
+    return keep, extra
+
+
+def _is_sensitive_name(name, keep, extra):
+    up = str(name).upper()
+    if up in keep:
+        return False
+    if up in extra:
+        return True
+    return bool(SENSITIVE_ENV_RE.search(up))
+
+
+def scrubbed_env_names(environ=None):
+    """当前环境里**会被剥掉**的变量名（只返名字，永不返回值）。自检用。"""
+    keep, extra = _scrub_sets()
+    src = os.environ if environ is None else environ
+    return sorted(k for k in src
+                  if k.upper().startswith("MOSS_")
+                  or _is_sensitive_name(k, keep, extra))
+
+
+def scrubbed_parent_env():
+    """父进程环境 − 凭据形状的名字 − 继承来的 `MOSS_*`。这是每个子进程的起点。
+
+    ★ 两条规则，缺一不可：
+      1. **形似凭据的名字不传**（`/KEY|PASSWORD|SECRET|TOKEN/i` + `scrub_extra`）——
+         用户自己在系统里设的 `OPENAI_API_KEY` 之类，不该被随便一个插件顺手拿走。
+      2. **继承来的 `MOSS_*` 也全丢掉** —— 随后由我们**显式**设置成自己认定的权威值
+         （`paths.HOME` 等）。子进程拿到的因此是一整套"由 moss 决定"的值，
+         而不是从父环境原样透传下来的。
+         ⚠️ 注意这**不等于**"父 shell 里陈旧的 `MOSS_HOME` 会被纠正"：
+         `paths.HOME` 本身就优先认环境里的 `MOSS_HOME`（`D-12` 给辅助脚本留的兜底），
+         所以那个值仍然会经由 `paths.HOME` 传下去。
+      白名单 `config.security.keep_env` 里的名字不受规则 1 影响。
+
+    ★ 之后注入的东西都是**显式**的（MOSS_* 与将来的"声明过 + 授权过"的凭据）——
+      也就是 DSH 那句话：**顺手的拿不到，只有明确给的才拿得到**。
+
+    ⚠️ **这是止损，不是墙**：同用户的代码照样能去读文件拿 key（见「设计与决策」
+      `X-11` 的对照实验）。它的真实作用是把攻击从"一行 `os.environ`"提高到
+      "专门去找一个文件"。
+    """
+    cfg = config.security_cfg()
+    if not cfg.get("scrub_env", True):
+        return dict(os.environ)
+    keep, extra = _scrub_sets()
+    out = {}
+    for k, v in os.environ.items():
+        if k.upper().startswith("MOSS_"):
+            continue
+        if _is_sensitive_name(k, keep, extra):
+            continue
+        out[k] = v
+    return out
+
+
 def build_env(inv):
-    """给子进程的环境。照抄 pa.py:234-238 的注入方式，换成 MOSS_* 前缀。"""
-    env = os.environ.copy()
+    """给子进程的环境。照抄 pa.py:234-238 的注入方式，换成 MOSS_* 前缀。
+
+    ★ 起点是 `scrubbed_parent_env()`（净化过的），不是 `os.environ.copy()`。
+    """
+    env = scrubbed_parent_env()
     env["MOSS_HOME"] = str(paths.HOME)
     env["MOSS_USER_DATA_DIR"] = str(paths.USER_DIR)
 

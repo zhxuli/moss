@@ -37,6 +37,17 @@ DEFAULT_CONFIG = {
     "ctrl_c": {
         "force_kill": True,
     },
+    # ★ 子进程环境净化（X-15）。第 5 组，前 4 组照抄 pa.py 的字段一个不改。
+    "security": {
+        # 开着的时候，形似凭据的环境变量**不传给插件**（见 core/engine.py 的说明）
+        "scrub_env": True,
+        # 额外要剥掉的名字（精确匹配，大小写不敏感）—— 有些项目的凭据变量名
+        # 不含 KEY/TOKEN/SECRET/PASSWORD 这些词
+        "scrub_extra": [],
+        # 白名单：即使名字命中敏感形状也保留。比如 TOKENIZERS_PARALLELISM 不是凭据，
+        # 被误杀了会让某些库少一个性能设置
+        "keep_env": [],
+    },
 }
 
 # pa.py:116-123 原样
@@ -124,6 +135,10 @@ def auto_clear():
 
 def max_parent_depth():
     return CONFIG.get("search", {}).get("max_parent_depth", 3)
+
+
+def security_cfg():
+    return CONFIG.get("security", {})
 
 
 def restore_prefix(arg):

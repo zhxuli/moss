@@ -711,6 +711,16 @@ def cmd_selfcheck(table):
         print("     （层说明：system = 随 exe 发给用户；dev = 只在开发机上，"
               "发行版里没有它 —— 本机 dev 包 %d 个）" % layers["dev"])
     cd_ok, cd_why = shell.console_available()
+    # ★ 环境净化：只报**名字**，永不报值（跟 DSH 的 describe() 一个原则）
+    sec = config.security_cfg()
+    names = engine.scrubbed_env_names()
+    if sec.get("scrub_env", True):
+        shown = ", ".join(names[:6]) + ("…" if len(names) > 6 else "")
+        print("  环境净化  : 已开（不传给插件的变量 %d 个%s）"
+              % (len(names), ("：" + shown) if names else ""))
+    else:
+        print("  环境净化  : ✗ 已关（config.security.scrub_env=false）"
+              " —— 插件会继承你环境里所有凭据变量")
     who = shell.parent_shell()
     print("  cd 注入   : %s   （%s）" % ("可用" if cd_ok else "✗ 不可用", cd_why))
     print("  父 shell  : %s   （沿父进程链: %s）"
