@@ -5,7 +5,7 @@
     加一种语言 = 往 `system/runners.json` 加一条，或者往 `user_data/runners.json` 加一条。
     **不改宿主代码，不重编 exe。**
 
-三层叠放：
+两层叠放：
     system/runners.json      随版本走
     user_data/runners.json   用户覆盖（优先）
     自带的解释器放 system/runtimes/<家族>/<版本>/（用户层可覆盖同名版本）
