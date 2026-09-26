@@ -1500,13 +1500,12 @@ def cleanup_on_exit(reason: str) -> None:
             continue
         if not looks_like_dsh(pid):        # 认不出就别动（防 PID 复用误杀）
             continue
-        LOG.warning("退出收尾（%s）：结束本桥拉起的 DSH pid=%s", reason, pid)
+        LOG.info("收尾（%s）：结束本桥拉起的 DSH pid=%s", reason, pid)
         kill_and_wait(pid)
     # 还留在 3080 上的，说明不是本桥拉起的 —— 说清楚，别让人以为"没退干净"
     for pid in find_port_pids(DSH_TARGET_PORT):
         if pid != os.getpid():
-            LOG.warning("注意：3080 上仍有 DSH（pid=%s）在跑，它不是本桥本次拉起的 —— "
-                        "本桥退出不会动它；要停就 taskkill /F /PID %s", pid, pid)
+            LOG.warning("3080 上还有别人的 DSH（pid=%s），没动它", pid)
 
 
 def ensure_single_instance() -> None:
@@ -1522,8 +1521,7 @@ def ensure_single_instance() -> None:
                 LOG.warning("接管：结束旧实例 pid=%s", old_pid)
                 kill_and_wait(old_pid)
             else:
-                LOG.warning("PID 文件里那个 pid=%s 看着不是 dsh 桥（PID 可能被系统复用了）"
-                            "→ 不动它，改用端口 %s 兜底", old_pid, SETUP_PORT)
+                LOG.warning("PID 文件里的 pid=%s 不是 dsh 桥，不接管它", old_pid)
 
     # 2) 端口兜底（PID 文件失效/缺失时，8788 被占则杀占用者）
     for pid in find_port_pids(SETUP_PORT):
@@ -1533,8 +1531,7 @@ def ensure_single_instance() -> None:
             LOG.warning("接管：结束占用端口 %s 的 pid=%s", SETUP_PORT, pid)
             kill_and_wait(pid)
         else:
-            LOG.warning("端口 %s 被 pid=%s 占着，但它看着不是 dsh 桥 → 不动它"
-                        "（后面绑定会自动重试）", SETUP_PORT, pid)
+            LOG.warning("端口 %s 被不是 dsh 桥的 pid=%s 占着，不动它", SETUP_PORT, pid)
 
     # 2.5) 等端口释放（旧实例被杀后）
     if not wait_port_free(SETUP_PORT):
@@ -1564,7 +1561,7 @@ def spawn_daemon() -> int:
     if not os.path.isfile(venv_py):
         _legacy_pw = r"D:\python\wwwroot\ZeEn\venv\Scripts\pythonw.exe"
         if os.path.isfile(_legacy_pw):
-            LOG.warning("当前运行时没有 pythonw.exe，退回老项目的 ZeEn venv（兜底）: %s", _legacy_pw)
+            LOG.warning("没有 pythonw.exe，退回 ZeEn venv: %s", _legacy_pw)
             venv_py = _legacy_pw
     flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
     try:
@@ -1647,8 +1644,7 @@ def _dsh_cwd() -> str:
     #    为什么不从启动器反推：那会得到 node_modules\@deepseek-ai\dsh 这种安装目录，
     #    拿它当工作区既怪又难找；而「我在哪个目录启动的」是命令行工具的通用直觉。
     cwd = os.getcwd()
-    LOG.info("DSH 工作目录 = %s（没有专用配置，取当前目录；可用环境变量 "
-             "DSH_BRIDGE_CWD 固定下来）", cwd)
+    LOG.info("DSH 工作目录 = %s（当前目录）", cwd)
     return cwd
 
 
@@ -1731,16 +1727,15 @@ def looks_like_dsh(pid: int) -> bool:
     """
     name = process_image_name(pid)
     if name != "node.exe":
-        LOG.warning("pid %s 的镜像名是 %r，不是 node.exe —— 不敢当 DSH 处理",
-                    pid, name or "取不到")
+        LOG.warning("pid %s 不是 node.exe（%r），不当 DSH 处理", pid, name or "取不到")
         return False
     cmd = process_cmdline(pid)
     low = cmd.lower()
     if not low:
-        LOG.error("pid %s 是 node.exe，但取不到它的命令行 —— 无法确认是 DSH，不动手", pid)
+        LOG.error("pid %s 取不到命令行，无法确认是 DSH，不动手", pid)
         return False
     if ("dsh" not in low) and ("bin.js" not in low):
-        LOG.warning("pid %s 的命令行里没有 dsh/bin.js —— 不敢当 DSH 处理: %s", pid, cmd[:120])
+        LOG.warning("pid %s 的命令行里没有 dsh/bin.js，不当 DSH 处理", pid)
         return False
     return True
 
@@ -1788,8 +1783,7 @@ def restart_dsh(reason: str) -> bool:
     pids = [p for p in find_port_pids(DSH_TARGET_PORT) if p != os.getpid()]
     if not pids:
         return True
-    LOG.warning("要重启 3080 上的 DSH（原因：%s）: pid=%s —— 本地 DSH 网页会闪断几秒，"
-                "监护随后会自动把它拉回来", reason, pids)
+    LOG.info("清掉 3080 上的旧 DSH: pid=%s", pids)
     killed = False
     # ★ 自保（`P-17`）：如果 3080 上那个 DSH 是**本进程的祖先**，说明我们正跑在它里面
     #   （比如你在 DSH 自己开出来的终端/会话里敲 `moss :dsh`）—— 杀掉它会把你自己
@@ -1797,21 +1791,18 @@ def restart_dsh(reason: str) -> bool:
     my_ancestors = ancestor_pids(os.getpid())
     for pid in pids:
         if pid in my_ancestors:
-            LOG.error("3080 上那个 DSH 是本进程的**祖先**（pid=%s）—— 你是在 DSH 自己"
-                      "开出来的终端/会话里跑的，杀掉它会把你这个会话一起断掉，已跳过。"
-                      "要重启 DSH 请换一个**独立的** PowerShell 窗口再跑 moss :dsh。", pid)
+            LOG.error("3080 上的 DSH 是本进程的祖先（pid=%s），跳过不杀；"
+                      "要重启请换独立窗口跑", pid)
             continue
         if looks_like_dsh(pid):
             kill_and_wait(pid)
             killed = True
     if not killed:
-        LOG.error("3080 上没有认出 DSH（不敢乱杀）→ 远端访问会一直 401；"
-                  "请自己结束占用 3080 的进程后重试")
+        LOG.error("3080 上那个进程不是 DSH，没动它（远端会 401，请自己处理）")
         return False
     if not wait_port_free(DSH_TARGET_PORT, timeout=8.0):
-        LOG.error("3080 端口还没释放，监护稍后会再试")
+        LOG.warning("3080 还没释放")
         return False
-    LOG.info("3080 已空出来，接下来由监护拉起新的 DSH")
     return True
 
 
