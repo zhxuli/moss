@@ -1,0 +1,54 @@
+{
+  "spec": 1,
+  "id": "exec",
+  "kind": "app",
+  "version": "2.0",
+  "name": {
+    "zh-CN": "快捷执行"
+  },
+  "desc": {
+    "zh-CN": "多语言命令脚本管理器（Apple 风格 WebView 界面，可内联运行 / 新窗口运行）"
+  },
+  "tags": [
+    "管理器",
+    "命令",
+    "gui"
+  ],
+  "aliases": [
+    "exec"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.py"
+  },
+  "params": [
+    {
+      "name": "args",
+      "type": "string",
+      "rest": true,
+      "desc": "不填 = 打开管理器；list = 列出命令；<别名> [参数] = 直接执行"
+    }
+  ],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "net": []
+  },
+  "output": {
+    "mode": "text"
+  },
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/pa_soft/bin/soft/exec",
+    "at": "2026-09-27"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "medium"
+  }
+}

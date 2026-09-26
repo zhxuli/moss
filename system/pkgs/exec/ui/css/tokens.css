@@ -1,0 +1,73 @@
+/* tokens.css
+   设计令牌：颜色/间距/字体/圆角，浅深两套
+   —— 由 index.html 拆出；<link> 顺序即层叠顺序 */
+
+/* ============================================================================
+   设计令牌：一个强调色、语义化命名、浅深两套；圆角与间距只在此处定义
+   ========================================================================== */
+:root {
+  --r-xs: 5px;  --r-sm: 7px;  --r-md: 10px;  --r-lg: 14px;  --r-xl: 18px;
+  --sp-1: 4px;  --sp-2: 8px;   --sp-3: 12px;  --sp-4: 16px;  --sp-5: 24px;  --sp-6: 32px;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text",
+             "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "Cascadia Code", "JetBrains Mono",
+               Consolas, "Microsoft YaHei UI", monospace;
+
+  --t-title: 21px;   --t-title-ls: -.021em;
+  --t-head:  15px;   --t-head-ls:  -.012em;
+  --t-body:  13px;   --t-body-ls:  -.003em;
+  --t-sub:   11.5px; --t-sub-ls:    .003em;
+  --t-code:  12.5px; --t-code-lh:   1.55;
+
+  --dur-fast: 110ms;  --dur-base: 200ms;
+  --ease-out: cubic-bezier(.22, .61, .36, 1);
+  --ease-spring: cubic-bezier(.34, 1.4, .64, 1);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --wall: radial-gradient(120% 120% at 8% 0%,  #eef3fb 0%, #ececf0 42%, #e7e7ec 100%);
+  --material: rgba(250, 250, 252, .70);
+  --material-solid: #fbfbfd;
+  --surface: #ffffff;   --surface-2: #f5f5f7;   --surface-3: #ececef;
+  --content-bg: #f0f0f3;                        /* 详情区底色：比卡片略深，衬托白卡 */
+  --text:   #1d1d1f;    --text-2: #6e6e73;      --text-3: #a1a1a6;
+  --sep:    rgba(0, 0, 0, .075);
+  --field:  rgba(118, 118, 128, .12);
+  --field-focus: rgba(0, 122, 255, .14);
+  --accent: #007aff;    --accent-fg: #ffffff;   --accent-press: #0069db;
+  --danger: #ff3b30;
+  --ring: rgba(0, 122, 255, .45);
+  --shadow-card: 0 1px 1px rgba(0,0,0,.028), 0 6px 20px rgba(0,0,0,.055);
+  --edge: inset 0 1px 0 rgba(255,255,255,.75);
+  --code-bg: #fbfbfd;
+  --btn-bg: #ffffff;  --btn-bg-hover: #f7f7f9;  --btn-border: rgba(0,0,0,.10);
+  --btn-shadow: 0 .5px 1.5px rgba(0,0,0,.07), 0 0 0 .5px rgba(0,0,0,.02);
+  --syn-comment: #6e7781;  --syn-keyword: #cf222e;  --syn-string: #0a3069;
+  --syn-number:  #0550ae;  --syn-title:   #8250df;  --syn-builtin: #953800;
+  --syn-attr:    #0550ae;  --syn-meta:    #6e7781;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --wall: radial-gradient(120% 120% at 8% 0%,  #26262b 0%, #202024 45%, #17171a 100%);
+  --material: rgba(38, 38, 42, .68);
+  --material-solid: #26262a;
+  --surface: #2c2c2e;   --surface-2: #3a3a3c;   --surface-3: #48484a;
+  --content-bg: #1e1e20;
+  --text:   #f5f5f7;    --text-2: #98989d;      --text-3: #6b6b70;
+  --sep:    rgba(255, 255, 255, .095);
+  --field:  rgba(118, 118, 128, .24);
+  --field-focus: rgba(10, 132, 255, .22);
+  --accent: #0a84ff;    --accent-fg: #ffffff;   --accent-press: #0a6fd6;
+  --danger: #ff453a;
+  --ring: rgba(10, 132, 255, .55);
+  --shadow-card: 0 1px 1px rgba(0,0,0,.24), 0 10px 28px rgba(0,0,0,.34);
+  --edge: inset 0 1px 0 rgba(255,255,255,.09);
+  --code-bg: #232326;
+  --btn-bg: #48484a;  --btn-bg-hover: #545456;  --btn-border: rgba(255,255,255,.07);
+  --btn-shadow: 0 .5px 1.5px rgba(0,0,0,.30), 0 0 0 .5px rgba(0,0,0,.18);
+  --syn-comment: #8b949e;  --syn-keyword: #ff7b72;  --syn-string: #a5d6ff;
+  --syn-number:  #79c0ff;  --syn-title:   #d2a8ff;  --syn-builtin: #ffa657;
+  --syn-attr:    #79c0ff;  --syn-meta:    #8b949e;
+}
