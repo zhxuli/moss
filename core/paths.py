@@ -11,6 +11,7 @@
 """
 import hashlib
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -48,6 +49,9 @@ USER_CONFIG = USER_DIR / "config.json"
 REGISTRY_FILE = USER_DIR / "registry.json"
 HISTORY_DIR = USER_DIR / "history"
 STATE_DIR = USER_DIR / "state"
+# 宿主自己的"目录记忆"（那个目录上次选了哪个候选）—— **跟插件数据分开放**。
+# 它不是"某个插件的数据"，以前混在 state/ 里，和插件数据平级、都是哈希名，谁也分不清。
+RESOLVE_DIR = USER_DIR / "resolve"
 # 用户层可以覆盖同名运行时（以后做"组件下载"时装到这里）
 USER_RUNTIMES = USER_DIR / "runtimes"
 
@@ -68,13 +72,46 @@ def ensure_user_dirs():
         d.mkdir(parents=True, exist_ok=True)
 
 
-def state_dir_for(key):
-    """给一个稳定 key（cwd 或包 id）分配状态目录。
+# 包 id 的**唯一权威规则**（`F-26`）。
+#   为什么要钉死：从 2026-09-27 起 `state/<id>/` 直接拿 id 当目录名，
+#   不校验的话一个 `id: "../../x"` 就能把数据写到别处去。
+ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
-    用哈希而不是原样路径：路径里的反斜杠、冒号、中文都不适合做目录名。
+
+def valid_id(pid):
+    return bool(ID_RE.match(str(pid or "")))
+
+
+def _short_hash(key):
+    return hashlib.sha1(str(key).encode("utf-8")).hexdigest()[:12]
+
+
+def pkg_state_dir(pid):
+    """包的数据目录 = `user_data/state/<id>/`。
+
+    ★ 目录名**就是包 id**，不再用哈希 —— 以前是 `state/978ea7af39ad/`，
+      在磁盘上根本看不出这是谁的包，删包、备份、排障都无从下手。
+    ★ id 不合法时**退回哈希并放进 `_bad/`**：这里必须自己兜住，
+      因为目录名是直接拼出来的（`F-26` 的安全边界）。
     """
-    h = hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
-    return STATE_DIR / h
+    pid = str(pid or "")
+    if not valid_id(pid):
+        return STATE_DIR / "_bad" / _short_hash(pid)
+    return STATE_DIR / pid
+
+
+def path_state_dir(key):
+    """**路径调用**（没有包 id）的数据目录：`user_data/state/_path/<短哈希>/`。
+
+    这里只能用哈希：路径里有反斜杠、冒号、中文，不适合当目录名。
+    放 `_path/` 下面是为了跟"按包 id 命名"的那些一眼区分开。
+    """
+    return STATE_DIR / "_path" / _short_hash(key)
+
+
+def resolve_dir_for(key):
+    """宿主的目录记忆（`choices.json`）落在哪。"""
+    return RESOLVE_DIR / _short_hash(key)
 
 
 def describe():

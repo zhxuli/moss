@@ -66,6 +66,12 @@ def _scan_layer(base_dir, layer):
                 print("[警告] %s 的 pkg.json 解析失败（JSON 语法错误？），"
                       "这个包会被当成不存在。" % d, file=sys.stderr)
             continue
+        # ★ id 不合法也要大声报出来（`F-26`）：它要当目录名用（`state/<id>/`），
+        #   放过去的话数据会被写到奇怪的地方；宁可这个包不出现，也不能带病跑。
+        if not paths.valid_id(p.get("id")):
+            print("[警告] %s 的 id '%s' 不合法（只允许 %s），这个包会被当成不存在。"
+                  % (d, p.get("id"), paths.ID_RE.pattern), file=sys.stderr)
+            continue
         pkg_mod.display_name(p)
         found.append({"id": p["id"], "layer": layer, "dir": d, "pkg": p})
     return found

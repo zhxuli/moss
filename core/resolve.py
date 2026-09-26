@@ -136,7 +136,7 @@ def collect(base, name, runners, depth):
 
 # ---------------------------------------------------------------- 记忆
 def _memory_file(base):
-    return paths.state_dir_for(str(base.resolve())) / "choices.json"
+    return paths.resolve_dir_for(str(base.resolve())) / "choices.json"
 
 
 def load_memory(base):

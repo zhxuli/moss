@@ -124,9 +124,18 @@ def build_env(inv):
     env["MOSS_HOME"] = str(paths.HOME)
     env["MOSS_USER_DATA_DIR"] = str(paths.USER_DIR)
 
-    key = inv.get("id") or ("path:" + str(inv.get("cwd") or ""))
-    state = paths.state_dir_for(key)
-    env["MOSS_PLUGIN_DATA_DIR"] = str(state)
+    # 这个包的数据目录。★ 包调用的目录名**就是包 id**（`state/<id>/`，一眼看得出
+    # 归属）；路径调用没有 id，退到 `state/_path/<短哈希>/`。
+    if inv.get("id"):
+        data = paths.pkg_state_dir(inv["id"])
+    else:
+        data = paths.path_state_dir("path:" + str(inv.get("cwd") or ""))
+    env["MOSS_PLUGIN_DATA_DIR"] = str(data)
+    # 约定好的子目录（设计与决策 §6.1）。★ 宿主**不预建**它们：包用哪个自己建，
+    # 免得给每个跑过一次的包都留一堆空目录（paths.py 的"懒创建"原则）。
+    env["MOSS_PLUGIN_CACHE_DIR"] = str(data / "cache")
+    env["MOSS_PLUGIN_LOG_DIR"] = str(data / "logs")
+    env["MOSS_PLUGIN_TMP_DIR"] = str(data / "tmp")
 
     if inv.get("id"):
         env["MOSS_PKG_ID"] = str(inv["id"])
