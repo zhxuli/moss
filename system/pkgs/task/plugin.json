@@ -1,1 +1,0 @@
-{ "name": "任务监控", "desc": "任务/进程查看（webview）：系统状态监控", "version": "1.0", "run": "main.py" }
