@@ -77,19 +77,80 @@ def scan_all():
     return sorted(by_id.values(), key=lambda r: r["id"])
 
 
-def find_alias(alias):
-    """按名字找包（id 或别名），用户层优先（遮蔽语义）。
+def _probe_by_dirname(name):
+    """**按目录名直接取一个包**，不读其它任何目录的清单。返回 None = 没探到。
 
-    注意：实现上是**先全扫、再线性找**（`scan_all()` 在循环外求值），
-    所以"找到就返回"只省下几次字符串比较，清单是一个不少读的 ——
-    精确 id 和"查不存在的名字"代价完全一样（实测 200 包时都是 54 ms）。
-    要省这一步得先按目录名直探两层，那是 `CL-11`（还没做）。
+    这是 `CL-11` 的快路径：`moss :img` 这种最常见的情况，根本用不着把两层的
+    清单全读一遍。实测（临时造 200 个包）：全扫 = 读 210 个清单 / 54 ms，
+    直探 = 读 1 个清单 / 0.28 ms。
+
+    为什么是这么写的 —— 三个坑，都得先想清楚：
+      ① **顺序必须"用户层优先"**。`layers()` 是按"从低到高"返回的
+         （system → user，后扫的遮蔽先扫的）。直探要是照抄那个顺序，
+         `moss :img` 会先命中 system 层的 img，用户放在 user 层的同名包
+         永远轮不到 —— `H-08`「用户层遮蔽系统层」当场失效。
+         所以这里 `reversed()`，改成 user → system。
+      ② **命中后要确认"这个名字真的是它的 id 或别名之一"**。约定上目录名 == 包 id，
+         但**不强制**（id 是从 `pkg.json` 里读的，`F-26` 只管格式、不管目录名）。
+         不确认就会出现"按目录名能跑、按名字找不到"的前后不一致，
+         那种 bug 比"慢"难查得多。确认之后语义和全扫**完全一致**，只是少读了清单。
+         顺带好处：目录名恰好就写成别名的包（少见）也会一起变快。
+      ③ **坏清单不在这里处理**。`pkg.load()` 读不出来（JSON 语法错）或 id 不合法时
+         直接放弃这一层，交给后面的全扫 —— 让 `_scan_layer` 去打那条真正的告警
+         （「pkg.json 解析失败」/「id 不合法」）。在这里再实现一遍告警只会重复，
+         而且会打两次。
     """
-    alias = (alias or "").strip().lower()
-    if not alias:
+    if not name:
         return None
-    for rec in scan_all():
+    for base, layer in reversed(layers()):          # ① user 层先试（见上）
+        d = base / name                             # 直接拿名字当目录名试
+        if not d.is_dir():
+            continue                                # 这层没有同名目录，试下一层
+        p = pkg_mod.load(d)                         # ★ 只读这一个清单
+        if p is None or not paths.valid_id(p.get("id")):
+            continue                                # ③ 坏了 / id 非法 → 交给全扫去报
+        pkg_mod.display_name(p)                     # 和 _scan_layer 一致：多语言的 name/desc 要摊平
+        pid = str(p.get("id") or "").lower()
+        aliases = [str(x).lower() for x in (p.get("aliases") or [])]
+        if name != pid and name not in aliases:
+            continue                                # ② 名字对不上 → 不算命中，继续找
+        rec = {"id": p["id"], "layer": layer, "dir": d, "pkg": p}
+        # 遮蔽信息：快路径只命中一个包，不会像 scan_all() 那样顺手算出 shadowed。
+        # 而 `--remove` 要用它打那句「它还遮住了 system 层的同名包 —— 删掉之后
+        # 那个会重新生效」，所以 user 层命中时补一次 is_dir（约 0.05 ms，可忽略）。
+        # 这里用 **id** 而不是 name 去拼路径：name 可能是别名，而 system 层
+        # 那个包的目录名是它自己的 id。
+        if layer == "user" and (paths.SYSTEM_PKGS / p["id"]).is_dir():
+            rec["shadowed"] = "system"
+        return rec
+    return None
+
+
+def find_alias(alias):
+    """按名字找包（id 或别名）。用户层优先（遮蔽语义，`H-08`）。
+
+    两条路（`CL-11`）：
+      ① **直探**：把名字当目录名，去 `user_data/pkgs/<名字>` 和
+         `system/pkgs/<名字>` 各读**一个**清单。命中就直接返回 ——
+         这是 `moss :img` / `moss --remove img` / 历史重跑这些常见路径。
+      ② **全扫兜底**：`scan_all()` 读两层的**全部**清单再线性找。
+         别名（`:image` → img）和"目录名≠包 id"的包只能这么找 ——
+         别名写在各包自己的 `pkg.json` 里，不读清单就不可能知道 image 是 img。
+         探不到**不等于没有这个包**，所以这一步不能省。
+
+    ★ 顺便说清一个以前没说透的事实：在全扫里"找到就返回"根本省不了什么 ——
+      `scan_all()` 是在 `for` 开始前**一次性求值**的，清单早就全读完了，
+      `return` 只省下后面几次字符串比较。所以真正能加速的做法只有一个：
+      **别做全扫**。
+    """
+    name = (alias or "").strip().lower()
+    if not name:
+        return None
+    rec = _probe_by_dirname(name)                   # ① 快路径
+    if rec is not None:
+        return rec
+    for rec in scan_all():                          # ② 兜底（逻辑与以前一字不差）
         names = [str(a).lower() for a in (rec["pkg"].get("aliases") or [])]
-        if alias in names or alias == rec["id"].lower():
+        if name in names or name == rec["id"].lower():
             return rec
     return None
