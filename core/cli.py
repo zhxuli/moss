@@ -42,14 +42,11 @@ USAGE = """moss —— 多语言启动器
   moss cd --print <目标>       只打印绝对路径，不做注入（包装函数用的就是它）
   moss pick | select | menu    交互式选择要运行的包
 
-  moss --list                  列出已安装的包
   moss --history               最近启动记录：**方向键选择，回车直接再跑一次**（去重，最多 20 条）
                                回车进入程序后，程序退出就**彻底退出**，不会再回到列表
   moss --history <条数>        只打印不交互（管道 / 脚本用这种）
-  moss --rerun <序号>          重跑列表里的第 N 条（不用先 cd 回去）
-  moss --resolve <名字>        只看解析结果，不执行
-  moss --selfcheck             自检：安装根 / runner 表 / 包 / 运行时
-  moss -h | --help             本帮助
+  moss --resolve <名字>        只看解析结果，不执行（排障用：为什么选中它 / 为什么没找到）
+  moss --selfcheck             自检：安装根 / runner 表 / 包 / 自带运行时 / cd 注入
 
 说明:
   · 参数写法二选一：位置参数（按 params 顺序）或 key=value
@@ -344,7 +341,7 @@ def _print_history(rows):
     print(_hist_head(width, width - _HIST_FIXED >= 10))
     for i, r in enumerate(rows, 1):
         print(_hist_row(i, r, width))
-    print("\n用 `moss --rerun <序号>` 可以重跑（不用先 cd 回去）。")
+    print("\n想再跑一次上面某条：直接敲它的名字（比如 `moss zeen`），不用先 cd 过去。")
     return 0
 
 
@@ -796,8 +793,6 @@ def main(argv):
         return handle_pick(table, detach=detach)
 
     # ---- moss 自己的选项 ----
-    if first in ("-l", "--list"):
-        return cmd_list(table)
     if first == "--selfcheck":
         return cmd_selfcheck(table)
     if first == "--history":
@@ -808,20 +803,19 @@ def main(argv):
             except ValueError:
                 n = None
         return cmd_history(n, table)
-    if first == "--rerun":
-        if not rest:
-            out.print_cyan("[错误] --rerun 需要一个序号。先看 `moss --history`。")
-            return 1
-        try:
-            return cmd_rerun(int(rest[0]), table)
-        except ValueError:
-            out.print_cyan("[错误] --rerun 的序号必须是数字。")
-            return 1
     if first == "--resolve":
         if not rest:
             out.print_cyan("[错误] --resolve 需要一个名字。")
             return 1
         return cmd_resolve(rest[0], table)
+
+    # 认不出来的选项给句人话，别掉进"找以 --xxx 开头的可运行目标"那种错误里
+    # （`--list` / `--rerun` 已经去掉：前者 `moss` 本来就会列包，后者改由
+    #   历史列表回车、或直接敲名字来做）
+    if first.startswith("-"):
+        out.print_cyan("[错误] 不认识的选项：%s" % first)
+        out.print_cyan("       直接敲 `moss` 看用法和包列表。")
+        return 1
 
     # ---- 包调用（照抄 pa.py:888-894） ----
     psym = config.plugin_symbol()
@@ -832,7 +826,7 @@ def main(argv):
             return handle_pick(table, detach=detach)
         rec = registry.find_alias(alias)
         if not rec:
-            out.print_cyan("[错误] 没有这个包：'%s'。用 `moss --list` 看有哪些。" % alias)
+            out.print_cyan("[错误] 没有这个包：'%s'。直接敲 `moss` 看有哪些包。" % alias)
             return 1
         if not registry.is_enabled(reg, rec["id"]):
             out.print_cyan("[错误] 包 '%s' 已被禁用。" % rec["id"])
