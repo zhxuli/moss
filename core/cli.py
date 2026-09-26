@@ -718,6 +718,8 @@ def cmd_selfcheck(table):
         shown = ", ".join(names[:6]) + ("…" if len(names) > 6 else "")
         print("  环境净化  : 已开（不传给插件的变量 %d 个%s）"
               % (len(names), ("：" + shown) if names else ""))
+        print("              误杀/关闭：user_data/config.json 的 security 组"
+              "（keep_env 白名单 / scrub_extra 补漏 / scrub_env 总开关）")
     else:
         print("  环境净化  : ✗ 已关（config.security.scrub_env=false）"
               " —— 插件会继承你环境里所有凭据变量")

@@ -77,12 +77,30 @@ def load():
         if cfg_path.is_file():
             with open(cfg_path, "r", encoding="utf-8") as f:
                 user = json.load(f)
+            added = []
             for section, settings in DEFAULT_CONFIG.items():
                 if section in user:
                     if isinstance(settings, dict) and isinstance(user[section], dict):
                         CONFIG[section].update(user[section])
                     else:
                         CONFIG[section] = user[section]
+                else:
+                    # ★ 新版本新增的配置组要**补进文件**，只用默认值是不够的：
+                    #   用户在 config.json 里看不到这个开关，就等于"它不存在"
+                    #   （实测踩过：加了 security 组，而用户的配置文件里没有，
+                    #    于是"怎么关掉环境净化/加白名单"根本无从下手）。
+                    user[section] = copy.deepcopy(settings)
+                    added.append(section)
+            if added:
+                try:
+                    with open(cfg_path, "w", encoding="utf-8") as f:
+                        json.dump(user, f, indent=2, ensure_ascii=False)
+                    from . import out
+                    out.print_cyan("[配置] 新版本新增了配置组 %s，已补进 %s"
+                                   % ("/".join(added), cfg_path))
+                except Exception as e:
+                    from . import out
+                    out.print_cyan("[配置警告] 新配置组补写失败: %s（本次仍用默认值）" % e)
         else:
             from . import out
             out.print_cyan("[配置] 未找到配置文件，将为您自动创建一个。")
