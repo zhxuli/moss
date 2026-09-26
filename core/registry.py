@@ -99,22 +99,41 @@ def _probe_by_dirname(name):
          直接放弃这一层，交给后面的全扫 —— 让 `_scan_layer` 去打那条真正的告警
          （「pkg.json 解析失败」/「id 不合法」）。在这里再实现一遍告警只会重复，
          而且会打两次。
+
+    ★ 人话版（照着这个读下面的代码，注释里的"第 N 步"一一对应）：
+        第 0 步  名字是空的 → 直接返回"没探到"。
+        第 1 步  拿这个名字当**目录名**，先试 `user_data/pkgs/<名字>`，
+                再试 `system/pkgs/<名字>`。（必须先试用户层！顺序反了，
+                用户放在用户层的同名包就永远轮不到。）
+        第 2 步  这一层没有这个目录 → 换下一层试。两层都没有 = 没探到，返回 None。
+        第 3 步  读这一个目录里的 `pkg.json` —— **只读这一个**，快就快在这。
+                读不出来（清单坏了）或 id 不合法（没法当目录名用）→ 不在这里报错，
+                放弃这一层，交给后面的全扫去报，免得同一个毛病报两遍。
+        第 4 步  确认"你要找的名字"真的是这个包的 id，或者它的别名之一。
+                都不是 → 这个目录只是碰巧同名，不算命中，换下一层试。
+        第 5 步  装成和全扫**一样的结果格式**（id / layer / dir / pkg）返回。
+                若命中的是用户层、而系统层还有同 id 的包，补一个 `shadowed="system"`
+                （`--remove` 要用它打那句"它还遮住了系统层的同名包"）。
+
+        ★ 探不到就返回 None，**"探不到"不等于"没这个包"** ——
+          别名（`:image`）和"目录名 ≠ 包名"的包都探不到，得靠后面的全扫。
     """
-    if not name:
+    if not name:                                    # 第 0 步
         return None
-    for base, layer in reversed(layers()):          # ① user 层先试（见上）
-        d = base / name                             # 直接拿名字当目录名试
-        if not d.is_dir():
-            continue                                # 这层没有同名目录，试下一层
-        p = pkg_mod.load(d)                         # ★ 只读这一个清单
+    # 第 1 步：拿名字当目录名试，**用户层先试**（原因见上面 ①）
+    for base, layer in reversed(layers()):
+        d = base / name                             #        拼出 <层>/pkgs/<名字>
+        if not d.is_dir():                          # 第 2 步：这层没有这个目录
+            continue                                #        → 换下一层试
+        p = pkg_mod.load(d)                         # 第 3 步：只读这一个清单
         if p is None or not paths.valid_id(p.get("id")):
-            continue                                # ③ 坏了 / id 非法 → 交给全扫去报
-        pkg_mod.display_name(p)                     # 和 _scan_layer 一致：多语言的 name/desc 要摊平
-        pid = str(p.get("id") or "").lower()
+            continue                                #        清单坏了 / id 非法 → 交给全扫去报
+        pkg_mod.display_name(p)                     #        和 _scan_layer 一致：多语言 name/desc 要摊平
+        pid = str(p.get("id") or "").lower()        # 第 4 步：你要找的名字，是它的 id 吗？
         aliases = [str(x).lower() for x in (p.get("aliases") or [])]
-        if name != pid and name not in aliases:
-            continue                                # ② 名字对不上 → 不算命中，继续找
-        rec = {"id": p["id"], "layer": layer, "dir": d, "pkg": p}
+        if name != pid and name not in aliases:     #        也不是它的别名？
+            continue                                #        → 只是目录碰巧同名，换下一层
+        rec = {"id": p["id"], "layer": layer, "dir": d, "pkg": p}   # 第 5 步：装成结果
         # 遮蔽信息：快路径只命中一个包，不会像 scan_all() 那样顺手算出 shadowed。
         # 而 `--remove` 要用它打那句「它还遮住了 system 层的同名包 —— 删掉之后
         # 那个会重新生效」，所以 user 层命中时补一次 is_dir（约 0.05 ms，可忽略）。
@@ -122,8 +141,8 @@ def _probe_by_dirname(name):
         # 那个包的目录名是它自己的 id。
         if layer == "user" and (paths.SYSTEM_PKGS / p["id"]).is_dir():
             rec["shadowed"] = "system"
-        return rec
-    return None
+        return rec                                  # 命中，直接回去（别的清单一个都不读）
+    return None                                     # 两层都没探到
 
 
 def find_alias(alias):
