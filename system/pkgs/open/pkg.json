@@ -1,0 +1,71 @@
+{
+  "spec": 1,
+  "id": "open",
+  "kind": "task",
+  "version": "1.0",
+  "name": {
+    "zh-CN": "打开网址",
+    "en": "Open URL or path"
+  },
+  "desc": {
+    "zh-CN": "输入域名/网址自动补 TLD 并补 http:// 用浏览器打开；是本地路径就用默认程序打开",
+    "en": "Open a URL (TLD whitelist) or a local path"
+  },
+  "tags": [
+    "打开",
+    "网址",
+    "浏览器",
+    "路径"
+  ],
+  "aliases": [
+    "open"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.py"
+  },
+  "params": [
+    {
+      "name": "target",
+      "type": "string",
+      "required": false,
+      "desc": "网址或本地路径；带空格要加引号",
+      "placeholder": "google.com  或  D:\\a.txt"
+    }
+  ],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "net": [],
+    "clipboard": [],
+    "fsRead": [
+      "{target}"
+    ],
+    "elevated": false
+  },
+  "output": {
+    "mode": "text"
+  },
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/bin/cli/open",
+    "at": "2026-09-27"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "medium",
+    "examples": [
+      {
+        "target": "google.com"
+      },
+      {
+        "target": "D:\\a.txt"
+      }
+    ]
+  }
+}

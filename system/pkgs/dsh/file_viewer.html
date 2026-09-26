@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>__TITLE__</title>
+<!-- 样式与脚本都是"加载文件"的形式，没有打包步骤；下面这些文件都在同目录的 viewer 里，
+     路径由桥的 file.fetch 读盘送出（桥只服务 file.view / file.fetch 两个入口）。 -->
+<link rel="stylesheet" href="file.fetch?path=__VIEWER_DIR__%5Cfv-styles.css">
+</head>
+<body>
+<div id="app"></div>
+
+<!--
+  桥注入的原始数据：刻意放在隐藏容器里、都以「文本」承载 ——
+  __NAME__ 里的引号不会破坏属性；__BODY__ 里是内联的 <img data:…>（图片）、
+  <pre>（文本）或一句「无法预览」的提示。应用启动后读取它，然后把这个容器删掉。
+-->
+<div id="boot" hidden>
+  <span id="boot-name">__NAME__</span>
+  <span id="boot-size">__SIZE__</span>
+  <span id="boot-raw">__RAW__</span>
+  <div id="boot-body">__BODY__</div>
+</div>
+
+<!-- Vue 3（3.5.42，MIT）：先让桥送，失败再回落公共 CDN -->
+<script src="file.fetch?path=__VIEWER_DIR__%5Cvue.global.prod.js"></script>
+<script>if (!window.Vue) document.write('<script src="https://registry.npmmirror.com/vue/3.5.42/files/dist/vue.global.prod.js"><\/script>');</script>
+<script>if (!window.Vue) document.write('<script src="https://cdn.jsdelivr.net/npm/vue@3.5.42/dist/vue.global.prod.js"><\/script>');</script>
+
+<!-- 查看器本体：核心 → 图标 → 视图插件 → 应用外壳 -->
+<script src="file.fetch?path=__VIEWER_DIR__%5Cfv-core.js"></script>
+<script src="file.fetch?path=__VIEWER_DIR__%5Cfv-icons.js"></script>
+<script src="file.fetch?path=__VIEWER_DIR__%5Cfv-components.js"></script>
+<script src="file.fetch?path=__VIEWER_DIR__%5Cfv-view-media.js"></script>
+<script src="file.fetch?path=__VIEWER_DIR__%5Cfv-view-text.js"></script>
+<script src="file.fetch?path=__VIEWER_DIR__%5Cfv-app.js"></script>
+<script>
+if (!window.Vue || !window.FV) {
+  document.getElementById("app").innerHTML = '<div class="card" style="margin:auto">' +
+    '<span class="mark warn">!</span><div class="ttl">查看器没能启动</div>' +
+    "<div>Vue 或查看器脚本没加载成功：确认本目录里有 vue.global.prod.js / fv-core.js / fv-icons.js / fv-components.js / fv-view-media.js / fv-view-text.js / fv-app.js。</div></div>";
+} else {
+  window.FV.mount();
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+{
+  "spec": 1,
+  "id": "tree",
+  "kind": "task",
+  "version": "1.0",
+  "name": {
+    "zh-CN": "目录树",
+    "en": "Directory tree"
+  },
+  "desc": {
+    "zh-CN": "生成目录树：按 .gitignore 与内置忽略表过滤，可限深度、显示隐藏文件、追加忽略名",
+    "en": "Print a directory tree with gitignore-aware filtering"
+  },
+  "tags": [
+    "目录",
+    "树",
+    "文件"
+  ],
+  "aliases": [
+    "tree"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.py"
+  },
+  "params": [
+    {
+      "name": "args",
+      "type": "string",
+      "required": false,
+      "rest": true,
+      "desc": "照旧语法：[目标子目录] [深度数字] [-a 显示隐藏] [-名字,名字 额外忽略]",
+      "placeholder": "docs 2 -a"
+    }
+  ],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "net": [],
+    "clipboard": [],
+    "fsRead": [
+      "."
+    ],
+    "elevated": false
+  },
+  "output": {
+    "mode": "text"
+  },
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/bin/cli/tree",
+    "at": "2026-09-27"
+  },
+  "ai": {
+    "expose": true,
+    "risk": "low",
+    "examples": [
+      {
+        "args": "2"
+      },
+      {
+        "args": "docs -a"
+      }
+    ]
+  }
+}

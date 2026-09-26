@@ -1,0 +1,44 @@
+{
+  "spec": 1,
+  "id": "path",
+  "kind": "app",
+  "version": "1.0",
+  "name": { "zh-CN": "PATH 管理", "en": "PATH manager" },
+  "desc": { "zh-CN": "查看/管理 Windows PATH 环境变量", "en": "View and manage the Windows PATH environment variable" },
+  "tags": ["环境变量", "PATH", "注册表", "gui"],
+  "aliases": ["path"],
+  "runner": "python",
+  "entry": { "file": "main.py" },
+
+  "_paramsWhy": "rest:true = 宿主把包名后面那一整串原样塞进这一个字段，包自己按旧语法解析（命令 + 可选路径）。不标 rest 的话宿主只取第一个位置参数，多余的会静默丢掉。",
+  "params": [
+    { "name": "args", "type": "string", "required": false, "rest": true,
+      "desc": "留空 = 打开界面；add [路径] = 注册到用户 PATH（别名 register/reg）；remove [路径] = 从用户 PATH 移除（别名 unregister/del）；help = 打用法（别名 ?/-h/--help）。省略 [路径] 时用插件自身目录",
+      "placeholder": "add D:\\tools\\bin",
+      "examples": ["add", "remove D:\\old\\bin", "help"] }
+  ],
+
+  "env": { "cwd": "", "elevated": false },
+
+  "capabilities": {
+    "run": ["python"],
+    "net": [],
+    "clipboard": [],
+    "fsRead": ["{state}"],
+    "fsWrite": ["{state}"],
+    "elevated": false,
+    "_note": "真正动的是注册表 HKCU\\Environment 的 Path（REG_EXPAND_SZ）并广播 WM_SETTINGCHANGE；契约的 capabilities 里还没有 registry 这一项，先如实记在这里。只改【当前用户】的 PATH，不需要管理员权限。"
+  },
+
+  "output": { "mode": "text" },
+
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/bin/cli/path",
+    "at": "2026-09-27"
+  },
+
+  "ai": { "expose": false, "risk": "high" },
+
+  "docs": { "agent": "AGENT.md" }
+}

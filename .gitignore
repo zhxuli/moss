@@ -19,8 +19,6 @@ nuitka-crash-report.xml
 # 生成物：图标预览图，用 tools/图标优化.py 随时能再生成
 *.preview.png
 
-# 开发固件里编译出来的 exe（build.cmd 现场产出）
-dev/pkgs/*/main.exe
 
 # IDE
 .idea/
@@ -30,5 +28,4 @@ dev/pkgs/*/main.exe
 # 用 tools/拉取运行时.py 恢复。发行包里 system/ 会整体打包，不受影响。
 system/runtimes/*/
 
-dev/_tmp/
 *.log

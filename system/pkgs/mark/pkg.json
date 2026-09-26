@@ -1,0 +1,64 @@
+{
+  "spec": 1,
+  "id": "mark",
+  "kind": "task",
+  "version": "1.0",
+  "name": {
+    "zh-CN": "目录书签",
+    "en": "Directory bookmarks"
+  },
+  "desc": {
+    "zh-CN": "记录目录书签并快速跳过去：不带参数记当前目录，给关键字就找并切过去，list 列出，--gui 开界面编辑",
+    "en": "Bookmark directories and jump to them"
+  },
+  "tags": [
+    "目录",
+    "书签",
+    "跳转"
+  ],
+  "aliases": [
+    "mark"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.py"
+  },
+  "params": [
+    {
+      "name": "args",
+      "type": "string",
+      "required": false,
+      "rest": true,
+      "desc": "第一个词：关键字 / list / --gui；不给 = 记录当前目录",
+      "placeholder": "list  或  项目"
+    }
+  ],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "net": [],
+    "clipboard": [],
+    "fsRead": [],
+    "fsWrite": [
+      "user_data/state/mark"
+    ],
+    "elevated": false
+  },
+  "output": {
+    "mode": "text"
+  },
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/bin/cli/mark",
+    "at": "2026-09-27"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "medium"
+  }
+}

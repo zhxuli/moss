@@ -1,0 +1,63 @@
+{
+  "spec": 1,
+  "id": "ai",
+  "kind": "task",
+  "version": "1.0",
+  "name": {
+    "zh-CN": "AI 对话",
+    "en": "AI chat"
+  },
+  "desc": {
+    "zh-CN": "AI 对话（OpenAI 兼容接口，流式输出）。Key/BaseURL/模型 配在数据目录的 config.json 里；不给问题就进多轮模式",
+    "en": "Chat with an OpenAI-compatible API"
+  },
+  "tags": [
+    "ai",
+    "对话",
+    "openai"
+  ],
+  "aliases": [
+    "ai"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.py"
+  },
+  "params": [
+    {
+      "name": "prompt",
+      "type": "string",
+      "required": false,
+      "rest": true,
+      "desc": "这一次要问的问题；不给就进多轮对话模式",
+      "placeholder": "帮我写个正则"
+    }
+  ],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "net": [
+      "按 config.json 的 BASE_URL 出网"
+    ],
+    "clipboard": [],
+    "fsRead": [],
+    "elevated": false
+  },
+  "output": {
+    "mode": "text"
+  },
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/bin/cli/ai",
+    "at": "2026-09-27"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "medium"
+  }
+}
