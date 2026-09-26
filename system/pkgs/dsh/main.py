@@ -25,6 +25,8 @@ dsh_bridge.py — 本机桥守护进程（DeepSeek Harness 远程访问的"本�
   moss :dsh --set-password       # 更换本机密码
   moss :dsh --status             # 查看配置摘要
   moss :dsh --daemon             # 转后台守护运行（无窗口，日志写 dsh.log）
+  moss :dsh --restart-dsh        # 启动前先结束 3080 上的 DSH，让本桥重新拉起一个
+                                 #（换不到会话 cookie 时本桥也会自动这么做一次）
 
 协议（与 AppVirtual_file/dsh.py 配对，JSON 文本消息）：
   桥 -> VPS: {"type":"hello","role":"bridge","token":"<zeen token>"}
@@ -1588,6 +1590,88 @@ def start_dsh_process() -> None:
             LOG.warning("启动 DSH 失败(%s): %s", cmd[0], exc)
 
 
+def process_image_name(pid: int) -> str:
+    """取进程镜像名（tasklist）。取不到返回空串。"""
+    try:
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, timeout=15).stdout
+    except Exception as exc:
+        LOG.warning("tasklist 查 pid %s 失败: %s", pid, exc)
+        return ""
+    lines = [ln for ln in (out or "").splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    return lines[0].split(",")[0].strip().strip('"').lower()
+
+
+def process_cmdline(pid: int) -> str:
+    """取进程命令行（PowerShell CIM，尽力而为）。取不到返回空串。"""
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f'(Get-CimInstance Win32_Process -Filter "ProcessId={pid}").CommandLine'],
+            capture_output=True, text=True, timeout=25).stdout
+        return (out or "").strip()
+    except Exception as exc:
+        LOG.warning("取 pid %s 的命令行失败: %s", pid, exc)
+        return ""
+
+
+def looks_like_dsh(pid: int) -> bool:
+    """3080 上那个进程是不是 DSH 本体。**拿不准就返回 False（宁可不动手）。**
+
+    ★ 为什么非要先确认：3080 上跑的也可能是别的东西，或者是你**自己手动起的** DSH。
+      杀错进程比"远端 401"严重得多 —— 所以只认正面证据：镜像名是 node.exe，
+      并且命令行里出现 dsh 或 bin.js（取不到命令行就直接判 False，不动手）。
+    """
+    name = process_image_name(pid)
+    if name != "node.exe":
+        LOG.warning("pid %s 的镜像名是 %r，不是 node.exe —— 不敢当 DSH 处理",
+                    pid, name or "取不到")
+        return False
+    cmd = process_cmdline(pid)
+    low = cmd.lower()
+    if not low:
+        LOG.error("pid %s 是 node.exe，但取不到它的命令行 —— 无法确认是 DSH，不动手", pid)
+        return False
+    if ("dsh" not in low) and ("bin.js" not in low):
+        LOG.warning("pid %s 的命令行里没有 dsh/bin.js —— 不敢当 DSH 处理: %s", pid, cmd[:120])
+        return False
+    return True
+
+
+def restart_dsh(reason: str) -> bool:
+    """结束 3080 上那个 DSH 并等端口释放。返回「端口确实空出来了」。
+
+    ★ 为什么要杀它重拉：DSH 的会话令牌是**每次进程启动随机生成、绝不持久化**的，
+      它只带 ?token= 打到"拉起它的那个进程"的 stdout（也就是本桥的 dsh3080.log）。
+      所以 3080 上那个 DSH 若不是本桥拉起来的（上一个桥、或旧项目的桥留下的），
+      本桥**永远换不到 cookie**，转发一律 401 —— 除了杀掉重拉没有别的办法。
+
+    ★ 本地网页会闪断几秒：DSH 一停，你浏览器里那个页面就断了；监护会在下一轮
+      （最多 5 秒）把它重新拉起来，刷新页面即可。会话落在磁盘上，不会丢。
+    """
+    pids = [p for p in find_port_pids(DSH_TARGET_PORT) if p != os.getpid()]
+    if not pids:
+        return True
+    LOG.warning("要重启 3080 上的 DSH（原因：%s）: pid=%s —— 本地 DSH 网页会闪断几秒，"
+                "监护随后会自动把它拉回来", reason, pids)
+    killed = False
+    for pid in pids:
+        if looks_like_dsh(pid):
+            kill_and_wait(pid)
+            killed = True
+    if not killed:
+        LOG.error("3080 上没有认出 DSH（不敢乱杀）→ 远端访问会一直 401；"
+                  "请自己结束占用 3080 的进程后重试")
+        return False
+    if not wait_port_free(DSH_TARGET_PORT, timeout=8.0):
+        LOG.error("3080 端口还没释放，监护稍后会再试")
+        return False
+    LOG.info("3080 已空出来，接下来由监护拉起新的 DSH")
+    return True
+
+
 async def watch_3080(bridge: "Bridge") -> None:
     """每 5 秒探测 3080；不在运行则拉起（带 30 秒启动冷却）。
 
@@ -1598,6 +1682,7 @@ async def watch_3080(bridge: "Bridge") -> None:
     LOG.info("3080 监护已启动（每 5 秒探测，异常自动拉起）")
     last_start = 0.0
     was_alive = False
+    restarted = False        # ★ 本次运行只自动重启一次 DSH，免得和监护互相打架
     while True:
         alive = port_alive(DSH_TARGET_PORT)
         if not alive:
@@ -1609,12 +1694,24 @@ async def watch_3080(bridge: "Bridge") -> None:
                 last_start = now
         elif not was_alive:
             was_alive = True
-            # DSH 启动后要等 webserver 绑定并打印 token 行，故重试数次；
-            # 失败也不致命——_forward 收到 401 时还会再试一次。
+            # DSH 启动后要等 webserver 绑定并打印 token 行，故重试数次。
+            token_ok = False
             for attempt in range(6):
                 if await bridge.dsh_auth.refresh(bridge.http):
+                    token_ok = True
                     break
                 await asyncio.sleep(1.0)
+            if token_ok:
+                pass
+            elif not restarted:
+                # ── 换不到 cookie：说明 3080 上那个 DSH **不是本桥拉起来的** ──
+                # 令牌每次启动随机生成、绝不持久化，只打在拉起它的那个桥的日志里；
+                # 本桥拿不到 → 转发必然 401（本地网页不受影响，走的是它自己的 cookie）。
+                # 唯一的解法就是杀掉它、让本桥自己重新拉一个（新令牌会进本桥的日志）。
+                restarted = True
+                if restart_dsh("换不到 DSH 会话 cookie，说明它不是本桥拉起的"):
+                    last_start = 0.0        # 跳过启动冷却，下一轮立刻拉新的
+                    was_alive = False       # 让下一轮走"不在运行 → 拉起"那条路
             else:
                 LOG.warning("未能取到 DSH 会话 cookie，将在收到 401 时重试")
         await asyncio.sleep(5)
@@ -1648,6 +1745,9 @@ def main() -> int:
     parser.add_argument("--status", action="store_true", help="查看配置摘要")
     parser.add_argument("--no-browser", action="store_true", help="启动时不自动打开设置页")
     parser.add_argument("--daemon", action="store_true", help="转为后台守护运行（无窗口，日志写 dsh.log）")
+    parser.add_argument("--restart-dsh", action="store_true",
+                        help="启动前先结束 3080 上的 DSH，让本桥重新拉起一个"
+                             "（本地网页会闪断几秒；只认确实是 DSH 的进程）")
     # 参数来源：优先宿主环境变量，读不到再退回 argv（= 原来的行为）
     host_args = _moss_args()
     args = parser.parse_args(host_args if host_args is not None else None)
@@ -1669,6 +1769,8 @@ def main() -> int:
 
     # 默认前台运行：日志直接在终端可见，Ctrl+C 停止
     # （spawn_daemon 拉起的实例也走这里——pythonw 无终端，等效后台常驻）
+    if args.restart_dsh:
+        restart_dsh("--restart-dsh 要求重启")
     ensure_single_instance()
 
     try:
