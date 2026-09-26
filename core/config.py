@@ -37,17 +37,6 @@ DEFAULT_CONFIG = {
     "ctrl_c": {
         "force_kill": True,
     },
-    # ★ 子进程环境净化（X-15）。第 5 组，前 4 组照抄 pa.py 的字段一个不改。
-    "security": {
-        # 开着的时候，形似凭据的环境变量**不传给插件**（见 core/engine.py 的说明）
-        "scrub_env": True,
-        # 额外要剥掉的名字（精确匹配，大小写不敏感）—— 有些项目的凭据变量名
-        # 不含 KEY/TOKEN/SECRET/PASSWORD 这些词
-        "scrub_extra": [],
-        # 白名单：即使名字命中敏感形状也保留。比如 TOKENIZERS_PARALLELISM 不是凭据，
-        # 被误杀了会让某些库少一个性能设置
-        "keep_env": [],
-    },
 }
 
 # pa.py:116-123 原样
@@ -77,30 +66,12 @@ def load():
         if cfg_path.is_file():
             with open(cfg_path, "r", encoding="utf-8") as f:
                 user = json.load(f)
-            added = []
             for section, settings in DEFAULT_CONFIG.items():
                 if section in user:
                     if isinstance(settings, dict) and isinstance(user[section], dict):
                         CONFIG[section].update(user[section])
                     else:
                         CONFIG[section] = user[section]
-                else:
-                    # ★ 新版本新增的配置组要**补进文件**，只用默认值是不够的：
-                    #   用户在 config.json 里看不到这个开关，就等于"它不存在"
-                    #   （实测踩过：加了 security 组，而用户的配置文件里没有，
-                    #    于是"怎么关掉环境净化/加白名单"根本无从下手）。
-                    user[section] = copy.deepcopy(settings)
-                    added.append(section)
-            if added:
-                try:
-                    with open(cfg_path, "w", encoding="utf-8") as f:
-                        json.dump(user, f, indent=2, ensure_ascii=False)
-                    from . import out
-                    out.print_cyan("[配置] 新版本新增了配置组 %s，已补进 %s"
-                                   % ("/".join(added), cfg_path))
-                except Exception as e:
-                    from . import out
-                    out.print_cyan("[配置警告] 新配置组补写失败: %s（本次仍用默认值）" % e)
         else:
             from . import out
             out.print_cyan("[配置] 未找到配置文件，将为您自动创建一个。")
@@ -153,10 +124,6 @@ def auto_clear():
 
 def max_parent_depth():
     return CONFIG.get("search", {}).get("max_parent_depth", 3)
-
-
-def security_cfg():
-    return CONFIG.get("security", {})
 
 
 def restore_prefix(arg):
