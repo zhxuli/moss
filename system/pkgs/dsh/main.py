@@ -12,14 +12,19 @@ dsh_bridge.py — 本机桥守护进程（DeepSeek Harness 远程访问的"本�
   4. 逐请求验票：每个转发请求必须携带本机签发的 dsh_session 票据。
   5. 请求转发到 127.0.0.1:3080（DSH），响应（含事件流、ZIP）分块流式回传。
 
-依赖：websockets + httpx（均在 ZeEn requirements.txt 中）。
+依赖：aiohttp + httpx + websockets —— **都在 moss 自带运行时里**
+（`system/runtimes/python/3.12/Lib/site-packages`），用户不需要自己装。
+文件顶部那段「缺依赖就用旧项目 ZeEn venv 重新执行自己」的自举逻辑保留着，
+但在 moss 下会被跳过（见那里的注释）。
 
-用法：
-  python dsh_bridge.py --setup           # 首次安装：选服务器(localhost/zeen.xin)+填token+设密码
-  python dsh_bridge.py --set-token       # 更换 zeen token（账号变更/过期后）
-  python dsh_bridge.py --set-password    # 更换本机密码
-  python dsh_bridge.py                   # 前台运行
-  python dsh_bridge.py --status          # 查看配置摘要
+用法（脚本名照抄旧文，命令名换成 moss）：
+  moss :dsh                      # 前台运行。没配好会自动打开"设置页"，
+                                 # 在浏览器里选服务器(localhost/zeen.xin)、填 token、设密码
+  moss :dsh --no-browser         # 同上，但不自动开浏览器
+  moss :dsh --set-token          # 更换 zeen token（账号变更/过期后）
+  moss :dsh --set-password       # 更换本机密码
+  moss :dsh --status             # 查看配置摘要
+  moss :dsh --daemon             # 转后台守护运行（无窗口，日志写 dsh.log）
 
 协议（与 AppVirtual_file/dsh.py 配对，JSON 文本消息）：
   桥 -> VPS: {"type":"hello","role":"bridge","token":"<zeen token>"}
@@ -39,11 +44,16 @@ dsh_bridge.py — 本机桥守护进程（DeepSeek Harness 远程访问的"本�
 
 # ---- 依赖自举：若当前解释器缺 aiohttp/httpx/websockets，自动用 ZeEn venv 重执行 ----
 # （moss 宿主下这一段直接跳过，见下面 except 里的第一句）
+# ★ import sys 必须放在 try **之前**：下面 except 块第一句就用 sys.path，
+#   而旧代码把它写在 try 的最后一行 —— 一旦缺的是 aiohttp/httpx/websockets，
+#   sys 根本还没导入，except 里立刻 NameError（旧项目里就有的坑，实测复现：
+#   用缺依赖的解释器跑 → NameError: name 'sys' is not defined，而不是那句友好提示）。
+import sys
+
 try:
     import aiohttp  # noqa: F401
     import httpx    # noqa: F401
     import websockets  # noqa: F401
-    import sys
 except ImportError:
     import os
     import subprocess
@@ -1483,7 +1493,8 @@ def spawn_daemon() -> int:
 DSH_TARGET_PORT = 3080
 DSH_START_COOLDOWN = 30   # 启动冷却（秒），避免启动失败时每 5 秒刷命令
 DSH_3080_LOG = os.path.join(DATA_DIR, "dsh3080.log")
-DSH_CWD = r"D:\soft\deepseek-harness"
+# DSH_CWD（拉起 DSH 本体时的工作目录）不在这里写死 —— 见下面 DSH_LAUNCHERS
+# 之后的 _dsh_cwd()：它要从探测到的启动器反推，所以只能等探测完再算。
 
 
 def find_dsh_launchers() -> list:
@@ -1517,6 +1528,37 @@ def find_dsh_launchers() -> list:
 
 
 DSH_LAUNCHERS = find_dsh_launchers()
+
+
+def _dsh_cwd() -> str:
+    r"""拉起 DSH 本体时，用哪个目录当它的工作目录（= DSH 那边看到的"工作区"）。
+
+    旧代码写死：DSH_CWD = r"D:\soft\deepseek-harness"（这台机器上 DSH 的检出目录）。
+    写死在别人机器上就跑不起来，所以改成三级，**本机行为一个字不变**：
+      ① 环境变量 `DSH_BRIDGE_CWD`（想固定工作区就设它 —— 这是最明确的做法）
+      ② 老路径还存在 → 就用它（本机命中这一条，和迁移前完全一样）
+      ③ 都没有 → 从探测到的 DSH 启动器反推它自己的安装目录（可移植兜底）
+
+    注意 ③ 的含义：它给的是「DSH 装在哪」，**不一定**是「你想让它以哪个目录为工作区」。
+    所以换到别的机器上，建议用 ① 明确指定，别指望 ③ 猜对。
+    """
+    env = os.environ.get("DSH_BRIDGE_CWD")
+    if env and os.path.isdir(env):
+        return env
+    legacy = r"D:\soft\deepseek-harness"
+    if os.path.isdir(legacy):
+        return legacy
+    for cmd in DSH_LAUNCHERS:
+        for part in cmd:
+            if isinstance(part, str) and part.lower().endswith("bin.js"):
+                # …/node_modules/@deepseek-ai/dsh/lib/bin.js → 往上两层 = 这个包的目录
+                pkg_dir = os.path.dirname(os.path.dirname(part))
+                if os.path.isdir(pkg_dir):
+                    return pkg_dir
+    return os.getcwd()
+
+
+DSH_CWD = _dsh_cwd()
 
 
 def port_alive(port: int, timeout: float = 2.0) -> bool:
