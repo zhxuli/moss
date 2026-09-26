@@ -1,6 +1,0 @@
-{
-  "name": "快捷执行",
-  "desc": "多语言命令脚本管理器（Apple 风格 WebView 界面，可内联运行 / 新窗口运行）",
-  "version": "2.0",
-  "run": "main.py"
-}
