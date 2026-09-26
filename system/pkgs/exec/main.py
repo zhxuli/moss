@@ -3,9 +3,9 @@
 """
 快捷执行 (exec) —— QuickTools 插件
 
-  pa :exec               打开管理器
-  pa :exec list          在控制台列出全部命令
-  pa :exec <别名> [参数]  直接在控制台执行该命令
+  moss :exec               打开管理器
+  moss :exec list          在控制台列出全部命令
+  moss :exec <别名> [参数]  直接在控制台执行该命令
 
 数据位置：宿主 moss 注入的 MOSS_PLUGIN_DATA_DIR/cmds/<别名>.json
 （= user_data/state/exec/cmds）；老 pa 的 PA_* 与插件自身目录作兜底。
@@ -22,7 +22,7 @@ def print_list():
     core.init_cmds_dir()
     commands = core.load_all_commands()
     if not commands:
-        print("[提示] 当前没有任何预设命令，运行 'pa :exec' 打开管理器添加。")
+        print("[提示] 当前没有任何预设命令，运行 'moss :exec' 打开管理器添加。")
         return
     print("\n[当前可用命令清单]")
     print("-" * 52)
@@ -37,8 +37,8 @@ def run_alias(alias, args):
     item = core.load_command(alias)
     if not item:
         print("[错误] 未知命令 '%s'。" % alias)
-        print("  · exec 里已有的命令： pa :exec list")
-        print("  · pa   里已有的插件： pa")
+        print("  · exec 里已有的命令：moss :exec list")
+        print("  · 所有已安装的包：  moss")
         return 1
     core.run_in_console(item, args)
     return 0
