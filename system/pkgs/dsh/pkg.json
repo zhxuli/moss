@@ -1,0 +1,72 @@
+{
+  "spec": 1,
+  "id": "dsh",
+  "kind": "app",
+  "version": "1.0",
+  "name": {
+    "zh-CN": "DSH 桥"
+  },
+  "desc": {
+    "zh-CN": "本机桥守护进程：保持 WebSocket 长连 zeen.xin 服务器/本地，NAT 穿透远程访问"
+  },
+  "tags": [
+    "远程访问",
+    "隧道",
+    "WebSocket",
+    "常驻服务"
+  ],
+  "aliases": [
+    "dsh"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.py"
+  },
+  "params": [
+    {
+      "name": "args",
+      "type": "string",
+      "rest": true,
+      "desc": "留空 = 前台运行（Ctrl+C 停止）；--status 查看配置摘要；--daemon 转后台守护；--no-browser 启动时不自动打开设置页；--set-token / --set-password 改配置"
+    }
+  ],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "net": [
+      "主动长连 wss://zeen.xin 或 ws://localhost:8633",
+      "转发到本机 http://127.0.0.1:3080（DSH）"
+    ],
+    "listen": [
+      "127.0.0.1:8788（本地设置向导）"
+    ],
+    "fsRead": [
+      "本机任意可读文件（/file.fetch 直传、/file.view 显示页；默认不做目录白名单）"
+    ],
+    "fsWrite": [
+      "MOSS_PLUGIN_DATA_DIR（配置 / PID / 日志）"
+    ],
+    "process": [
+      "list",
+      "kill",
+      "spawn"
+    ]
+  },
+  "output": {
+    "mode": "text"
+  },
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/bin/soft/dsh",
+    "at": "2026-09-27"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "high"
+  },
+  "docs": {
+    "agent": "AGENT.md"
+  }
+}

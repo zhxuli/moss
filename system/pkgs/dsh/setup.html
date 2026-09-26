@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DSH 远程 · 设置</title>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;margin:0;
+       min-height:100vh;padding:32px 16px;display:flex;justify-content:center;
+       background:linear-gradient(160deg,#f0f4ff 0%,#f8fafc 45%,#f8faff 100%);
+       color:#0f172a}
+  .wrap{width:100%;max-width:460px}
+  .head{text-align:center;margin-bottom:26px}
+  h1{font-size:1.45rem;margin:0 0 6px;letter-spacing:.3px}
+  .sub{color:#64748b;font-size:.88rem;margin:0}
+
+  /* ---- 标准步骤条 ---- */
+  .steps{display:flex;margin-bottom:24px}
+  .step-item{flex:1;position:relative;text-align:center;cursor:pointer;user-select:none}
+  .snode{width:32px;height:32px;border-radius:50%;margin:0 auto;position:relative;
+        z-index:1;display:flex;align-items:center;justify-content:center;
+        font-size:.9rem;font-weight:700;color:#94a3b8;
+        background:#fff;border:2px solid #e2e8f0;transition:.2s}
+  .step-item:not(:last-child)::after{content:"";position:absolute;top:15px;left:50%;
+        width:100%;height:2px;background:#e2e8f0;z-index:0}
+  .slabel{margin-top:9px;font-size:.8rem;color:#94a3b8;font-weight:500;
+        transition:.2s;white-space:nowrap}
+
+  /* 已完成：浅蓝节点 + 蓝勾；连线浅蓝；标签蓝 */
+  .step-item.done .snode{background:#e0e7ff;border-color:#a5b4fc;color:#4d6bfe;
+        box-shadow:0 3px 8px rgba(77,107,254,.2)}
+  .step-item.done::after{background:#a5b4fc}
+  .step-item.done .slabel{color:#4d6bfe;font-weight:600}
+
+  /* 当前：白底蓝描边 + 蓝数字 + 深色标签 */
+  .step-item.active .snode{border-color:#4d6bfe;color:#4d6bfe;
+        box-shadow:0 0 0 4px rgba(77,107,254,.15)}
+  .step-item.active .slabel{color:#0f172a;font-weight:700}
+  .step-item.active .snode::before{content:"";position:absolute;inset:-11px;
+        border-radius:50%;border:3px solid #1d4ed8;
+        animation:pulse 1.6s ease-in-out infinite;
+        box-shadow:0 0 10px rgba(29,78,216,.35)}
+  @keyframes pulse{0%,100%{transform:scale(1);opacity:1}
+        50%{transform:scale(1.12);opacity:.55}}
+  .step-item.done.active .snode{background:#4d6bfe;color:#fff}
+  .step-item:hover .snode{transform:scale(1.06)}
+
+  .panel{display:none}
+  .panel.active{display:block;animation:fade .2s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .card{background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:22px;
+        box-shadow:0 4px 16px rgba(15,23,42,.05)}
+  .card h2{font-size:1rem;margin:0 0 14px;color:#0f172a}
+  /* 完成视图：全宽正方形状态卡片（宽=高，大留白）+ 弱化的小重新按钮 */
+  .donebox{width:100%;aspect-ratio:1;background:#eef2ff;
+        border:1px solid #c7d2fe;border-radius:28px;color:#4d6bfe;
+        display:flex;flex-direction:column;align-items:center;justify-content:center;
+        gap:16px;padding:32px}
+  .donebox .ck{font-size:3rem;line-height:1;font-weight:700}
+  .donebox .dt{font-size:1.05rem;font-weight:600;text-align:center;color:#4d6bfe}
+  .donebox .ds{font-size:.78rem;color:#94a3b8;font-weight:400;text-align:center;
+        word-break:break-all;max-width:85%}
+  button.retry{width:auto;margin:14px auto 0;display:block;padding:4px 14px;
+        font-size:.75rem;background:transparent;color:#a5b4fc;box-shadow:none;font-weight:500}
+  button.retry:hover{transform:none;background:transparent;color:#4d6bfe;box-shadow:none}
+  button{margin-top:12px;width:100%;padding:11px;border:0;border-radius:12px;
+         background:linear-gradient(135deg,#4d6bfe,#6e8bff);color:#fff;
+         font-size:.95rem;font-weight:600;cursor:pointer;transition:.15s;
+         box-shadow:0 4px 12px rgba(77,107,254,.28)}
+  button:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(77,107,254,.38)}
+  button:active{transform:translateY(0)}
+  button.ghost{margin-top:10px;background:#f1f5f9;color:#475569;box-shadow:none}
+  button.ghost:hover{transform:none;background:#eef2ff;color:#4d6bfe;box-shadow:none}
+  .form-view .tip{font-size:.78rem;color:#94a3b8;margin:0 0 4px}
+  label{display:block;font-size:.82rem;color:#64748b;margin:10px 0 5px;font-weight:500}
+  input{width:100%;padding:10px 13px;border-radius:11px;border:1.5px solid #e2e8f0;
+        background:#f8fafc;color:#0f172a;font-size:.95rem;outline:none;transition:.15s}
+  input:focus{border-color:#4d6bfe;background:#fff;
+              box-shadow:0 0 0 3px rgba(77,107,254,.12)}
+  .srv-mini{margin:0;width:auto;padding:9px 14px;background:#f1f5f9;color:#475569;
+            border:1.5px solid #e2e8f0;box-shadow:none}
+  .srv-mini:hover{transform:none;background:#eef2ff;border-color:#c7d2fe}
+  .msg{font-size:.83rem;min-height:1.3em;margin-top:10px;text-align:center;font-weight:500}
+  .ok{color:#4d6bfe}.err{color:#dc2626}
+  .cap{width:100%;border-radius:12px;margin-top:8px;border:1px solid #e2e8f0}
+  .row{display:flex;gap:8px;align-items:center;margin-top:6px}
+  .row input{flex:1}
+  .srvtip{font-size:.76rem;color:#94a3b8;margin-top:10px;text-align:center;word-break:break-all}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>DSH 远程 · 桥设置</h1>
+    <p class="sub">三步完成配置</p>
+  </div>
+
+  <!-- 标准步骤条 -->
+  <div class="steps">
+    <div class="step-item active" id="item1" onclick="gotoStep(1)" title="点击切换：二级密码">
+      <div class="snode" id="snode1">1</div>
+      <div class="slabel">二级密码</div>
+    </div>
+    <div class="step-item" id="item2" onclick="gotoStep(2)" title="点击切换：登录账号">
+      <div class="snode" id="snode2">2</div>
+      <div class="slabel">登录账号</div>
+    </div>
+    <div class="step-item" id="item3" onclick="gotoStep(3)" title="点击切换：连接">
+      <div class="snode" id="snode3">3</div>
+      <div class="slabel">连接</div>
+    </div>
+  </div>
+
+  <!-- 第 1 步 -->
+  <div class="panel active" id="panel1">
+    <div class="card">
+      <h2>第 1 步 · 设置二级密码</h2>
+      <div class="done-view" id="done1" style="display:none">
+        <div class="donebox">
+          <div class="ck">✓</div>
+          <div class="dt">二级密码已设置</div>
+          <div class="ds">手机远程解锁时使用</div>
+        </div>
+        <button class="retry" onclick="showForm(1)">重新设置</button>
+      </div>
+      <div class="form-view" id="form1">
+        <p class="tip">只存本机、只在本机验证，手机远程解锁时使用</p>
+        <label>新密码（≥6 位）</label><input type="password" id="pw1" placeholder="设置一个本机专属密码">
+        <label>确认密码</label><input type="password" id="pw2" placeholder="再输一遍">
+        <button onclick="savePw()">保存密码</button>
+        <div class="msg" id="pwMsg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 第 2 步 -->
+  <div class="panel" id="panel2">
+    <div class="card">
+      <h2>第 2 步 · 登录 zeen 账号</h2>
+      <div class="done-view" id="done2" style="display:none">
+        <div class="donebox">
+          <div class="ck">✓</div>
+          <div class="dt">已登录</div>
+          <div class="ds" id="loginUser">—</div>
+        </div>
+        <button class="retry" onclick="showForm(2)">重新登录</button>
+      </div>
+      <div class="form-view" id="form2">
+        <p class="tip">走官方登录接口，验证码由服务器校验</p>
+        <label>账号</label><input id="uname" autocomplete="username" placeholder="zeen.xin 用户名">
+        <label>密码</label><input type="password" id="upass" autocomplete="current-password" placeholder="登录密码">
+        <img class="cap" id="capImg" alt="验证码" onclick="loadCode()" title="点击刷新">
+        <div class="row"><input id="ucode" placeholder="验证码（看不清点图片刷新）"><button class="srv-mini"
+          onclick="loadCode()">刷新</button></div>
+        <button onclick="doLogin()">登录</button>
+        <div class="msg" id="loginMsg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 第 3 步 -->
+  <div class="panel" id="panel3">
+    <div class="card">
+      <h2>第 3 步 · 连接</h2>
+      <div class="done-view" id="done3" style="display:none">
+        <div class="donebox">
+          <div class="ck">✓</div>
+          <div class="dt">已连接</div>
+          <div class="ds" id="srvTip">服务器：读取中…</div>
+        </div>
+        <button class="retry" onclick="conn()">重新连接</button>
+      </div>
+      <div class="form-view" id="form3">
+        <p class="tip">连接配置文件指定的服务器，状态看上方步骤条</p>
+        <button onclick="conn()">连接</button>
+        <div class="msg" id="connMsg"></div>
+        <div class="srvtip" id="srvTip2">服务器：读取中…</div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+var capData=null, lastStatus=null, override={};
+function $(id){return document.getElementById(id)}
+function gotoStep(n){
+  for(var i=1;i<=3;i++){
+    $('panel'+i).classList.toggle('active', i===n);
+    $('item'+i).classList.toggle('active', i===n);
+  }
+}
+function refreshViews(){
+  if(!lastStatus) return;
+  // 已完成步骤显示"完成视图"，否则显示表单（尊重用户点过"重新设置"）
+  var pwDone=!!lastStatus.password_set, tkDone=!!lastStatus.token_set, cnDone=!!lastStatus.connected;
+  $('done1').style.display = (pwDone && !override[1]) ? '' : 'none';
+  $('form1').style.display  = (pwDone && !override[1]) ? 'none' : '';
+  $('done2').style.display = (tkDone && !override[2]) ? '' : 'none';
+  $('form2').style.display  = (tkDone && !override[2]) ? 'none' : '';
+  $('done3').style.display = (cnDone && !override[3]) ? '' : 'none';
+  $('form3').style.display  = (cnDone && !override[3]) ? 'none' : '';
+  if(lastStatus.user) $('loginUser').textContent = lastStatus.user;
+  $('srvTip').textContent = $('srvTip2').textContent = '服务器：'+(lastStatus.server||'未配置');
+}
+function showForm(n){ override[n]=true; refreshViews(); }
+function status(){
+  fetch('/setup/status').then(function(r){return r.json()}).then(function(s){
+    lastStatus=s;
+    // 步骤条完成状态（真实配置驱动）
+    $('item1').classList.toggle('done', !!s.password_set);
+    $('snode1').textContent = s.password_set ? '✓' : '1';
+    $('item2').classList.toggle('done', !!s.token_set);
+    $('snode2').textContent = s.token_set ? '✓' : '2';
+    $('item3').classList.toggle('done', !!s.connected);
+    $('snode3').textContent = s.connected ? '✓' : '3';
+    refreshViews();
+  }).catch(function(){});
+}
+setInterval(status,2000);status();
+
+function savePw(){
+  var p1=$('pw1').value,p2=$('pw2').value,m=$('pwMsg');
+  if(p1.length<6){m.className='msg err';m.textContent='密码至少 6 位';return}
+  if(p1!==p2){m.className='msg err';m.textContent='两次输入不一致';return}
+  fetch('/setup/password',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:p1})})
+    .then(function(r){return r.json()}).then(function(s){
+      m.className='msg '+(s.ok?'ok':'err');m.textContent=s.ok?'✓ 密码已保存':'保存失败';
+      if(s.ok){$('pw1').value='';$('pw2').value='';override[1]=false;gotoStep(2);}
+    });
+}
+function loadCode(){
+  fetch('/setup/code').then(function(r){return r.json()}).then(function(d){
+    if(d.code_img){$('capImg').src=d.code_img;capData=d;}
+    else if(d.ok===false){capData=null;$('loginMsg').className='msg err';
+      $('loginMsg').textContent=d.message||'无法获取验证码';}
+  }).catch(function(){capData=null;$('capImg').style.display='none';
+    $('loginMsg').className='msg err';$('loginMsg').textContent='无法获取验证码：请确认所选服务器主站已启动';});
+}
+loadCode();
+function doLogin(){
+  var m=$('loginMsg');
+  if(!capData){m.className='msg err';m.textContent='请先获取验证码';return}
+  fetch('/setup/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+    name:$('uname').value,password:$('upass').value,
+    code:$('ucode').value,check_data:capData.check_data,code_time:capData.code_time})})
+    .then(function(r){return r.json()}).then(function(s){
+      m.className='msg '+(s.ok?'ok':'err');m.textContent=s.ok?('✓ 登录成功：'+s.user):(s.message||'登录失败');
+      if(s.ok){$('upass').value='';$('ucode').value='';override[2]=false;loadCode();gotoStep(3);}
+    });
+}
+function conn(){
+  var m=$('connMsg');m.className='msg';m.textContent='连接中…';
+  fetch('/setup/connect',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})
+    .then(function(r){return r.json()}).then(function(s){
+      m.className='msg '+(s.ok?'ok':'err');m.textContent=s.message||'失败';
+    });
+}
+</script>
+</body>
+</html>
