@@ -3,8 +3,15 @@
 
 它是"装了哪些包、什么状态"的**单一事实来源**（D-09），
 但它**可以被重建** —— 启动时与磁盘对账（`sync`）：
-  · 磁盘上有、registry 里没有  → 补进去
-  · registry 里有、磁盘上没了  → 标记 orphan（不静默删，留着让人看见）
+  · 磁盘上有、registry 里没有      → 补进去
+  · registry 里有、**连包目录都没了** → **删掉这条**（`D-21`）
+  · registry 里有、目录还在但清单读不出来（`pkg.json` 坏了） → 标 orphan，
+    留着不删 —— 目录还在说明是文件坏了，`_scan_layer` 会大声打出真正的原因
+
+★ 为什么"目录没了"可以直接删（`D-21`）：registry 是可重建的缓存，而"包不见了"
+  这件事**包列表本来就看得出来**（它只列磁盘上真有的包）—— 留着只是一条
+  谁也看不见的垃圾。实测攒了 10 条（`clock` / `hello` / `imgcli` / `ziptest`…），
+  原设计写的是"不静默删，留着让人看见"，可**没有任何地方显示它们**。
 
 遮蔽规则（H-08）：**用户层同名包遮蔽系统层，系统层原件保留**，不是替换。
 """
@@ -80,15 +87,12 @@ def _scan_layer(base_dir, layer):
 def layers():
     """扫描顺序 = 优先级**从低到高**（后扫的遮蔽先扫的）。
 
-    层优先级：dev > user > system
-      · `dev` 层只在开发机上存在（`dev/pkgs`）。发行版里没有 `dev/` 目录，
-        所以用户永远看不到它 —— 演示包、测试固件放这里，**绝不进 `system/pkgs`**。
-      · `system/pkgs` 是要随程序分发给所有用户的出厂包。
+    层优先级：user > system
+      · `system/pkgs` 是要随程序分发给所有用户的出厂包（只读，升级时整体替换）。
+      · `user_data/pkgs` 是用户自己写的 / 从商店装的包 —— 同名时遮蔽 system。
+      （2026-09-27 第 36 版：原来的第三层 `dev/` 已删，见 `D-16` 否决记录。）
     """
-    out = [(paths.SYSTEM_PKGS, "system"), (paths.USER_PKGS, "user")]
-    if paths.DEV_PKGS.is_dir():
-        out.append((paths.DEV_PKGS, "dev"))
-    return out
+    return [(paths.SYSTEM_PKGS, "system"), (paths.USER_PKGS, "user")]
 
 
 def scan_all():
@@ -114,10 +118,23 @@ def find_alias(alias):
     return None
 
 
+def _pkg_dir_exists(pid):
+    """registry 里的这个 id，磁盘上还有没有它的包目录。
+
+    只按**目录名**判断（`<层>/pkgs/<id>/`）—— 这是本项目的既定约定（`D-05`）。
+    目录在、清单坏了的情况不能算"没了"：那是文件坏了，得留着并报警告。
+    """
+    return any((base / pid).is_dir() for base in (paths.SYSTEM_PKGS, paths.USER_PKGS))
+
+
 def sync(reg):
-    """与磁盘对账。返回 (added, missing)。"""
+    """与磁盘对账。返回 (added, missing, dropped)。
+
+    missing = 目录还在但清单读不出来（标 orphan，见 `D-21`）
+    dropped = 目录已经不在了，记录被清掉（`D-21`）
+    """
     on_disk = {rec["id"]: rec for rec in scan_all()}
-    added, missing, restored = [], [], []
+    added, missing, restored, dropped = [], [], [], []
 
     for pid, rec in on_disk.items():
         if pid not in reg["packages"]:
@@ -135,25 +152,39 @@ def sync(reg):
             #   成了一个"一旦进去就出不来"的状态：哪怕包完完整整地在那儿，
             #   也永远显示「已被禁用」。（真踩过：pkg.json 被写坏 → img 变 orphan
             #   → 修好 pkg.json 之后依然起不来。）
-            #   只恢复 orphan；用户**主动**禁用过的是 "disabled"，那种不动。
+            #   只恢复 orphan；用户**主动**禁用过的是 "disabled"，那种不动 ——
+            #   所以标 orphan 之前要先把原状态记进 prevState（`D-21`）。
             if reg["packages"][pid].get("state") == "orphan":
-                reg["packages"][pid]["state"] = "enabled"
+                prev = reg["packages"][pid].pop("prevState", None)
+                reg["packages"][pid]["state"] = (
+                    "disabled" if prev == "disabled" else "enabled")
                 restored.append(pid)
             reg["packages"][pid]["layer"] = rec["layer"]
             reg["packages"][pid]["version"] = rec["pkg"].get("version")
 
     for pid in list(reg["packages"].keys()):
-        if pid not in on_disk:
-            reg["packages"][pid]["state"] = "orphan"
-            missing.append(pid)
+        if pid in on_disk:
+            continue
+        if not _pkg_dir_exists(pid):
+            reg["packages"].pop(pid)          # 目录都没了 → 清掉（D-21）
+            dropped.append(pid)
+            continue
+        prev = reg["packages"][pid].get("state") or "enabled"
+        if prev != "orphan":
+            reg["packages"][pid]["prevState"] = prev   # 别把用户手动禁用的状态弄丢
+        reg["packages"][pid]["state"] = "orphan"
+        missing.append(pid)
 
     reg["host"]["version"] = HOST_VERSION
     reg["host"]["lastStart"] = datetime.now().isoformat(timespec="seconds")
     save(reg)
     if restored:
-        print("[提示] 这些包之前被标成 orphan，现在磁盘上又有了，已恢复启用：%s"
+        print("[提示] 这些包之前被标成 orphan，现在清单又能读了，已恢复：%s"
               % "、".join(restored))
-    return added, missing
+    if dropped:
+        print("[提示] 这些包的目录已经不在了，registry 里的记录一并清掉（%d 个）：%s"
+              % (len(dropped), "、".join(dropped)))
+    return added, missing, dropped
 
 
 def is_enabled(reg, pid):

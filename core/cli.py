@@ -204,9 +204,8 @@ def _fill_interpreter(inv, table):
 
 
 # ---------------------------------------------------------------- 子命令
-#: 三层的说法与位置（U-15：列表要按这三类分块显示，并写明"在哪、谁压谁"）
+#: 两层的说法与位置（U-15：列表要按这两类分块显示，并写明"在哪、谁压谁"）
 _LAYERS = (
-    ("dev", "开发插件", "只在开发机上，发行版里没有这个目录", None),
     ("user", "用户插件", "你自己写的 / 从商店装的，升级不碰", paths.USER_PKGS),
     ("system", "系统插件", "随 moss 分发，升级时整体替换", paths.SYSTEM_PKGS),
 )
@@ -231,7 +230,7 @@ def cmd_list(table, skip_clear=False):
     reg = registry.load()
     by_layer = _pkg_rows(recs)
     out.print_cyan("已安装的包（%d）—— 按层分组" % len(recs))
-    print("  优先级：开发插件 > 用户插件 > 系统插件"
+    print("  优先级：用户插件 > 系统插件"
           "（同名时高优先级遮蔽低优先级，低层原件保留）")
     for key, cn, why, where in _LAYERS:
         rows = by_layer.get(key)
@@ -836,10 +835,7 @@ def cmd_selfcheck(table):
             r["id"], r.get("layer") or "?", r["pkg"].get("runner"),
             (e.name if e else ("inline" if pkg_mod.inline_code(r["pkg"]) else "✗ 缺失"))))
     # ★ 必须把"层"打出来：不然根本分不清哪些会随发行版发给用户
-    #   （`system` = 出厂件，随 exe 分发；`dev` = **只在开发机上**，发行版没有这个目录）
-    if layers.get("dev"):
-        print("     （层说明：system = 随 exe 发给用户；dev = 只在开发机上，"
-              "发行版里没有它 —— 本机 dev 包 %d 个）" % layers["dev"])
+    #   （`system` = 出厂件，随 exe 分发；`user` = 你自己写的 / 商店装的，打包时排除）
     cd_ok, cd_why = shell.console_available()
     who = shell.parent_shell()
     print("  cd 注入   : %s   （%s）" % ("可用" if cd_ok else "✗ 不可用", cd_why))

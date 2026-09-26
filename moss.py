@@ -37,7 +37,7 @@ r"""moss 入口。
   不加的话打包会成功，但运行时可能报 `No module named 'core'`。
 
 · **不要**加 `--include-data-dir`
-  包（`system/pkgs`、`dev/pkgs`）刻意留在 exe 外面 —— 那是 `K-10` 内核最小化：
+  包（`system/pkgs`）刻意留在 exe 外面 —— 那是 `K-10` 内核最小化：
   加功能 = 丢一个目录，不用重编 exe。
 
 发行与自检
