@@ -21,6 +21,7 @@ dsh_bridge.py — 本机桥守护进程（DeepSeek Harness 远程访问的"本�
   moss :dsh                      # 前台运行。没配好会自动打开"设置页"，
                                  # 在浏览器里选服务器(localhost/zeen.xin)、填 token、设密码
   moss :dsh --no-browser         # 同上，但不自动开浏览器
+                                 # ★ Ctrl+C 会**连同 DSH 本体(3080)一起干净退出**
   moss :dsh --set-token          # 更换 zeen token（账号变更/过期后）
   moss :dsh --set-password       # 更换本机密码
   moss :dsh --status             # 查看配置摘要
@@ -113,6 +114,7 @@ except ImportError:
 
 import argparse
 import asyncio
+import atexit
 import base64
 import getpass
 import glob
@@ -1458,6 +1460,55 @@ def wait_port_free(port: int, timeout: float = 5.0) -> bool:
     return False
 
 
+def looks_like_bridge(pid: int) -> bool:
+    """那个 pid 是不是「另一个 dsh 桥」，而不是系统把 PID 复用给了别的程序。
+
+    只在"按 PID 文件接管旧实例"时用：PID 会被系统复用，旧 PID 文件里那个号很可能已经
+    是无关程序了 —— 那时直接 taskkill 就是**误杀**。所以要求命令行里同时出现 dsh 与
+    main.py/bootstrap.py（桥自己的写法）。取不到命令行就返回 False（宁可不动手）。
+    """
+    cmd = process_cmdline(pid).lower()
+    if not cmd:
+        return False
+    return ("dsh" in cmd) and (("main.py" in cmd) or ("bootstrap.py" in cmd))
+
+
+def release_pid_file() -> None:
+    """退出时把自己的 PID 文件删掉。
+
+    原来它**只写不删**：下次启动会照着那个陈旧 pid 去"接管"，一旦系统把这个号
+    复用给别的程序，就会误杀无关进程（`looks_like_bridge` 是第一道闸，这里是第二道）。
+    """
+    try:
+        if os.path.exists(PID_FILE) and Path(PID_FILE).read_text().strip() == str(os.getpid()):
+            os.remove(PID_FILE)
+    except Exception:
+        pass
+
+
+def cleanup_on_exit(reason: str) -> None:
+    """退出收尾（Ctrl+C、正常结束、解释器退出都会走这里）：清 PID 文件 + 收掉本桥拉起的 DSH。
+
+    ★ Ctrl+C 本身已经会送到 DSH（见 `start_dsh_process` 的注释），这里只是**兜底**：
+      万一 DSH 自己装了 SIGINT 处理器不肯退、或者桥是被 taskkill/崩溃弄死的，就用这里收掉。
+      只动 `SPAWNED_DSH_PIDS` 里的（= 本桥亲手拉起的），不碰别人的 DSH。
+    """
+    release_pid_file()
+    while SPAWNED_DSH_PIDS:
+        pid = SPAWNED_DSH_PIDS.pop()
+        if not pid_alive(pid):
+            continue
+        if not looks_like_dsh(pid):        # 认不出就别动（防 PID 复用误杀）
+            continue
+        LOG.warning("退出收尾（%s）：结束本桥拉起的 DSH pid=%s", reason, pid)
+        kill_and_wait(pid)
+    # 还留在 3080 上的，说明不是本桥拉起的 —— 说清楚，别让人以为"没退干净"
+    for pid in find_port_pids(DSH_TARGET_PORT):
+        if pid != os.getpid():
+            LOG.warning("注意：3080 上仍有 DSH（pid=%s）在跑，它不是本桥本次拉起的 —— "
+                        "本桥退出不会动它；要停就 taskkill /F /PID %s", pid, pid)
+
+
 def ensure_single_instance() -> None:
     """启动前接管：优先按 PID 文件杀掉上一个 dsh，再以端口兜底，最后写自己的 PID。"""
     # 1) PID 文件精确接管
@@ -1467,14 +1518,23 @@ def ensure_single_instance() -> None:
         except Exception:
             old_pid = None
         if old_pid and old_pid != os.getpid() and pid_alive(old_pid):
-            LOG.warning("接管：结束旧实例 pid=%s", old_pid)
-            kill_and_wait(old_pid)
+            if looks_like_bridge(old_pid):
+                LOG.warning("接管：结束旧实例 pid=%s", old_pid)
+                kill_and_wait(old_pid)
+            else:
+                LOG.warning("PID 文件里那个 pid=%s 看着不是 dsh 桥（PID 可能被系统复用了）"
+                            "→ 不动它，改用端口 %s 兜底", old_pid, SETUP_PORT)
 
     # 2) 端口兜底（PID 文件失效/缺失时，8788 被占则杀占用者）
     for pid in find_port_pids(SETUP_PORT):
-        if pid != os.getpid():
+        if pid == os.getpid():
+            continue
+        if looks_like_bridge(pid):          # 同样先认进程，别杀错
             LOG.warning("接管：结束占用端口 %s 的 pid=%s", SETUP_PORT, pid)
             kill_and_wait(pid)
+        else:
+            LOG.warning("端口 %s 被 pid=%s 占着，但它看着不是 dsh 桥 → 不动它"
+                        "（后面绑定会自动重试）", SETUP_PORT, pid)
 
     # 2.5) 等端口释放（旧实例被杀后）
     if not wait_port_free(SETUP_PORT):
@@ -1603,20 +1663,33 @@ def port_alive(port: int, timeout: float = 2.0) -> bool:
         return False
 
 
+#: 本桥**亲自**拉起来的 DSH 进程 pid。退出时要把它们收掉（见 cleanup_on_exit），
+#: 但绝不会去动"别的桥留下的"或"你手动起的" DSH —— 那些不在这个表里。
+SPAWNED_DSH_PIDS: list = []
+
+
 def start_dsh_process() -> None:
-    """启动 DSH 本体（后台运行，日志进 dsh3080.log）。"""
+    """启动 DSH 本体（日志进 dsh3080.log）。
+
+    ★ 这里**故意不加** `CREATE_NEW_PROCESS_GROUP`（2026-09-27 按你的要求改）：
+      带上它，子进程会**免疫 Ctrl+C** —— 于是你按 Ctrl+C 只停掉桥，DSH 还在后台跑、
+      网页照样打得开，看起来就是"没退出"（这就是你遇到的那个现象）。
+      去掉之后，Ctrl+C 会同时送到 DSH，node 收到就退出 —— **一次 Ctrl+C 全部干净退出**。
+      （stdout 仍然写进日志文件，所以去掉这个标志不会让 DSH 的输出刷到终端上。）
+    """
     for cmd in DSH_LAUNCHERS:
         try:
             if not os.path.exists(cmd[0]):
                 continue
             os.makedirs(DATA_DIR, exist_ok=True)
             with open(DSH_3080_LOG, "ab") as logf:
-                subprocess.Popen(
+                proc = subprocess.Popen(
                     cmd, cwd=DSH_CWD,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
                     stdin=subprocess.DEVNULL, stdout=logf, stderr=subprocess.STDOUT,
                 )
-            LOG.warning("已发出 DSH 启动命令: %s %s", cmd[0], cmd[1] if len(cmd) > 1 else "")
+            SPAWNED_DSH_PIDS.append(proc.pid)
+            LOG.warning("已发出 DSH 启动命令: %s %s (pid=%s)",
+                        cmd[0], cmd[1] if len(cmd) > 1 else "", proc.pid)
             return
         except Exception as exc:
             LOG.warning("启动 DSH 失败(%s): %s", cmd[0], exc)
@@ -1858,13 +1931,20 @@ def main() -> int:
     restart_dsh("启动时先清掉 3080 上的旧 DSH")
     ensure_single_instance()
 
+    # 退出收尾：不管怎么退（Ctrl+C、正常结束、异常），都要清 PID 文件 + 收掉自己拉起的 DSH。
+    # atexit 是兜底（正常返回/异常退出都会跑到），下面两条是让日志里能看出"是哪条路退的"。
+    atexit.register(cleanup_on_exit, "解释器退出")
+
     try:
         bridge = Bridge(load_config())
         asyncio.run(_serve_setup(bridge, args.no_browser))
+        cleanup_on_exit("正常运行结束")
     except KeyboardInterrupt:
-        LOG.info("stopped")
+        LOG.info("stopped（Ctrl+C）")
+        cleanup_on_exit("Ctrl+C")
     except Exception as exc:
         LOG.exception("运行异常退出: %s", exc)
+        cleanup_on_exit("异常退出")
     return 0
 
 
