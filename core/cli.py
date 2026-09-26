@@ -227,7 +227,6 @@ def cmd_list(table, skip_clear=False):
         out.print_cyan("[信息] 还没有安装任何包。包放在 %s" % paths.SYSTEM_PKGS)
         return 0
 
-    reg = registry.load()
     by_layer = _pkg_rows(recs)
     out.print_cyan("已安装的包（%d）—— 按层分组" % len(recs))
     print("  优先级：用户插件 > 系统插件"
@@ -246,8 +245,6 @@ def cmd_list(table, skip_clear=False):
             tail = ""
             if r.get("shadowed"):
                 tail += "  [它遮住了 %s 层的同名包]" % r["shadowed"]
-            if not registry.is_enabled(reg, r["id"]):
-                tail += "  [已停用]"
             print("    %-16s %-7s %-7s %s%s" % (
                 alias[:16], p.get("kind", ""), str(p.get("version", ""))[:7],
                 str(p.get("desc", ""))[:34], tail))
@@ -733,15 +730,6 @@ def cmd_remove(name, table, assume_yes=False):
         except Exception as e:                                  # noqa: BLE001
             errors.append("%s（%s）：%s" % (label, p, e))
 
-    # registry 里那条也要去掉 —— 否则下次启动会被标成 orphan（"磁盘上没了"）
-    try:
-        reg = registry.load()
-        if pid in (reg.get("packages") or {}):
-            del reg["packages"][pid]
-            registry.save(reg)
-    except Exception as e:                                      # noqa: BLE001
-        errors.append("registry：%s" % e)
-
     if errors:
         out.print_cyan("有 %d 处没删干净：" % len(errors))
         for e in errors:
@@ -1031,8 +1019,6 @@ def main(argv):
     events.BUS.on("after:run", history.on_after_run, name="history")
 
     table = runners_mod.load()
-    reg = registry.load()
-    registry.sync(reg)
 
     # ---- 帮助（照抄 pa.py:861-866：先文档再列表） ----
     if not argv or argv[0] in ("-h", "--help", "help"):
@@ -1120,9 +1106,6 @@ def main(argv):
         rec = registry.find_alias(alias)
         if not rec:
             out.print_cyan("[错误] 没有这个包：'%s'。直接敲 `moss` 看有哪些包。" % alias)
-            return 1
-        if not registry.is_enabled(reg, rec["id"]):
-            out.print_cyan("[错误] 包 '%s' 已被禁用。" % rec["id"])
             return 1
         params = parse_params(rec["pkg"], rest)
         inv, err = build_pkg_inv(rec, params, via="cli")
