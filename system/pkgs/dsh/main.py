@@ -79,15 +79,36 @@ except ImportError:
     if not _DIR:
         # 最后兜底：以**脚本自身所在目录**为准（moss 用 runpy.run_path 执行，
         # __file__ 一定可用；这段本来在旧宿主里也到不了，因为 pa 会先把插件目录
-        # 塞进 sys.path）。原来的写死路径 D:\python\two\QuickTools\...\dsh 已随
-        # 迁移作废，不能再指向旧项目。
+        # 塞进 sys.path）。原来写死的那个旧项目路径已随迁移作废，不能再指回去。
         _DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
     _THIS = os.path.join(_DIR, "main.py")
-    _VENV_PY = r"D:\python\wwwroot\ZeEn\venv\Scripts\python.exe"
-    if not os.path.exists(_VENV_PY):
-        print("缺少依赖(aiohttp/httpx/websockets)且找不到 venv python: " + _VENV_PY)
+    # 换哪个解释器来跑（三级，`P-15`）：
+    #   ① 环境变量 DSH_PYTHON —— 想指定就用它，这是最明确的做法
+    #   ② 当前解释器同目录的 python.exe（moss 自带运行时就在这，依赖是齐的）
+    #   ③ 老项目的 ZeEn venv —— **仅当它真的存在**才用（旧机器上的兜底；
+    #      迁移前这里写死的就是它，现在降级成最后一级，不再是无条件依赖）
+    # 三级都不行就报清楚缺什么、该怎么办，而不是甩一个 NameError/FileNotFound。
+    _CANDIDATES = []
+    _env_py = os.environ.get("DSH_PYTHON")
+    if _env_py:
+        _CANDIDATES.append(("环境变量 DSH_PYTHON", _env_py))
+    _CANDIDATES.append(("当前解释器同目录",
+                        os.path.join(os.path.dirname(os.path.abspath(sys.executable or "")),
+                                     "python.exe")))
+    _CANDIDATES.append(("老项目的 ZeEn venv（兜底）",
+                        r"D:\python\wwwroot\ZeEn\venv\Scripts\python.exe"))
+    _VENV_PY = ""
+    for _why, _p in _CANDIDATES:
+        if _p and os.path.isfile(_p) and os.path.abspath(_p) != os.path.abspath(sys.executable or ""):
+            _VENV_PY = _p
+            print("检测到当前解释器缺依赖(aiohttp/httpx/websockets)，改用【%s】的解释器: %s"
+                  % (_why, _p))
+            break
+    if not _VENV_PY:
+        print("缺少依赖(aiohttp/httpx/websockets)，且没有可换的解释器。")
+        print("  办法：设环境变量 DSH_PYTHON 指向一个装了这些库的 python.exe，")
+        print("        或用 moss 自带运行时跑（moss :dsh 本来就是这么跑的）。")
         sys.exit(1)
-    print("检测到当前解释器缺依赖，改用 venv python 运行...")
     sys.exit(subprocess.call([_VENV_PY, _THIS] + sys.argv[1:]))
 
 import argparse
@@ -1474,9 +1495,17 @@ def spawn_daemon() -> int:
     # (system/runtimes/python/3.12) 里就有一个，依赖 aiohttp/httpx/websockets 也齐。
     # 旧代码写死的是旧项目那台 venv 里的 pythonw.exe，迁移后它指向外面、
     # 别人机器上根本没有 —— 所以降级成兜底（老宿主下行为不变）。
-    venv_py = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    # 无窗口解释器（三级，`P-15`）：① 环境变量 DSH_PYTHONW
+    #                              ② 当前运行时同目录的 pythonw.exe（自带运行时里就有）
+    #                              ③ 老项目的 ZeEn venv —— 仅当它存在才用（兜底）
+    venv_py = os.environ.get("DSH_PYTHONW") or ""
+    if not (venv_py and os.path.isfile(venv_py)):
+        venv_py = os.path.join(os.path.dirname(sys.executable or ""), "pythonw.exe")
     if not os.path.isfile(venv_py):
-        venv_py = r"D:\python\wwwroot\ZeEn\venv\Scripts\pythonw.exe"
+        _legacy_pw = r"D:\python\wwwroot\ZeEn\venv\Scripts\pythonw.exe"
+        if os.path.isfile(_legacy_pw):
+            LOG.warning("当前运行时没有 pythonw.exe，退回老项目的 ZeEn venv（兜底）: %s", _legacy_pw)
+            venv_py = _legacy_pw
     flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
@@ -1537,7 +1566,7 @@ DSH_LAUNCHERS = find_dsh_launchers()
 def _dsh_cwd() -> str:
     r"""拉起 DSH 本体时，用哪个目录当它的工作目录（= DSH 那边看到的"工作区"）。
 
-    旧代码写死：DSH_CWD = r"D:\soft\deepseek-harness"（这台机器上 DSH 的检出目录）。
+    旧代码写死成这台机器上 DSH 的检出目录（`D:\soft\deepseek-harness`，**本机就是靠它**）。
     写死在别人机器上就跑不起来，所以改成三级，**本机行为一个字不变**：
       ① 环境变量 `DSH_BRIDGE_CWD`（想固定工作区就设它 —— 这是最明确的做法）
       ② 老路径还存在 → 就用它（本机命中这一条，和迁移前完全一样）
@@ -1642,6 +1671,35 @@ def looks_like_dsh(pid: int) -> bool:
     return True
 
 
+def ancestor_pids(pid: int, limit: int = 20) -> set:
+    """从 pid 往上找出它的**所有祖先进程**。
+
+    用途只有一个（`P-17`）：判断「3080 上那个 DSH 是不是我自己所在的这棵树」。
+    因为 DSH 可能是被**我们自己的父进程**拉起来的 —— 典型场景就是你在 DSH 自己开出来的
+    终端里敲 `moss :dsh`，这时杀掉 3080 会把**你自己这个会话**一起断掉。
+
+    实现：一条 PowerShell 命令一次走完父链（比每层单独调一次 CIM 快得多）。
+    取不到就返回空集合 —— 那种情况下当作"不是祖先"（不误伤正常路径），
+    但别的守卫（认进程、看端口）仍然在。
+    """
+    script = ('$p = %d; for ($i = 0; $i -lt %d; $i++) { '
+              '$q = (Get-CimInstance Win32_Process -Filter "ProcessId=$p" '
+              '-ErrorAction SilentlyContinue).ParentProcessId; '
+              'if (-not $q) { break }; Write-Output $q; $p = $q }' % (pid, limit))
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", script],
+                             capture_output=True, text=True, timeout=25).stdout
+    except Exception as exc:
+        LOG.warning("取祖先进程失败: %s", exc)
+        return set()
+    pids = set()
+    for ln in (out or "").splitlines():
+        s = ln.strip()
+        if s.isdigit():
+            pids.add(int(s))
+    return pids
+
+
 def restart_dsh(reason: str) -> bool:
     """结束 3080 上那个 DSH 并等端口释放。返回「端口确实空出来了」。
 
@@ -1659,7 +1717,16 @@ def restart_dsh(reason: str) -> bool:
     LOG.warning("要重启 3080 上的 DSH（原因：%s）: pid=%s —— 本地 DSH 网页会闪断几秒，"
                 "监护随后会自动把它拉回来", reason, pids)
     killed = False
+    # ★ 自保（`P-17`）：如果 3080 上那个 DSH 是**本进程的祖先**，说明我们正跑在它里面
+    #   （比如你在 DSH 自己开出来的终端/会话里敲 `moss :dsh`）—— 杀掉它会把你自己
+    #   这个会话一起断掉（实测：2026-09-27 我就在这上面栽了两次）。这种一律跳过。
+    my_ancestors = ancestor_pids(os.getpid())
     for pid in pids:
+        if pid in my_ancestors:
+            LOG.error("3080 上那个 DSH 是本进程的**祖先**（pid=%s）—— 你是在 DSH 自己"
+                      "开出来的终端/会话里跑的，杀掉它会把你这个会话一起断掉，已跳过。"
+                      "要重启 DSH 请换一个**独立的** PowerShell 窗口再跑 moss :dsh。", pid)
+            continue
         if looks_like_dsh(pid):
             kill_and_wait(pid)
             killed = True
@@ -1728,13 +1795,21 @@ def _moss_args():
     有就返回切好的参数表，没有返回 None —— 那就走原来的 sys.argv 逻辑，
     所以 `python main.py --status` 这种直接调试照旧能用。
     """
+    # ★ 只有"宿主确实给了参数"才算数：**空串要当成没给**，继续往下走、最后退回
+    #   sys.argv。踩过的坑（2026-09-27）：moss 起子进程时会注入 MOSS_PKG_PARAMS，
+    #   而 DSH 自己是被桥拉起来的 —— 于是**整个 DSH 会话树里都留着这个变量**
+    #   （值通常是 {"args": ""}）。旧写法在这里直接返回 []（空列表 = "宿主说了，
+    #   没有参数"），于是 sys.argv 永远轮不到：在 DSH 会话里直接跑
+    #   `python main.py --help` 会被当成"无参数"→ 前台启动桥。
     raw = os.environ.get("MOSS_PKG_PARAMS")
     if raw:
         try:
-            return str(json.loads(raw).get("args") or "").split()
+            got = str(json.loads(raw).get("args") or "").strip()
+            if got:
+                return got.split()
         except Exception:
             pass
-    raw = os.environ.get("MOSS_ARGS")
+    raw = (os.environ.get("MOSS_ARGS") or "").strip()
     if raw:
         return raw.split()
     return None
