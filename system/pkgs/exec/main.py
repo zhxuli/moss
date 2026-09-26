@@ -61,13 +61,18 @@ def _moss_args():
     有就返回解析好的参数表，没有返回 None —— 那就走原来的 sys.argv 逻辑。"""
     import json as _json
     import os as _os
+    # ★ 空串要当成"宿主没给参数"，继续往下走、最后退回 sys.argv（同一个坑：
+    #   moss 注入的 MOSS_PKG_PARAMS 会留在整个子进程树里，值通常是 {"args": ""}；
+    #   旧写法直接返回 []，于是 sys.argv 永远轮不到 —— 见 dsh/main.py 里的长注释）。
     raw = _os.environ.get("MOSS_PKG_PARAMS")
     if raw:
         try:
-            return core.split_args(str(_json.loads(raw).get("args") or ""))
+            got = str(_json.loads(raw).get("args") or "").strip()
+            if got:
+                return core.split_args(got)
         except Exception:
             pass
-    raw = _os.environ.get("MOSS_ARGS")
+    raw = (_os.environ.get("MOSS_ARGS") or "").strip()
     if raw:
         return core.split_args(raw)
     return None
