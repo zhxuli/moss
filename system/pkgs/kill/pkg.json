@@ -1,0 +1,60 @@
+{
+  "spec": 1,
+  "id": "kill",
+  "kind": "task",
+  "version": "1.0",
+  "name": {
+    "zh-CN": "杀进程",
+    "en": "Kill process"
+  },
+  "desc": {
+    "zh-CN": "按进程名（模糊匹配）或端口号结束进程：命中后按可执行文件路径分组，上下键选一组，或清理全部",
+    "en": "Kill processes by name or by listening port"
+  },
+  "tags": [
+    "进程",
+    "端口",
+    "psutil"
+  ],
+  "aliases": [
+    "kill"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.py"
+  },
+  "params": [
+    {
+      "name": "query",
+      "type": "string",
+      "required": false,
+      "desc": "进程名（大小写不敏感的包含匹配），或端口号（纯数字 = 找正在监听它的进程）",
+      "placeholder": "node  或  8080"
+    }
+  ],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "net": [],
+    "clipboard": [],
+    "fsRead": [],
+    "elevated": false
+  },
+  "output": {
+    "mode": "text"
+  },
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/bin/cli/kill",
+    "at": "2026-09-27"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "high"
+  }
+}
