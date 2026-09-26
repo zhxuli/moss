@@ -45,6 +45,7 @@ USAGE = """moss —— 多语言启动器
   moss --history               最近启动记录：**方向键选择，回车直接再跑一次**（去重，最多 20 条）
                                回车进入程序后，程序退出就**彻底退出**，不会再回到列表
   moss --history <条数>        只打印不交互（管道 / 脚本用这种）
+  moss --remove <别名>         卸载一个包：**包本体 + 它的数据**（真删，要先确认；-y 跳过）
   moss --spec                  打印「插件契约」：怎么写一个插件（★ AI 请先读它）
   moss --new <id>              生成一个能跑的插件骨架到 user_data/pkgs/<id>/
   moss --resolve <名字>        只看解析结果，不执行（排障用：为什么选中它 / 为什么没找到）
@@ -203,6 +204,22 @@ def _fill_interpreter(inv, table):
 
 
 # ---------------------------------------------------------------- 子命令
+#: 三层的说法与位置（U-15：列表要按这三类分块显示，并写明"在哪、谁压谁"）
+_LAYERS = (
+    ("dev", "开发插件", "只在开发机上，发行版里没有这个目录", None),
+    ("user", "用户插件", "你自己写的 / 从商店装的，升级不碰", paths.USER_PKGS),
+    ("system", "系统插件", "随 moss 分发，升级时整体替换", paths.SYSTEM_PKGS),
+)
+
+
+def _pkg_rows(recs):
+    """把扫描结果按层分好组（保持 _LAYERS 的顺序）。"""
+    by_layer = {}
+    for r in recs:
+        by_layer.setdefault(r["layer"], []).append(r)
+    return by_layer
+
+
 def cmd_list(table, skip_clear=False):
     if not skip_clear:
         out.conditional_clear_screen()
@@ -210,16 +227,31 @@ def cmd_list(table, skip_clear=False):
     if not recs:
         out.print_cyan("[信息] 还没有安装任何包。包放在 %s" % paths.SYSTEM_PKGS)
         return 0
-    out.print_cyan("已安装的包（%d）：" % len(recs))
-    print("  %-16s %-8s %-6s %-7s %s" % ("别名", "类型", "版本", "层", "说明"))
-    print("  " + "-" * 72)
-    for r in recs:
-        p = r["pkg"]
-        alias = ",".join(p.get("aliases") or []) or p["id"]
-        layer = r["layer"] + ("→遮蔽" + r["shadowed"] if r.get("shadowed") else "")
-        print("  %-16s %-8s %-6s %-7s %s" % (
-            alias[:16], p.get("kind", ""), str(p.get("version", ""))[:6], layer,
-            str(p.get("desc", ""))[:30]))
+
+    reg = registry.load()
+    by_layer = _pkg_rows(recs)
+    out.print_cyan("已安装的包（%d）—— 按层分组" % len(recs))
+    print("  优先级：开发插件 > 用户插件 > 系统插件"
+          "（同名时高优先级遮蔽低优先级，低层原件保留）")
+    for key, cn, why, where in _LAYERS:
+        rows = by_layer.get(key)
+        if not rows:
+            continue                      # 这一类是空的就不显示
+        print()
+        print("  【%s】%s%s" % (cn, why, ("　" + str(where)) if where else ""))
+        print("    %-16s %-7s %-7s %s" % ("别名", "类型", "版本", "说明"))
+        print("    " + "-" * 68)
+        for r in rows:
+            p = r["pkg"]
+            alias = ",".join(p.get("aliases") or []) or p["id"]
+            tail = ""
+            if r.get("shadowed"):
+                tail += "  [它遮住了 %s 层的同名包]" % r["shadowed"]
+            if not registry.is_enabled(reg, r["id"]):
+                tail += "  [已停用]"
+            print("    %-16s %-7s %-7s %s%s" % (
+                alias[:16], p.get("kind", ""), str(p.get("version", ""))[:7],
+                str(p.get("desc", ""))[:34], tail))
     return 0
 
 
@@ -622,6 +654,104 @@ def cmd_new(pid, kind="task"):
     return 0
 
 
+def _dir_stats(p):
+    """(文件数, 字节数)。"""
+    n, size = 0, 0
+    try:
+        for f in Path(p).rglob("*"):
+            if f.is_file():
+                n += 1
+                try:
+                    size += f.stat().st_size
+                except OSError:
+                    pass
+    except Exception:
+        pass
+    return n, size
+
+
+def _human_size(n):
+    if n >= 1048576:
+        return "%.1f MB" % (n / 1048576.0)
+    if n >= 1024:
+        return "%.1f KB" % (n / 1024.0)
+    return "%d 字节" % n
+
+
+def cmd_remove(name, table, assume_yes=False):
+    """卸载一个包：**包本体 + 它产生的数据**。
+
+    ★ 按你定的：**真删**（不进 trash），所以"先把要删什么打出来 + 确认"这一步不能省。
+    ★ 历史记录里提到它的条目**不动** —— 历史是流水账，不是资产。
+    """
+    rec = registry.find_alias(name)
+    if not rec:
+        out.print_cyan("[错误] 没有这个包：'%s'。直接敲 `moss` 看有哪些。" % name)
+        return 1
+
+    pid = rec["id"]
+    layer = rec.get("layer")
+    cn = dict((k, c) for k, c, _, _ in _LAYERS).get(layer, layer)
+    pkg_dir = Path(rec["dir"])
+    state_dir = paths.pkg_state_dir(pid)
+    shadowed = rec.get("shadowed")          # 它遮住了哪一层的同名包
+
+    targets = [(pkg_dir, "包本体")]
+    if state_dir.is_dir():
+        targets.append((state_dir, "它的数据"))
+
+    out.conditional_clear_screen()
+    out.print_cyan("将要卸载：%s（%s）" % (pid, cn))
+    total = 0
+    for p, label in targets:
+        n, size = _dir_stats(p)
+        total += size
+        print("  %-8s %s" % (label, p))
+        print("  %-8s %d 个文件，%s" % ("", n, _human_size(size)))
+    print("  %-8s 合计 %s" % ("", _human_size(total)))
+    if shadowed:
+        out.print_cyan("  提示：它还遮住了 %s 层的同名包 —— 删掉之后那个会重新生效。"
+                       % dict((k, c) for k, c, _, _ in _LAYERS).get(shadowed, shadowed))
+    out.print_cyan("★ 这是真删（不进回收站），删了就没了。")
+
+    if not assume_yes:
+        if not sys.stdin.isatty():
+            out.print_cyan("[错误] 非交互环境请显式加 -y 确认。")
+            return 1
+        try:
+            ans = input("确认？ [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = ""
+        if ans not in ("y", "yes"):
+            out.print_cyan("[取消] 什么都没删。")
+            return 0
+
+    errors = []
+    for p, label in targets:
+        try:
+            shutil.rmtree(str(p))
+            print("  已删 %s" % p)
+        except Exception as e:                                  # noqa: BLE001
+            errors.append("%s（%s）：%s" % (label, p, e))
+
+    # registry 里那条也要去掉 —— 否则下次启动会被标成 orphan（"磁盘上没了"）
+    try:
+        reg = registry.load()
+        if pid in (reg.get("packages") or {}):
+            del reg["packages"][pid]
+            registry.save(reg)
+    except Exception as e:                                      # noqa: BLE001
+        errors.append("registry：%s" % e)
+
+    if errors:
+        out.print_cyan("有 %d 处没删干净：" % len(errors))
+        for e in errors:
+            print("  × %s" % e)
+        return 1
+    out.print_cyan("已卸载 %s。" % pid)
+    return 0
+
+
 def cmd_resolve(name, table):
     """只看解析结果，不执行。
 
@@ -946,6 +1076,13 @@ def main(argv):
         return handle_pick(table, detach=detach)
 
     # ---- moss 自己的选项 ----
+    if first in ("--remove", "--uninstall"):
+        args = [a for a in rest if a not in ("-y", "--yes")]
+        yes = len(args) != len(rest)
+        if not args:
+            out.print_cyan("[错误] --remove 需要一个包名（别名或 id）。直接敲 `moss` 看有哪些。")
+            return 1
+        return cmd_remove(args[0], table, assume_yes=yes)
     if first == "--spec":
         return cmd_spec()
     if first == "--new":
