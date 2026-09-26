@@ -26,6 +26,9 @@ USAGE = """moss —— 多语言启动器
                                例: moss m        → main.py / main.go / main.html
                                    moss b/m      → 进 b 开头的子目录再找 m 开头
                                    moss s/t/main → 逐级往下
+                               ★ 文件系统里找不到时，会去**历史**里找同名的那次调用
+                                 （比如 `moss zeen` 直接进上次那个 ZeEn），
+                                 命中多个就进最近的一次
   moss /<名字>                 同上，但**不切换目录**（在当前目录里跑）
   moss ~<名字>                 后台脱离运行，不阻塞当前控制台
 
@@ -40,7 +43,8 @@ USAGE = """moss —— 多语言启动器
   moss pick | select | menu    交互式选择要运行的包
 
   moss --list                  列出已安装的包
-  moss --history               最近启动记录：**方向键选择，回车一键重跑**（去重，最多 225 条）
+  moss --history               最近启动记录：**方向键选择，回车直接再跑一次**（去重，最多 20 条）
+                               回车进入程序后，程序退出就**彻底退出**，不会再回到列表
   moss --history <条数>        只打印不交互（管道 / 脚本用这种）
   moss --rerun <序号>          重跑列表里的第 N 条（不用先 cd 回去）
   moss --resolve <名字>        只看解析结果，不执行
@@ -362,7 +366,7 @@ def _history_browser(rows, table):
         width, height = _term_size()
         inner = width - 2                       # 两侧各留一列余量
         with_args = inner - _HIST_FIXED >= 10
-        vh = max(3, min(height - 5, len(rows)))
+        vh = max(3, min(height - 3, len(rows)))
         top = _scroll_top(idx, len(rows), vh)
         lines = ["  最近启动（已去重 %d 条）" % len(rows),
                  _hist_head(inner, with_args)]
@@ -399,7 +403,7 @@ def _history_browser(rows, table):
             except Exception:
                 return 1
             _, height = _term_size()
-            vh = max(3, min(height - 5, len(rows)))
+            vh = max(3, min(height - 3, len(rows)))
             if ch2 in ("H", "A"):
                 idx = max(0, idx - 1)
             elif ch2 in ("P", "B"):
@@ -415,18 +419,11 @@ def _history_browser(rows, table):
             paint(True)
             continue
         if ch in ("\r", "\n"):
+            # ★ 从历史进入程序：跑完就**彻底退出**，不再回到列表（你要求的）。
+            #   理由：从历史进入等于"再跑一次那个程序"，跟直接敲命令是一回事 ——
+            #   程序结束就该回到 shell 提示符，而不是又甩一个列表给你。
             out.clear_screen()
-            cmd_rerun(idx + 1, table, rows=rows)
-            print("\n  —— 按任意键回到列表 ——")
-            try:
-                msvcrt.getwch()
-            except Exception:
-                return 1
-            # 重跑本身会写一条新历史，去重后它会顶到最前
-            rows[:] = history.recent_unique()
-            idx = 0
-            paint(False)
-            continue
+            return cmd_rerun(idx + 1, table, rows=rows)
 
 
 def cmd_history(n=None, table=None):
@@ -450,9 +447,12 @@ def cmd_rerun(idx, table, rows=None):
     if not (1 <= idx <= len(rows)):
         out.print_cyan("[错误] 序号超范围（1-%d）。" % len(rows))
         return 1
-    r = rows[idx - 1]
-    out.print_cyan("[重跑] 来自历史：%s" % (r.get("id") or r.get("target")))
+    return cmd_rerun_record(rows[idx - 1], table)
 
+
+def cmd_rerun_record(r, table):
+    """按一条历史记录重跑。"""
+    out.print_cyan("[重跑] 来自历史：%s" % (r.get("id") or r.get("target")))
     if r.get("kind") == "pkg" and r.get("id"):
         rec = registry.find_alias(r["id"])
         if not rec:
@@ -858,6 +858,14 @@ def main(argv):
         if why == "用户取消":
             out.print_cyan("[取消] 已退出。")
             return 130
+        # ★ 文件系统里找不到 -> 再问一次**历史**（V-20）：
+        #   你在别的目录，凭记忆敲 `moss zeen` 就想进上次那个 ZeEn。
+        #   命中多个就进最近的那个（find_recent 已经保证）。
+        rec = history.find_recent(clean_arg)
+        if rec is not None:
+            out.print_cyan("[历史] 文件系统里没有 '%s'，改用最近一次记录：%s  (cwd=%s)"
+                           % (clean_arg, _hist_name(rec), rec.get("cwd") or "-"))
+            return cmd_rerun_record(rec, table)
         out.print_cyan("[错误] 在 %s 及上层没找到以 '%s' 开头的可运行目标。"
                        % (Path.cwd(), clean_arg))
         print("       （只在装了对应 runner 的情况下才算候选：用 `moss --resolve %s` 看细节）"

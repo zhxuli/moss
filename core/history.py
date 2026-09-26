@@ -110,6 +110,48 @@ def recent_unique(limit=MAX_SHOW, raw=READ_RAW):
     return dedup(recent(raw))[:limit]
 
 
+def match_keys(r):
+    """这条记录能被哪些"名字"叫起来。
+
+    三种都算（都转小写）：
+      · 包 id / 别名        —— `moss img` 能叫起 `moss :img`
+      · 目标文件名与去扩展名 —— `moss main.py` / `moss main`
+      · **cwd 的最后一段**   —— 你举的例子：`moss zeen` 叫起
+        `main.py  cwd=D:\\python\\wwwroot\\ZeEn`
+    """
+    keys = set()
+    if r.get("id"):
+        keys.add(str(r["id"]).lower())
+    t = r.get("target")
+    if t:
+        base = str(t).replace("/", "\\").rsplit("\\", 1)[-1]
+        if base:
+            keys.add(base.lower())
+            if "." in base:
+                keys.add(base.rsplit(".", 1)[0].lower())
+    cwd = r.get("cwd")
+    if cwd:
+        seg = str(cwd).rstrip("\\/").replace("/", "\\").rsplit("\\", 1)[-1]
+        if seg:
+            keys.add(seg.lower())
+    return keys
+
+
+def find_recent(name):
+    """按名字在最近的记录里找**最新**的那一条；找不到返回 None。
+
+    "匹配到多个就进最近的一个" —— `recent_unique()` 本来就是新的在前，
+    所以第一个命中的就是最近的。
+    """
+    want = str(name or "").strip().lower()
+    if not want:
+        return None
+    for r in recent_unique():
+        if want in match_keys(r):
+            return r
+    return None
+
+
 def _entry_from(inv, result=None, state=None):
     """把一次 Invocation 变成一条历史记录。"""
     entry = {
