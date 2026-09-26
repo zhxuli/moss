@@ -1,0 +1,108 @@
+/* layout.css
+   窗口骨架：顶栏、三栏网格、侧栏与详情外壳
+   —— 由 index.html 拆出；<link> 顺序即层叠顺序 */
+
+/* ============================================================================
+   窗口骨架
+   ========================================================================== */
+.window { height: 100%; display: grid; grid-template-rows: 52px 1fr; }
+
+.toolbar {
+  display: grid; grid-template-columns: 1fr minmax(200px, 340px) 1fr;
+  align-items: center; gap: var(--sp-3);
+  padding: 0 var(--sp-4) 0 var(--sp-3);
+  background: var(--material);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  border-bottom: 1px solid var(--sep);
+  box-shadow: var(--edge);
+}
+.tb-left { display: flex; align-items: center; }
+.tb-right { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
+
+/* 分类 + 命令合成一棵可折叠的树（等价于 macOS 的大纲视图 / Xcode 导航栏）。
+   —— 于是"筛选控件"根本不需要存在：分类就是导航。 */
+.tree-head {
+  display: flex; align-items: center; gap: 7px;
+  padding: var(--sp-3) var(--sp-3) var(--sp-2);
+  border-bottom: 1px solid var(--sep);
+}
+.tree-head .title {
+  font: 600 var(--t-sub)/1 var(--font-ui); letter-spacing: var(--t-sub-ls);
+  color: var(--text-3); text-transform: uppercase;
+}
+.tree-head .n { color: var(--text-3); font-size: var(--t-sub); font-variant-numeric: tabular-nums; }
+.icon-btn {
+  width: 22px; height: 22px; display: grid; place-items: center; flex: none;
+  border: none; border-radius: 5px; background: transparent; cursor: pointer; color: var(--text-2);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.icon-btn:hover { background: var(--field); color: var(--text); }
+.icon-btn:active { transform: scale(.94); }
+.icon-btn svg { width: 14px; height: 14px; }
+
+.tree { flex: 1; overflow-y: auto; padding: var(--sp-1) var(--sp-2) var(--sp-2); }
+
+.grp {
+  display: grid; grid-template-columns: 10px 16px minmax(0, 1fr) auto;
+  align-items: center; gap: 7px;
+  width: 100%; padding: 5px 8px; margin-top: 1px;
+  border: none; border-radius: var(--r-sm); background: transparent; cursor: default;
+  color: var(--text); text-align: left; font-weight: 570;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.grp:hover { background: color-mix(in srgb, var(--text-3) 14%, transparent); }
+.grp .tri { width: 10px; height: 10px; color: var(--text-3); transition: transform var(--dur-base) var(--ease-out); }
+.grp .tri.open { transform: rotate(90deg); }
+.grp svg.ico { width: 15px; height: 15px; opacity: .7; }
+.grp .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grp .n { color: var(--text-3); font-size: var(--t-sub); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* 搜索 */
+.search { position: relative; display: flex; align-items: center; }
+.search svg { position: absolute; left: 9px; width: 13px; height: 13px; color: var(--text-3); pointer-events: none; }
+.search input {
+  width: 100%; height: 30px; padding: 0 28px;
+  background: var(--field); border: 1px solid transparent; border-radius: var(--r-sm);
+  outline: none;
+  transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out);
+}
+.search input::placeholder { color: var(--text-3); }
+.search input:focus { background: var(--surface); border-color: var(--ring); box-shadow: 0 0 0 3px var(--field-focus); }
+.search .clear {
+  position: absolute; right: 6px; width: 18px; height: 18px; border: none; border-radius: 50%;
+  background: var(--field); color: var(--text-2); font-size: 11px; line-height: 1;
+  display: none; place-items: center; cursor: pointer;
+}
+.search.has-value .clear { display: grid; }
+
+/* 按钮 */
+.btn {
+  height: 30px; padding: 0 var(--sp-3); border-radius: var(--r-sm);
+  border: 1px solid var(--btn-border); cursor: pointer; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--btn-bg); color: var(--text); box-shadow: var(--btn-shadow);
+  transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out), opacity var(--dur-base) var(--ease-out);
+}
+.btn:hover { background: var(--btn-bg-hover); }
+.btn:active { transform: scale(.97); }
+.btn:disabled { opacity: .38; cursor: default; transform: none; }
+.btn.primary {
+  background: var(--accent); color: var(--accent-fg); font-weight: 590;
+  border-color: transparent; box-shadow: 0 .5px 2px rgba(0,0,0,.18);
+}
+.btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #fff); }
+.btn.primary:active { background: var(--accent-press); }
+.btn.ghost { background: transparent; border-color: transparent; box-shadow: none; }
+.btn.ghost:hover { background: var(--field); }
+.btn.danger { background: transparent; border-color: transparent; box-shadow: none; color: var(--danger); }
+.btn.danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.btn.icon { width: 30px; padding: 0; justify-content: center; }
+.btn .kbd {
+  font: 500 10.5px/1 var(--font-ui); color: var(--text-3);
+  background: color-mix(in srgb, var(--text-3) 20%, transparent);
+  border-radius: 4px; padding: 2px 4px;
+}
+.btn.primary .kbd { color: inherit; opacity: .72; background: color-mix(in srgb, currentColor 20%, transparent); }

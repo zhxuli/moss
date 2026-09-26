@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>快捷执行</title>
+<!-- 主题：先用系统偏好顶上，避免首帧闪一下；boot 时再用后端读到的值覆盖 -->
+<script>
+  document.documentElement.dataset.theme =
+    (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+</script>
+<!-- 都是本地 vendor 引用（已用 CDN 验证过同一份文件）：
+     Vue 走 ESM（src/main.js 里 import），highlight 仍是经典脚本挂在 window.hljs 上。
+     不引 CDN 的原因：冷启动拉外网会赶不上首帧，离线就整块失效。 -->
+<script src="vendor/highlight.min.js"></script>
+<script src="vendor/powershell.min.js"></script>
+<link rel="stylesheet" href="./css/tokens.css">
+<link rel="stylesheet" href="./css/base.css">
+<link rel="stylesheet" href="./css/layout.css">
+<link rel="stylesheet" href="./css/components.css">
+</head>
+<body>
+<div id="app" v-cloak>
+  <div class="window">
+
+    <header class="toolbar">
+      <div class="tb-left"></div>
+
+      <div class="search" :class="{ 'has-value': query }">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+          <circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 14 14"></path>
+        </svg>
+        <input ref="search" type="text" v-model="query"
+               spellcheck="false" autocomplete="off" @keydown.enter="openFirst">
+        <button class="clear" v-if="query" @click="query = ''">✕</button>
+      </div>
+
+      <div class="tb-right">
+        <button class="btn primary" @click="sheetOpen = true">新建 <span class="kbd">Ctrl+N</span></button>
+      </div>
+    </header>
+
+    <div class="body">
+      <!-- 分类 + 命令合成一棵可折叠的树 -->
+      <side-tree :groups="groups" :expanded="expanded" :selected-key="selectedKey"
+                 :filtered-count="filtered.length" :commands-count="commands.length"
+                 :searching="!!query.trim()"
+                 @select="select" @toggle="toggle" @expand-all="expandAll"
+                 @reveal="reveal" @hover="hover = $event"></side-tree>
+
+      <detail-pane :command="current" :commands-count="commands.length" :spec="spec"
+                   :placeholder-hint="placeholderHint" :after-actions="afterActions"
+                   :dirty="dirty" :alias-bad="aliasBad" :is-html="isHtml"
+                   :html-view="htmlView" :wants-args="wantsArgs" :last-args="lastArgs"
+                   :run="run" :confirming="confirming" :code="codeText"
+                   @change="dirty = true"
+                   @set-html-view="htmlView = $event"
+                   @set-last-args="lastArgs = $event"
+                   @set-confirming="confirming = $event"
+                   @set-code="codeText = $event"
+                   @pick="pickInto"
+                   @save="save" @run="runCommand" @delete="doDelete"
+                   @stop="stopRun" @close-run="closeRun" @console="openConsole"
+                   @save-run="saveThenRun"></detail-pane>
+    </div>
+  </div>
+
+  <toasts :toasts="toasts"></toasts>
+
+  <!-- 列表项悬停时补全被截断的描述 -->
+  <hover-tip :hover="hover"></hover-tip>
+
+  <!-- 新建：先定类型（建好后不再允许切换） -->
+  <new-sheet :open="sheetOpen" :new-types="newTypes"
+             @pick="newCommand" @close="sheetOpen = false"></new-sheet>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

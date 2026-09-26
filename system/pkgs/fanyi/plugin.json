@@ -1,0 +1,1 @@
+{ "name": "快捷翻译", "desc": "双击 Ctrl 翻译选中文字并自动粘贴（Google 翻译，带本地缓存）", "version": "1.0", "run": "main.py" }

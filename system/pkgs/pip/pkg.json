@@ -1,0 +1,49 @@
+{
+  "spec": 1,
+  "id": "pip",
+  "kind": "app",
+  "version": "1.0",
+  "name": {
+    "zh-CN": "Pip 工具"
+  },
+  "desc": {
+    "zh-CN": "Pip 相关操作工具"
+  },
+  "tags": [
+    "python",
+    "pip"
+  ],
+  "aliases": [
+    "pip"
+  ],
+  "runner": "exe",
+  "entry": {
+    "file": "main.exe"
+  },
+  "params": [],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "exe"
+    ],
+    "net": [
+      "pypi.org"
+    ],
+    "elevated": false
+  },
+  "output": {
+    "mode": "text"
+  },
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/pa_soft/bin/soft/pip",
+    "at": "2026-09-27"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "medium"
+  }
+}

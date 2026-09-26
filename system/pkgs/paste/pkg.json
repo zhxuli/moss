@@ -1,0 +1,53 @@
+{
+  "spec": 1,
+  "id": "paste",
+  "kind": "app",
+  "version": "2.0",
+  "name": {
+    "zh-CN": "贴边快输"
+  },
+  "desc": {
+    "zh-CN": "常用文本/剪贴板快速粘贴（分组管理，分组间热键可重复，可同时启用多个分组；窗口可拉伸）"
+  },
+  "tags": [
+    "效率",
+    "剪贴板",
+    "热键",
+    "gui"
+  ],
+  "aliases": [
+    "paste"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.pyw"
+  },
+  "params": [],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "clipboard": [
+      "read",
+      "write"
+    ],
+    "hotkey": true,
+    "net": []
+  },
+  "output": {
+    "mode": "text"
+  },
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/pa_soft/bin/soft/paste",
+    "at": "2026-09-27"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "medium"
+  }
+}

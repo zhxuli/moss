@@ -1,0 +1,54 @@
+{
+  "spec": 1,
+  "id": "unwx",
+  "kind": "app",
+  "version": "1.0",
+  "name": {
+    "zh-CN": "微信反编译"
+  },
+  "desc": {
+    "zh-CN": "微信小程序扫描/反编译还原工具（列表、还原、输出目录）"
+  },
+  "tags": [
+    "微信",
+    "小程序",
+    "反编译",
+    "gui"
+  ],
+  "aliases": [
+    "unwx"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.pyw"
+  },
+  "params": [],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python",
+      "exe"
+    ],
+    "fsRead": [
+      "%APPDATA%\\Tencent"
+    ],
+    "fsWrite": [
+      "{state}"
+    ]
+  },
+  "output": {
+    "mode": "text"
+  },
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/pa_soft/bin/soft/unwx",
+    "at": "2026-09-27"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "medium"
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "spec": 1,
+  "id": "task",
+  "kind": "app",
+  "version": "1.0",
+  "name": {
+    "zh-CN": "任务监控"
+  },
+  "desc": {
+    "zh-CN": "任务/进程查看（webview）：系统状态监控，可结束进程、打开文件位置"
+  },
+  "tags": [
+    "系统",
+    "进程",
+    "监控",
+    "gui"
+  ],
+  "aliases": [
+    "task"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.py"
+  },
+  "params": [],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "process": [
+      "read",
+      "kill"
+    ]
+  },
+  "output": {
+    "mode": "text"
+  },
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/pa_soft/bin/soft/task",
+    "at": "2026-09-27"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "medium"
+  }
+}

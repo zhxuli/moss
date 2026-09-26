@@ -1,0 +1,54 @@
+{
+  "spec": 1,
+  "id": "fanyi",
+  "kind": "app",
+  "version": "1.0",
+  "name": {
+    "zh-CN": "快捷翻译"
+  },
+  "desc": {
+    "zh-CN": "双击 Ctrl 翻译选中文字并自动粘贴（Google 翻译，带本地缓存）"
+  },
+  "tags": [
+    "翻译",
+    "热键",
+    "gui"
+  ],
+  "aliases": [
+    "fanyi"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.py"
+  },
+  "params": [],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "net": [
+      "translate.googleapis.com"
+    ],
+    "clipboard": [
+      "read",
+      "write"
+    ],
+    "hotkey": true
+  },
+  "output": {
+    "mode": "text"
+  },
+  "origin": {
+    "by": "imported",
+    "from": "QuickTools/pa_soft/bin/soft/fanyi",
+    "at": "2026-09-27"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "medium"
+  }
+}
