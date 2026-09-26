@@ -13,8 +13,61 @@
 所以这里**绝不**用白名单重建字典 —— 只在原始字典上补默认值。
 """
 import json
+import sys
 
 SPEC = 1
+
+#: 手写 `pkg.json` 最容易写错的两类形状 —— 都踩过 / 都会出事：
+#:   `"entry": "run.py"`      少一层（该是对象）→ 后面 `entry.get()` 崩出 Python traceback，
+#:                            用户看到的是栈，不是"你这里写错了"
+#:   `"aliases": "img,image"` 该是数组 → 遍历字符串会**按字符**匹配，
+#:                            `moss :i` 会静默命中 img（不崩，但更坏）
+#: 所以这里**就地纠正 + 说一句**：手写友好，但绝不静默。
+_DICT_FIELDS = ("entry", "capabilities", "output", "ai", "origin")
+_LIST_FIELDS = ("tags", "aliases", "params")
+
+
+def _fix_shape(pkg):
+    """把"形状写错"的已知字段纠正回来；纠不了的删掉，让下面的默认值接手。"""
+    for key in _DICT_FIELDS:
+        v = pkg.get(key)
+        if isinstance(v, dict):
+            continue
+        if key == "entry" and isinstance(v, str) and v.strip():
+            pkg[key] = {"file": v.strip()}          # 手写最常见的一种，直接当 file 用
+            print("[提示] pkg.json 的 entry 写成了字符串，已按 {\"file\": %r} 处理"
+                  % v.strip(), file=sys.stderr)
+            continue
+        if v not in (None, ""):
+            print("[警告] pkg.json 的 %s 应该是对象，已忽略它原来的值：%r"
+                  % (key, v), file=sys.stderr)
+        pkg.pop(key, None)
+    for key in _LIST_FIELDS:
+        v = pkg.get(key)
+        if v is None or v == "":
+            pkg.pop(key, None)
+            continue
+        if isinstance(v, str):                      # "img,image" → ["img", "image"]
+            v = [x for x in v.replace("，", ",").replace(",", " ").split() if x]
+            pkg[key] = v
+            print("[提示] pkg.json 的 %s 写成了字符串，已按 %r 处理" % (key, v),
+                  file=sys.stderr)
+        elif not isinstance(v, list):
+            print("[警告] pkg.json 的 %s 应该是数组，已忽略它原来的值：%r"
+                  % (key, v), file=sys.stderr)
+            pkg.pop(key, None)
+            continue
+        if key == "params":                         # ["text"] → [{"name": "text"}]
+            fixed = []
+            for p in v:
+                if isinstance(p, dict):
+                    fixed.append(p)
+                elif isinstance(p, str) and p.strip():
+                    fixed.append({"name": p.strip()})
+                else:
+                    print("[警告] pkg.json 的 params 里有一项形状不对，已丢掉：%r"
+                          % (p,), file=sys.stderr)
+            pkg[key] = fixed
 
 
 def normalize(raw, pid=None):
@@ -25,6 +78,7 @@ def normalize(raw, pid=None):
     pkg["id"] = str(pkg.get("id") or pid or "").strip()
     pkg["kind"] = str(pkg.get("kind") or "task")
     pkg["version"] = str(pkg.get("version") or "0.0.0")
+    _fix_shape(pkg)
     pkg.setdefault("name", pkg["id"])
     pkg.setdefault("desc", "")
     pkg.setdefault("tags", [])
