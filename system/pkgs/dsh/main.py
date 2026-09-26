@@ -25,8 +25,10 @@ dsh_bridge.py — 本机桥守护进程（DeepSeek Harness 远程访问的"本�
   moss :dsh --set-password       # 更换本机密码
   moss :dsh --status             # 查看配置摘要
   moss :dsh --daemon             # 转后台守护运行（无窗口，日志写 dsh.log）
-  moss :dsh --restart-dsh        # 启动前先结束 3080 上的 DSH，让本桥重新拉起一个
-                                 #（换不到会话 cookie 时本桥也会自动这么做一次）
+                                 # ★ 每次启动都会先结束 3080 上的旧 DSH 再重拉 ——
+                                 #   因为 DSH 的会话令牌每次启动随机生成、不持久化，
+                                 #   不是本桥拉起来的就永远换不到 cookie（隧道会 401）。
+                                 #   代价：本地 DSH 网页闪断几秒，监护 5 秒内拉回来。
 
 协议（与 AppVirtual_file/dsh.py 配对，JSON 文本消息）：
   桥 -> VPS: {"type":"hello","role":"bridge","token":"<zeen token>"}
@@ -1747,7 +1749,7 @@ def main() -> int:
     parser.add_argument("--daemon", action="store_true", help="转为后台守护运行（无窗口，日志写 dsh.log）")
     parser.add_argument("--restart-dsh", action="store_true",
                         help="启动前先结束 3080 上的 DSH，让本桥重新拉起一个"
-                             "（本地网页会闪断几秒；只认确实是 DSH 的进程）")
+                             "（默认启动时就会这么做；这个开关只是写明确）")
     # 参数来源：优先宿主环境变量，读不到再退回 argv（= 原来的行为）
     host_args = _moss_args()
     args = parser.parse_args(host_args if host_args is not None else None)
@@ -1769,8 +1771,15 @@ def main() -> int:
 
     # 默认前台运行：日志直接在终端可见，Ctrl+C 停止
     # （spawn_daemon 拉起的实例也走这里——pythonw 无终端，等效后台常驻）
-    if args.restart_dsh:
-        restart_dsh("--restart-dsh 要求重启")
+    # ★ 每次启动都先清掉 3080 上的旧 DSH（你定的，2026-09-27 `P-14`）：
+    #   DSH 的会话令牌**每次进程启动随机生成、绝不持久化**，只带 ?token= 打进
+    #   "拉起它的那个进程"的日志。3080 上那个若不是本桥拉起来的（上一个桥、旧项目的桥、
+    #   或你自己手动起的），本桥永远换不到 cookie，隧道请求一律 401。
+    #   与其去分辨归属，不如每次都用本桥自己拉起来的那个 —— 代价是本地 DSH 网页闪断
+    #   几秒（会话落在磁盘上，不会丢），监护最多 5 秒内把它拉回来。
+    #   `--restart-dsh` 因此成了"同义开关"（保留：写明确、也方便脚本里表达意图）。
+    #   守卫仍然在：认不出那个进程是 DSH（镜像名/命令行）就只报错、绝不动手。
+    restart_dsh("启动时先清掉 3080 上的旧 DSH")
     ensure_single_instance()
 
     try:
