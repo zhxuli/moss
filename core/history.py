@@ -8,6 +8,9 @@
   结束时再记一条（`after:run`，带 `exit`/`ms`），列表里靠去重合成一条。
   为什么要先记：长驻程序（服务器/界面）在跑着的时候不能"查无此人"。
 
+★ **只记路径调用**（`should_record`）：插件调用（`moss :别名`）不进历史 ——
+  插件没有目录问题，永远叫得起来，记下来只是噪声，还会淹掉真正有价值的那类。
+
 记录里最关键的两个字段是 **target 和 cwd** ——
 没有 cwd，就实现不了"不用先 cd 就能重启"（V-11）。
 """
@@ -106,22 +109,37 @@ def recent_unique(limit=MAX_SHOW, raw=READ_RAW):
     """去重后的最近记录（新的在前），最多 limit 条。
 
     为了凑够 limit 条**去重后**的记录，原始记录要多往回读一些（raw 条）。
+    ★ 只算**路径调用**（见 `should_record`）：插件调用不进列表。
+      老文件里已经写下的插件记录也在这里被滤掉 —— 不改动日志本身（日志是
+      追加写的账，不该回头重写），只是"看的时候不算它"。
     """
-    return dedup(recent(raw))[:limit]
+    rows = [r for r in recent(raw) if should_record(r)]
+    return dedup(rows)[:limit]
+
+
+def should_record(entry):
+    """这条要不要进历史？**只记路径调用**（`moss zeen` 这种）。
+
+    ★ 为什么不记插件调用（`moss :img`）：插件**没有目录问题** —— 它永远能用
+      `moss :别名` 叫起来，跟你在哪个目录无关，记下来只是噪声，还会把真正
+      有价值的那类（"必须先 cd 过去才能跑"的路径调用）淹掉。
+      这条是用户定的（第 24 版）："插件永远通过普通的方式唤醒"。
+    """
+    return (entry.get("kind") or "") != "pkg"
 
 
 def match_keys(r):
     """这条记录能被哪些"名字"叫起来。
 
-    三种都算（都转小写）：
-      · 包 id / 别名        —— `moss img` 能叫起 `moss :img`
+    两种都算（都转小写）：
       · 目标文件名与去扩展名 —— `moss main.py` / `moss main`
       · **cwd 的最后一段**   —— 你举的例子：`moss zeen` 叫起
         `main.py  cwd=D:\\python\\wwwroot\\ZeEn`
+
+    （原来还认"包 id"，但插件记录已经不进历史了，这一项自然消失，见
+    `should_record`。）
     """
     keys = set()
-    if r.get("id"):
-        keys.add(str(r["id"]).lower())
     t = r.get("target")
     if t:
         base = str(t).replace("/", "\\").rsplit("\\", 1)[-1]
@@ -184,6 +202,8 @@ def on_before_run(payload):
     ⚠️ 这个函数也是**内核行为**，不是钩子（`T-05`）。
     """
     inv = (payload or {}).get("invocation") or {}
+    if not should_record(inv):
+        return None
     return append(_entry_from(inv, state="start"))
 
 
@@ -193,4 +213,6 @@ def on_after_run(payload):
     ⚠️ 这个函数是**内核行为**，不是钩子。见模块 docstring。
     """
     inv = (payload or {}).get("invocation") or {}
+    if not should_record(inv):
+        return None
     return append(_entry_from(inv, result=(payload or {}).get("result") or {}))
