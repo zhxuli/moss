@@ -16,7 +16,8 @@
        往 PowerShell 的 `$PROFILE` 写一个 `function moss`：moss 只把路径打到
        stdout，shell 自己 `Set-Location`。**屏幕上什么都没有**，但要装一次。
 
-  `--print` / `MOSS_CD_PRINT=1` 是两条路之间的开关，见 `cli.handle_cd`。
+  `MOSS_CD_PRINT=1` 是两条路之间的开关（包装函数设的就是它），见 `cli.handle_cd`。
+  （手动用的 `--print` 开关 2026-09-27 去掉了 —— 零回显那条路本来就不靠它。）
 
 ★ 实测（2026-09-25，**同步形态** —— 与真实 `moss cd` 一致：shell 阻塞在子进程上，
   子进程注入完就退出，shell 之后才读键盘）：经典 conhost + PowerShell 5.1 /
