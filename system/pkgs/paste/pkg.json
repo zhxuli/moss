@@ -41,11 +41,6 @@
   "output": {
     "mode": "text"
   },
-  "origin": {
-    "by": "imported",
-    "from": "QuickTools/pa_soft/bin/soft/paste",
-    "at": "2026-09-27"
-  },
   "ai": {
     "expose": false,
     "risk": "medium"

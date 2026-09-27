@@ -24,7 +24,7 @@ SPEC = 1
 #:   `"aliases": "img,image"` 该是数组 → 遍历字符串会**按字符**匹配，
 #:                            `moss :i` 会静默命中 img（不崩，但更坏）
 #: 所以这里**就地纠正 + 说一句**：手写友好，但绝不静默。
-_DICT_FIELDS = ("entry", "capabilities", "output", "ai", "origin")
+_DICT_FIELDS = ("entry", "capabilities", "output", "ai")
 _LIST_FIELDS = ("tags", "aliases", "params")
 
 
@@ -90,7 +90,6 @@ def normalize(raw, pid=None):
     pkg.setdefault("capabilities", {})
     pkg.setdefault("output", {"mode": "text"})
     pkg.setdefault("ai", {"expose": False})
-    pkg.setdefault("origin", {"by": "builtin"})
     return pkg
 
 

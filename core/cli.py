@@ -551,8 +551,7 @@ NEW_PKG_JSON = {
     "env": {"cwd": "", "elevated": False},
     "capabilities": {"run": ["python"], "net": [], "elevated": False},
     "output": {"mode": "json", "schema": {"text": "string", "times": "int"}},
-    "origin": {"by": "user"},
-    "ai": {"expose": False, "risk": "low"},
+      "ai": {"expose": False, "risk": "low"},
 }
 
 NEW_RUN_PY = '''# -*- coding: utf-8 -*-

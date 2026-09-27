@@ -3,56 +3,91 @@
   "id": "img",
   "kind": "app",
   "version": "1.12.0",
-  "name": { "zh-CN": "图片工具", "en": "Image tool" },
-  "desc": { "zh-CN": "图片压缩 / 转换（jpg / png / webp / ico）。不带参数开界面，带参数走命令行", "en": "Compress and convert images" },
-  "tags": ["图片", "压缩", "转换", "ico", "命令行"],
-
-  "aliases": ["img", "image"],
-
+  "name": {
+    "zh-CN": "图片工具",
+    "en": "Image tool"
+  },
+  "desc": {
+    "zh-CN": "图片压缩 / 转换（jpg / png / webp / ico）。不带参数开界面，带参数走命令行",
+    "en": "Compress and convert images"
+  },
+  "tags": [
+    "图片",
+    "压缩",
+    "转换",
+    "ico",
+    "命令行"
+  ],
+  "aliases": [
+    "img",
+    "image"
+  ],
   "runner": "python",
-  "entry": { "file": "main.py" },
-
+  "entry": {
+    "file": "main.py"
+  },
   "_paramsWhy": "rest:true = 宿主把包名后面那一整串原样塞进这一个字段，包自己解析（写法要短、顺序随便）。不标 rest 的话宿主只取第一个位置参数，多余的会静默丢掉。",
   "params": [
-    { "name": "args", "type": "string", "rest": true, "required": false,
+    {
+      "name": "args",
+      "type": "string",
+      "rest": true,
+      "required": false,
       "desc": "留空 = 打开界面；填了 = 命令行参数：[格式] [质量%] [宽度px] [文件/通配符...] 输出位置（必须给一个：/ 写回源目录，或 -o <目录> 输出到指定目录）。不写格式 = 保持原格式。详见 AGENT.md",
       "placeholder": "ico a.png -o D:\\out",
-      "examples": ["ico a.png -o D:\\out", "webp 60% 1200 *.png -o D:\\out",
-                   "1200 -o D:\\out", "jpg 90% /"] }
+      "examples": [
+        "ico a.png -o D:\\out",
+        "webp 60% 1200 *.png -o D:\\out",
+        "1200 -o D:\\out",
+        "jpg 90% /"
+      ]
+    }
   ],
-
-  "env": { "cwd": "", "elevated": false },
-
-  "capabilities": {
-    "run": ["python"],
-    "net": [],
-    "fsRead": ["{cwd}"],
-    "fsWrite": ["{cwd}"],
+  "env": {
+    "cwd": "",
     "elevated": false
   },
-
-  "output": { "mode": "text" },
-
-  "origin": {
-    "by": "imported",
-    "from": "QuickTools/bin/soft/img",
-    "at": "2026-09-25",
-    "note": "GUI 版 + 命令行版合成一个包；ico 生成从【单尺寸】修成【多分辨率】"
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "net": [],
+    "fsRead": [
+      "{cwd}"
+    ],
+    "fsWrite": [
+      "{cwd}"
+    ],
+    "elevated": false
   },
-
+  "output": {
+    "mode": "text"
+  },
   "ai": {
     "expose": true,
     "risk": "low",
     "examples": [
-      { "args": "ico a.png -o D:\\out", "note": "只把 a.png 转成 ico 放到 D:\\out" },
-      { "args": "webp 60% 1200 *.png -o D:\\out", "note": "当前目录的 png 转 webp，质量 60、宽 1200" },
-      { "args": "1200 -o D:\\out", "note": "全部缩到 1200 宽，格式不动" },
-      { "args": "ico -s 16,32 *.png -o D:\\out", "note": "只要 16 和 32 两档的 ico" }
+      {
+        "args": "ico a.png -o D:\\out",
+        "note": "只把 a.png 转成 ico 放到 D:\\out"
+      },
+      {
+        "args": "webp 60% 1200 *.png -o D:\\out",
+        "note": "当前目录的 png 转 webp，质量 60、宽 1200"
+      },
+      {
+        "args": "1200 -o D:\\out",
+        "note": "全部缩到 1200 宽，格式不动"
+      },
+      {
+        "args": "ico -s 16,32 *.png -o D:\\out",
+        "note": "只要 16 和 32 两档的 ico"
+      }
     ]
   },
-
-  "docs": { "agent": "AGENT.md" },
-
+  "docs": {
+    "agent": "AGENT.md"
+  },
   "changes": [
     "输出目录加了「恢复默认」（撤销图标那个小按钮）：把自定输出目录清掉，回到「源目录\\compressed_output」。只在设过自定目录时才出现 —— 拖放设过一次之后原来没办法撤销，这是补的退路。",
     "命令行不再替用户猜输出模式：没写 / 也没写 -o 时**弹出上下选择菜单**（覆盖原图 / 删除原图 / 新文件夹），自己选。菜单**不预选** —— 光标一开始不在任何一项上，必须先按 ↑↓ 再回车；**直接回车 = 取消整个操作**（用户定的规则，避免随手一个回车就把原图覆盖或删掉）。",

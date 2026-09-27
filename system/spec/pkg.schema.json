@@ -71,7 +71,6 @@
       "additionalProperties": true
     },
     "verify": { "type": "object", "description": "自检（自我迭代闭环用，宿主尚未执行）", "additionalProperties": true },
-    "origin": { "type": "object", "description": "来源与派生谱系（by/from/at）", "additionalProperties": true },
     "ai": {
       "type": "object",
       "properties": {

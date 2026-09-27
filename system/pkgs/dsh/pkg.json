@@ -57,11 +57,6 @@
   "output": {
     "mode": "text"
   },
-  "origin": {
-    "by": "imported",
-    "from": "QuickTools/bin/soft/dsh",
-    "at": "2026-09-27"
-  },
   "ai": {
     "expose": false,
     "risk": "high"
