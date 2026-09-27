@@ -49,7 +49,7 @@ SYSTEM_RUNTIMES = SYSTEM_DIR / "runtimes"
 USER_DIR = HOME / "user_data"
 USER_PKGS = USER_DIR / "pkgs"
 USER_RUNNERS = USER_DIR / "runners.json"
-USER_CONFIG = USER_DIR / "config.json"
+USER_CONFIG = USER_DIR / "config.toml"
 HISTORY_DIR = USER_DIR / "history"
 STATE_DIR = USER_DIR / "state"
 # 宿主自己的"目录记忆"（那个目录上次选了哪个候选）—— **跟插件数据分开放**。

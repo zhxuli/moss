@@ -56,7 +56,8 @@ USAGE = """moss —— 多语言启动器
   · 包可以把某个参数标成 rest:true，表示「剩下的参数全归我，我自己解释」
     （img 就是这种：`moss :img webp 60% 1200 *.png`）
   · 环境变量 MOSS_HOME / MOSS_PLUGIN_DATA_DIR 会注入给子进程
-  · 配置在 user_data\\config.json（输出横幅、清屏、max_parent_depth、Ctrl-C 策略）
+  · 配置在 user_data\\config.toml（**带注释**：命令前缀符号 / 输出横幅 / 清屏 /
+    搜索层数 / Ctrl-C 策略 —— 打开那个文件就知道每一项是干什么的）
 """
 
 
@@ -796,6 +797,20 @@ def cmd_selfcheck(table):
     print("  runner 表 : %d 个 runner —— %s"
           % (len(table), ", ".join(sorted(table.keys())) or "（空！）"))
     ok &= bool(table)
+
+    # 配置：模板与默认值是否一致（防止"加了新键、忘了往带注释的模板里加"）
+    print("  配置文件  : %s   %s" % (paths.USER_CONFIG,
+                                     "存在" if paths.USER_CONFIG.is_file() else "（首次运行会创建）"))
+    tpl = config.template_problems()
+    if tpl:
+        ok = False
+        print("     ✗ 默认模板和默认值不一致（用户会看不到这些键）：")
+        for p in tpl:
+            print("       - %s" % p)
+    else:
+        print("     模板与默认值一致 ✔（用户打开 config.toml 能看到全部键 + 说明）")
+        print("     当前裸名前缀: plugin_mode=%r  no_chdir_mode=%r  后台=%r"
+              % (config.plugin_symbol(), config.no_chdir_symbol(), config.detach_symbol()))
 
     rts = runners_mod.list_runtimes()
     print("  自带运行时: %d 个" % len(rts))
