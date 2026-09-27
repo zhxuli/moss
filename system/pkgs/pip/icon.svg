@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     fill="none" stroke="currentColor" stroke-width="1.5"
+     stroke-linecap="round" stroke-linejoin="round">
+  <!-- moss 包图标 · Pip 工具（立方体（包））· 24×24 / 1.5 描边 / currentColor：
+       界面可以跟随主题色，深浅模式都不用重画。改形状直接改下面的 path。 -->
+  <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/>
+  <path d="M4 7.5l8 4.5 8-4.5"/>
+  <path d="M12 12v9"/>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     fill="none" stroke="currentColor" stroke-width="1.5"
+     stroke-linecap="round" stroke-linejoin="round">
+  <!-- moss 包图标 · 杀进程（方框加叉（结束））· 24×24 / 1.5 描边 / currentColor：
+       界面可以跟随主题色，深浅模式都不用重画。改形状直接改下面的 path。 -->
+  <path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+  <path d="M9.5 9.5l5 5"/>
+  <path d="M14.5 9.5l-5 5"/>
+</svg>

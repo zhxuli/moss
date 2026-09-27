@@ -132,6 +132,7 @@ def build_pkg_inv(rec, params, via="cli"):
 
     env = pkg.get("env") or {}
     cwd = env.get("cwd") or os.getcwd()
+    icon = pkg_mod.icon_path(pkg, pkg_dir)
 
     inv = {
         "kind": "pkg",
@@ -147,6 +148,7 @@ def build_pkg_inv(rec, params, via="cli"):
         "args": [],
         "via": via,
         "pkg_dir": str(pkg_dir),
+        "icon": str(icon) if icon else None,
     }
     req = (pkg.get("requires") or {}).get(pkg.get("runner"))
     if req:
@@ -836,9 +838,21 @@ def cmd_selfcheck(table):
         layers[r.get("layer") or "?"] = layers.get(r.get("layer") or "?", 0) + 1
     for r in recs:
         e = pkg_mod.entry_path(r["pkg"], Path(r["dir"]))
-        print("     - %-12s [%-6s] runner=%-10s 入口=%s" % (
+        ic = pkg_mod.icon_path(r["pkg"], Path(r["dir"]))
+        print("     - %-12s [%-6s] runner=%-10s 入口=%-12s 图标=%s" % (
             r["id"], r.get("layer") or "?", r["pkg"].get("runner"),
-            (e.name if e else ("inline" if pkg_mod.inline_code(r["pkg"]) else "✗ 缺失"))))
+            (e.name if e else ("inline" if pkg_mod.inline_code(r["pkg"]) else "✗ 缺失")),
+            (ic.name if ic else "—")))
+    # 图标盘点（`F-29`）：有图标几个、谁没有、谁"声明了却读不到"（后者是真问题）
+    have = [r["id"] for r in recs if pkg_mod.icon_path(r["pkg"], Path(r["dir"]))]
+    lack = [r["id"] for r in recs if not pkg_mod.icon_path(r["pkg"], Path(r["dir"]))]
+    print("  图标      : %d/%d 个包有图标%s"
+          % (len(have), len(recs), ("；没有：" + "、".join(lack)) if lack else ""))
+    for r in recs:
+        prob = pkg_mod.icon_problem(r["pkg"], Path(r["dir"]))
+        if prob:
+            ok = False
+            print("     ✗ %s: %s" % (r["id"], prob))
     # ★ 必须把"层"打出来：不然根本分不清哪些会随发行版发给用户
     #   （`system` = 出厂件，随 exe 分发；`user` = 你自己写的 / 商店装的，打包时排除）
     cd_ok, cd_why = shell.console_available()
