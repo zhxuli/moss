@@ -56,11 +56,6 @@
       "md5": "string[]"
     }
   },
-  "origin": {
-    "by": "imported",
-    "from": "QuickTools/user_data/exec/cmds/md5.json",
-    "at": "2026-09-25"
-  },
   "ai": {
     "expose": true,
     "risk": "low",

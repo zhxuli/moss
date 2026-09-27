@@ -48,11 +48,6 @@
   "output": {
     "mode": "text"
   },
-  "origin": {
-    "by": "imported",
-    "from": "QuickTools/bin/cli/kill",
-    "at": "2026-09-27"
-  },
   "ai": {
     "expose": false,
     "risk": "high"

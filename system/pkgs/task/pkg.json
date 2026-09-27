@@ -39,11 +39,6 @@
   "output": {
     "mode": "text"
   },
-  "origin": {
-    "by": "imported",
-    "from": "QuickTools/pa_soft/bin/soft/task",
-    "at": "2026-09-27"
-  },
   "ai": {
     "expose": false,
     "risk": "medium"
