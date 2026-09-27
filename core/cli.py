@@ -2,8 +2,8 @@
 """CLI 分发 —— 入口分类与命令派发。
 
 ★ 照抄 pa.py:856-931 的 main() 分流顺序（E-20 照抄原则）：
-    帮助 → `~`后台脱离前缀 → `cd` → `pick|select|menu` → `:`包调用
-    → `/`不切目录 → 路径查找
+    帮助 → `~`后台脱离前缀 → `cd` → `:`包调用 → `/`不切目录 → 路径查找
+  （pa 的 `pick|select|menu` 选择器 **2026-09-27 去掉了**，见 `CL-13`）
   moss 的增量：包模型 / 类型化参数 / 结构化返回 / 历史（pa 没有这些）
 
 ★ 内建订阅者在这里挂上（`T-05`）：历史服务订阅 `after:run`。
@@ -34,13 +34,10 @@ USAGE = """moss —— 多语言启动器
 
   moss :<别名> [参数...]       运行一个已安装的包
                                例: moss :md5 hello
-  moss :                       打开交互式选择（上下键 + 回车）
 
   moss cd <目标>               智能找目录并切过去（认出父 shell 后把命令注入控制台）
   moss cd --install            把 cd 包装函数写进 PowerShell 配置 → 屏幕上不留回显
   moss cd --uninstall          删掉那个包装函数
-  moss cd --print <目标>       只打印绝对路径，不做注入（包装函数用的就是它）
-  moss pick | select | menu    交互式选择要运行的包
 
   moss --history               最近启动记录：**方向键选择，回车直接再跑一次**（去重，最多 20 条）
                                回车进入程序后，程序退出就**彻底退出**，不会再回到列表
@@ -859,72 +856,14 @@ def cmd_selfcheck(table):
     return 0 if ok else 1
 
 
-# ---------------------------------------------------------------- 交互式选择
-def interactive_pick(recs):
-    """上下键 + 回车的选择器。照抄 pa.py:491-521。"""
-    import msvcrt
-    idx = 0
-
-    def render():
-        out.conditional_clear_screen()
-        out.print_cyan("=== 选择包 (↑↓ 选择, 回车运行, Esc 退出) ===\n")
-        for i, r in enumerate(recs):
-            mark = '\u25b6' if i == idx else ' '
-            p = r["pkg"]
-            alias = ",".join(p.get("aliases") or []) or p["id"]
-            print("  %s%2d. (%s) %-16s %s" % (mark, i + 1, r["layer"], alias,
-                                              str(p.get("desc", ""))[:40]))
-
-    render()
-    while True:
-        try:
-            ch = msvcrt.getwch()
-        except Exception:
-            return None
-        if ch == '\x1b':
-            out.conditional_clear_screen()
-            return None
-        if ch in ('\x00', '\xe0'):
-            ch2 = msvcrt.getwch()
-            if ch2 in ('H', 'A'):
-                idx = (idx - 1) % len(recs)
-                render()
-            elif ch2 in ('P', 'B'):
-                idx = (idx + 1) % len(recs)
-                render()
-        elif ch in ('\r', '\n'):
-            out.conditional_clear_screen()
-            return recs[idx]
-
-
-def handle_pick(table, detach=False):
-    """照抄 pa.py:524-542，换成"选包"。"""
-    recs = registry.scan_all()
-    if not recs:
-        out.print_cyan("[信息] 未找到任何包。")
-        return 1
-    chosen = interactive_pick(recs)
-    if not chosen:
-        out.print_cyan("[取消] 已退出。")
-        return 0
-    inv, err = build_pkg_inv(chosen, {}, via="cli")
-    if err:
-        out.print_cyan("[错误] %s" % err)
-        return 1
-    inv, err = _fill_interpreter(inv, table)
-    if err:
-        out.print_cyan("[错误] %s" % err)
-        return 1
-    return engine.run(inv, table, detach=detach)
-
-
 # ---------------------------------------------------------------- cd
 def handle_cd(target_str, print_only=False):
     """智能找目录并切换。
 
     ★ 三条路，区别在**谁来执行那条 cd**（详见 core/shell.py 的模块说明）：
 
-      · `print_only=True`（`--print` / `MOSS_CD_PRINT=1`）：**只把绝对路径打到
+      · `print_only=True`（**由环境变量 `MOSS_CD_PRINT=1` 触发**，包装函数设的就是它；
+        `--print` 这个开关 2026-09-27 已去掉）：**只把绝对路径打到
         stdout**，别的什么都不打印。给 PowerShell 的包装函数用 —— 它拿到路径
         自己 `Set-Location`，于是**屏幕上没有任何回显**。
 
@@ -1059,23 +998,28 @@ def main(argv):
 
     # ---- cd（照抄 pa.py:876-881） ----
     if first.lower() == 'cd':
-        args = [a for a in rest if a != '--print']
+        if '--print' in rest:
+            # 2026-09-27 你去掉了这个开关（"没啥用"）：留给零回显那条路的是**环境变量**
+            # MOSS_CD_PRINT=1（`moss cd --install` 装好的包装函数就是这么调的），
+            # 手动敲 `--print` 没有额外好处 —— 所以这里明说一句，别让它悄悄变成"目标路径"。
+            out.print_cyan("[提示] `moss cd --print` 已经去掉了：")
+            out.print_cyan("       零回显是靠包装函数（`moss cd --install`）设 MOSS_CD_PRINT=1 实现的，"
+                           "不需要手动加开关。")
+            out.print_cyan("       只想看解析出的路径：`moss --resolve <名字>`。")
+            return 1
+        args = list(rest)
         # `--install` / `--uninstall`：装/卸 PowerShell 的包装函数（③，零回显）
         if args and args[0] in ('--install', '--uninstall'):
             return cmd_cd_install() if args[0] == '--install' else cmd_cd_uninstall()
-        # `--print` / 环境变量 MOSS_CD_PRINT=1 → 只吐路径，不做注入。
-        # 环境变量这条路是给包装函数用的（见 handle_cd 的说明）：
-        # 包装函数设好变量再调 moss，moss 就只输出路径让 shell 自己 cd。
-        print_only = ('--print' in rest) or (os.environ.get('MOSS_CD_PRINT') == '1')
+        # 环境变量 MOSS_CD_PRINT=1 → 只吐路径，不做注入。
+        # 这条路是给包装函数用的（见 handle_cd 的说明）：包装函数设好变量再调 moss，
+        # moss 就只输出路径让 shell 自己 cd。
+        print_only = os.environ.get('MOSS_CD_PRINT') == '1'
         if args:
             return handle_cd(args[0], print_only=print_only)
         out.print_cyan("[错误] 'cd' 命令需要一个目标路径。用法: moss cd <目标>")
         out.print_cyan("       （想屏幕上不留回显: moss cd --install）")
         return 1
-
-    # ---- pick / select / menu（照抄 pa.py:883-886） ----
-    if first.lower() in ('pick', 'select', 'menu'):
-        return handle_pick(table, detach=detach)
 
     # ---- moss 自己的选项 ----
     if first in ("--remove", "--uninstall"):
@@ -1143,10 +1087,15 @@ def main(argv):
 def _run_package(alias, rest, table, detach, quiet_missing=False):
     """跑一个装好的包。`quiet_missing=True` 时"没这个包"返回 None（交给调用方回退路径）。
 
-    `alias` 为空 = 光敲了一个前缀符号（`moss :`）→ 打开选择器（照抄 pa.py:890-892）。
+    `alias` 为空 = 光敲了一个前缀符号（`moss :`）：**原来会打开交互式选择器，
+    2026-09-27 你去掉了那个选择器**（`pick`/`select`/`menu` 一起去掉），所以这里
+    直接告诉用户该怎么写。
     """
     if not alias:
-        return handle_pick(table, detach=detach)
+        psym = config.plugin_symbol()
+        out.print_cyan("[错误] '%s' 后面要写包名。例：moss %simg" % (psym, psym))
+        out.print_cyan("       直接敲 `moss` 看有哪些包。")
+        return 1
     rec = registry.find_alias(alias)
     if not rec:
         if quiet_missing:
