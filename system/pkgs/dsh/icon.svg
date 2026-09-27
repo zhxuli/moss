@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     fill="none" stroke="currentColor" stroke-width="1.5"
+     stroke-linecap="round" stroke-linejoin="round">
+  <!-- moss 包图标 · DSH 桥（桥（远程连通））· 24×24 / 1.5 描边 / currentColor：
+       界面可以跟随主题色，深浅模式都不用重画。改形状直接改下面的 path。 -->
+  <path d="M2.5 19.5h19"/>
+  <path d="M5 19.5v-5.5"/>
+  <path d="M19 19.5v-5.5"/>
+  <path d="M5 14a7 7 0 0 1 14 0"/>
+</svg>

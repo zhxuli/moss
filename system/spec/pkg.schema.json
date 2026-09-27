@@ -32,6 +32,10 @@
       "items": { "type": "string", "pattern": "^[a-z0-9_-]{1,32}$" },
       "description": "命令行里敲的短名，可多个"
     },
+    "icon": {
+      "type": "string",
+      "description": "图标文件名（相对包目录，不许跑出包目录）。不写就在包里自动找 icon.svg → icon.png → icon.webp → icon.jpg/jpeg → icon.ico → icon.gif → icon.bmp，命中第一个就用；都没有也算合法。宿主把绝对路径注入 MOSS_PKG_ICON（F-29）"
+    },
     "runner": {
       "type": "string",
       "description": "内置：python / go / html / exe / shell / powershell。用户在 user_data/runners.json 里可以自己加（E-19），所以这里不用 enum，免得把合法的自定义 runner 判成非法"

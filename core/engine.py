@@ -146,6 +146,11 @@ def build_env(inv):
     env["MOSS_PKG_PARAMS"] = json.dumps(inv.get("params") or {}, ensure_ascii=False)
     env["MOSS_ARGS"] = " ".join(inv.get("args") or [])
     env["MOSS_VIA"] = inv.get("via") or "cli"
+    # 包自己的图标（绝对路径，`F-29`）。宿主**不解释格式** —— 界面上怎么显示是包的事
+    # （WebView2 = Chromium，svg/png/webp/jpg/ico 都吃得下）。没有图标就**不注入**，
+    # 让包自己判断"这个包没图标"，而不是给一个空字符串还得再判一次。
+    if inv.get("icon"):
+        env["MOSS_PKG_ICON"] = str(inv["icon"])
     if inv.get("venv"):
         env["MOSS_VENV"] = str(inv["venv"])
     env["MOSS_RESULT_FILE"] = inv["_result_file"]

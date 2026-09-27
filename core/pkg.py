@@ -14,6 +14,7 @@
 """
 import json
 import sys
+from pathlib import Path
 
 SPEC = 1
 
@@ -127,6 +128,59 @@ def entry_path(pkg, pkg_dir):
     except ValueError:
         return None
     return p if p.is_file() else None
+
+
+#: 包图标认哪些扩展名（`F-29`）。
+#:   顺序 = **清单里没写 `icon` 时的自动发现顺序**：矢量 → 无损 → 有损 → ico → 动图/位图。
+#:   为什么认这么多：显示图标的界面是 WebView2（Chromium），这些格式它全吃得下；
+#:   而 `.ico` 留着是因为将来做 Windows 外壳（快捷方式 / 文件关联）时**只有它管用**。
+ICON_EXTS = (".svg", ".png", ".webp", ".jpg", ".jpeg", ".ico", ".gif", ".bmp")
+
+
+def icon_path(pkg, pkg_dir):
+    """这个包的图标文件（绝对路径）；没有 / 写坏了返回 None。
+
+    两种写法都认：
+      · 清单里写 `"icon": "assets/logo.svg"` —— 显式指定，放哪、叫什么都行
+      · **什么都不写** —— 自动在包目录里找 `icon.svg` / `icon.png` / `icon.webp` / …
+        （按 `ICON_EXTS` 的顺序，命中第一个就用）→ 作者零配置，文件名对了就行
+
+    安全规矩跟 `entry.file` 一样：**不许跑出包目录**（防 `..` 越界），
+    而且扩展名必须在 `ICON_EXTS` 白名单里（否则一个 `.exe` 也能当"图标"声明进来）。
+    """
+    name = pkg.get("icon")
+    cands = [str(name)] if name else ["icon" + e for e in ICON_EXTS]
+    try:
+        root = Path(pkg_dir).resolve()
+    except OSError:
+        return None
+    for rel in cands:
+        try:
+            p = (root / rel).resolve()
+            p.relative_to(root)                     # 越界 → 跳过
+        except (ValueError, OSError):
+            continue
+        if p.is_file() and p.suffix.lower() in ICON_EXTS:
+            return p
+    return None
+
+
+def icon_problem(pkg, pkg_dir):
+    """自检用：**显式声明**了 `icon` 却读不出来时，给一句人话；没声明就返回 None。
+
+    为什么不返回"没图标"当问题：不写 `icon`、也没有 `icon.*` 文件是**合法的**
+    （很多命令行包不需要图标）。但**写了却读不到**是真问题 —— 那是作者以为加了、
+    实际界面上什么都没有，必须说出来。
+    """
+    name = pkg.get("icon")
+    if not name:
+        return None
+    if icon_path(pkg, pkg_dir) is not None:
+        return None
+    ext = Path(str(name)).suffix.lower()
+    if ext and ext not in ICON_EXTS:
+        return "icon 声明的扩展名不认识：%s（认这些：%s）" % (name, " ".join(ICON_EXTS))
+    return "icon 声明的文件找不到（或跑出了包目录）：%s" % name
 
 
 def inline_code(pkg):

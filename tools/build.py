@@ -139,7 +139,7 @@ def preflight():
     if not (HOME / "moss.py").is_file():
         return None, die("找不到 moss.py")
     if not (HOME / "icon.ico").is_file():
-        return None, die("找不到 icon.ico（见 design\\图标提示词.md）")
+        return None, die("找不到 icon.ico（仓库根的图标文件，构建时嵌进 exe 的那个）")
 
     print("  构建器 : Python %d.%d.%d" % sys.version_info[:3])
     if sys.version_info[:2] != REQUIRED:
