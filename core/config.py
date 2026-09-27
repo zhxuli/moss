@@ -29,6 +29,7 @@ from . import paths
 #: （`template_problems()`，挂 `moss --selfcheck`），免得"默认值改了、模板没跟上"。
 DEFAULT_CONFIG = {
     "symbols": {
+        "path_mode": "",           # 空串 = 裸名就是路径调用（默认档，见 bare_owner()）
         "no_chdir_mode": "/",
         "plugin_mode": ":",
         "no_force_kill_mode": "~",
@@ -65,9 +66,18 @@ CONFIG_TEMPLATE = '''# moss 配置 —— 改完存盘即生效（下一次运�
 # 什么都不改也能用；下面每一项都写了它是干什么的。
 
 [symbols]
-# 命令前缀符号。三项都可以改成你顺手的字符 —— 注意 `moss` 会先去掉前缀再判断类型。
-plugin_mode        = ":"    # 跑**装好的包**：            moss :img
-no_chdir_mode      = "/"    # 跑路径但**不切目录**：      moss /m
+# 命令前缀符号。四项都可以改成你顺手的字符 —— `moss` 会先去掉前缀再判断类型。
+#
+# ★ 裸名（不带前缀）归谁，就看这两条：**谁留空，裸名就归谁**。
+#   下面这样是"默认档"：裸名 = 路径调用（`moss m` 跑当前项目里的脚本），包要写 `:`。
+#   如果主要用途是"跑装好的包"（不常写脚本），可以把这两行对调：
+#       plugin_mode = ""
+#       path_mode   = ":"
+#   那样 `moss img` 直接跑包，`moss :m` 才是找文件。
+#   注意：**两项不能同时留空**（那就说不清裸名算哪种了，宿主会提示并按"裸名=路径"处理）。
+path_mode          = ""     # 路径调用（**空串 = 裸名**）：   moss m
+no_chdir_mode      = "/"    # 跑路径但**不切目录**：          moss /m
+plugin_mode        = ":"    # 跑**装好的包**：                moss :img
 no_force_kill_mode = "~"    # **后台脱离**运行（脱离后 Ctrl+C 也管不到它）：moss ~m
 
 [output]
@@ -106,7 +116,28 @@ def _collect_problems(user, problems):
         if section not in DEFAULT_CONFIG:
             problems.append("配置里有不认识的段 [%s]，已忽略（是不是拼错了？）" % section)
 
-    # ② 类型不对
+    # ② 符号本身写得不合理（重复 / 两个都留空）—— 这两种都会让"命令是什么意思"变得说不清，
+    #    必须在用户改完的当场说出来，而不是等他敲命令时莫名其妙。
+    sym = user.get("symbols")
+    if isinstance(sym, dict):
+        names = ("path_mode", "no_chdir_mode", "plugin_mode", "no_force_kill_mode")
+        vals = {n: sym.get(n, DEFAULT_CONFIG["symbols"][n]) for n in names}
+        if not vals["path_mode"] and not vals["plugin_mode"]:
+            problems.append("symbols 里 path_mode 和 plugin_mode **不能同时留空** —— "
+                            "那样裸名该算哪一类就说不清了；本次按「裸名 = 路径调用」处理。"
+                            "（想改成「裸名 = 跑包」：plugin_mode 留空，path_mode 填个符号）")
+        seen = {}
+        for n in names:
+            v = vals[n]
+            if not v:              # 空串不是符号，是"这一类不带前缀"，不参与查重
+                continue
+            if v in seen:
+                problems.append("symbols 里 %s 和 %s 都用了同一个符号 %r —— "
+                                "命令含义会有歧义，请改成不同的符号" % (seen[v], n, v))
+            else:
+                seen[v] = n
+
+    # ③ 类型不对
     for section, defaults in DEFAULT_CONFIG.items():
         got = user.get(section)
         if not isinstance(got, dict):
@@ -214,6 +245,30 @@ def symbols():
 
 def plugin_symbol():
     return symbols().get("plugin_mode", ":")
+
+
+def path_symbol():
+    """路径调用的前缀。**空串 = 裸名就是路径调用**（默认档）。"""
+    return symbols().get("path_mode", "")
+
+
+def bare_owner():
+    """裸名（不带任何前缀）归哪个命名空间：`"path"` 还是 `"package"`。
+
+    规则一句话：**谁的前缀是空串，裸名就归谁**（`CL-12`）。
+      · 默认 `path_mode = ""`、`plugin_mode = ":"` → 裸名 = 路径调用（`moss m`）
+      · 对调成 `plugin_mode = ""`、`path_mode = ":"` → 裸名 = 跑包（`moss img`）
+
+    两个都空（配置非法）或两个都非空（谁也没占裸名）→ 一律按 `"path"`：
+    `load()` 已经就此打过提示，这里**不再自作聪明**，免得"配置写错"变成"命令乱跑"。
+    """
+    p = path_symbol()
+    g = plugin_symbol()
+    if not p and g:
+        return "path"
+    if p and not g:
+        return "package"
+    return "path"
 
 
 def no_chdir_symbol():
