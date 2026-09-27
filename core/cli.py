@@ -58,6 +58,9 @@ USAGE = """moss —— 多语言启动器
   · 环境变量 MOSS_HOME / MOSS_PLUGIN_DATA_DIR 会注入给子进程
   · 配置在 user_data\\config.toml（**带注释**：命令前缀符号 / 输出横幅 / 清屏 /
     搜索层数 / Ctrl-C 策略 —— 打开那个文件就知道每一项是干什么的）
+  · **裸名（不带前缀）归谁可以改**：默认 `moss m` 找文件、`moss :img` 跑包；
+    若你主要用途是"跑装好的包"（不常写脚本），把 config.toml 里的 plugin_mode 留空、
+    path_mode 填 ":" —— 于是 `moss img` 直接跑包，`moss :img` 才是找文件
 """
 
 
@@ -809,8 +812,10 @@ def cmd_selfcheck(table):
             print("       - %s" % p)
     else:
         print("     模板与默认值一致 ✔（用户打开 config.toml 能看到全部键 + 说明）")
-        print("     当前裸名前缀: plugin_mode=%r  no_chdir_mode=%r  后台=%r"
-              % (config.plugin_symbol(), config.no_chdir_symbol(), config.detach_symbol()))
+        print("     裸名归谁  : %s   （path_mode=%r  plugin_mode=%r  no_chdir=%r  后台=%r）"
+              % ("**跑包**" if config.bare_owner() == "package" else "找文件（路径调用）",
+                 config.path_symbol(), config.plugin_symbol(),
+                 config.no_chdir_symbol(), config.detach_symbol()))
 
     rts = runners_mod.list_runtimes()
     print("  自带运行时: %d 个" % len(rts))
@@ -1111,50 +1116,81 @@ def main(argv):
         out.print_cyan("       直接敲 `moss` 看用法和包列表。")
         return 1
 
-    # ---- 包调用（照抄 pa.py:888-894） ----
+    # ---- 分派到两个命名空间（`CL-12`：显式符号优先，裸名归谁由配置决定）----
     psym = config.plugin_symbol()
-    if first.startswith(psym):
-        alias = first.lstrip(psym).strip()
-        if not alias:
-            # 照抄 pa.py:890-892 —— 光一个符号就是打开选择器
-            return handle_pick(table, detach=detach)
-        rec = registry.find_alias(alias)
-        if not rec:
-            out.print_cyan("[错误] 没有这个包：'%s'。直接敲 `moss` 看有哪些包。" % alias)
-            return 1
-        params = parse_params(rec["pkg"], rest)
-        inv, err = build_pkg_inv(rec, params, via="cli")
-        if err:
-            out.print_cyan("[错误] %s" % err)
-            return 1
-        inv, err = _fill_interpreter(inv, table)
-        if err:
-            out.print_cyan("[错误] %s" % err)
-            return 1
-        return engine.run(inv, table, detach=detach)
-
-    # ---- 路径调用（照抄 pa.py:896-928） ----
+    psym_path = config.path_symbol()
     ncsym = config.no_chdir_symbol()
-    change_dir = not first.startswith(ncsym)
-    clean_arg = first.lstrip(ncsym)
 
-    cand, why = resolve.find(clean_arg, Path.cwd(), table)
+    # ① 带显式前缀的：前缀说了算（空串 = "这一类不带前缀"，不算前缀）
+    if psym and first.startswith(psym):
+        return _run_package(first.lstrip(psym).strip(), rest, table, detach)
+    if psym_path and first.startswith(psym_path):
+        return _run_path(first.lstrip(psym_path), rest, table, detach, change_dir=True)
+    if ncsym and first.startswith(ncsym):
+        return _run_path(first.lstrip(ncsym), rest, table, detach, change_dir=False)
+
+    # ② 裸名（没带任何前缀）：归谁看配置 —— 谁的前缀是空串，裸名就归谁。
+    #   默认 `path_mode = ""` → 裸名=路径调用（和以前一模一样）；
+    #   把 `plugin_mode` 留空、`path_mode` 填个符号，就变成"裸名=跑包"（非程序员更顺手）。
+    if config.bare_owner() == "package":
+        rc = _run_package(first, rest, table, detach, quiet_missing=True)
+        if rc is not None:
+            return rc
+        # 包里没有这个名字 → 继续按路径找（同一个名字两种身份，谁先命中算谁）
+    return _run_path(first, rest, table, detach, change_dir=True)
+
+
+def _run_package(alias, rest, table, detach, quiet_missing=False):
+    """跑一个装好的包。`quiet_missing=True` 时"没这个包"返回 None（交给调用方回退路径）。
+
+    `alias` 为空 = 光敲了一个前缀符号（`moss :`）→ 打开选择器（照抄 pa.py:890-892）。
+    """
+    if not alias:
+        return handle_pick(table, detach=detach)
+    rec = registry.find_alias(alias)
+    if not rec:
+        if quiet_missing:
+            return None
+        out.print_cyan("[错误] 没有这个包：'%s'。直接敲 `moss` 看有哪些包。" % alias)
+        return 1
+    params = parse_params(rec["pkg"], rest)
+    inv, err = build_pkg_inv(rec, params, via="cli")
+    if err:
+        out.print_cyan("[错误] %s" % err)
+        return 1
+    inv, err = _fill_interpreter(inv, table)
+    if err:
+        out.print_cyan("[错误] %s" % err)
+        return 1
+    return engine.run(inv, table, detach=detach)
+
+
+def _run_path(name, rest, table, detach, change_dir):
+    """路径调用：在 cwd 往上找以 `name` 开头的可运行目标（`E-23` 判定链）。
+
+    找不到时**再问一次历史**（`V-20`：你在别的目录，凭记忆敲 `moss zeen` 就想进上次那个）；
+    还是没有，就报错 —— 并且**顺带提示有没有同名的包**（`CL-12`：这是最省事的发现性改进，
+    "moss img 少打个冒号"的人一眼就知道该怎么办）。
+    """
+    cand, why = resolve.find(name, Path.cwd(), table)
     if cand is None:
         if why == "用户取消":
             out.print_cyan("[取消] 已退出。")
             return 130
-        # ★ 文件系统里找不到 -> 再问一次**历史**（V-20）：
-        #   你在别的目录，凭记忆敲 `moss zeen` 就想进上次那个 ZeEn。
-        #   命中多个就进最近的那个（find_recent 已经保证）。
-        rec = history.find_recent(clean_arg)
+        rec = history.find_recent(name)
         if rec is not None:
             out.print_cyan("[历史] 文件系统里没有 '%s'，改用最近一次记录：%s  (cwd=%s)"
-                           % (clean_arg, _hist_name(rec), rec.get("cwd") or "-"))
+                           % (name, _hist_name(rec), rec.get("cwd") or "-"))
             return cmd_rerun_record(rec, table)
         out.print_cyan("[错误] 在 %s 及上层没找到以 '%s' 开头的可运行目标。"
-                       % (Path.cwd(), clean_arg))
+                       % (Path.cwd(), name))
         print("       （只在装了对应 runner 的情况下才算候选：用 `moss --resolve %s` 看细节）"
-              % clean_arg)
+              % name)
+        # ★ 同名包提示：默认档位是"裸名=路径"，所以想跑包的人经常会漏掉前缀
+        if registry.find_alias(name):
+            psym = config.plugin_symbol()
+            hint = ("%s%s" % (psym, name)) if psym else name
+            out.print_cyan("[提示] 有个同名的包 '%s'：要跑它就敲 `moss %s`" % (name, hint))
         return 1
 
     out.print_cyan("[选中] %s  ← %s" % (cand["path"], why))
