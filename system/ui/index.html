@@ -74,30 +74,31 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);overflow:auto;bac
   white-space:pre-wrap;word-break:break-word;
   user-select:text;-webkit-user-select:text;cursor:text}
 #out::selection{background:#3a5a8c;color:#fff}
-/* ---- 状态灯：**不同颜色 = 不同状态**，别往输出里写"跑着呢"那种假日志 ----
-   灰=就绪（空圈） · 蓝=运行中（呼吸） · 绿=成功 · 红=失败 */
+/* ---- 状态灯：**不同颜色 = 不同状态**（2026-09-27 你定的语义）----
+   空灰圈=还没跑过 · 绿=运行中（呼吸）· 实心灰=跑完了 · 红=故障 · 黄=警告/结果未知
+   ★ 文字**不跟着染色** —— 灯已经把状态说清楚了，正文再变色只是噪音（你指出的）。 */
 .lamp{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block;
-  box-sizing:border-box;background:transparent;border:1.5px solid var(--line);vertical-align:middle}
-.lamp[data-state=idle]{border-color:#bfc0c9}
-.lamp[data-state=running]{border-color:transparent;background:var(--accent);
+  box-sizing:border-box;background:transparent;border:1.5px solid #bfc0c9;vertical-align:middle}
+.lamp[data-state=running]{border-color:transparent;background:#1f9d55;
   animation:lamp-pulse 1.15s ease-in-out infinite}
-.lamp[data-state=ok]{border-color:transparent;background:#1f9d55;box-shadow:0 0 7px rgba(31,157,85,.6)}
+.lamp[data-state=ok]{border-color:transparent;background:#8e8e93;
+  box-shadow:0 0 0 2px rgba(142,142,147,.16)}
 .lamp[data-state=fail]{border-color:transparent;background:#d64545;box-shadow:0 0 7px rgba(214,69,69,.6)}
+.lamp[data-state=warn]{border-color:transparent;background:#dfa100;box-shadow:0 0 7px rgba(223,161,0,.6)}
 .lamp.big{width:11px;height:11px}
 .lamp.tiny{width:7px;height:7px;margin-left:6px}
 @keyframes lamp-pulse{
-  0%,100%{box-shadow:0 0 0 0 rgba(10,132,255,.5);opacity:1}
-  50%{box-shadow:0 0 0 5px rgba(10,132,255,0);opacity:.5}
+  0%,100%{box-shadow:0 0 0 0 rgba(31,157,85,.55);opacity:1}
+  50%{box-shadow:0 0 0 5px rgba(31,157,85,0);opacity:.55}
 }
-/* 列表里那一行也跟着变色：运行中浅蓝底，成功/失败只靠右侧小灯区分 */
-.item[data-state=running]{background:var(--sel)}
-.item[data-state=fail] .nm{color:#c0392b}
+/* 列表里"运行中"那一行：左边一条绿杠（不动底色，免得和"选中"那一行打架） */
+.item[data-state=running]{box-shadow:inset 3px 0 0 #1f9d55}
 .item .lamp{margin-left:6px}
 /* 详情里的状态胶囊 */
 .status{display:inline-flex;align-items:center;gap:7px;padding:3px 11px;border-radius:20px;
   background:var(--panel2);border:1px solid var(--line);font-size:12px;color:var(--dim);margin-top:9px}
 .spin{width:11px;height:11px;border-radius:50%;flex:none;display:none;
-  border:1.6px solid rgba(127,127,127,.35);border-top-color:var(--accent);
+  border:1.6px solid rgba(127,127,127,.35);border-top-color:#1f9d55;
   animation:spin .7s linear infinite}
 .spin.on{display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -145,7 +146,7 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
       <div class="outbar">
         <span class="lamp" id="outlamp" data-state="idle"></span>
         <span class="spin" id="outspin"></span>
-        <span id="outinfo">就绪</span>
+        <span id="outinfo">还没跑过</span>
         <span style="flex:1"></span>
         <button id="btn-copy">复制全部</button>
         <button id="btn-rerun">再跑一次</button>
@@ -209,8 +210,9 @@ function setTab(name){
 }
 
 /* ---------------------------------------------------------------- 状态灯
-   每个包一份状态：idle / running / ok / fail。左栏那一行、详情里的胶囊、
-   "命令行"选项卡上的小灯、输出工具条上的灯 —— 全部由这一份状态驱动。
+   每个包一份状态：idle / running / ok / fail / warn（你定的颜色语义）。
+   左栏那一行、详情里的胶囊、"命令行"选项卡上的小灯、输出工具条上的灯 ——
+   全部由这一份状态驱动。
    ★ 不许再往输出区里写"（跑着呢…）"这种假日志：状态是**灯**的事，
      输出区只放"命令 + 真实输出"。 */
 const STATE = {};          // id -> {state, code, ms}
@@ -226,11 +228,12 @@ function setState(id, st, extra){
 
 function stateLabel(s){
   if (s.state === "running") return "运行中";
-  if (s.state === "ok") return "完成 · 退出码 " + (s.code === undefined ? 0 : s.code) +
+  if (s.state === "ok") return "已完成 · 退出码 " + (s.code === undefined ? 0 : s.code) +
       (s.ms ? " · " + (s.ms / 1000).toFixed(2) + " 秒" : "");
-  if (s.state === "fail") return "失败 · 退出码 " + (s.code === undefined ? "?" : s.code) +
+  if (s.state === "fail") return "故障 · 退出码 " + (s.code === undefined ? "?" : s.code) +
       (s.ms ? " · " + (s.ms / 1000).toFixed(2) + " 秒" : "");
-  return "就绪";
+  if (s.state === "warn") return s.note || "有情况（结果未知）";
+  return "还没跑过";
 }
 
 function paintStates(){
@@ -261,7 +264,7 @@ function clearConsoleState(){
   if (sp) sp.classList.remove("on");
   [$("#tablamp"), $("#outlamp")].forEach(l => { if (l) l.dataset.state = "idle"; });
   const info = $("#outinfo");
-  if (info) info.textContent = "就绪";
+  if (info) info.textContent = "还没跑过";
 }
 
 function setCmd(text){
@@ -416,7 +419,9 @@ function renderDetail(){
   $("#btn-openui").onclick = async () => {
     const r = await pywebview.api.open_ui(p.id, $("#args").value);
     setTab("console"); setCmd("moss :" + p.id);
-    setState(p.id, r.ok ? "ok" : "fail", {code: r.ok ? 0 : undefined});
+    // 后台启动只能说明"拉起来了"，跑成什么样没人知道 → 黄灯（警告），不是绿灯
+    setState(p.id, r.ok ? "warn" : "fail",
+             {code: r.ok ? undefined : -1, note: r.ok ? "已后台启动 · 结果未知" : "启动失败"});
     out(r.msg || "");
   };
   $("#btn-dir").onclick = () => pywebview.api.open_path(p.dir);
