@@ -75,10 +75,16 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--
 .hitem .hico img,.ico img{object-fit:contain}
 .hitem .hmain{min-width:0;flex:1}
 .hitem .hname,.nm{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* `.ds` = 列表第二行（普通字号、不是等宽）；`.sub` = 夹在句子里的等宽小字（`:md5` 这种）。
+   ★ 原来 `.sub` 写了两遍（第二遍把 font-size 从 12 改成 11，还加了 mono）——
+     同一层里重复声明等于自己压自己。合成一条。 */
 .hitem .hsub,.ds{color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis}
-.sub{color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sub{font-family:var(--mono);font-size:11px}
+.sub{color:var(--dim);font-family:var(--mono);font-size:11.5px}
+/* ★ 给"整段的提示文字"用：**要能折行**。上面那个 `.sub` 带 nowrap + 省略号，
+   拿来包一整句提示会把后半句悄悄吃掉（实测：命令行预览那句一窄就被截断）。 */
+.hint{color:var(--dim);font-size:12px;line-height:1.6;margin-top:8px;word-break:break-all}
+.hint .mono{font-size:11.5px}
 #right{flex:1;display:flex;flex-direction:column;min-width:0}
 #tabs{display:flex;gap:4px;align-items:center;padding:7px 12px;flex:none;
   border-bottom:1px solid var(--line);background:var(--panel)}
@@ -102,6 +108,9 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--
   color:var(--out-fg);font-family:var(--mono);font-size:13px;line-height:1.55;
   white-space:pre-wrap;word-break:break-word;user-select:text;cursor:text}
 #out::selection{background:#3a5a8c;color:#fff}
+/* 还没跑过时那块输出区是**一大片纯黑**，看着像个洞。给一句暗色提示。 */
+#out:empty::before{content:"（还没有输出）在「详情」里点「运行」，输出会出现在这里。";
+  color:#5d6773}
 /* ---- 状态灯 ---- */
 /* ---- 状态：**只有两种** —— 运行中（绿色停止图标）/ 没运行（灰色播放图标）----
    ★ 不再显示"故障红 / 警告黄"（2026-09-27 你定的：「要么就停止 要么就运行，
@@ -119,10 +128,10 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--
   border:none;border-radius:6px;background:transparent;cursor:pointer}
 .hstat button:hover,.rowstat button:hover{background:var(--hover)}
 .item[data-state=running],.hitem[data-state=running]{box-shadow:inset 3px 0 0 #1f9d55}
-.status{display:inline-flex;align-items:center;gap:7px;padding:3px 11px;border-radius:20px;
-  background:var(--panel2);border:1px solid var(--line);font-size:12px;color:var(--dim);margin-top:9px}
-  border:1.6px solid rgba(127,127,127,.35);border-top-color:#1f9d55;
-  animation:spin .7s linear infinite}
+/* ★ 这里原来挂着一句 `.status{…}` 后面跟着**两行没有选择器的裸声明**
+   （`border:1.6px …` / `animation:spin …}`）—— 是删小圆点时没清干净的残留：
+   裸声明在顶层是非法 CSS，整段被浏览器丢掉，`animation` 引用的 `@keyframes spin`
+   也早就不存在了。删掉。 */
 /* ================= 文件管理：**属于某一个包**的一套界面 =================
    结构是"文件管理"这个大选项卡 -> 里面的子选项卡：
      ① 「文件」固定在最左、**不能关闭**（目录浏览，资源管理器那套操作）
@@ -146,9 +155,14 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--
   border-bottom:1px solid var(--line2);background:var(--panel)}
 /* 「回到默认目录」和后面那组导航空开一点，免得看着像同一组的第一个 */
 .fbnav .b-home{margin-right:6px}
-.crumbs{flex:1;display:flex;align-items:center;gap:2px;min-width:0;overflow:hidden;
+/* 面包屑：`abs/` 那种长路径（此电脑 › D: › python › wwwroot › ZeEn）会超出一行 ——
+   原来只写 overflow:hidden，等于把**最后的当前目录悄悄裁掉**。改成可横向滚，
+   滚动条本身不用显示（能拖/能滚就行）。 */
+.crumbs{flex:1;display:flex;align-items:center;gap:2px;min-width:0;overflow-x:auto;
+  overflow-y:hidden;scrollbar-width:none;
   padding:3px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);
   font-size:12.5px;white-space:nowrap}
+.crumbs::-webkit-scrollbar{height:0}
 .crumbs span.seg{padding:1px 5px;border-radius:5px;cursor:pointer}
 .crumbs span.seg:hover{background:var(--hover)}
 .crumbs span.sep{color:var(--dim)}
@@ -220,21 +234,32 @@ h1{font-size:19px;margin:0 0 4px}
 .hd{display:flex;gap:14px;align-items:flex-start}
 .bigico{width:44px;height:44px;flex:none;color:var(--dim)}
 .bigico svg,.bigico img{width:44px;height:44px}
-.chip{display:inline-block;padding:1px 8px;border-radius:20px;background:var(--panel2);
+.chip{display:inline-block;padding:2px 9px;border-radius:20px;background:var(--panel2);
   border:1px solid var(--line);font-size:12px;color:var(--dim);margin:0 6px 6px 0}
+/* ★ chip 里放图标时**必须把它拉回行内**：全局那条 `svg.i{display:block}` 会让
+   图标自己占一行，后面的文字掉到第二行 —— 历史详情里那个「📁 / 地址」就是这么断的
+   （你看到的"图标和后面的地址有不正确的换行"）。 */
+.chip svg.i{display:inline-block;vertical-align:-3px;margin-right:5px}
 .chip.click{cursor:pointer;font-family:var(--mono)}
 .chip.click:hover{border-color:var(--accent);color:var(--accent)}
 table.p{width:100%;border-collapse:collapse;margin:6px 0 12px;font-size:13px}
 table.p th,table.p td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line2);vertical-align:top}
 table.p th{color:var(--dim);font-weight:500}
 code,.mono{font-family:var(--mono);font-size:12.5px}
-.sec{margin-top:16px}
-.sec h2{font-size:11.5px;letter-spacing:.06em;color:var(--dim);margin:0 0 6px;
-  font-weight:600;text-transform:uppercase}
+/* 小标题。★ 不要 `letter-spacing` / `text-transform:uppercase` —— 那套是给英文
+   小标签设计的，套在中文上「参数」「例子」「卸载」会被拉成「参 数」「例 子」，很丑。 */
+.sec{margin-top:18px}
+.sec h2{font-size:12px;color:var(--dim);margin:0 0 7px;font-weight:600}
 .row-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-#args{flex:1;min-width:180px;padding:8px 11px;border-radius:9px;border:1px solid var(--line);
-  background:var(--panel2);color:var(--fg);font-family:var(--mono);outline:none}
-#args:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+/* ★ 两个详情各有一个参数框：包详情是 `#args`，历史详情是 `#hargs`。
+   原来只写了 `#args` ⇒ 历史那边的输入框是**浏览器默认样式**（细边、字被挤），
+   一眼就跟旁边不是一套东西 —— 你指出的「参数那里缺少样式」就是这个。 */
+#args,#hargs{flex:1;min-width:180px;max-width:620px;padding:8px 11px;border-radius:9px;
+  border:1px solid var(--line);
+  background:var(--panel2);color:var(--fg);font-family:var(--mono);font-size:12.5px;
+  outline:none;transition:border-color .12s,box-shadow .12s}
+#args:focus,#hargs:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+#args::placeholder,#hargs::placeholder{color:var(--dim)}
 .empty{color:var(--dim);text-align:center;margin-top:70px;font-size:13px}
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;
   align-items:center;justify-content:center;z-index:80}
@@ -1053,11 +1078,11 @@ function renderDetail(){
       '<input id="args" placeholder="参数（可留空；回车 = 运行）">' +
       '<button class="iconbtn" id="btn-openui" title="打开这个包自己的界面（后台运行，不等它）">' +
         ico("app-window", "i") + '<span>打开界面</span></button></div>' +
-      '<div class="sub" style="margin-top:8px">命令预览：<span class="mono" id="preview"></span>' +
+      '<div class="hint">命令预览：<span class="mono" id="preview"></span>' +
       '　·　右上角是「运行 / 停止」</div></div>' +
     // ★ 卸载放在最后单独一块（危险操作不跟"跑一下"混在一起）
     '<div class="sec"><h2>卸载</h2><div class="row-inline">' +
-      '<span class="sub" style="flex:1">真删：包本体 + 它的数据（不进回收站）</span>' +
+      '<span class="hint" style="flex:1;margin-top:0">真删：包本体 + 它的数据（不进回收站）</span>' +
       '<button class="iconbtn warn" id="btn-remove" title="卸载这个包（moss --remove）">' +
         ico("trash-2", "i") + '<span>卸载</span></button>' +
     '</div></div>';
@@ -1117,9 +1142,9 @@ function renderDetailHist(it, box){
         esc(it.args || "") + '">' +
       '<button class="iconbtn" id="btn-opendir" title="用 Windows 资源管理器打开它所在的目录">' +
         ico("folder-open", "i") + '<span>打开所在目录</span></button></div>' +
-      '<div class="sub" style="margin-top:8px">命令预览：<span class="mono" id="hpreview"></span>' +
+      '<div class="hint">命令预览：<span class="mono" id="hpreview"></span>' +
       '　·　右上角是「运行 / 停止」</div>' +
-      '<div class="sub" style="margin-top:4px">跑起来时的工作目录 = <span class="mono">' +
+      '<div class="hint" style="margin-top:4px">跑起来时的工作目录 = <span class="mono">' +
         esc(it.cwd || "(没记，用目标所在的目录)") + '</span>（这是宿主真正用的那个，' +
         '不是界面猜的）</div></div>' +
     '<div class="sec"><h2>这条记录</h2><table class="p">' +
@@ -1130,7 +1155,7 @@ function renderDetailHist(it, box){
       '<tr><th>上次结果</th><td class="mono">' +
         (it.exit === null || it.exit === undefined
           ? "(没跑完 / 没记)" : ("退出码 " + esc(String(it.exit)))) + '</td></tr>' +
-    '</table><div class="sub" style="margin-top:8px">' +
+    '</table><div class="hint">' +
       '历史只记<b>路径调用</b>；「文件管理」进的是这个目标所在的目录。</div></div>';
   box.innerHTML = html;
 
@@ -1172,10 +1197,17 @@ function fmCtxKey(){ return cur ? cur.id : (curH ? histKey(curH) : "__all__"); }
 function fmState(key){
   if (!key) key = "__all__";
   if (!FM.st[key]){
+    // ★ 这里有两个"hist"，**必须分开叫**：
+    //     `hist`    = 这个上下文的**前进后退历史**（一个数组，`fmGoto` 要 push）
+    //     `histCtx` = 这个上下文是不是"一条历史"（存那条历史的 key）
+    //   我第一版把第二个也起名 `hist`，同一个对象字面量里写了两遍 ⇒ 后面的把数组
+    //   覆盖成 null/字符串 ⇒ `fmGoto` 里 `s.hist.slice` 直接抛异常，
+    //   **整个文件管理都打不开**（实测：上下文永远停在上一次渲染的 `__all__` 上，
+    //   地址栏写着 user_data，右边却显示"历史调用所在的目录"）。
     FM.st[key] = {rel:null, hist:[], hpos:-1, entries:[], sel:new Set(), clip:null,
                   sort:{key:"name", dir:1}, tabs:[], active:"__browse__",
                   pkg: (!isHistKey(key) && key !== "__all__") ? key : null,
-                  hist: isHistKey(key) ? key : null,
+                  histCtx: isHistKey(key) ? key : null,
                   layers: {user:false, system:false}};
   }
   return FM.st[key];
@@ -1513,8 +1545,8 @@ function bindBrowse(s){
   const layersBox = page.querySelector(".layers");
   const hereLayer = (s.rel || "").split("/")[0];
   let lhtml = "";
-  if (s.hist){
-    lhtml = '<span class="sub" style="align-self:center">历史调用所在的目录' +
+  if (s.histCtx){
+    lhtml = '<span class="hint" style="align-self:center;margin-top:0;white-space:nowrap">历史调用所在的目录' +
             (hereLayer === "abs" ? '（在 user_data / system 之外）' : "") + '</span>';
   } else if (!s.pkg){
     lhtml = '<button class="iconbtn' + (hereLayer === "user" ? " on" : "") +
@@ -1532,7 +1564,7 @@ function bindBrowse(s){
         '" data-go="' + esc(cand.system) + '" title="system 里这个包的目录（' +
         esc(cand.system) + '）">system</button>';
     if (!s.layers.user && !s.layers.system)
-      lhtml += '<span class="sub" style="align-self:center">这个包只在当前目录里</span>';
+      lhtml += '<span class="hint" style="align-self:center;margin-top:0;white-space:nowrap">这个包只在当前目录里</span>';
   }
   layersBox.innerHTML = lhtml;
   layersBox.querySelectorAll("button").forEach(b => {
