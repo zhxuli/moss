@@ -1187,8 +1187,7 @@ function renderDetailHist(it, box){
         '</td></tr>').join("") + '</table></div>';
   }
   html += '<div class="sec"><h2>删除</h2><div class="row-inline">' +
-      '<span class="hint" style="flex:1;margin-top:0">只删这条<b>记录</b>（历史账里追加一条墓碑），' +
-        '文件本身不动</span>' +
+      '<span class="hint" style="flex:1;margin-top:0">只删这条<b>记录</b>，那个文件本身不动</span>' +
       '<button class="iconbtn warn" id="btn-forget" title="从历史里删掉这条记录">' +
         ico("trash-2", "i") + '<span>删除这条记录</span></button>' +
     '</div></div>';
@@ -1216,12 +1215,13 @@ function renderDetailHist(it, box){
   $("#btn-forget").onclick = () => cmdForgetHist(it);
 }
 
-/* 删一条历史记录：**不是删文件**，是把这条记录从历史里抹掉。
-   宿主那边是**追加一条墓碑**（账只增不改），所以 CLI 的 `--history` 也会一起看不见它。
-
+/* 删一条历史记录：**真删** —— 把那几行从账里抠掉（原地改、保留行尾）。
    ★ **不弹确认框**（你定的：「删除历史记录的时候 不要用弹窗 直接删 我最烦弹窗了」）。
-     这里也确实碰不到任何文件：墓碑只是账里多一行"这条别看了"的标记，
-     原来那些行还在 jsonl 里。包那边的「卸载」是**真删文件**，确认框保留。 */
+     这里也确实碰不到任何文件：只动 `user_data/history/*.jsonl` 里那几行。
+     （包那边的「卸载」是**真删文件**，确认框保留。）
+   ★ 为什么不做成"追加一条墓碑、读的时候跳过"：那样"能不能跳过"取决于读的人那份代码
+     认不认墓碑 —— 终端里的 `moss --history` 跑的是**编在 exe 里的** `core/history.py`，
+     旧 exe 不认识，于是"界面里删了、终端里还在"。**删就真删。** */
 async function cmdForgetHist(it){
   const r = await pywebview.api.hist_forget(histKey(it));
   toast(r.ok ? ("已删掉这条记录：" + it.name) : ("✗ " + (r.msg || "删不掉")), !r.ok);
