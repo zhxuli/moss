@@ -63,29 +63,21 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--
 #sideswitch button.on{background:var(--panel2);border-color:var(--line);color:var(--fg);font-weight:500}
 #sideswitch #btn-newpkg{margin-left:auto;padding:4px 7px;min-width:28px;border-color:var(--line);
   background:var(--panel2)}
-/* 历史行：图标 + 名字/参数 + 目录 + 时间 */
-.hitem{display:flex;gap:9px;padding:8px 11px;border-bottom:1px solid var(--line2);
+/* 历史行：**和包列表长得一样**（你要求的）—— 同一套内边距 / 图标尺寸 / hover / 选中态。
+   只有第二行不同：包显示"说明"，历史显示"目录 · 时间"。 */
+.hitem,.item{display:flex;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line2);
   cursor:pointer;align-items:center}
-.hitem:hover{background:var(--hover)}
-.hitem .hico{width:20px;height:20px;flex:none;display:flex;align-items:center;
+.hitem:hover,.item:hover{background:var(--hover)}
+.hitem.sel,.item.sel{background:var(--sel)}
+.hitem .hico,.ico{width:24px;height:24px;flex:none;display:flex;align-items:center;
   justify-content:center;color:var(--dim)}
-.hitem .hico svg,.hitem .hico img{width:20px;height:20px}
-.hitem .hico img{object-fit:contain}
+.hitem .hico svg,.hitem .hico img,.ico svg,.ico img{width:24px;height:24px}
+.hitem .hico img,.ico img{object-fit:contain}
 .hitem .hmain{min-width:0;flex:1}
-.hitem .hname{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hitem .hsub{color:var(--dim);font-size:11.5px;font-family:var(--mono);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hitem .hstat{flex:none;display:flex;align-items:center}
-.item{display:flex;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line2);
-  cursor:pointer;align-items:center}
-.item:hover{background:var(--hover)}
-.item.sel{background:var(--sel)}
-.ico{width:24px;height:24px;flex:none;display:flex;align-items:center;
-  justify-content:center;color:var(--dim)}
-.ico svg,.ico img{width:24px;height:24px}
-.ico img{object-fit:contain}
-.nm{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ds,.sub{color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hitem .hname,.nm{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hitem .hsub,.ds{color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.sub{color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sub{font-family:var(--mono);font-size:11px}
 #right{flex:1;display:flex;flex-direction:column;min-width:0}
 #tabs{display:flex;gap:4px;align-items:center;padding:7px 12px;flex:none;
@@ -117,14 +109,16 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--
      退出码本身还是照记（在「命令行」那行文字里），只是**不拿出来当状态报警**了。 */
 .ic-run{color:#1f9d55}
 /* 左侧列表行尾那颗"没在跑"的播放图标：平时很淡，鼠标移上去才亮 —— 不抢视线 */
-.rowstat .idle{color:var(--dim);opacity:.45}
-.rowstat .idle:hover{opacity:1;color:var(--fg)}
-/* 左侧列表行尾的状态图标 */
-.rowstat{flex:none;display:flex;align-items:center;margin-left:6px}
-.rowstat button{display:flex;align-items:center;justify-content:center;padding:3px;
+.hstat .idle,.rowstat .idle{color:var(--dim);opacity:.45}
+.hstat .idle:hover,.rowstat .idle:hover{opacity:1;color:var(--fg)}
+/* 左侧列表行尾的状态图标。★ 历史行（`.hstat`）和包行（`.rowstat`）**共用同一套**：
+   以前只写了 `.rowstat button`，历史那边就退化成浏览器默认按钮（灰框），
+   看着跟包列表不是一家 —— 你指出的"历史这里运行的样式不对"就是这个。 */
+.hstat,.rowstat{flex:none;display:flex;align-items:center;margin-left:6px}
+.hstat button,.rowstat button{display:flex;align-items:center;justify-content:center;padding:3px;
   border:none;border-radius:6px;background:transparent;cursor:pointer}
-.rowstat button:hover{background:var(--hover)}
-.item[data-state=running]{box-shadow:inset 3px 0 0 #1f9d55}
+.hstat button:hover,.rowstat button:hover{background:var(--hover)}
+.item[data-state=running],.hitem[data-state=running]{box-shadow:inset 3px 0 0 #1f9d55}
 .status{display:inline-flex;align-items:center;gap:7px;padding:3px 11px;border-radius:20px;
   background:var(--panel2);border:1px solid var(--line);font-size:12px;color:var(--dim);margin-top:9px}
   border:1.6px solid rgba(127,127,127,.35);border-top-color:#1f9d55;
@@ -344,6 +338,14 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
    ========================================================================== */
 
 let DATA = null, cur = null, tab = "detail";
+/* ★ 右边那三个选项卡的"当前对象"有两种：**包**（`cur`）和**一条历史**（`curH`）。
+   两者互斥 —— 选了一个就把另一个清掉，左边的高亮跟着走。
+   为什么不合成一个对象：包有一堆历史没有的字段（版本/层/参数表/AI 开关/卸载），
+   历史有的是包没有的（目标绝对路径 / 当初的 cwd / 那次的结果）；
+   合成一个就得到处判空，不如分成两份、用一个 `selObj()` 取"现在是谁"。 */
+let curH = null;
+function isHist(o){ return !!o && !o.id && !!o.target; }   // 包有 id，历史有 target
+function selObj(){ return curH || cur; }
 let lastRun = null;
 const $ = s => document.querySelector(s);
 
@@ -432,7 +434,7 @@ const esc = escapeHtml;
 function paintStates(){
   paintRowStats();
   paintHistStats();
-  if (cur) paintActions(cur);
+  paintActions(selObj());
 }
 
 /* ---------------------------------------------------------------- 面板 */
@@ -443,7 +445,8 @@ function setTab(name){
   ["detail", "console", "file"].forEach(t =>
     $("#pane-" + t).classList.toggle("on", t === name));
   hideCtx();
-  if (name === "detail" && cur) refreshPkgState(cur);   // 回到详情时对一下"在不在跑 / 有没有窗口"
+  // 回到详情时对一下"在不在跑 / 有没有窗口"（历史条目没有包状态，不用问）
+  if (name === "detail" && cur) refreshPkgState(cur);
   if (name === "console") paintConsole();
 }
 function stripAnsi(s){
@@ -547,7 +550,7 @@ async function refreshAllStates(){
   }catch(e){}
   paintRowStats();
   paintHistStats();
-  if (cur) paintActions(cur);
+  paintActions(selObj());
 }
 
 /* ---------------------------------------------------------------- 状态：只有两种
@@ -604,6 +607,22 @@ async function stopFromList(id){
 function paintActions(p){
   const b = $("#btn-run"), v = $("#btn-vis");
   if (!b || !v) return;
+  /* 历史条目：只有「运行 / 停止」，而且状态**只认我们自己起的那一次**（宿主那边
+     一次"路径调用"没有包 id，认不出是不是别处起的）。「显示/隐藏」对它禁用 ——
+     路径调用没有"包自己的窗口"这回事（那个按钮管的是 GUI 包的窗口，`U-16`）。 */
+  if (isHist(p)){
+    const running = !!RUNS[histKey(p)];
+    b.disabled = false;
+    b.innerHTML = ico(running ? "square" : "play", running ? "i ic-run" : "i") +
+                  '<span>' + (running ? "停止" : "运行") + '</span>';
+    b.title = running ? "停掉这次调用（连同它的子进程）"
+                      : "在它当初的目录里再跑一次（输出进「命令行」）";
+    b.classList.toggle("warn", running);
+    v.disabled = true;
+    v.innerHTML = ico("eye", "i") + '<span>显示</span>';
+    v.title = "这是一次路径调用，没有「包自己的窗口」";
+    return;
+  }
   const st = (p && PST[p.id]) || {running: false, windows: 0, visible: false};
   const mine = !!(p && RUNS[p.id]);
   const running = mine || !!st.running;
@@ -611,14 +630,14 @@ function paintActions(p){
   // ★ 颜色只在"运行中"时给（绿色停止图标）；不再按"上次是否非 0"染红/黄 —— 误报太多
   b.innerHTML = ico(running ? "square" : "play", running ? "i ic-run" : "i") +
                 '<span>' + (running ? "停止" : "运行") + '</span>';
-  b.title = !p ? "先在左边选一个包"
+  b.title = !p ? "先在左边选一个包或一条历史"
                : (running ? "停掉它（连同它拉起的子进程）"
                           : "运行这个包，输出进「命令行」");
   b.classList.toggle("warn", running);
   v.disabled = !p || !st.windows;
   v.innerHTML = ico(st.visible ? "eye-off" : "eye", "i") +
                 '<span>' + (st.visible ? "隐藏" : "显示") + '</span>';
-  v.title = !p ? "先在左边选一个包"
+  v.title = !p ? "先在左边选一个包或一条历史"
                : (!st.windows
                   ? "这个包现在没有开着的窗口（先「运行」或「打开界面」）"
                   : (st.visible ? "隐藏它的窗口（不关掉，随时能再显示出来）"
@@ -626,6 +645,13 @@ function paintActions(p){
 }
 
 async function clickRun(p){
+  /* 历史条目：跑 / 停都按 `histKey` 走（那才是它的命令行缓冲区键）。 */
+  if (isHist(p)){
+    const key = histKey(p);
+    if (RUNS[key]){ await stopRun(key); return; }
+    rerunHist(p, argsInput() ? argsInput().value : undefined);
+    return;
+  }
   if (RUNS[p.id]){ await stopRun(p.id); return; }
   const st = PST[p.id] || {};
   if (st.running){                       // 别处启动的：直接停掉它的进程
@@ -635,8 +661,12 @@ async function clickRun(p){
     setTimeout(() => refreshPkgState(p), 400);
     return;
   }
-  startRun(p, $("#args").value);
+  startRun(p, argsInput() ? argsInput().value : "");
 }
+
+/* 详情里那个「参数」输入框：包详情叫 `#args`、历史详情叫 `#hargs`
+   （两套详情互斥，同一时刻只会存在一个，所以这里谁在就用谁）。 */
+function argsInput(){ return $("#args") || $("#hargs"); }
 
 async function startRun(p, args){
   if (RUNS[p.id]) return;                // ★ 只拦"同一个包重复起"，不再拦别的包
@@ -704,12 +734,14 @@ function finishRun(id, code, text){
              stopped ? "已停止" : ("退出码 " + code));
   // 我们自己按的停止不算"故障"（红）—— 是"已停止"（黄）
   paintRowStats();
-  if (cur && cur.id === id) renderDetail();
+  // 详情正开着"这次跑的那个对象"就重画一遍（包 或 历史条目 —— 收尾信息在详情里也显示）
+  if ((cur && cur.id === id) || (curH && histKey(curH) === id)) renderDetail();
+  paintActions(selObj());
   paintHistStats();
   // ★ 退出码回来了不等于"它没在跑" —— 有的包 fork 出界面自己就退了。
   //   所以状态以宿主那份为准（600ms 后再问一次）。
   setTimeout(refreshAllStates, 600);
-  if (side === "hist") loadHist().then(renderHist);   // 重跑会往历史里再加一条
+  if (side === "hist") loadHist().then(() => { renderHist(); });
 }
 
 /* 收尾那一行怎么措辞。
@@ -739,6 +771,7 @@ async function stopRun(id){
    还能再叫出来。窗口归属由宿主认（进程树 ∪ 进程环境里的 MOSS_PKG_ID），
    所以从终端开的也认得出来。 */
 async function toggleVis(p){
+  if (isHist(p)) return;                  // 路径调用没有"包自己的窗口"（按钮也是禁用的）
   const st = PST[p.id] || {windows: 0, visible: false};
   const r = st.visible ? await pywebview.api.pkg_hide(p.id)
                        : await pywebview.api.pkg_show(p.id);
@@ -764,13 +797,16 @@ function setSide(which){
   $("#hist").hidden = which !== "hist";
   $("#q").placeholder = which === "pkg" ? "搜索包名 / 说明 / 标签…"
                                         : "搜索历史（名字 / 参数 / 目录）…";
-  if (which === "hist"){ loadHist(); renderHist(); } else renderList();
+  if (which === "hist") loadHist().then(renderHist); else renderList();
 }
 
 /* ---------------------------------------------------------------- 历史（路径调用）
    数据来自 `user_data/history/*.jsonl`（宿主那侧读好、去过重）。
-   点一下 = **重跑那次调用**（和 CLI 的 `--history` 回车一样）；
-   目标目录里若有 `icon.xxx` 就用它当图标（你要求的）。 */
+   ★ 点一下 = **选中它**（不再是直接重跑）—— 和包列表一样：右边出「详情 / 命令行 /
+     文件管理」三个选项卡，只有点「运行」（或详情里那个参数框回车）才真的跑，
+     而且**在它当初的目录里跑**。行尾那颗播放图标仍然是"点一下就重跑"。
+   目标目录里若有 `icon.xxx` 就用它当图标（你要求的）；没有就按目标文件的
+   **后缀**画一个（跟文件管理器里同一个图标），不是一个千篇一律的返回箭头。 */
 let HIST = [];
 
 async function loadHist(){
@@ -778,10 +814,46 @@ async function loadHist(){
     const r = await pywebview.api.hist_list(60);
     HIST = (r && r.ok && r.items) || [];
   }catch(e){ HIST = []; }
+  // 选中的那条会被重新读成**新对象** —— 按 key 找回来，别让详情里看的是旧的
+  if (curH){
+    const k = histKey(curH);
+    curH = HIST.find(x => histKey(x) === k) || curH;
+  }
 }
 
 // 键要带参数：同一个文件用不同参数跑过，是**两条**历史，不能共用一份控制台
 function histKey(it){ return "hist:" + it.target + (it.args ? " " + it.args : ""); }
+function histIconHTML(it, cls){
+  const c = cls || "hico";
+  if (it.icon_svg){ const s = safeSvg(it.icon_svg); if (s) return '<span class="' + c + '">' + s + '</span>'; }
+  if (it.icon) return '<span class="' + c + '"><img src="' + it.icon + '" alt=""></span>';
+  // 没有 icon.xxx：按目标文件的类型画（和文件管理里那套完全同一个图标）
+  const nm = it.name || it.target || "";
+  const e = extOf({name: nm, ext: (nm.split(".").pop() || "").toLowerCase()});
+  return '<span class="' + c + '" style="color:' + e.c + '">' + ico(e.i, "i") + '</span>';
+}
+
+/* 一条历史的目标目录，写成页面用的 rel：优先落在 user_data / system 两个根里，
+   落到外面就是 `abs/<绝对路径>`（宿主认这个前缀，见 `system/ui/main.py` 的 ABS_ROOT）。
+   ★ 根那一段**大小写不敏感**地比（Windows 路径本来就无所谓大小写）——
+     不然盘符写小写就会掉进 `abs/`，面包屑上看着像"跑到外面去了"。 */
+function dirRel(dir){
+  const norm = s => String(s || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const d = norm(dir);
+  if (!d) return null;
+  const dl = d.toLowerCase();
+  for (const [key, base] of [["user", norm(DATA.user_data)],
+                             ["system", norm(DATA.home) + "/system"]]){
+    const bl = base.toLowerCase();
+    if (dl === bl) return key;
+    if (dl.startsWith(bl + "/")) return key + d.slice(base.length);
+  }
+  return "abs/" + d;
+}
+function histDir(it){
+  const d = it.cwd || (it.target ? it.target.replace(/[\\/][^\\/]*$/, "") : "");
+  return dirRel(d);
+}
 
 function renderHist(){
   const box = $("#hist");
@@ -796,21 +868,22 @@ function renderHist(){
     return;
   }
   box.innerHTML = "";
+  const selKey = curH ? histKey(curH) : null;
   for (const it of rows){
     const d = document.createElement("div");
     d.className = "hitem";
     d.dataset.key = histKey(it);
+    d.dataset.state = RUNS[d.dataset.key] ? "running" : "idle";
+    if (d.dataset.key === selKey) d.classList.add("sel");
     const when = (it.ts || "").replace("T", " ").slice(5, 16);
-    d.innerHTML =
-      '<span class="hico">' + (it.icon_svg ? safeSvg(it.icon_svg)
-                              : (it.icon ? '<img src="' + it.icon + '" alt="">'
-                                         : ico("corner-up-left", "i"))) + '</span>' +
+    d.innerHTML = histIconHTML(it) +
       '<div class="hmain">' +
-        '<div class="hname">' + esc(it.name) + (it.args ? ' <span class="sub">' + esc(it.args) + '</span>' : "") + '</div>' +
+        '<div class="hname">' + esc(it.name) +
+          (it.args ? ' <span class="sub">' + esc(it.args) + '</span>' : "") + '</div>' +
         '<div class="hsub">' + esc(it.cwd || "") + '　·　' + esc(when) + '</div>' +
       '</div>' +
       '<span class="hstat"></span>';
-    d.onclick = () => rerunHist(it);
+    d.onclick = () => selectHist(it);          // 选中，不跑
     box.appendChild(d);
   }
   paintHistStats();
@@ -822,12 +895,13 @@ function paintHistStats(){
     const box = el.querySelector(".hstat");
     if (!box) return;
     const running = !!RUNS[key];
+    el.dataset.state = running ? "running" : "idle";
     box.innerHTML = running
       ? '<button class="ic-run" title="正在跑 —— 点这里停掉它">' + ico("square", "i") + '</button>'
-      : '<button class="idle" title="重跑这次调用">' + ico("play", "i") + '</button>';
+      : '<button class="idle" title="不选中，直接重跑这次调用">' + ico("play", "i") + '</button>';
     const b = box.querySelector("button");
     if (b) b.onclick = (ev) => {
-      ev.stopPropagation();
+      ev.stopPropagation();                    // 点图标不要连带选中那一行
       if (running) stopRun(key); else rerunHistByKey(key);
     };
   });
@@ -838,23 +912,37 @@ function rerunHistByKey(key, args){
   if (it) rerunHist(it, args);
 }
 
+/* 选中一条历史：右边三个选项卡跟着换成"这一条"的。 */
+function selectHist(it){
+  curH = it; cur = null;
+  consoleKey = histKey(it);
+  renderList(); renderHist(); renderDetail(); paintConsole();
+  setTab("detail");
+  fmSelect(histKey(it), /*keepTab*/ true);     // 文件管理换成"这条调用所在的目录"
+}
+
 async function rerunHist(it, args){
   const key = histKey(it);
   if (RUNS[key]) return;
   const a = args === undefined ? (it.args || "") : args;
-  const cmd = "moss /" + it.target + (a ? " " + a : "");
-  lastRun = {key: key, args: a, label: cmd};
+  lastRun = {key: key, args: a, label: "moss /" + it.name};
   consoleKey = key;
-  setConsole(key, "$ " + cmd, "运行中");
+  setConsole(key, "$ moss /" + it.name + (a ? " " + a : ""), "运行中");
+  // ★ 宿主会把**它真正要跑的命令和当前目录**回报回来（`rerun_argv` 那条规则：
+  //   绝对路径 moss 的解析器不认，得翻成"手敲形式"）。所以这里用 `r.cmd` 覆盖一遍，
+  //   界面上显示的就是真的那条命令，不是界面自己猜的。
   const r = await pywebview.api.path_start(it.target, it.cwd || "", a);
   if (!r.ok){
-    setConsole(key, "$ " + cmd + "\n\n启动失败：" + (r.msg || ""), "启动失败");
+    setConsole(key, "$ moss /" + it.name + "\n\n启动失败：" + (r.msg || ""), "启动失败");
     toast("✗ " + (r.msg || "启动失败"), true);
     return;
   }
+  const cmd = r.cmd || ("moss /" + it.name);
+  setConsole(key, "$ " + cmd + (r.cwd ? "\n# 当前目录：" + r.cwd : ""), "运行中");
   RUNS[key] = {rid: r.run_id, cmd: cmd, timer: null, stopped: false,
                switched: false, tabAtStart: tab};
   paintHistStats();
+  paintActions(selObj());
   pollRun(key);
 }
 
@@ -920,14 +1008,17 @@ function pkgRel(p){
 }
 function select(id){
   cur = DATA.packages.find(p => p.id === id) || null;
+  curH = null;                                // 选了包就把"历史那条"放下（两者互斥）
   consoleKey = cur ? cur.id : "__host__";     // 命令行跟着换成"这个包自己的那份"
-  renderList(); renderDetail(); paintConsole(); setTab("detail");
+  renderList(); renderHist(); renderDetail(); paintConsole(); setTab("detail");
   // 换了包 → 文件管理跟着换到"这个包的那一套"（每个包一份上下文，互不干扰）
   if (cur) fmSelect(cur.id, /*keepTab*/ true);
 }
 function renderDetail(){
   const box = $("#pane-detail");
-  if (!cur){ box.innerHTML = '<div class="empty">左边选一个包</div>'; return; }
+  const who = selObj();
+  if (!who){ box.innerHTML = '<div class="empty">左边选一个包，或者一条历史</div>'; return; }
+  if (isHist(who)) return renderDetailHist(who, box);
   const p = cur, params = p.params || [];
   let html = '<div class="hd">' + iconHTML(p, "bigico") +
       '<div style="min-width:0"><h1>' + esc(p.name) + '</h1>' +
@@ -999,18 +1090,92 @@ function renderDetail(){
   $("#btn-remove").onclick = () => cmdRemovePkg(p);
 }
 
+/* ---------------------------------------------------------------- 详情：一条历史
+   和包那份**长得一样**（同一个 .hd / .sec / .row-inline 结构），只是内容少：
+   没有版本 / 层 / 参数表 / AI 标签 / 卸载 —— 那些是"包"才有的东西。
+   ★ 那个「跑一下」的输入框**照样有**，回车就运行，而且运行时的当前目录就是
+     这条记录当初的 cwd（宿主 `path_start` 保证）。 */
+function renderDetailHist(it, box){
+  const when = (it.ts || "").replace("T", " ");
+  let html = '<div class="hd">' + histIconHTML(it, "bigico") +
+      '<div style="min-width:0"><h1>' + esc(it.name) + '</h1>' +
+      '<div class="sub">历史 · 路径调用　' + esc(when) +
+        (it.exit === null || it.exit === undefined ? "" : '　上次退出码 ' + esc(String(it.exit))) +
+      '</div></div></div>' +
+    '<p style="margin:12px 0 4px" class="mono">' + esc(it.target || "") + '</p>' +
+    '<div>' +
+      (it.cwd ? '<span class="chip">' + ico("folder", "i") + esc(it.cwd) + '</span>' : "") +
+      (it.args ? '<span class="chip">参数 ' + esc(it.args) + '</span>' : "") +
+      (it.kind ? '<span class="chip">' + esc(it.kind) + '</span>' : "") +
+    '</div>' +
+    '<div class="sec"><h2>跑一下</h2><div class="row-inline">' +
+      // ★ 这里用 `#hargs` / `#hpreview`（而不是包详情那对 `#args` / `#preview`）：
+      //   两个详情虽然**同一个时刻只会存在一个**（都往 #pane-detail 里写），
+      //   但静态检查"整个页面每个 id 只能出现一次"就分不清了 —— 换成不同的 id
+      //   那条检查才继续有用。要取输入框请走 `argsInput()`。
+      '<input id="hargs" placeholder="参数（留空 = 上次那样；回车 = 运行）" value="' +
+        esc(it.args || "") + '">' +
+      '<button class="iconbtn" id="btn-opendir" title="用 Windows 资源管理器打开它所在的目录">' +
+        ico("folder-open", "i") + '<span>打开所在目录</span></button></div>' +
+      '<div class="sub" style="margin-top:8px">命令预览：<span class="mono" id="hpreview"></span>' +
+      '　·　右上角是「运行 / 停止」</div>' +
+      '<div class="sub" style="margin-top:4px">跑起来时的工作目录 = <span class="mono">' +
+        esc(it.cwd || "(没记，用目标所在的目录)") + '</span>（这是宿主真正用的那个，' +
+        '不是界面猜的）</div></div>' +
+    '<div class="sec"><h2>这条记录</h2><table class="p">' +
+      '<tr><th style="width:96px">目标</th><td class="mono">' + esc(it.target || "") + '</td></tr>' +
+      '<tr><th>工作目录</th><td class="mono">' + esc(it.cwd || "(没记)") + '</td></tr>' +
+      '<tr><th>参数</th><td class="mono">' + (it.args ? esc(it.args) : "(无)") + '</td></tr>' +
+      '<tr><th>时间</th><td class="mono">' + esc(when) + '</td></tr>' +
+      '<tr><th>上次结果</th><td class="mono">' +
+        (it.exit === null || it.exit === undefined
+          ? "(没跑完 / 没记)" : ("退出码 " + esc(String(it.exit)))) + '</td></tr>' +
+    '</table><div class="sub" style="margin-top:8px">' +
+      '历史只记<b>路径调用</b>；「文件管理」进的是这个目标所在的目录。</div></div>';
+  box.innerHTML = html;
+
+  const upd = () => {
+    const a = $("#hargs").value.trim();
+    // 和宿主 `rerun_argv` 同一条规则的**近似预览**：真正跑的时候宿主回来的 `cmd`
+    // 才是准的（会打到「命令行」上）。这里只求"看着像你会敲的那条"。
+    $("#hpreview").textContent = "moss /" + it.name + (a ? " " + a : "");
+  };
+  $("#hargs").addEventListener("input", upd);
+  $("#hargs").addEventListener("keydown", (e) => {
+    if (e.key === "Enter"){ e.preventDefault(); rerunHist(it, $("#hargs").value); }
+  });
+  upd();
+
+  paintActions(it);
+  $("#btn-run").onclick = () => clickRun(it);
+  $("#btn-vis").onclick = () => {};            // 已禁用；留个空钩子不放旧的包 handler
+  $("#btn-opendir").onclick = () => {
+    pywebview.api.fs_open_default(histDir(it)).then(r => toast(r.msg, !r.ok));
+  };
+}
+
 /* ================================================================ 文件管理
-   上下文按"包 id"分（外加一个 `__all__` 给"没有选包时"用）：
+   上下文按"当前对象"分，三种 key：
+     · `<包 id>`   —— 这个包自己的一套
+     · `hist:…`    —— **一条历史**（你要求的：历史也要有文件管理），根是它当初的目录
+     · `__all__`   —— 没选任何东西时的"全部文件"
    每个上下文记自己的当前目录、历史、选中、剪贴板、排序，以及**打开的文件子选项卡**。
-   切到别的包 = 换一套上下文，互不干扰；切回来还在原处。 */
+   切到别的对象 = 换一套上下文，互不干扰；切回来还在原处。 */
 const FM = { ctx: null, st: {} };
+const HIST_PREFIX = "hist:";
+
+function isHistKey(key){ return String(key || "").startsWith(HIST_PREFIX); }
+function histByKey(key){ return HIST.find(x => histKey(x) === key) || null; }
+/* 现在该用哪一套文件管理上下文（顶部「文件管理」选项卡点进来时用） */
+function fmCtxKey(){ return cur ? cur.id : (curH ? histKey(curH) : "__all__"); }
 
 function fmState(key){
   if (!key) key = "__all__";
   if (!FM.st[key]){
     FM.st[key] = {rel:null, hist:[], hpos:-1, entries:[], sel:new Set(), clip:null,
                   sort:{key:"name", dir:1}, tabs:[], active:"__browse__",
-                  pkgId: key === "__all__" ? null : key,
+                  pkg: (!isHistKey(key) && key !== "__all__") ? key : null,
+                  hist: isHistKey(key) ? key : null,
                   layers: {user:false, system:false}};
   }
   return FM.st[key];
@@ -1023,6 +1188,7 @@ function fmLayerRels(key){
 }
 async function fmProbeLayers(key){
   if (!key || key === "__all__") return {user:true, system:true};
+  if (isHistKey(key)) return {user:false, system:false};   // 历史没有"包的两层"
   const cand = fmLayerRels(key);
   const r = await pywebview.api.fs_exists([cand.user, cand.system]);
   const has = (r && r.has) || {};
@@ -1030,11 +1196,19 @@ async function fmProbeLayers(key){
 }
 function fmDefaultRel(key){
   if (key === "__all__") return "user";
+  if (isHistKey(key)){
+    const it = histByKey(key);
+    return (it && histDir(it)) || "user";
+  }
   const p = DATA.packages.find(x => x.id === key);
   return (p && pkgRel(p)) || "user";
 }
 function fmLabel(key){
   if (key === "__all__") return "全部文件";
+  if (isHistKey(key)){
+    const it = histByKey(key);
+    return "历史 · " + ((it && (it.name || it.target)) || key.slice(HIST_PREFIX.length));
+  }
   const p = DATA.packages.find(x => x.id === key);
   return p ? (p.name + "（:" + p.id + "）") : key;
 }
@@ -1048,15 +1222,26 @@ async function fmSelect(key, keepTab){
   FM.ctx = key;
   const s = fmState(key);
   s.layers = await fmProbeLayers(key);          // 哪一层有"这个包的目录"
-  if (!s.rel) await fmGoto(fmDefaultRel(key), true, true);   // quiet: 不切顶层选项卡
-  else fmRender();
+  if (!s.rel){
+    const def = fmDefaultRel(key);
+    const ok = await fmGoto(def, true, true);   // quiet: 不切顶层选项卡
+    // ★ 历史那条记的目录可能早就删了/挪了 —— 退到**目标文件自己所在的目录**
+    //   （和宿主 `path_start` 里那条退路同一个道理）。
+    if (!ok && isHistKey(key)){
+      const it = histByKey(key);
+      const alt = it && it.target ? dirRel(it.target.replace(/[\\/][^\\/]*$/, "")) : null;
+      if (alt && alt !== def) await fmGoto(alt, true, true);
+    }
+  } else fmRender();
   if (!keepTab) setTab("file");
 }
+/* 返回 true/false（调用方多半不看，但"历史目录没了要退一条"那里要靠它判断） */
 async function fmGoto(rel, push, quiet){
   const s = fmState(FM.ctx);
   const r = await pywebview.api.fs_list(rel);
-  if (!r.ok){ toast("✗ " + r.msg, true); return; }
+  if (!r.ok){ toast("✗ " + r.msg, true); return false; }
   s.rel = r.rel || rel;
+  s.path = r.path || "";            // 真正的绝对路径（状态条上给用户看的，比 rel 好读）
   s.entries = r.entries || [];
   s.sel.clear();
   if (push !== false){
@@ -1067,12 +1252,13 @@ async function fmGoto(rel, push, quiet){
   s.active = "__browse__";
   if (!quiet) setTab("file");
   fmRender();
+  return true;
 }
 function fmHome(){
   const def = fmDefaultRel(FM.ctx);
   const s = fmState(FM.ctx);
   // 已经在默认目录就说一声 —— 不然点下去"什么都没发生"，看着像按钮坏了（你反馈过）
-  if (s.rel === def){ toast("已经在这个包的默认目录了：" + def); return; }
+  if (s.rel === def){ toast("已经在默认目录了：" + (s.path || def)); return; }
   fmGoto(def);
 }
 function fmRefresh(){
@@ -1082,9 +1268,19 @@ function fmRefresh(){
   fmProbeLayers(FM.ctx).then(layers => { s.layers = layers; });
   fmGoto(s.rel, false);
 }
+/* 能不能再往上：两个根走到顶就没了；`abs/` 那边走到**盘根**（`abs/D:/`）就到顶 ——
+   再往上会得到 `abs` 那个光秃秃的前缀，宿主会拒（它不是绝对路径）。 */
+function fmAtTop(rel){
+  const r = String(rel || "");
+  if (!r.includes("/")) return true;                    // user / system
+  if (r === "abs") return true;
+  if (/^abs\/[A-Za-z]:\/?$/.test(r)) return true;       // 盘根
+  return false;
+}
 function fmUp(){
-  const parts = (fmState(FM.ctx).rel || "").split("/");
-  if (parts.length > 1) fmGoto(parts.slice(0, -1).join("/"));
+  const rel = fmState(FM.ctx).rel || "";
+  if (fmAtTop(rel)){ toast("已经到顶了：" + rel); return; }
+  fmGoto(rel.split("/").slice(0, -1).join("/"));
 }
 function fmBack(){ const s = fmState(FM.ctx); if (s.hpos > 0){ s.hpos--; fmGoto(s.hist[s.hpos], false); } }
 function fmFwd(){ const s = fmState(FM.ctx); if (s.hpos < s.hist.length - 1){ s.hpos++; fmGoto(s.hist[s.hpos], false); } }
@@ -1261,7 +1457,7 @@ function fmPaintInfo(s, page){
   const bytes = rows.filter(e => s.sel.has(e.rel) && !e.dir).reduce((a, e) => a + (e.size || 0), 0);
   page.querySelector(".info").textContent = rows.length + " 项" +
     (n ? " · 选中 " + n + " 项" + (bytes ? "（" + humanSize(bytes) + "）" : "") : "") +
-    " · " + s.rel;
+    " · " + (s.path || s.rel);
   page.querySelector(".clipinfo").textContent = s.clip
     ? ("剪贴板：" + s.clip.rels.length + " 项" + (s.clip.cut ? "（剪切）" : "（复制）")) : "";
   const dis = (sel, need) => { const b = page.querySelector(sel); if (b) b.disabled = !need; };
@@ -1282,14 +1478,20 @@ function bindBrowse(s){
   setIcon(".b-copy", "copy"); setIcon(".b-cut", "scissors"); setIcon(".b-paste", "clipboard-paste");
   setIcon(".b-default", "external-link"); setIcon(".b-opendir", "folder-open");
 
-  // 面包屑
+  // 面包屑。★ `abs/` 那个上下文里第一段是相对写法，**不是**能点进去的目录
+  //   （`abs` 本身不是路径），所以它只当个标签："此电脑"。
   const segs = (s.rel || "").split("/");
   let acc = "", crumb = "";
+  const firstLabel = seg => seg === "user" ? "user_data"
+                          : (seg === "system" ? "system"
+                          : (seg === "abs" ? "此电脑" : seg));
   segs.forEach((seg, i) => {
     acc = i === 0 ? seg : acc + "/" + seg;
-    const label = i === 0 ? (seg === "user" ? "user_data" : "system") : seg;
+    const label = i === 0 ? firstLabel(seg) : seg;
     if (i) crumb += '<span class="sep">›</span>';
-    crumb += (i === segs.length - 1)
+    const last = (i === segs.length - 1);
+    const dead = (i === 0 && seg === "abs");        // "此电脑"点了没用，做成纯标签
+    crumb += (last || dead)
       ? '<span class="here">' + esc(label) + '</span>'
       : '<span class="seg" data-rel="' + esc(acc) + '">' + esc(label) + '</span>';
   });
@@ -1297,23 +1499,30 @@ function bindBrowse(s){
   page.querySelectorAll(".crumbs .seg").forEach(el => { el.onclick = () => fmGoto(el.dataset.rel); });
 
   page.querySelector(".b-home").onclick = fmHome;
+  page.querySelector(".b-home").title = isHistKey(FM.ctx)
+    ? "回到这条调用当初的目录" : "回到默认目录（这个包的目录）";
   page.querySelector(".b-back").onclick = fmBack;
   page.querySelector(".b-fwd").onclick = fmFwd;
   page.querySelector(".b-up").onclick = fmUp;
+  page.querySelector(".b-up").disabled = fmAtTop(s.rel);
   page.querySelector(".b-reload").onclick = fmRefresh;
 
   /* 切换按钮：**跳到同一个包在另一层的目录**；那一层没有这个目录就不显示。
-     （`__all__` 上下文没有"这个包"，那时才是切到两个总根。） */
+     （`__all__` 上下文没有"这个包"，那时才是切到两个总根；
+       历史上下文是"磁盘上一个具体目录"，没有层可切，只标一下它在哪。） */
   const layersBox = page.querySelector(".layers");
   const hereLayer = (s.rel || "").split("/")[0];
   let lhtml = "";
-  if (!s.pkgId){
+  if (s.hist){
+    lhtml = '<span class="sub" style="align-self:center">历史调用所在的目录' +
+            (hereLayer === "abs" ? '（在 user_data / system 之外）' : "") + '</span>';
+  } else if (!s.pkg){
     lhtml = '<button class="iconbtn' + (hereLayer === "user" ? " on" : "") +
               '" data-go="user" title="user_data 根目录">user_data</button>' +
             '<button class="iconbtn' + (hereLayer === "system" ? " on" : "") +
               '" data-go="system" title="system 根目录">system</button>';
   } else {
-    const cand = fmLayerRels(s.pkgId);
+    const cand = fmLayerRels(s.pkg);
     if (s.layers.user)
       lhtml += '<button class="iconbtn' + (hereLayer === "user" ? " on" : "") +
         '" data-go="' + esc(cand.user) + '" title="user_data 里这个包的目录（' +
@@ -1688,8 +1897,8 @@ async function init(){
   $("#meta").textContent =
     DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home;
   renderList(); paintStates();
-  setSide(side);           // 切换条的高亮 / 隐藏状态跟 JS 变量对齐
-  await loadHist();        // 先把历史读回来，点「历史」就是瞬时的
+  await loadHist();        // 先把历史读回来（loadHist 会顺手按 key 找回选中的那条）
+  setSide(side);           // 切换条的高亮 / 隐藏状态跟 JS 变量对齐；顺带画一遍列表
   consoleKey = "__host__";
   paintConsole();
   pkgPollStart();          // 每 2.5 秒把所有包的状态对一次（列表 + 按钮都要）
@@ -1712,7 +1921,9 @@ function paintStaticIcons(){
   $("#btn-selfcheck").innerHTML = ico("activity", "i");
   // 左侧顶部：插件 / 历史 切换 + 新建包
   $("#sw-pkg").innerHTML  = ico("package", "i") + '<span>插件</span>';
-  $("#sw-hist").innerHTML = ico("corner-up-left", "i") + '<span>历史</span>';
+  // ★ 历史用 Lucide 那个**带表针的 history**（lucide-static 1.48.0，见 vendor/README.md）。
+  //   上一版我随手用了 `corner-up-left`（就是个"返回箭头"），跟"历史"不是一回事 —— 你指出的。
+  $("#sw-hist").innerHTML = ico("history", "i") + '<span>历史</span>';
   $("#btn-newpkg").innerHTML = ico("file-plus", "i");
   $("#btn-refresh").innerHTML   = ico("refresh-cw", "i");
   $("#btn-copy").innerHTML      = ico("copy", "i");
@@ -1725,7 +1936,7 @@ $("#sw-pkg").onclick = () => setSide("pkg");
 $("#sw-hist").onclick = () => setSide("hist");
 $("#btn-newpkg").onclick = cmdNewPkg;
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
-  if (b.dataset.tab === "file") fmSelect(cur ? cur.id : "__all__");
+  if (b.dataset.tab === "file") fmSelect(fmCtxKey());
   else setTab(b.dataset.tab);
 });
 $("#btn-copy").onclick = copyOut;

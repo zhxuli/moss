@@ -7,7 +7,7 @@
 | `highlight.min.js` | 代码高亮引擎（官方 **common** 构建，34 种语言：python / go / json / markdown / yaml / ini / css / xml / javascript …） | 11.9.0 | BSD-3-Clause | 与 `system/pkgs/exec/ui/vendor/` 里那份**同一份**（exec 早就在用） |
 | `powershell.min.js` | 高亮语言包：PowerShell（`.ps1`） | 11.9.0 | BSD-3-Clause | highlight.js 官方语言包 |
 | `dos.min.js` | 高亮语言包：DOS 批处理（`.bat` / `.cmd`）—— common 构建里没有，单独补 | 11.9.0 | BSD-3-Clause | highlight.js 官方语言包 |
-| `lucide.js` | 图标库：`{名字: '<path .../>'}` 的表 + `ico(name)` 函数，**只收了用到的 74 个** | lucide-static 1.48.0 | ISC | `unpkg.com/lucide-static`，见 `lucide-LICENSE.txt` |
+| `lucide.js` | 图标库：`{名字: '<path .../>'}` 的表 + `ico(name)` 函数，**只收了用到的 82 个** | lucide-static 1.48.0 | ISC | `unpkg.com/lucide-static`，见 `lucide-LICENSE.txt` |
 
 ## 为什么这么放
 
@@ -26,9 +26,21 @@
 # 语言包（版本号一起改）
 https://cdnjs.cloudflare.com/ajax/libs/highlight.js/<版本>/languages/dos.min.js
 
-# 图标（取新版本后重新生成 lucide.js）
+# 图标（取新版本后重新生成）
 https://unpkg.com/lucide-static@<版本>/icons/<名字>.svg
 ```
 
-`lucide.js` 是脚本生成的（不是手抄）：见提交记录里那份"取图标"的脚本，
-它把每个 `<svg>` 里的内容剥出来拼成表；**别手工编辑这个文件**。
+`lucide.js` 由 **`tools/取图标.py`** 生成，**别手工编辑这个文件**：
+
+```
+venv\Scripts\python.exe tools\取图标.py                 # 只报告，不写
+venv\Scripts\python.exe tools\取图标.py history clock   # 把缺的补进去
+venv\Scripts\python.exe tools\取图标.py --verify        # 拿线上重新核对现有条目
+```
+
+它把每个 `<svg>` 里的内容剥出来拼成表（单引号单行、1.5 描边由 `ico()` 统一给）。
+**只增不改** —— 已经有的一条都不重写，免得整个文件产生无意义 diff。
+改版本号时把脚本里的 `VERSION` 一起改掉，再跑 `--verify` 核对。
+
+★ 2026-09-28 之前，这个脚本**不在仓库里**（只在提交记录里），README 却写着"别手工编辑" ——
+于是想补一个图标就只能手抄，等于破了自己定的规矩。现在补回来了（补 `history` 时顺手做的）。
