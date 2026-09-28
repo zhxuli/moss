@@ -93,13 +93,14 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--
 .ic-run{color:#1f9d55}
 .ic-fail{color:#d64545}
 .ic-warn{color:#dfa100}
-/* 左侧列表行尾的状态图标（运行中那颗可点：停掉它） */
+/* 左侧列表行尾的状态图标（运行中那颗可点：停掉它）
+   ★ 这里**千万别写 `color:inherit`**：`.rowstat button` 的优先级(0,1,1)高过
+     `.ic-run`(0,1,0)，会把按钮上的状态颜色整个压掉 —— 表现就是"列表里的图标
+     一点颜色都没有"（你实测发现的）。按钮的颜色交给 `.ic-run/.ic-fail/.ic-warn`。 */
 .rowstat{flex:none;display:flex;align-items:center;margin-left:6px}
 .rowstat button{display:flex;align-items:center;justify-content:center;padding:3px;
-  border:none;border-radius:6px;background:transparent;cursor:pointer;color:inherit}
+  border:none;border-radius:6px;background:transparent;cursor:pointer}
 .rowstat button:hover{background:var(--hover)}
-.rowstat .spin{width:12px;height:12px;border-radius:50%;border:1.6px solid rgba(31,157,85,.3);
-  border-top-color:#1f9d55;animation:spin .7s linear infinite}
 .item[data-state=running]{box-shadow:inset 3px 0 0 #1f9d55}
 .status{display:inline-flex;align-items:center;gap:7px;padding:3px 11px;border-radius:20px;
   background:var(--panel2);border:1px solid var(--line);font-size:12px;color:var(--dim);margin-top:9px}
