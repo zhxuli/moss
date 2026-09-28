@@ -132,6 +132,21 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--
    （`border:1.6px …` / `animation:spin …}`）—— 是删小圆点时没清干净的残留：
    裸声明在顶层是非法 CSS，整段被浏览器丢掉，`animation` 引用的 `@keyframes spin`
    也早就不存在了。删掉。 */
+/* ★ 目标文件已经没了的历史条目：**整行灰掉**（你要求的）。
+   为什么不干脆删掉：这条记录仍然有用（当初在哪个目录跑的、跑过什么），
+   只是再也跑不了了 —— 所以是"灰"，而且行尾那颗播放图标也不给。
+   不做删除线、不去色：它不是"已删除"，它是"失效"。 */
+.hitem.dead{opacity:.45}
+.hitem.dead .hname{color:var(--dim)}
+/* 详情里"提醒一句"的横条（目标没了之类） */
+.warnbox{display:flex;gap:8px;align-items:flex-start;margin:12px 0 0;padding:8px 11px;
+  border:1px solid #e0b34d;border-radius:9px;background:rgba(224,179,77,.12);
+  color:var(--fg);font-size:12.5px;line-height:1.6}
+.warnbox svg.i{color:#c8901a;margin-top:2px}
+/* 文件页标题栏里那截"猜到的编码" */
+.encnote{font-family:var(--mono);font-size:11px;color:var(--dim);
+  border:1px solid var(--line);border-radius:5px;padding:0 5px;margin-left:6px;flex:none}
+.dim{color:var(--dim)}
 /* ================= 文件管理：**属于某一个包**的一套界面 =================
    结构是"文件管理"这个大选项卡 -> 里面的子选项卡：
      ① 「文件」固定在最左、**不能关闭**（目录浏览，资源管理器那套操作）
@@ -637,11 +652,14 @@ function paintActions(p){
      路径调用没有"包自己的窗口"这回事（那个按钮管的是 GUI 包的窗口，`U-16`）。 */
   if (isHist(p)){
     const running = !!RUNS[histKey(p)];
-    b.disabled = false;
+    const gone = p.exists === false;
+    // 目标文件没了的：不给"运行"—— 点了只会得到"目标已经不在了"，不如直接不给点
+    b.disabled = gone && !running;
     b.innerHTML = ico(running ? "square" : "play", running ? "i ic-run" : "i") +
                   '<span>' + (running ? "停止" : "运行") + '</span>';
-    b.title = running ? "停掉这次调用（连同它的子进程）"
-                      : "在它当初的目录里再跑一次（输出进「命令行」）";
+    b.title = gone ? "这个文件已经不在了，跑不了"
+                   : (running ? "停掉这次调用（连同它的子进程）"
+                              : "在它当初的目录里再跑一次（输出进「命令行」）");
     b.classList.toggle("warn", running);
     v.disabled = true;
     v.innerHTML = ico("eye", "i") + '<span>显示</span>';
@@ -900,6 +918,13 @@ function renderHist(){
     d.dataset.key = histKey(it);
     d.dataset.state = RUNS[d.dataset.key] ? "running" : "idle";
     if (d.dataset.key === selKey) d.classList.add("sel");
+    // ★ 目标文件已经没了的，整行**灰掉**（你要求的）：它已经跑不了了，
+    //   但记录还留着（当初在哪儿、跑过什么仍然有用），所以是灰不是删。
+    const gone = it.exists === false;
+    if (gone){
+      d.classList.add("dead");
+      d.title = "这个文件已经不在了：" + (it.target || "");
+    }
     const when = (it.ts || "").replace("T", " ").slice(5, 16);
     d.innerHTML = histIconHTML(it) +
       '<div class="hmain">' +
@@ -921,6 +946,13 @@ function paintHistStats(){
     if (!box) return;
     const running = !!RUNS[key];
     el.dataset.state = running ? "running" : "idle";
+    const it = HIST.find(x => histKey(x) === key);
+    const gone = it && it.exists === false;
+    // 文件没了的：不放"运行"按钮 —— 点了也只会报"目标已经不在了"，不如不给点
+    if (gone && !running){
+      box.innerHTML = "";
+      return;
+    }
     box.innerHTML = running
       ? '<button class="ic-run" title="正在跑 —— 点这里停掉它">' + ico("square", "i") + '</button>'
       : '<button class="idle" title="不选中，直接重跑这次调用">' + ico("play", "i") + '</button>';
@@ -1116,52 +1148,55 @@ function renderDetail(){
 }
 
 /* ---------------------------------------------------------------- 详情：一条历史
-   和包那份**长得一样**（同一个 .hd / .sec / .row-inline 结构），只是内容少：
-   没有版本 / 层 / 参数表 / AI 标签 / 卸载 —— 那些是"包"才有的东西。
-   ★ 那个「跑一下」的输入框**照样有**，回车就运行，而且运行时的当前目录就是
-     这条记录当初的 cwd（宿主 `path_start` 保证）。 */
+   和包那份**长得一样**（同一个 .hd / .sec / .row-inline 结构），内容按"这条记录
+   真有什么"来给 —— **没有的就不显示**（你说过：参数空着就别写"参数（无）"，
+   上次结果不知道就别写；说明性的废话也不要）。 */
 function renderDetailHist(it, box){
   const when = (it.ts || "").replace("T", " ");
+  const gone = it.exists === false;
+  // 只放"真有值"的行；一行都没有，整张表就不出现
+  const rows = [];
+  if (it.cwd) rows.push(["工作目录", it.cwd, it.cwd_exists === false ? "（这个目录也不在了）" : ""]);
+  if (it.args) rows.push(["参数", it.args, ""]);
+  if (when) rows.push(["时间", when, ""]);
+  if (it.exit !== null && it.exit !== undefined) rows.push(["上次退出码", String(it.exit), ""]);
   let html = '<div class="hd">' + histIconHTML(it, "bigico") +
       '<div style="min-width:0"><h1>' + esc(it.name) + '</h1>' +
-      '<div class="sub">历史 · 路径调用　' + esc(when) +
-        (it.exit === null || it.exit === undefined ? "" : '　上次退出码 ' + esc(String(it.exit))) +
-      '</div></div></div>' +
-    '<p style="margin:12px 0 4px" class="mono">' + esc(it.target || "") + '</p>' +
-    '<div>' +
-      (it.cwd ? '<span class="chip">' + ico("folder", "i") + esc(it.cwd) + '</span>' : "") +
-      (it.args ? '<span class="chip">参数 ' + esc(it.args) + '</span>' : "") +
-      (it.kind ? '<span class="chip">' + esc(it.kind) + '</span>' : "") +
-    '</div>' +
-    '<div class="sec"><h2>跑一下</h2><div class="row-inline">' +
+      '<div class="sub mono">' + esc(it.target || "") + '</div>' +
+      '</div></div>';
+  if (gone){
+    html += '<div class="warnbox">' + ico("alert-triangle", "i") +
+      '<span>这个文件已经不在了 —— 跑不了了。记录还留着，想清掉就点下面那个按钮。</span></div>';
+  }
+  html += '<div class="sec"><h2>跑一下</h2><div class="row-inline">' +
       // ★ 这里用 `#hargs` / `#hpreview`（而不是包详情那对 `#args` / `#preview`）：
       //   两个详情虽然**同一个时刻只会存在一个**（都往 #pane-detail 里写），
       //   但静态检查"整个页面每个 id 只能出现一次"就分不清了 —— 换成不同的 id
       //   那条检查才继续有用。要取输入框请走 `argsInput()`。
       '<input id="hargs" placeholder="参数（留空 = 上次那样；回车 = 运行）" value="' +
-        esc(it.args || "") + '">' +
+        esc(it.args || "") + '"' + (gone ? " disabled" : "") + '>' +
+      '<button class="iconbtn" id="btn-run2"' + (gone ? " disabled" : "") + '>' +
+        ico("play", "i") + '<span>运行</span></button>' +
       '<button class="iconbtn" id="btn-opendir" title="用 Windows 资源管理器打开它所在的目录">' +
         ico("folder-open", "i") + '<span>打开所在目录</span></button></div>' +
-      '<div class="hint">命令预览：<span class="mono" id="hpreview"></span>' +
-      '　·　右上角是「运行 / 停止」</div>' +
-      '<div class="hint" style="margin-top:4px">跑起来时的工作目录 = <span class="mono">' +
-        esc(it.cwd || "(没记，用目标所在的目录)") + '</span>（这是宿主真正用的那个，' +
-        '不是界面猜的）</div></div>' +
-    '<div class="sec"><h2>这条记录</h2><table class="p">' +
-      '<tr><th style="width:96px">目标</th><td class="mono">' + esc(it.target || "") + '</td></tr>' +
-      '<tr><th>工作目录</th><td class="mono">' + esc(it.cwd || "(没记)") + '</td></tr>' +
-      '<tr><th>参数</th><td class="mono">' + (it.args ? esc(it.args) : "(无)") + '</td></tr>' +
-      '<tr><th>时间</th><td class="mono">' + esc(when) + '</td></tr>' +
-      '<tr><th>上次结果</th><td class="mono">' +
-        (it.exit === null || it.exit === undefined
-          ? "(没跑完 / 没记)" : ("退出码 " + esc(String(it.exit)))) + '</td></tr>' +
-    '</table><div class="hint">' +
-      '历史只记<b>路径调用</b>；「文件管理」进的是这个目标所在的目录。</div></div>';
+      '<div class="hint">命令预览：<span class="mono" id="hpreview"></span></div></div>';
+  if (rows.length){
+    html += '<div class="sec"><h2>这条记录</h2><table class="p">' +
+      rows.map(r => '<tr><th style="width:88px">' + esc(r[0]) + '</th><td class="mono">' +
+        esc(r[1]) + (r[2] ? ' <span class="dim">' + esc(r[2]) + '</span>' : "") +
+        '</td></tr>').join("") + '</table></div>';
+  }
+  html += '<div class="sec"><h2>删除</h2><div class="row-inline">' +
+      '<span class="hint" style="flex:1;margin-top:0">只删这条<b>记录</b>（历史账里追加一条墓碑），' +
+        '文件本身不动</span>' +
+      '<button class="iconbtn warn" id="btn-forget" title="从历史里删掉这条记录">' +
+        ico("trash-2", "i") + '<span>删除这条记录</span></button>' +
+    '</div></div>';
   box.innerHTML = html;
 
   const upd = () => {
     const a = $("#hargs").value.trim();
-    // 和宿主 `rerun_argv` 同一条规则的**近似预览**：真正跑的时候宿主回来的 `cmd`
+    // 和宿主 `rerun_argv` 同一条规则的**近似预览**：真正跑的时候宿主回回来的 `cmd`
     // 才是准的（会打到「命令行」上）。这里只求"看着像你会敲的那条"。
     $("#hpreview").textContent = "moss /" + it.name + (a ? " " + a : "");
   };
@@ -1174,9 +1209,27 @@ function renderDetailHist(it, box){
   paintActions(it);
   $("#btn-run").onclick = () => clickRun(it);
   $("#btn-vis").onclick = () => {};            // 已禁用；留个空钩子不放旧的包 handler
+  $("#btn-run2").onclick = () => rerunHist(it, $("#hargs").value);
   $("#btn-opendir").onclick = () => {
     pywebview.api.fs_open_default(histDir(it)).then(r => toast(r.msg, !r.ok));
   };
+  $("#btn-forget").onclick = () => cmdForgetHist(it);
+}
+
+/* 删一条历史记录：**不是删文件**，是把这条记录从历史里抹掉。
+   宿主那边是**追加一条墓碑**（账只增不改），所以 CLI 的 `--history` 也会一起看不见它。
+
+   ★ **不弹确认框**（你定的：「删除历史记录的时候 不要用弹窗 直接删 我最烦弹窗了」）。
+     这里也确实碰不到任何文件：墓碑只是账里多一行"这条别看了"的标记，
+     原来那些行还在 jsonl 里。包那边的「卸载」是**真删文件**，确认框保留。 */
+async function cmdForgetHist(it){
+  const r = await pywebview.api.hist_forget(histKey(it));
+  toast(r.ok ? ("已删掉这条记录：" + it.name) : ("✗ " + (r.msg || "删不掉")), !r.ok);
+  if (!r.ok) return;
+  if (curH && histKey(curH) === histKey(it)) curH = null;
+  await loadHist();
+  renderHist();
+  renderDetail();
 }
 
 /* ================================================================ 文件管理
@@ -1330,6 +1383,10 @@ async function fmOpenPage(rel){
          text: r.text || "", original: r.text || "",
          binary: !!(r.binary || r.too_big),
          note: r.binary ? "binary" : (r.too_big ? r.msg : ""),
+         // ★ 记下"读进来时是什么编码 / 有没有 BOM"，保存时原样带回去 ——
+         //   不然打开一个 GBK / UTF-16 的 txt 改一个字，整个文件就被转成 UTF-8 了。
+         encoding: r.encoding || "utf-8", bom: r.bom || "",
+         encodingNote: r.encoding_note || "",
          factory: rel.split("/")[0] === "system"};
     s.tabs.push(t);
   }
@@ -1354,7 +1411,7 @@ function fmClosePage(rel){
 }
 function fmSave(t){
   if (!t || t.binary) return;
-  pywebview.api.fs_write(t.rel, t.text).then(r => {
+  pywebview.api.fs_write(t.rel, t.text, t.encoding || "utf-8", t.bom || "").then(r => {
     toast(r.ok ? ("已保存 " + t.rel + (r.factory ? "（出厂件）" : "")) : ("✗ " + r.msg), !r.ok);
     if (r.ok){ t.original = t.text; fmPaintBar(); fmPaintDirty(t); }
   });
@@ -1457,6 +1514,8 @@ function filePageHTML(t){
     '<div class="outbar">' +
       '<span style="color:' + meta.c + ';display:flex">' + ico(meta.i, "i") + '</span>' +
       '<span class="mono">' + esc(t.rel) + '</span>' +
+      // 猜到的编码写出来：不然遇到乱码不知道是"文件本来就这样"还是"猜错了"
+      (t.encodingNote ? '<span class="encnote">' + esc(t.encodingNote) + '</span>' : "") +
       '<span class="dirtydot"' + (isDirty(t) ? "" : " hidden") + ' title="有未保存的改动"></span>' +
       '<span style="flex:1"></span>' +
       '<button class="iconbtn b-save" title="保存（Ctrl+S）"' + (isDirty(t) ? "" : " disabled") + '></button>' +

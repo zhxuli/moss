@@ -112,8 +112,11 @@ def recent_unique(limit=MAX_SHOW, raw=READ_RAW):
     ★ 只算**路径调用**（见 `should_record`）：插件调用不进列表。
       老文件里已经写下的插件记录也在这里被滤掉 —— 不改动日志本身（日志是
       追加写的账，不该回头重写），只是"看的时候不算它"。
+    ★ 被墓碑点名的（`forget`）同样在这里滤掉。
     """
-    rows = [r for r in recent(raw) if should_record(r)]
+    rows = recent(raw)
+    dead = _forgotten(rows)
+    rows = [r for r in rows if should_record(r) and dedup_key(r) not in dead]
     return dedup(rows)[:limit]
 
 
@@ -124,8 +127,33 @@ def should_record(entry):
       `moss :别名` 叫起来，跟你在哪个目录无关，记下来只是噪声，还会把真正
       有价值的那类（"必须先 cd 过去才能跑"的路径调用）淹掉。
       这条是用户定的（第 24 版）："插件永远通过普通的方式唤醒"。
+    ★ 墓碑自己不是一条历史（它只是"某条别看了"的标记），同样不算。
     """
-    return (entry.get("kind") or "") != "pkg"
+    return (entry.get("kind") or "") not in ("pkg", TOMBSTONE)
+
+
+# ---------------------------------------------------------------- 删除（墓碑）
+# ★ 为什么不"重写文件把它抠掉"：这本账是**追加写**的（`append` 从不回头改），
+#   重写会跟"正在跑的那次调用结束时要补一条"打架，也可能把时间序搞乱。
+#   所以删除也**追加一条**：`{"kind":"tombstone","forget":"<去重键>"}`，
+#   读的时候看见同键的墓碑就跳过 —— 账只增，效果是"这条没了"。
+TOMBSTONE = "tombstone"
+
+
+def forget(entry):
+    """把一条历史"删掉"（追加一条墓碑）。entry 可以是记录本身，也可以是去重键。"""
+    if not entry:
+        return False
+    key = entry if isinstance(entry, str) else dedup_key(entry)
+    if not key:
+        return False
+    return append({"via": "ui", "kind": TOMBSTONE, "forget": key})
+
+
+def _forgotten(rows):
+    """这批原始记录里被墓碑点名的去重键。"""
+    return {str(r.get("forget") or "") for r in rows
+            if (r.get("kind") or "") == TOMBSTONE and r.get("forget")}
 
 
 def match_keys(r):
