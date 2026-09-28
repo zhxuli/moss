@@ -107,9 +107,14 @@ window = webview.create_window(
     "moss",
     str(HERE / "index.html"),
     js_api=Api(),
-    width=1040,
-    height=700,
-    min_size=(820, 520),
+    width=1280,
+    height=860,
+    min_size=(900, 600),
+    # ★ text_select 默认是 **False**，页面上的字**选不中**（拖不动、也没法 Ctrl+C）——
+    #   pywebview 的 `create_window(..., text_select: bool = False)`。
+    #   命令行窗口最要紧的就是"能选中、能复制"，所以这里必须打开它；
+    #   页面里也给 `#out` 写了 user-select:text，另外配了「复制全部」按钮。
+    text_select=True,
 )
 
 if __name__ == "__main__":
