@@ -122,12 +122,13 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--
 .fmtab .x{margin-left:2px;color:var(--dim);border-radius:4px;padding:0 3px;line-height:1}
 .fmtab .x:hover{background:#d64545;color:#fff}
 .fmtab .fdot{width:7px;height:7px;border-radius:50%;background:#dfa100;flex:none}
-#fm-home{margin-left:auto;align-self:center;padding-bottom:4px}
 .fmwrap{flex:1;min-height:0;display:flex;flex-direction:column}
 .fmpage{flex:1;min-height:0;display:none;flex-direction:column}
 .fmpage.on{display:flex}
 .fbnav{display:flex;gap:4px;align-items:center;padding:6px 10px;flex:none;
   border-bottom:1px solid var(--line2);background:var(--panel)}
+/* 「回到默认目录」和后面那组导航空开一点，免得看着像同一组的第一个 */
+.fbnav .b-home{margin-right:6px}
 .crumbs{flex:1;display:flex;align-items:center;gap:2px;min-width:0;overflow:hidden;
   padding:3px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);
   font-size:12.5px;white-space:nowrap}
@@ -902,7 +903,13 @@ async function fmGoto(rel, push, quiet){
   if (!quiet) setTab("file");
   fmRender();
 }
-function fmHome(){ fmGoto(fmDefaultRel(FM.ctx)); }        // ★ 一键回到默认
+function fmHome(){
+  const def = fmDefaultRel(FM.ctx);
+  const s = fmState(FM.ctx);
+  // 已经在默认目录就说一声 —— 不然点下去"什么都没发生"，看着像按钮坏了（你反馈过）
+  if (s.rel === def){ toast("已经在这个包的默认目录了：" + def); return; }
+  fmGoto(def);
+}
 function fmRefresh(){
   const s = fmState(FM.ctx);
   if (!s.rel) return;
@@ -973,8 +980,7 @@ function fmRender(){
         'title="' + esc(t.rel) + '">' + fileIconHTML({name:t.name, ext:(t.name.split(".").pop()||"").toLowerCase()}) +
         '<span class="fname">' + esc(t.name) + '</span>' +
         (isDirty(t) ? '<span class="fdot" title="有未保存的改动"></span>' : "") +
-        '<span class="x" data-close="' + esc(t.rel) + '" title="关闭">×</span></button>').join("") +
-    '<button class="iconbtn" id="fm-home" title="回到默认目录">' + ico("home", "i") + '</button>';
+        '<span class="x" data-close="' + esc(t.rel) + '" title="关闭">×</span></button>').join("");
 
   bar.querySelectorAll(".fmtab").forEach(b => {
     b.onclick = (ev) => {
@@ -986,7 +992,6 @@ function fmRender(){
   bar.querySelectorAll(".x").forEach(x => {
     x.onclick = (ev) => { ev.stopPropagation(); fmClosePage(x.dataset.close); };
   });
-  $("#fm-home").onclick = fmHome;
 
   const body = $("#fm-body");
   body.innerHTML = browsePageHTML(s) + s.tabs.map(filePageHTML).join("");
@@ -1002,6 +1007,9 @@ function browsePageHTML(s){
     ? '<span class="arrow">' + (s.sort.dir === 1 ? "▲" : "▼") + '</span>' : '';
   let html = '<div class="fmpage" data-page="__browse__">' +
     '<div class="fbnav">' +
+      // ★「回到默认目录」放在这一排的**最左边** —— 它是个"导航"动作，和 ⬅ ➡ ⬆ ⟳ 同类，
+      //   放子选项卡那一行的最右边（上一版）既不合群、也容易被当成"关掉什么"。
+      '<button class="iconbtn b-home" title="回到默认目录（这个包的目录）"></button>' +
       '<button class="iconbtn b-back" title="后退"></button>' +
       '<button class="iconbtn b-fwd" title="前进"></button>' +
       '<button class="iconbtn b-up" title="向上一级（Backspace）"></button>' +
@@ -1102,6 +1110,7 @@ function bindBrowse(s){
   const rows = fmSorted(s);
   const setIcon = (sel, name) => { const b = page.querySelector(sel); if (b) b.innerHTML = ico(name, "i"); };
   setIcon(".b-back", "corner-up-left"); setIcon(".b-fwd", "corner-up-right");
+  setIcon(".b-home", "home");
   setIcon(".b-up", "arrow-up"); setIcon(".b-reload", "refresh-cw");
   setIcon(".b-newdir", "folder-plus"); setIcon(".b-newfile", "file-plus");
   setIcon(".b-rename", "pencil"); setIcon(".b-del", "trash-2");
@@ -1122,6 +1131,7 @@ function bindBrowse(s){
   page.querySelector(".crumbs").innerHTML = crumb;
   page.querySelectorAll(".crumbs .seg").forEach(el => { el.onclick = () => fmGoto(el.dataset.rel); });
 
+  page.querySelector(".b-home").onclick = fmHome;
   page.querySelector(".b-back").onclick = fmBack;
   page.querySelector(".b-fwd").onclick = fmFwd;
   page.querySelector(".b-up").onclick = fmUp;
