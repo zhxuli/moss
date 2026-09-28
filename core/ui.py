@@ -177,6 +177,9 @@ def build_payload():
         "user_data": str(paths.USER_DIR),
         "host_cmd": host_cmd(),
         "launch_kind": shell_mod.launch_kind(),
+        # 图标后缀顺序由宿主带过去：界面那侧要按同一套顺序去"历史目标目录"里
+        # 找 `icon.xxx`（你说的那条），两边共用一份顺序，免得以后 F-29 改了漏改
+        "icon_exts": list(pkg_mod.ICON_EXTS),
         "packages": pkgs,
     }
 
