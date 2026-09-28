@@ -61,7 +61,7 @@ svg.i{width:16px;height:16px;flex:none;display:block}
 .iconbtn.warn{color:#d64545}
 .iconbtn.warn:hover{background:color-mix(in srgb, #d64545 14%, transparent)}
 /* 「运行」是这一屏的主动作 → 蓝底；跑起来之后变成灰底的「停止」（图标是绿的，
-   颜色仍然只表达"在跑 / 没在跑"，这是你定的）。详情里那个「运行」也走同一套。 */
+   颜色仍然只表达"在跑 / 没在跑"）。详情里那个「运行」也走同一套。 */
 .iconbtn.primary{background:var(--accent);color:var(--accent-fg)}
 .iconbtn.primary:hover{background:var(--accent);filter:brightness(1.06)}
 header{display:flex;align-items:center;gap:10px;padding:9px 14px;
@@ -91,7 +91,7 @@ aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--
 #sideswitch button.on{background:var(--panel2);border-color:var(--line);color:var(--fg);font-weight:500}
 #sideswitch #btn-newpkg{margin-left:auto;padding:4px 7px;min-width:28px;border-color:var(--line);
   background:var(--panel2)}
-/* 历史行：**和包列表长得一样**（你要求的）—— 同一套内边距 / 图标尺寸 / hover / 选中态。
+/* 历史行：**和包列表长得一样** —— 同一套内边距 / 图标尺寸 / hover / 选中态。
    只有第二行不同：包显示"说明"，历史显示"目录 · 时间"。 */
 .hitem,.item{display:flex;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line2);
   cursor:pointer;align-items:center}
@@ -143,8 +143,8 @@ aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--
   color:#5d6773}
 /* ---- 状态灯 ---- */
 /* ---- 状态：**只有两种** —— 运行中（绿色停止图标）/ 没运行（灰色播放图标）----
-   ★ 不再显示"故障红 / 警告黄"（2026-09-27 你定的：「要么就停止 要么就运行，
-     请忽略那个错误啥的 —— 很多正确的退出、没有报错，也经常误报错误，看起来很碍眼」）。
+   ★ 不再显示"故障红 / 警告黄"：退出码误报太多 —— 很多正常的退出没有报错，
+     也经常被判成错误，那种颜色只会制造噪音（`U-18`）。
      退出码本身还是照记（在「命令行」那行文字里），只是**不拿出来当状态报警**了。 */
 .ic-run{color:#1f9d55}
 /* 左侧列表行尾那颗"没在跑"的播放图标：平时很淡，鼠标移上去才亮 —— 不抢视线 */
@@ -152,7 +152,7 @@ aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--
 .hstat .idle:hover,.rowstat .idle:hover{opacity:1;color:var(--fg)}
 /* 左侧列表行尾的状态图标。★ 历史行（`.hstat`）和包行（`.rowstat`）**共用同一套**：
    以前只写了 `.rowstat button`，历史那边就退化成浏览器默认按钮（灰框），
-   看着跟包列表不是一家 —— 你指出的"历史这里运行的样式不对"就是这个。 */
+   看着跟包列表不是一家 —— 就是这条漏了。 */
 .hstat,.rowstat{flex:none;display:flex;align-items:center;margin-left:6px}
 .hstat button,.rowstat button{display:flex;align-items:center;justify-content:center;padding:3px;
   border:none;border-radius:6px;background:transparent;cursor:pointer}
@@ -162,7 +162,7 @@ aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--
    （`border:1.6px …` / `animation:spin …}`）—— 是删小圆点时没清干净的残留：
    裸声明在顶层是非法 CSS，整段被浏览器丢掉，`animation` 引用的 `@keyframes spin`
    也早就不存在了。删掉。 */
-/* ★ 目标文件已经没了的历史条目：**整行灰掉**（你要求的）。
+/* ★ 目标文件已经没了的历史条目：**整行灰掉**。
    为什么不干脆删掉：这条记录仍然有用（当初在哪个目录跑的、跑过什么），
    只是再也跑不了了 —— 所以是"灰"，而且行尾那颗播放图标也不给。
    不做删除线、不去色：它不是"已删除"，它是"失效"。 */
@@ -374,7 +374,7 @@ table.p th{color:var(--dim);font-weight:500}
 .row-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 /* ★ 两个详情各有一个参数框：包详情是 `#args`，历史详情是 `#hargs`。
    原来只写了 `#args` ⇒ 历史那边的输入框是**浏览器默认样式**（细边、字被挤），
-   一眼就跟旁边不是一套东西 —— 你指出的「参数那里缺少样式」就是这个。 */
+   一眼就跟旁边不是一套东西 —— 以前就是漏了这一条。 */
 #args,#hargs{flex:1;min-width:180px;max-width:620px;padding:8px 11px;border-radius:9px;
   border:1px solid var(--line);
   background:var(--panel2);color:var(--fg);font-family:var(--mono);font-size:12.5px;
@@ -416,7 +416,7 @@ table.p th{color:var(--dim);font-weight:500}
 
 <main>
   <aside>
-    <!-- 左侧顶部：插件 / 历史 切换（你要求的），右边是"新建包" -->
+    <!-- 左侧顶部：插件 / 历史 切换，右边是"新建包" -->
     <div id="sideswitch">
       <button id="sw-pkg" class="on" title="已安装的包"></button>
       <button id="sw-hist" title="最近跑过的路径调用（点一下重跑）"></button>
@@ -575,7 +575,7 @@ const esc = escapeHtml;
    ★ 状态**只有"在跑 / 没在跑"两种**，而且唯一来源是**宿主**那份 (`PST`)：
      它会答"这个包有没有活着的进程"（按进程环境里的 MOSS_PKG_ID + 命令行认），
      不管是谁拉起来的。界面上不再自己维护一套"上次跑成什么样"——
-     那套原来只用来染红/黄，而退出码误报太多（你要求忽略），已经删掉。
+     那套原来只用来染红/黄，而退出码误报太多，已经删掉。
      需要退出码时它就在「命令行」那行文字里（"退出码 1"），不拿出来报警。 */
 function paintStates(){
   paintRowStats();
@@ -603,17 +603,17 @@ function stripAnsi(s){
 }
 
 /* ================================================================ 命令行：**一个包一份**
-   ★ 原来只有一块 <pre>，谁跑就往里写，于是"在 fanyi 这里看到的命令行和 img 那里是同一份"
-     （你发现的）。现在按 key 分缓冲区：
+   ★ 原来只有一块 <pre>，谁跑就往里写，于是"在 fanyi 这里看到的命令行和 img 那里是同一份"。
+     现在按 key 分缓冲区：
          key = 包 id（`moss :img` 的输出就落在 `img` 那份里）
          key = "__host__"（自检这种宿主自己的输出）
      切包只切"看哪一份"，别人的输出不会串进来；同时**允许多个包一起跑**
-     （宿主本来就支持，是我前端原来只留了一份 RUN 把它限成了单线程）。 */
+     （宿主本来就支持，是前端原来只留了一份 RUN，把它限成了单线程）。 */
 const CONSOLE = {};             // key -> {text, info}
 let consoleKey = null;          // 当前显示的是哪一份
 
 // 宿主机那一份的初始说明（顺便把"每个包一份"这件事写在界面上）
-const HOST_SEED = "每个包有**自己的一份**命令行，互不串台 —— 在左边选谁就显示谁。\n" +
+const HOST_SEED = "每个包有自己的一份命令行，互不串台 —— 在左边选谁就显示谁。\n" +
   "· 右上角「运行」= 跑这个包，输出落进它自己那份（可以同时跑好几个）\n" +
   "· 运行中再点同一个按钮 = 停止；左侧列表行尾那颗绿色停止图标也能停\n" +
   "· 「自检」的输出单独算一份（就是现在这份）";
@@ -701,7 +701,7 @@ async function refreshAllStates(){
 
 /* ---------------------------------------------------------------- 状态：只有两种
    运行中 = 绿色停止图标（点它停）；没在跑 = 淡灰播放图标（点它跑）。
-   **不再有红/黄**（退出码误报太多，你要求忽略）。 */
+   **不再有红/黄**（退出码误报太多）。 */
 function rowStateOf(id){
   const st = PST[id] || {};
   return st.running ? "running" : "idle";
@@ -734,7 +734,7 @@ async function runFromList(id){
   startRun(p, "");
 }
 
-/* 列表里直接停掉：是我们起的就走 run_stop（好把输出收尾），否则按进程停 */
+/* 列表里直接停掉：是这里起的就走 run_stop（好把输出收尾），否则按进程停 */
 async function stopFromList(id){
   let r;
   if (RUNS[id]){
@@ -753,7 +753,7 @@ async function stopFromList(id){
 function paintActions(p){
   const b = $("#btn-run"), v = $("#btn-vis");
   if (!b || !v) return;
-  /* 历史条目：只有「运行 / 停止」，而且状态**只认我们自己起的那一次**（宿主那边
+  /* 历史条目：只有「运行 / 停止」，而且状态**只认这里起的那一次**（宿主那边
      一次"路径调用"没有包 id，认不出是不是别处起的）。「显示/隐藏」对它禁用 ——
      路径调用没有"包自己的窗口"这回事（那个按钮管的是 GUI 包的窗口，`U-16`）。 */
   if (isHist(p)){
@@ -846,8 +846,8 @@ function hasRealOutput(text){
     !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(l));
 }
 
-/* ★ "有输出才切过去"（你定的规则，第 72 版我先做成了"永不切换"，是我理解偏了）：
-   第一次出现**真输出**时切到「命令行」；一直没输出（纯 GUI 的包）就留在原地。
+/* ★ "有输出才切过去"：第一次出现**真输出**时切到「命令行」；
+   一直没输出（纯 GUI 的包）就留在原地（`U-16`）。
    只在"用户自己没挪窝"时切 —— 万一他已经去文件管理了，别把他拽回来。 */
 function maybeAutoSwitch(id, run, outText){
   if (run.switched || !hasRealOutput(outText)) return;
@@ -883,7 +883,7 @@ function finishRun(id, code, text){
              runTail(code, text, stopped),
              // ★ 只说事实（退出码是多少），不判"故障" —— 非 0 在很多包里是正常现象
              stopped ? "已停止" : ("退出码 " + code));
-  // 我们自己按的停止不算"故障"（红）—— 是"已停止"（黄）
+  // 这里按的停止不算"故障"（红）—— 是"已停止"（黄）
   paintRowStats();
   // 详情正开着"这次跑的那个对象"就重画一遍（包 或 历史条目 —— 收尾信息在详情里也显示）
   if ((cur && cur.id === id) || (curH && histKey(curH) === id)) renderDetail();
@@ -896,8 +896,8 @@ function finishRun(id, code, text){
 }
 
 /* 收尾那一行怎么措辞。
-   ★ 为什么要专门做：GUI 包被**我们自己按停止**时，进程是被强杀的，退出码必然是 1 ——
-     直接写"[退出码] 1"会让人以为它报错了（你实测反馈过："我正常关闭的，感觉也没报错呀"）。
+   ★ 为什么要专门做：GUI 包被**在这里按停止**时，进程是被强杀的，退出码必然是 1 ——
+     直接写"[退出码] 1"会让人以为它报错了（实测：正常关窗口也是这个码）。
      另外"非 0 但一句话都没输出"这种情况也点明，省得盯着屏幕找不存在的报错。 */
 function runTail(code, text, stopped){
   if (stopped) return "[已停止]（这次是点了停止 —— 不是故障）";
@@ -956,7 +956,7 @@ function setSide(which){
    ★ 点一下 = **选中它**（不再是直接重跑）—— 和包列表一样：右边出「详情 / 命令行 /
      文件管理」三个选项卡，只有点「运行」（或详情里那个参数框回车）才真的跑，
      而且**在它当初的目录里跑**。行尾那颗播放图标仍然是"点一下就重跑"。
-   目标目录里若有 `icon.xxx` 就用它当图标（你要求的）；没有就按目标文件的
+   目标目录里若有 `icon.xxx` 就用它当图标；没有就按目标文件的
    **后缀**画一个（跟文件管理器里同一个图标），不是一个千篇一律的返回箭头。 */
 let HIST = [];
 
@@ -1026,7 +1026,7 @@ function renderHist(){
     d.dataset.key = histKey(it);
     d.dataset.state = RUNS[d.dataset.key] ? "running" : "idle";
     if (d.dataset.key === selKey) d.classList.add("sel");
-    // ★ 目标文件已经没了的，整行**灰掉**（你要求的）：它已经跑不了了，
+    // ★ 目标文件已经没了的，整行**灰掉**：它已经跑不了了，
     //   但记录还留着（当初在哪儿、跑过什么仍然有用），所以是灰不是删。
     const gone = it.exists === false;
     if (gone){
@@ -1195,7 +1195,7 @@ function renderDetail(){
       '</div></div>' +
     // ★ 这里**不要再建 #btn-run / #btn-vis**：它们已经钉在选项卡那一行上了。
     //   上次挪位置时把这段留下了 —— 结果是同一对 id 在页面里出现两次，
-    //   `$("#btn-run")` 只会命中先出现的那个，详情里这两个永远空着（你看到的"两个空元素"）。
+    //   `$("#btn-run")` 只会命中先出现的那个，详情里这两个永远空着。
     '<p class="desc">' + esc(p.desc) + '</p>';
 
   // 别名 / 标签 / AI：**用"标签 : 值"的行**（像设置的检查器），不再是一堆药丸 —— 药丸只留给
@@ -1239,7 +1239,7 @@ function renderDetail(){
       '　·　右上角是「运行 / 停止」</div></div></div>' +
     '<div class="grp danger"><div class="glabel">卸载</div><div class="gbody">' +
       '<div class="grow row-split">' +
-      '<span class="hint">真删：包本体 + 它的数据（不进回收站）</span>' +
+      '<span class="hint">永久删除：包本体 + 它的数据（不进回收站）</span>' +
       '<button class="btn tint warn" id="btn-remove" title="卸载这个包（moss --remove）">' +
         ico("trash-2", "i") + '<span>卸载</span></button>' +
       '</div></div></div></div>';
@@ -1265,7 +1265,7 @@ function renderDetail(){
   $("#btn-vis").onclick = () => toggleVis(p);
   refreshPkgState(p);
   $("#btn-openui").onclick = async () => {    const r = await pywebview.api.open_ui(p.id, $("#args").value);
-    // 不切选项卡：带界面的包本来就没有命令行输出（你指出的），停在详情更合理
+    // 不切选项卡：带界面的包本来就没有命令行输出，停在详情更合理
     paintRowStats();
     setTimeout(() => refreshPkgState(p), 1500);
     setTimeout(() => refreshPkgState(p), 3500);
@@ -1275,8 +1275,8 @@ function renderDetail(){
 
 /* ---------------------------------------------------------------- 详情：一条历史
    和包那份**长得一样**（同一个 .hd / .sec / .row-inline 结构），内容按"这条记录
-   真有什么"来给 —— **没有的就不显示**（你说过：参数空着就别写"参数（无）"，
-   上次结果不知道就别写；说明性的废话也不要）。 */
+   真有什么"来给 —— **没有的就不显示**（参数空着不写"参数（无）"，
+   上次结果不知道就不写；说明性的废话也不写）。 */
 function renderDetailHist(it, box){
   const when = (it.ts || "").replace("T", " ");
   const gone = it.exists === false;
@@ -1326,7 +1326,7 @@ function renderDetailHist(it, box){
   const upd = () => {
     const a = $("#hargs").value.trim();
     // 和宿主 `rerun_argv` 同一条规则的**近似预览**：真正跑的时候宿主回回来的 `cmd`
-    // 才是准的（会打到「命令行」上）。这里只求"看着像你会敲的那条"。
+    // 才是准的（会打到「命令行」上）。这里只求"看着像手敲的那条"。
     $("#hpreview").textContent = "moss /" + it.name + (a ? " " + a : "");
   };
   $("#hargs").addEventListener("input", upd);
@@ -1346,12 +1346,12 @@ function renderDetailHist(it, box){
 }
 
 /* 删一条历史记录：**真删** —— 把那几行从账里抠掉（原地改、保留行尾）。
-   ★ **不弹确认框**（你定的：「删除历史记录的时候 不要用弹窗 直接删 我最烦弹窗了」）。
+   ★ **不弹确认框**：这里碰不到任何文件，弹窗只会拖慢一次清理动作。
      这里也确实碰不到任何文件：只动 `user_data/history/*.jsonl` 里那几行。
      （包那边的「卸载」是**真删文件**，确认框保留。）
    ★ 为什么不做成"追加一条墓碑、读的时候跳过"：那样"能不能跳过"取决于读的人那份代码
      认不认墓碑 —— 终端里的 `moss --history` 跑的是**编在 exe 里的** `core/history.py`，
-     旧 exe 不认识，于是"界面里删了、终端里还在"。**删就真删。** */
+     旧 exe 不认识，于是"界面里删了、终端里还在"。所以删除做成真删。 */
 async function cmdForgetHist(it){
   const r = await pywebview.api.hist_forget(histKey(it));
   toast(r.ok ? ("已删掉这条记录：" + it.name) : ("✗ " + (r.msg || "删不掉")), !r.ok);
@@ -1365,7 +1365,7 @@ async function cmdForgetHist(it){
 /* ================================================================ 文件管理
    上下文按"当前对象"分，三种 key：
      · `<包 id>`   —— 这个包自己的一套
-     · `hist:…`    —— **一条历史**（你要求的：历史也要有文件管理），根是它当初的目录
+     · `hist:…`    —— **一条历史**（历史条目同样有文件管理），根是它当初的目录
      · `__all__`   —— 没选任何东西时的"全部文件"
    每个上下文记自己的当前目录、历史、选中、剪贴板、排序，以及**打开的文件子选项卡**。
    切到别的对象 = 换一套上下文，互不干扰；切回来还在原处。 */
@@ -1383,7 +1383,7 @@ function fmState(key){
     // ★ 这里有两个"hist"，**必须分开叫**：
     //     `hist`    = 这个上下文的**前进后退历史**（一个数组，`fmGoto` 要 push）
     //     `histCtx` = 这个上下文是不是"一条历史"（存那条历史的 key）
-    //   我第一版把第二个也起名 `hist`，同一个对象字面量里写了两遍 ⇒ 后面的把数组
+    //   曾经把第二个也起名 `hist`，同一个对象字面量里写了两遍 ⇒ 后面的把数组
     //   覆盖成 null/字符串 ⇒ `fmGoto` 里 `s.hist.slice` 直接抛异常，
     //   **整个文件管理都打不开**（实测：上下文永远停在上一次渲染的 `__all__` 上，
     //   地址栏写着 user_data，右边却显示"历史调用所在的目录"）。
@@ -1397,7 +1397,7 @@ function fmState(key){
 }
 /* 这个包在两层里的候选目录（`system/pkgs/<id>` / `user/pkgs/<id>`）。
    ★ 切换按钮要跳的是**同一个包在另一层的目录**，不是总目录 ——
-     哪一层没有这个目录，那个按钮就不显示（你要求的）。 */
+     哪一层没有这个目录，那个按钮就不显示。 */
 function fmLayerRels(key){
   return {user: "user/pkgs/" + key, system: "system/pkgs/" + key};
 }
@@ -1472,7 +1472,7 @@ async function fmGoto(rel, push, quiet){
 function fmHome(){
   const def = fmDefaultRel(FM.ctx);
   const s = fmState(FM.ctx);
-  // 已经在默认目录就说一声 —— 不然点下去"什么都没发生"，看着像按钮坏了（你反馈过）
+  // 已经在默认目录就说一声 —— 不然点下去"什么都没发生"，看着像按钮坏了
   if (s.rel === def){ toast("已经在默认目录了：" + (s.path || def)); return; }
   fmGoto(def);
 }
@@ -2031,7 +2031,7 @@ async function fmCmd(act){
     if (!selArr.length) return;
     const names = s.entries.filter(e => s.sel.has(e.rel)).map(e => e.name);
     askConfirm("删除", "把 " + (names.length === 1 ? "“" + names[0] + "”" : names.length + " 项") +
-      " 挪进 user_data/trash/（**不是真删**，能拿回来）。确定吗？", async () => {
+      " 挪进 user_data/trash/（<b>不是永久删除</b>，能拿回来）。确定吗？", async () => {
         const r = await pywebview.api.fs_delete(selArr);
         toast(r.msg, !r.ok);
         if (r.ok){
@@ -2093,7 +2093,7 @@ function askText(title, value, cb){
 }
 function askConfirm(title, text, cb){
   $("#m-title").textContent = title;
-  // 用 innerHTML：确认框里要换行（`<br>`）。文案是我们自己拼的（包 id / 目录），
+  // 用 innerHTML：确认框里要换行（`<br>`）。文案是自己拼的（包 id / 目录），
   // 而 Windows 路径里不可能有 `<`，所以这里没有注入面。
   $("#m-text").innerHTML = text.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
   $("#m-input").hidden = true;
@@ -2131,7 +2131,7 @@ async function init(){
   fmRender();
 }
 function paintStaticIcons(){
-  // 注意：这里**没有"退出"按钮**了 —— 标题栏本来就有 ×，重复一个是我多做的（你指出的）
+  // 注意：这里**没有"退出"按钮** —— 标题栏本来就有 ×，重复一个是多余的
   // 顶层三个选项卡也带图标（原来只有文字，和别处不统一）
   const tabs = {"detail": ["info", "详情"], "console": ["terminal", "命令行"],
                 "file": ["folder-tree", "文件管理"]};
@@ -2143,7 +2143,7 @@ function paintStaticIcons(){
   // 左侧顶部：插件 / 历史 切换 + 新建包
   $("#sw-pkg").innerHTML  = ico("package", "i") + '<span>插件</span>';
   // ★ 历史用 Lucide 那个**带表针的 history**（lucide-static 1.48.0，见 vendor/README.md）。
-  //   上一版我随手用了 `corner-up-left`（就是个"返回箭头"），跟"历史"不是一回事 —— 你指出的。
+  //   以前用的是 `corner-up-left`（一个"返回箭头"），跟"历史"不是一回事。
   $("#sw-hist").innerHTML = ico("history", "i") + '<span>历史</span>';
   $("#btn-newpkg").innerHTML = ico("file-plus", "i");
   $("#btn-refresh").innerHTML   = ico("refresh-cw", "i");
@@ -2195,7 +2195,7 @@ async function cmdNewPkg(){
 async function cmdRemovePkg(p){
   const st = ico("alert-triangle", "i");
   askConfirm("卸载这个包",
-    "将**真删**（不进回收站）：<br>· 包本体 " + p.dir + "<br>" +
+    "将<b>永久删除</b>（不进回收站）：<br>· 包本体 " + p.dir + "<br>" +
     "· 它的数据 user_data/state/" + p.id + "（如果有）<br><br>" +
     "层：" + p.layer + (p.layer === "system" ? "（出厂件 —— 删了升级时会回来）" : "") +
     "<br>确定吗？",

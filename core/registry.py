@@ -9,7 +9,7 @@
 ★ 没有 `registry.json` 了（`D-09` ❌ / `D-22` ✅，2026-09-27）。
   原来那份"安装状态账本"每次启动都重写一遍，而它里面的字段
   （`layer` / `version` / `origin` / `seenAt` / `lastStart` / `host`）
-  **全是只写不读**，唯一被读的 `state` 又只有"禁用"一个用途 —— 而你不需要禁用。
+  **全是只写不读**，唯一被读的 `state` 又只有"禁用"一个用途 —— 而这个用途并不需要。
   于是它成了一张命中率为 0 的缓存表：要么每次刷新（等于没缓存），
   要么不刷新（就会和磁盘不同步）。两条路都指向同一个结论：**别记账，现扫。**
   实测（200 个包）：全扫 54 ms，直探一个目录 0.28 ms。
@@ -109,7 +109,7 @@ def _probe_by_dirname(name):
         第 3 步  读这一个目录里的 `pkg.json` —— **只读这一个**，快就快在这。
                 读不出来（清单坏了）或 id 不合法（没法当目录名用）→ 不在这里报错，
                 放弃这一层，交给后面的全扫去报，免得同一个毛病报两遍。
-        第 4 步  确认"你要找的名字"真的是这个包的 id，或者它的别名之一。
+        第 4 步  确认要找的名字真的是这个包的 id，或者它的别名之一。
                 都不是 → 这个目录只是碰巧同名，不算命中，换下一层试。
         第 5 步  装成和全扫**一样的结果格式**（id / layer / dir / pkg）返回。
                 若命中的是用户层、而系统层还有同 id 的包，补一个 `shadowed="system"`
@@ -129,7 +129,7 @@ def _probe_by_dirname(name):
         if p is None or not paths.valid_id(p.get("id")):
             continue                                #        清单坏了 / id 非法 → 交给全扫去报
         pkg_mod.display_name(p)                     #        和 _scan_layer 一致：多语言 name/desc 要摊平
-        pid = str(p.get("id") or "").lower()        # 第 4 步：你要找的名字，是它的 id 吗？
+        pid = str(p.get("id") or "").lower()        # 第 4 步：要找的名字，是它的 id 吗？
         aliases = [str(x).lower() for x in (p.get("aliases") or [])]
         if name != pid and name not in aliases:     #        也不是它的别名？
             continue                                #        → 只是目录碰巧同名，换下一层

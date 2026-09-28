@@ -83,7 +83,7 @@ def _run_capture(argv):
 #      路径最终来自页面，不能假设它是善意的。
 #   ③ **删除不是真删**：挪进 `user_data/trash/<时间戳>/<原路径>`（可恢复）。
 #
-# ★ `system/` 是**可写**的（2026-09-27 你定的："只读可不行"）。理由也站得住：
+# ★ `system/` 是**可写**的（`D-24`）。理由：出厂件也常常需要就地改一下试试，
 #   这个项目的玩法就是"自己改包"，而改包就得改代码；`system/pkgs/*` 虽然是出厂件，
 #   但现在还没开始分发、改坏了 git 还能救。界面上**只提示不拦截**：
 #   打开 `system/` 里的文件会顶一条"升级时会被整体替换"的提醒。
@@ -95,13 +95,13 @@ USER_DATA = Path(os.environ.get("MOSS_USER_DATA_DIR") or (HOME / "user_data"))
 
 ROOTS = [
     {"key": "user", "label": "user_data", "path": USER_DATA, "writable": True,
-     "why": "你的包 / 配置 / 数据"},
+     "why": "本地安装的包 / 配置 / 数据"},
     {"key": "system", "label": "system", "path": HOME / "system", "writable": True,
      "why": "出厂件（随 moss.exe 分发）—— 能改，但升级时会被整体替换"},
 ]
 
 # ★ 第三个根：**绝对路径**（页面写的 `abs/D:/python/wwwroot/ZeEn`）。
-#   为什么要它（2026-09-28 你定的）：历史里那些**路径调用**的目标本来就散在磁盘各处
+#   为什么要它（`D-25`）：历史里那些**路径调用**的目标本来就散在磁盘各处
 #   （`D:\python\wwwroot\ZeEn` 这类），而前两个根只覆盖 `user_data/` 和 `system/`。
 #   历史条目要能"点进去看看那个目录"，就必须能走到根外面 —— 否则它的「文件管理」
 #   永远只会说"路径跑到根外面去了"。
@@ -222,11 +222,11 @@ def _bad_name(name):
 
 # ================================================================ 包自己的界面窗口
 # 「显示 / 隐藏」那个按钮要管的是**这个包自己的界面窗口**（GUI 包跑起来的那扇窗）。
-# 怎么知道哪扇窗是它的：**记我们为它拉起过的进程根**（`open_ui` / `run_start` 时记），
+# 怎么知道哪扇窗是它的：**记下为它拉起过的进程根**（`open_ui` / `run_start` 时记），
 # 然后按 PID 树找出这些进程以及它们的子孙，再用 EnumWindows 找属于这些 PID 的顶层窗口。
 # 比"按窗口标题猜"可靠得多（标题会被包自己改，也可能撞名）。
-_pkg_procs = {}          # 包 id -> {我们为它拉起过的进程根 pid}
-_pkg_hidden = {}         # 包 id -> [我们自己藏起来的窗口句柄]（显示时只放这几个）
+_pkg_procs = {}          # 包 id -> {为它拉起过的进程根 pid}
+_pkg_hidden = {}         # 包 id -> [被藏起来的窗口句柄]（显示时只放这几个）
 
 
 def _remember_proc(pkg, pid):
@@ -270,7 +270,7 @@ def _pid_parents():
 def _with_descendants(roots, parents=None):
     """roots 以及它们的全部子孙 pid —— **只算还活着的**（包的启动器 → 真身常常两三层）。
 
-    ★ 必须按快照过滤掉死 pid：`roots` 是我们当初记下的 pid，进程退出后那个号
+    ★ 必须按快照过滤掉死 pid：`roots` 是当初记下的 pid，进程退出后那个号
       还留在表里；不过滤的话 `pkg_state` 会永远报"它还在跑" ——
       **实测踩到**：点「停止」把图片工具退出了，按钮却一直显示"停止"不变回来。
     ★ `parents` 允许传进来复用：批量查十几个包时，进程快照只取一次就够（省几十毫秒）。
@@ -425,7 +425,7 @@ def _hist_drop_lines(path, key):
 
 
 # ================================================================ 文本编码
-# ★ 为什么专门做这件事（2026-09-28 你反馈"有的 txt 打不开，说它是二进制"）：
+# ★ 为什么专门做这件事（有些 txt 打不开、被报成"二进制文件"）：
 #   原来的判断只有一句 `b"\x00" in raw[:8192]` —— 而 **UTF-16 文本里每个 ASCII
 #   字符后面都跟着一个 0x00**，于是记事本存成的 UTF-16 txt 全被当成二进制拒了。
 #   GBK（中文 Windows 上老 .txt 的常见编码）倒是不会被判成二进制，但会解成乱码。
@@ -493,7 +493,7 @@ def _decode_text(raw):
 
 
 def rerun_argv(target, cwd="", args=""):
-    """把一条历史记录翻成"你在终端里会手敲的那条命令"。返回 (argv, cwd)，空目标给 (None, None)。
+    """把一条历史记录翻成"在终端里会手敲的那条命令"。返回 (argv, cwd)，空目标给 (None, None)。
 
     ★ 为什么不能直接用绝对路径（2026-09-28 实测踩到）：
       `core/resolve.py:find()` 只在 cwd 往上做**名字前缀匹配** —— 绝对路径会被
@@ -505,7 +505,7 @@ def rerun_argv(target, cwd="", args=""):
 
           cwd  = 当初记录的 cwd（不是目录了就退到目标自己所在的目录，再退 user_data）
           名字 = 目标**相对这个 cwd** 的写法；目标不在它下面时只给文件名
-                 （只给文件名时靠 `V-20` 那条历史兜底 —— 也就是你说的 `moss zeen`）
+                 （只给文件名时靠 `V-20` 那条历史兜底 —— 即 `moss zeen` 那种写法）
 
       cwd=`D:\\python\\wwwroot\\ZeEn` + 目标=同目录 `main.py` → `moss /main.py`
       目标在子目录里（cwd 是上层）                        → `moss /ZeEn/main.py`
@@ -572,15 +572,15 @@ def _run_registered(proc):
 
 
 def _env_pkg_id(pid):
-    """问一个进程：你的环境变量里 `MOSS_PKG_ID` 是什么。
+    """问一个进程：它的环境变量里 `MOSS_PKG_ID` 是什么。
 
-    ★ 为什么要它：光靠"我们自己拉起过的进程树"认不出这些情况 ——
-      ① 用户是**从终端**敲 `moss :exec` 开的（我们没经手）；
+    ★ 为什么要它：光靠"本程序拉起过的进程树"认不出这些情况 ——
+      ① 用户是**从终端**敲 `moss :exec` 开的（本程序没经手）；
       ② 包的父进程 fork 出界面之后**自己退出了**（PID 树断了，界面成了孤儿）；
       ③ moss 界面重启过（内存里那份进程表没了）。
       而宿主给每个包调用都注入了 `MOSS_PKG_ID`（`core/engine.py:144`），
       它跟着子进程一路继承下去 —— 所以"谁在跑这个包"这件事，
-      **进程自己身上就写着**，比我们记的账可靠。
+      **进程自己身上就写着**，比宿主记的账可靠。
     ⚠️ 已知副作用（`P-18` ⬜）：`MOSS_*` 会顺着长驻服务往下漏（实测 dsh 那棵树里
       node/pwsh 都带着 `MOSS_PKG_ID=dsh`），所以对 `dsh` 这种包，认出来的可能偏多。
       `P-18` 那条定了之后这里会更准。
@@ -617,7 +617,7 @@ def _pids_by_cmdline():
 
 def _pkg_pids(pkg, parents=None, cmdlines=None, owner_pkg=None):
     """属于这个包、**还活着**的进程：
-       ① 我们记下的进程树（点过运行/打开界面的）
+       ① 宿主记下的进程树（点过运行 / 打开界面的）
        ② 命令行里带着 `pkgs/<id>/` 的（从终端开的、后台服务都算）
        ③ 拥有窗口、且环境里 `MOSS_PKG_ID` 等于它的（包自己 re-exec 之类的情况）
     """
@@ -793,7 +793,7 @@ class Api:
           在 CLI 的 `--history` 里就会**又冒出来**。所以下面 `_hist_key` /
           `_hist_is_record` 是那两个函数的**逐字镜像**
           （改一处必须改两处 —— 这两份注定要重复，因为不能 import）。
-        ★ 图标按你说的来：**目标所在目录里若有 `icon.xxx` 就用它**（包列表那边
+        ★ 图标规则：**目标所在目录里若有 `icon.xxx` 就用它**（包列表那边
           宿主的 `pkg.icon_path` 早就在这么做了，这里是同一套前缀顺序）。
         """
         rows = [r for r in _hist_read_all() if _hist_is_record(r)]
@@ -829,7 +829,7 @@ class Api:
                 "cwd": cwd,
                 "args": str(r.get("args") or ""),
                 "exit": r.get("exit"),
-                # ★ "这东西还在不在"：不在的条目界面画成灰的（你要求的）。
+                # ★ "这东西还在不在"：不在的条目界面画成灰的。
                 #   目标没了 / 当初的目录没了，分开报 —— 一个是"跑不了了"，
                 #   另一个只影响"在哪儿跑"。
                 "exists": bool(target) and Path(target).is_file(),
@@ -843,7 +843,7 @@ class Api:
     def hist_forget(self, key):
         """把一条历史**真删掉**：把那几行从账里抠掉（原地改、保留行尾、原子截断）。
 
-        ★ 为什么不是"追加一条墓碑"（第一版是那么做的，你一问就看出问题了）：
+        ★ 为什么不是"追加一条墓碑、读的时候跳过"：
           墓碑只是"读的时候跳过"，**能不能跳过取决于读的人那份代码认不认它**。
           界面后端在 exe 外面、改完就是新的；而终端里的 `moss --history` 跑的是
           **编在 exe 里的 `core/history.py`** —— 旧 exe 不认识墓碑，于是
@@ -881,8 +881,8 @@ class Api:
           `resolve.find()` 只会在 cwd 往上做**名字前缀匹配**，绝对路径会被当成名字，
           于是永远"候选 0 个" —— 也就是说这条路**从来没真正跑起来过**。
           （CLI 自己的 `--history` 回车能跑，是因为它走 `cmd_rerun_record`，
-            直接构造调用、不过解析器。你举的 `moss zeen` 走的是 `V-20` 那条历史兜底。）
-          所以这里换成**和你在终端里手敲完全一样的形式** —— 规则见 `rerun_argv()`。
+            直接构造调用、不过解析器。`moss zeen` 那种写法走的是 `V-20` 的历史兜底。）
+          所以这里换成**和在终端里手敲完全一样的形式** —— 规则见 `rerun_argv()`。
         """
         argv, workdir = rerun_argv(target, cwd, args)
         if argv is None:
@@ -938,7 +938,7 @@ class Api:
     def pkg_state(self, pid):
         """这个包**现在在不在跑**、有没有窗口、窗口是显示还是隐藏。
 
-        「在不在跑」不只算我们自己拉起的：从终端开的、父进程退了的，都认得出
+        「在不在跑」不只算宿主自己拉起的：从终端开的、父进程退了的，都认得出
         （看进程环境里的 `MOSS_PKG_ID`）。界面右上角那个按钮就靠它决定
         显示「运行」还是「停止」。
         """
@@ -969,7 +969,7 @@ class Api:
             return {"ok": True, "msg": "它的窗口本来就是隐藏的"}
         done = [w["hwnd"] for w in vis if _show_window(w["hwnd"], False)]
         if done:
-            _pkg_hidden[str(pid)] = done            # 记下"是我们藏的"，显示时只放这几个
+            _pkg_hidden[str(pid)] = done            # 记下"是这里藏的"，显示时只放这几个
         return {"ok": bool(done), "msg": "已隐藏 %d 个窗口（没关掉，还能再显示出来）" % len(done)}
 
     def pkg_show(self, pid):
@@ -979,7 +979,7 @@ class Api:
             ws = _pkg_windows(pid)
             if not ws:
                 return {"ok": False, "msg": "没找到它的窗口 —— 先「打开界面」或「运行」一次"}
-            hs = [w["hwnd"] for w in ws]            # 不是我们藏的（比如被最小化过）→ 全放出来
+            hs = [w["hwnd"] for w in ws]            # 不是这里藏的（比如被最小化过）→ 全放出来
         n = sum(1 for h in hs if _show_window(h, True))
         if n:
             _pkg_hidden.pop(str(pid), None)
@@ -1237,8 +1237,8 @@ class Api:
 
         ★ 用途：文件管理里那对"切到另一层"的按钮（`system/pkgs/md5` ↔
           `user_data/pkgs/md5`）**只有那一层真有这个包的目录时才显示** ——
-          用户明确要求过："user_data 对应的有这个目录，你才能显示这个切换的按钮，
-          否则不要显示"。所以页面需要在渲染时问一次，而不是猜。
+          规则：只有那一层真有这个包的目录时，才显示那个切换按钮 ——
+          所以页面需要在渲染时问一次，而不是猜。
         """
         out = {}
         for rel in (rels or []):
