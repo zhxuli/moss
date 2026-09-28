@@ -310,7 +310,7 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
    高亮与编辑器结构照抄 exec；图标用 Lucide。
    ========================================================================== */
 
-let DATA = null, cur = null, busy = false, tab = "detail";
+let DATA = null, cur = null, tab = "detail";
 let lastRun = null;
 const $ = s => document.querySelector(s);
 
@@ -392,11 +392,10 @@ const esc = escapeHtml;
 
 /* ---------------------------------------------------------------- 状态灯 */
 const STATE = {};
-let consoleWho = null;
 function stateOf(id){ return STATE[id] || {state:"idle"}; }
 function setState(id, st, extra){
   STATE[id] = Object.assign({state:st, ts:Date.now()}, extra || {});
-  consoleWho = id; paintStates();
+  paintStates();
 }
 function stateLabel(s){
   if (s.state === "running") return "运行中";
@@ -411,14 +410,7 @@ function paintStates(){
   // 状态颜色现在只出现在两处：**顶部的运行/停止按钮的图标**、**左侧列表行尾的状态图标**。
   // 这里只负责把行尾那颗更新掉（颜色/图标由 `paintRowStats` 统一算）。
   paintRowStats();
-  const info = $("#outinfo");
-  if (info && consoleWho) info.textContent = stateLabel(consoleWho ? stateOf(consoleWho) : {state:"idle"});
   if (cur) paintActions(cur);
-}
-function clearConsoleState(){
-  consoleWho = null;
-  const info = $("#outinfo");
-  if (info) info.textContent = "还没跑过";
 }
 
 /* ---------------------------------------------------------------- 面板 */
@@ -430,6 +422,7 @@ function setTab(name){
     $("#pane-" + t).classList.toggle("on", t === name));
   hideCtx();
   if (name === "detail" && cur) refreshPkgState(cur);   // 回到详情时对一下"在不在跑 / 有没有窗口"
+  if (name === "console") paintConsole();
 }
 function stripAnsi(s){
   return String(s == null ? "" : s)
@@ -437,12 +430,49 @@ function stripAnsi(s){
     .replace(/[\x1b][()][A-Za-z0-9]/g, "")
     .replace(/[\r\f]/g, "");
 }
-function out(text, info){
-  const el = $("#out");
-  el.textContent = stripAnsi(text);
-  el.scrollTop = el.scrollHeight;
-  if (info !== undefined && info !== null) $("#outinfo").textContent = info;
+
+/* ================================================================ 命令行：**一个包一份**
+   ★ 原来只有一块 <pre>，谁跑就往里写，于是"在 fanyi 这里看到的命令行和 img 那里是同一份"
+     （你发现的）。现在按 key 分缓冲区：
+         key = 包 id（`moss :img` 的输出就落在 `img` 那份里）
+         key = "__host__"（自检这种宿主自己的输出）
+     切包只切"看哪一份"，别人的输出不会串进来；同时**允许多个包一起跑**
+     （宿主本来就支持，是我前端原来只留了一份 RUN 把它限成了单线程）。 */
+const CONSOLE = {};             // key -> {text, info}
+let consoleKey = null;          // 当前显示的是哪一份
+
+// 宿主机那一份的初始说明（顺便把"每个包一份"这件事写在界面上）
+const HOST_SEED = "每个包有**自己的一份**命令行，互不串台 —— 在左边选谁就显示谁。\n" +
+  "· 右上角「运行」= 跑这个包，输出落进它自己那份（可以同时跑好几个）\n" +
+  "· 运行中再点同一个按钮 = 停止；左侧列表行尾那颗绿色停止图标也能停\n" +
+  "· 「自检」的输出单独算一份（就是现在这份）";
+
+function consoleBuf(key){
+  const k = key || "__host__";
+  if (!CONSOLE[k]) CONSOLE[k] = {text: k === "__host__" ? HOST_SEED : "", info: "还没跑过"};
+  return CONSOLE[k];
 }
+function consoleTitle(key){
+  if (!key) return "moss";
+  if (key === "__host__") return "moss 自检";
+  const p = DATA && DATA.packages.find(x => x.id === key);
+  return p ? (p.name + "（:" + key + "）") : key;
+}
+function paintConsole(){
+  const key = consoleKey || "__host__";
+  const b = consoleBuf(key);
+  const el = $("#out");
+  el.textContent = b.text;
+  el.scrollTop = el.scrollHeight;
+  $("#outinfo").textContent = consoleTitle(key) + " · " + (b.info || "");
+}
+function setConsole(key, text, info){
+  const b = consoleBuf(key);
+  b.text = stripAnsi(text);
+  if (info !== undefined && info !== null) b.info = info;
+  if ((consoleKey || "__host__") === (key || "__host__")) paintConsole();
+}
+function out(text, info){ setConsole(consoleKey || "__host__", text, info); }
 async function copyOut(){
   const text = $("#out").textContent;
   let ok = false;
@@ -465,11 +495,11 @@ async function copyOut(){
    走宿主的 `run_start` / `run_poll` / `run_stop`：200ms 轮询一次，
    输出**流式**刷进「命令行」，随时能按停止（连子孙进程一起杀）。
 
-   ★ 但"这个包在不在跑"**不能只看我这份 RUN**：包可能是从终端开的、
-   或者它的父进程 fork 出界面后自己退了、或者 moss 界面重启过。
-   所以按钮状态一律问宿主 `pkg_state`（它按进程环境里的 `MOSS_PKG_ID` 认，
-   不管是谁拉起来的）。本地的 RUN 只用来决定"输出还能不能流式看"。 */
-let RUN = null;                 // {id, rid, cmd, timer}
+   ★ "这个包在不在跑"**不能只看本地状态**：包可能是从终端开的、或者它的父进程
+   fork 出界面后自己退了、或者 moss 界面重启过。所以按钮状态一律问宿主
+   （它按进程环境里的 `MOSS_PKG_ID` 认，不管是谁拉起来的）。
+   本地的 `RUNS` 只用来决定"这个包的输出还能不能流式看"。 */
+const RUNS = {};                // 包 id -> {rid, cmd, timer, stopped}（**可以同时好几个**）
 const PST = {};                 // 包 id -> {running, pids, windows, visible, titles}
 let pstTimer = null;
 
@@ -532,10 +562,9 @@ function paintRowStats(){
 /* 列表里直接停掉：是我们起的就走 run_stop（好把输出收尾），否则按进程停 */
 async function stopFromList(id){
   let r;
-  if (RUN && RUN.id === id){
-    r = await pywebview.api.run_stop(RUN.rid);
-    if (RUN) RUN.stopped = true;
-    setTimeout(() => { if (cur) refreshPkgState(cur); }, 400);
+  if (RUNS[id]){
+    r = await pywebview.api.run_stop(RUNS[id].rid);
+    RUNS[id].stopped = true;
   } else {
     r = await pywebview.api.pkg_stop(id);
     if (r.ok) setState(id, "warn", {note: "已停止"});
@@ -550,7 +579,7 @@ function paintActions(p){
   const b = $("#btn-run"), v = $("#btn-vis");
   if (!b || !v) return;
   const st = (p && PST[p.id]) || {running: false, windows: 0, visible: false};
-  const mine = !!(p && RUN && RUN.id === p.id);
+  const mine = !!(p && RUNS[p.id]);
   const running = mine || !!st.running;
   const last = p ? stateOf(p.id).state : "idle";
   const colorCls = running ? "ic-run" : (last === "fail" ? "ic-fail" : (last === "warn" ? "ic-warn" : ""));
@@ -574,9 +603,8 @@ function paintActions(p){
 }
 
 async function clickRun(p){
-  const mine = !!(RUN && RUN.id === p.id);
+  if (RUNS[p.id]){ await stopRun(p.id); return; }
   const st = PST[p.id] || {};
-  if (mine){ await stopRun(); return; }
   if (st.running){                       // 别处启动的：直接停掉它的进程
     const r = await pywebview.api.pkg_stop(p.id);
     toast(r.msg, !r.ok);
@@ -588,46 +616,53 @@ async function clickRun(p){
 }
 
 async function startRun(p, args){
-  if (RUN){
-    if (RUN.id !== p.id){ toast("先停掉正在跑的 :" + RUN.id, true); return; }
-    return;
-  }
+  if (RUNS[p.id]) return;                // ★ 只拦"同一个包重复起"，不再拦别的包
   const cmd = "moss :" + p.id + ((args || "").trim() ? " " + args.trim() : "");
   lastRun = {id: p.id, args: args, label: cmd};
-  setState(p.id, "running");             // ★ 不再自动跳到「命令行」：
-  out("$ " + cmd);                       //   带界面的包根本没有命令行输出（你指出的），
-  const r = await pywebview.api.run_start(p.id, args || "");   // 停在原地更合理
-  if (!r.ok){ toast("✗ " + (r.msg || "启动失败"), true); setState(p.id, "fail", {code: -1}); return; }
-  RUN = {id: p.id, rid: r.run_id, cmd: cmd, timer: null};
+  setState(p.id, "running");             // ★ 不自动跳「命令行」（GUI 包没输出）；
+  consoleKey = p.id;                     //   但**切到"这个包自己的"那份缓冲**
+  setConsole(p.id, "$ " + cmd, "运行中");
+  const r = await pywebview.api.run_start(p.id, args || "");
+  if (!r.ok){
+    setConsole(p.id, "$ " + cmd + "\n\n启动失败：" + (r.msg || ""), "启动失败");
+    setState(p.id, "fail", {code: -1});
+    toast("✗ " + (r.msg || "启动失败"), true);
+    return;
+  }
+  RUNS[p.id] = {rid: r.run_id, cmd: cmd, timer: null, stopped: false};
   refreshPkgState(p);                    // 让按钮立刻变成「停止」
-  pollRun();
+  pollRun(p.id);
 }
 
-function pollRun(){
-  if (!RUN) return;
-  RUN.timer = setTimeout(async () => {
-    if (!RUN) return;
-    const r = await pywebview.api.run_poll(RUN.rid);
-    if (!r.ok){ finishRun(-1, ""); return; }
-    out("$ " + RUN.cmd + "\n\n" + (r.out || "（还没有输出）"));
-    if (r.running) pollRun();
-    else finishRun(r.code, r.out);
+function pollRun(id){
+  const run = RUNS[id];
+  if (!run) return;
+  run.timer = setTimeout(async () => {
+    if (!RUNS[id]) return;
+    const r = await pywebview.api.run_poll(run.rid);
+    if (!r.ok){ finishRun(id, -1, ""); return; }
+    setConsole(id, "$ " + run.cmd + "\n\n" + (r.out || "（还没有输出）"), "运行中");
+    if (r.running) pollRun(id);
+    else finishRun(id, r.code, r.out);
   }, 200);
 }
 
-function finishRun(code, text){
-  if (!RUN) return;
-  const id = RUN.id, cmd = RUN.cmd, p = cur, stopped = !!RUN.stopped;
-  clearTimeout(RUN.timer);
-  RUN = null;
-  out("$ " + cmd + "\n\n" + (text || "(这个包没有输出)") + "\n" + runTail(code, text, stopped));
+function finishRun(id, code, text){
+  const run = RUNS[id];
+  if (!run) return;
+  clearTimeout(run.timer);
+  delete RUNS[id];
+  const stopped = !!run.stopped;
+  setConsole(id, "$ " + run.cmd + "\n\n" + (text || "(这个包没有输出)") + "\n" +
+             runTail(code, text, stopped),
+             stopped ? "已停止" : (code === 0 ? "完成 · 退出码 0" : "故障 · 退出码 " + code));
   // 我们自己按的停止不算"故障"（红）—— 是"已停止"（黄）
   setState(id, stopped ? "warn" : (code === 0 ? "ok" : "fail"),
            {code: code, note: stopped ? "已停止" : ""});
-  renderDetail();
+  if (cur && cur.id === id) renderDetail();
   // ★ 退出码回来了不等于"它没在跑" —— 有的包 fork 出界面自己就退了。
-  //   所以状态以宿主那份为准（800ms 后再问一次）。
-  if (p && p.id === id) setTimeout(() => refreshPkgState(p), 800);
+  //   所以状态以宿主那份为准（600ms 后再问一次）。
+  setTimeout(refreshAllStates, 600);
 }
 
 /* 收尾那一行怎么措辞。
@@ -643,12 +678,13 @@ function runTail(code, text, stopped){
   return "[退出码] " + code;
 }
 
-async function stopRun(){
-  if (!RUN) return;
-  const r = await pywebview.api.run_stop(RUN.rid);
+async function stopRun(id){
+  const run = RUNS[id];
+  if (!run) return;
+  const r = await pywebview.api.run_stop(run.rid);
   toast(r.msg, !r.ok);
-  if (RUN) RUN.stopped = true;           // 让 finishRun 别把它记成"故障"
-  setTimeout(() => { if (cur) refreshPkgState(cur); }, 500);
+  run.stopped = true;                    // 让 finishRun 别把它记成"故障"
+  setTimeout(refreshAllStates, 400);
 }
 
 /* ---------------------------------------------------------------- 显示 / 隐藏
@@ -723,7 +759,8 @@ function pkgRel(p){
 }
 function select(id){
   cur = DATA.packages.find(p => p.id === id) || null;
-  renderList(); renderDetail(); setTab("detail");
+  consoleKey = cur ? cur.id : "__host__";     // 命令行跟着换成"这个包自己的那份"
+  renderList(); renderDetail(); paintConsole(); setTab("detail");
   // 换了包 → 文件管理跟着换到"这个包的那一套"（每个包一份上下文，互不干扰）
   if (cur) fmSelect(cur.id, /*keepTab*/ true);
 }
@@ -1474,7 +1511,9 @@ async function init(){
   $("#meta").textContent =
     DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home;
   renderList(); paintStates();
-  pkgPollStart();          // 详情页开着时每 2.5 秒对一次"在不在跑 / 有没有窗口"
+  consoleKey = "__host__";
+  paintConsole();
+  pkgPollStart();          // 每 2.5 秒把所有包的状态对一次（列表 + 按钮都要）
   // 默认上下文：不选包时给一个"全部文件"（根 = user_data），能自己往上走到 system
   FM.ctx = "__all__";
   const s = fmState("__all__");
@@ -1497,7 +1536,7 @@ document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
   else setTab(b.dataset.tab);
 });
 $("#btn-copy").onclick = copyOut;
-$("#btn-clear").onclick = () => { out(""); clearConsoleState(); };
+$("#btn-clear").onclick = () => setConsole(consoleKey, "", "还没跑过");
 $("#m-cancel").onclick = closeModal;
 $("#m-ok").onclick = () => { const cb = modalCb; closeModal(); if (cb) cb(); };
 $("#m-input").addEventListener("keydown", e => {
@@ -1506,26 +1545,23 @@ $("#m-input").addEventListener("keydown", e => {
 });
 $("#modal").addEventListener("click", e => { if (e.target.id === "modal") closeModal(); });
 $("#btn-rerun").onclick = async () => {
-  if (!lastRun || busy) return;
-  busy = true;
-  const btn = $("#btn-rerun"); btn.disabled = true;
-  setState(lastRun.id, "running");
-  out("$ " + lastRun.label);
-  const t0 = performance.now();
-  const r = await pywebview.api.run(lastRun.id, lastRun.args);
-  out("$ " + lastRun.label + "\n\n" + (r.out || "(这个包没有输出)") + "\n[退出码] " + r.code);
-  setState(lastRun.id, r.code === 0 ? "ok" : "fail",
-           {code: r.code, ms: Math.round(performance.now() - t0)});
-  btn.disabled = false; busy = false;
+  if (!lastRun) return;
+  const p = DATA.packages.find(x => x.id === lastRun.id);
+  if (!p){ toast("找不到 :" + lastRun.id + " 这个包了", true); return; }
+  if (RUNS[p.id]){ toast(":" + p.id + " 正在跑", true); return; }
+  startRun(p, lastRun.args);
 };
 $("#btn-selfcheck").onclick = async () => {
-  setTab("console"); setState("__host__", "running");
-  out("$ moss --selfcheck");
+  consoleKey = "__host__";                // 自检是**宿主自己的**输出，单独一份
+  setTab("console");
+  setConsole("__host__", "$ moss --selfcheck", "运行中");
   const t0 = performance.now();
   const r = await pywebview.api.run_host("--selfcheck");
-  out("$ moss --selfcheck\n\n" + (r.out || "(没有输出)") + "\n[退出码] " + r.code);
-  setState("__host__", r.code === 0 ? "ok" : "fail",
-           {code: r.code, ms: Math.round(performance.now() - t0)});
+  const ms = Math.round(performance.now() - t0);
+  setConsole("__host__",
+             "$ moss --selfcheck\n\n" + (r.out || "(没有输出)") + "\n[退出码] " + r.code,
+             r.code === 0 ? ("完成 · 退出码 0 · " + (ms / 1000).toFixed(2) + " 秒")
+                          : ("故障 · 退出码 " + r.code));
 };
 
 paintStaticIcons();
