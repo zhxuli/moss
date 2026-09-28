@@ -25,8 +25,8 @@
          --syn-attr:#79c0ff;    --syn-meta:#8b949e; }
 }
 *{box-sizing:border-box}
-/* ★ 必须有这条兜底：`display:flex` 之类的规则会压过浏览器默认的
-   `[hidden]{display:none}`，于是 `el.hidden = true` 看起来毫无反应（实测坑）。 */
+/* ★ 必须有这条兜底：`display:flex` 之类会压过浏览器默认的 `[hidden]{display:none}`，
+   于是 `el.hidden = true` 看起来毫无反应（实测坑）。 */
 [hidden]{display:none !important}
 html,body{height:100%}
 body{margin:0;height:100vh;display:flex;flex-direction:column;overflow:hidden;
@@ -49,7 +49,7 @@ header{display:flex;align-items:center;gap:10px;padding:9px 14px;
 .meta{flex:1;color:var(--dim);font-size:12px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;text-align:right}
 main{flex:1;display:flex;min-height:0}
-aside{width:320px;flex:none;border-right:1px solid var(--line);background:var(--panel);
+aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--panel);
   display:flex;flex-direction:column;min-height:0}
 #list{flex:1;overflow:auto;min-height:0}
 .item{display:flex;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line2);
@@ -71,7 +71,7 @@ aside{width:320px;flex:none;border-right:1px solid var(--line);background:var(--
 .tab:hover{background:var(--hover)}
 .tab.active{background:var(--panel2);border-color:var(--line);color:var(--fg);font-weight:500}
 #tabcmd{margin-left:auto;color:var(--dim);font-family:var(--mono);font-size:12px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46%}
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50%}
 .pane{flex:1;min-height:0;display:none}
 .pane.on{display:flex;flex-direction:column}
 /* ★ 别写 `#pane-x{display:none}`：ID 选择器优先级高于 `.pane.on`，面板会永远 0×0 */
@@ -79,7 +79,6 @@ aside{width:320px;flex:none;border-right:1px solid var(--line);background:var(--
 #pane-detail.on{display:block}
 #pane-console.on{display:flex;flex-direction:column}
 #pane-file.on{display:flex;flex-direction:column}
-#pane-editor.on{display:flex;flex-direction:column}
 .outbar{display:flex;gap:6px;align-items:center;padding:6px 12px;flex:none;
   border-bottom:1px solid var(--line2);background:var(--panel);color:var(--dim);font-size:12px}
 .outbar .iconbtn{padding:4px 6px;min-width:28px}
@@ -111,7 +110,26 @@ aside{width:320px;flex:none;border-right:1px solid var(--line);background:var(--
   animation:spin .7s linear infinite}
 .spin.on{display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
-/* ---- 文件管理：像资源管理器那样 ---- */
+/* ================= 文件管理：**属于某一个包**的一套界面 =================
+   结构是"文件管理"这个大选项卡 -> 里面的子选项卡：
+     ① 「文件」固定在最左、**不能关闭**（目录浏览，资源管理器那套操作）
+     ② 每打开一个文件 = 新增一个子选项卡（可关闭、带未保存黄点）
+   子选项卡是**文件管理内部的**，不和顶层的 详情/命令行/文件管理 平级。 */
+#fm-bar{display:flex;gap:4px;align-items:flex-end;padding:6px 10px 0;flex:none;
+  border-bottom:1px solid var(--line);background:var(--panel);overflow-x:auto;overflow-y:hidden}
+.fmtab{display:inline-flex;align-items:center;gap:7px;padding:5px 10px;border-radius:8px 8px 0 0;
+  border:1px solid transparent;border-bottom:none;background:transparent;color:var(--dim);
+  cursor:pointer;font-size:13px;white-space:nowrap;max-width:240px}
+.fmtab:hover{background:var(--hover)}
+.fmtab.on{background:var(--bg);border-color:var(--line);color:var(--fg);font-weight:500}
+.fmtab .fname{overflow:hidden;text-overflow:ellipsis}
+.fmtab .x{margin-left:2px;color:var(--dim);border-radius:4px;padding:0 3px;line-height:1}
+.fmtab .x:hover{background:#d64545;color:#fff}
+.fmtab .fdot{width:7px;height:7px;border-radius:50%;background:#dfa100;flex:none}
+#fm-home{margin-left:auto;align-self:center;padding-bottom:4px}
+.fmwrap{flex:1;min-height:0;display:flex;flex-direction:column}
+.fmpage{flex:1;min-height:0;display:none;flex-direction:column}
+.fmpage.on{display:flex}
 .fbnav{display:flex;gap:4px;align-items:center;padding:6px 10px;flex:none;
   border-bottom:1px solid var(--line2);background:var(--panel)}
 .crumbs{flex:1;display:flex;align-items:center;gap:2px;min-width:0;overflow:hidden;
@@ -140,17 +158,7 @@ table.fb td.num{text-align:right;color:var(--dim);font-variant-numeric:tabular-n
 table.fb td.dim{color:var(--dim)}
 .fbstatus{padding:5px 12px;font-size:12px;color:var(--dim);border-top:1px solid var(--line2);
   background:var(--panel);flex:none;display:flex;gap:12px;align-items:center}
-/* 右键菜单 */
-#ctxmenu{position:fixed;z-index:70;min-width:200px;background:var(--panel);
-  border:1px solid var(--line);border-radius:10px;padding:5px;
-  box-shadow:0 14px 40px rgba(0,0,0,.28)}
-#ctxmenu .mi{display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;
-  cursor:pointer;font-size:13px;color:var(--fg)}
-#ctxmenu .mi:hover{background:var(--hover)}
-#ctxmenu .mi.dis{opacity:.4;cursor:default}
-#ctxmenu .mi.dis:hover{background:transparent}
-#ctxmenu .sep{height:1px;background:var(--line2);margin:4px 6px}
-/* ---- 编辑器 ---- */
+/* ---- 编辑器（子选项卡里的那页）---- */
 .editor{position:relative;flex:1;min-height:0;margin:10px 12px 12px;overflow:hidden;
   background:var(--code-bg);border:1px solid var(--line);border-radius:8px}
 .editor:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
@@ -177,6 +185,19 @@ table.fb td.dim{color:var(--dim)}
 .hljs-meta,.hljs-deletion{color:var(--syn-meta)}
 .hljs-emphasis{font-style:italic}
 .hljs-strong{font-weight:600}
+.note{padding:6px 12px;font-size:12px;color:var(--dim);border-bottom:1px solid var(--line2);
+  background:var(--panel2);display:flex;align-items:center;gap:7px}
+.dirtydot{width:7px;height:7px;border-radius:50%;background:#dfa100;flex:none}
+/* ---- 右键菜单 ---- */
+#ctxmenu{position:fixed;z-index:70;min-width:200px;background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;padding:5px;
+  box-shadow:0 14px 40px rgba(0,0,0,.28)}
+#ctxmenu .mi{display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;
+  cursor:pointer;font-size:13px;color:var(--fg)}
+#ctxmenu .mi:hover{background:var(--hover)}
+#ctxmenu .mi.dis{opacity:.4;cursor:default}
+#ctxmenu .mi.dis:hover{background:transparent}
+#ctxmenu .sep{height:1px;background:var(--line2);margin:4px 6px}
 /* ---- 详情 ---- */
 h1{font-size:19px;margin:0 0 4px}
 .hd{display:flex;gap:14px;align-items:flex-start}
@@ -198,9 +219,6 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
   background:var(--panel2);color:var(--fg);font-family:var(--mono);outline:none}
 #args:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
 .empty{color:var(--dim);text-align:center;margin-top:70px;font-size:13px}
-.note{padding:6px 12px;font-size:12px;color:var(--dim);border-bottom:1px solid var(--line2);
-  background:var(--panel2);display:flex;align-items:center;gap:7px}
-.dirtydot{width:7px;height:7px;border-radius:50%;background:#dfa100;flex:none}
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;
   align-items:center;justify-content:center;z-index:80}
 #modal.on{display:flex}
@@ -229,7 +247,6 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
   <div class="brand"><span class="dot"></span>moss</div>
   <input id="q" placeholder="搜索包名 / 说明 / 标签…">
   <div class="meta" id="meta"></div>
-  <button id="btn-browse" class="iconbtn" title="文件管理（user_data / system）"></button>
   <button id="btn-selfcheck" class="iconbtn" title="自检（moss --selfcheck）"></button>
   <button id="btn-refresh" class="iconbtn" title="刷新包列表"></button>
   <button id="btn-quit" class="iconbtn" title="退出"></button>
@@ -242,7 +259,6 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
       <button class="tab active" data-tab="detail">详情</button>
       <button class="tab" data-tab="console">命令行<span class="lamp tiny" id="tablamp" data-state="idle"></span></button>
       <button class="tab" data-tab="file">文件管理</button>
-      <button class="tab" data-tab="editor">编辑器<span class="lamp tiny" id="editlamp" data-state="idle"></span></button>
       <span id="tabcmd"></span>
     </div>
 
@@ -262,47 +278,8 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
     </section>
 
     <section class="pane" id="pane-file">
-      <div class="fbnav">
-        <button id="fb-back" class="iconbtn" title="后退"></button>
-        <button id="fb-fwd" class="iconbtn" title="前进"></button>
-        <button id="fb-up" class="iconbtn" title="向上一级（Backspace）"></button>
-        <button id="fb-reload" class="iconbtn" title="刷新（F5）"></button>
-        <div class="crumbs" id="fb-crumbs"></div>
-        <button class="iconbtn" id="fb-root-user" title="切到 user_data">user_data</button>
-        <button class="iconbtn" id="fb-root-system" title="切到 system">system</button>
-      </div>
-      <div class="fbtools">
-        <button id="fb-newdir" class="iconbtn" title="新建文件夹"></button>
-        <button id="fb-newfile" class="iconbtn" title="新建文件"></button>
-        <button id="fb-rename" class="iconbtn" title="重命名（F2）"></button>
-        <button id="fb-del" class="iconbtn warn" title="删除（Delete）→ 挪进回收站"></button>
-        <span class="gap"></span>
-        <button id="fb-copyb" class="iconbtn" title="复制（Ctrl+C）"></button>
-        <button id="fb-cut" class="iconbtn" title="剪切（Ctrl+X）"></button>
-        <button id="fb-paste" class="iconbtn" title="粘贴（Ctrl+V）"></button>
-        <span class="gap"></span>
-        <button id="fb-open" class="iconbtn" title="用默认程序打开（Enter 是进编辑器）"></button>
-        <button id="fb-reveal" class="iconbtn" title="在资源管理器里显示"></button>
-      </div>
-      <div class="fbwrap" id="fb-wrap"></div>
-      <div class="fbstatus"><span id="fb-info">—</span><span id="fb-clip"></span></div>
-    </section>
-
-    <section class="pane" id="pane-editor">
-      <div class="outbar">
-        <span id="edpath" class="mono">没打开文件</span>
-        <span class="dirtydot" id="eddirty" hidden title="有未保存的改动"></span>
-        <span style="flex:1"></span>
-        <button id="btn-save" class="iconbtn" title="保存（Ctrl+S）"></button>
-        <button id="btn-revert" class="iconbtn" title="放弃改动，重新读一遍"></button>
-        <button id="btn-default" class="iconbtn" title="用系统默认程序打开"></button>
-        <button id="btn-reveal2" class="iconbtn" title="在资源管理器里显示"></button>
-      </div>
-      <div class="note" id="ednote" hidden></div>
-      <div class="editor">
-        <pre aria-hidden="true"><code id="hl" class="hljs"></code></pre>
-        <textarea id="code" spellcheck="false" wrap="off"></textarea>
-      </div>
+      <div id="fm-bar"></div>
+      <div class="fmwrap" id="fm-body"></div>
     </section>
   </div>
 </main>
@@ -325,13 +302,15 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
 <script src="vendor/lucide.js"></script>
 <script>
 /* ============================================================================
-   moss 界面：包列表 / 命令行 / 文件管理（资源管理器式）/ 代码编辑器（高亮）
+   moss 界面：详情 / 命令行 / **文件管理**
+   文件管理是**每个包自己的一套**（上下文按包 id 分），里面的子选项卡：
+       「文件」固定不可关（目录浏览，资源管理器那套操作）
+       + 每打开一个文件一个子选项卡（可关、带未保存黄点）
    高亮与编辑器结构照抄 exec；图标用 Lucide。
    ========================================================================== */
 
 let DATA = null, cur = null, busy = false, tab = "detail";
 let lastRun = null;
-
 const $ = s => document.querySelector(s);
 
 /* ---------------------------------------------------------------- 后缀 → 图标/颜色/语言 */
@@ -376,22 +355,21 @@ const NO_EXT = {
   ".gitignore":{i:"file-cog",c:"#8a8a8a",l:"plaintext"},
   ".gitattributes":{i:"file-cog",c:"#8a8a8a",l:"plaintext"},
 };
-
 function extOf(entry){
   const name = (entry.name || "").toLowerCase();
   if (NO_EXT[name]) return Object.assign({ext:""}, NO_EXT[name]);
   return Object.assign({ext: entry.ext || ""}, EXT[entry.ext] || {i:"file", c:"#8a8a8a"});
 }
 function fileIconHTML(entry, open){
-  if (entry.dir) return '<span style="color:#e0a800;display:flex">' + ico(open ? "folder-open" : "folder", "i") + '</span>';
+  if (entry.dir) return '<span style="color:#e0a800;display:flex">' +
+    ico(open ? "folder-open" : "folder", "i") + '</span>';
   const e = extOf(entry);
   return '<span style="color:' + e.c + ';display:flex">' + ico(e.i, "i") + '</span>';
 }
 function typeLabel(entry){
   if (entry.dir) return "文件夹";
   const e = entry.ext || "";
-  if (!e) return "文件";
-  return e.toUpperCase() + " 文件";
+  return e ? (e.toUpperCase() + " 文件") : "文件";
 }
 function humanSize(n){
   if (n == null) return "";
@@ -401,8 +379,7 @@ function humanSize(n){
 }
 function fmtTime(sec){
   if (!sec) return "";
-  const d = new Date(sec * 1000);
-  const p = n => String(n).padStart(2, "0");
+  const d = new Date(sec * 1000), p = n => String(n).padStart(2, "0");
   return d.getFullYear() + "/" + p(d.getMonth() + 1) + "/" + p(d.getDate()) + " " +
          p(d.getHours()) + ":" + p(d.getMinutes());
 }
@@ -418,8 +395,7 @@ let consoleWho = null;
 function stateOf(id){ return STATE[id] || {state:"idle"}; }
 function setState(id, st, extra){
   STATE[id] = Object.assign({state:st, ts:Date.now()}, extra || {});
-  consoleWho = id;
-  paintStates();
+  consoleWho = id; paintStates();
 }
 function stateLabel(s){
   if (s.state === "running") return "运行中";
@@ -464,16 +440,14 @@ function setTab(name){
   tab = name;
   document.querySelectorAll(".tab").forEach(b =>
     b.classList.toggle("active", b.dataset.tab === name));
-  ["detail", "console", "file", "editor"].forEach(t =>
+  ["detail", "console", "file"].forEach(t =>
     $("#pane-" + t).classList.toggle("on", t === name));
   hideCtx();
-  // 第一次点「文件管理」才去读目录（不在启动时白读一次，也不抢走「详情」）
-  if (name === "file" && !FB.rel) fbOpen("user");
 }
 function stripAnsi(s){
   return String(s == null ? "" : s)
     .replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "")
-    .replace(/\x1b[()][A-Za-z0-9]/g, "")
+    .replace(/[\x1b][()][A-Za-z0-9]/g, "")
     .replace(/[\r\f]/g, "");
 }
 function out(text, info){
@@ -505,11 +479,9 @@ function renderList(){
   const f = $("#q").value.trim().toLowerCase();
   const box = $("#list");
   box.innerHTML = "";
-  const rows = DATA.packages.filter(p => {
-    if (!f) return true;
-    return [p.id, p.name, p.desc, (p.tags||[]).join(" "), (p.aliases||[]).join(" ")]
-      .join(" ").toLowerCase().includes(f);
-  });
+  const rows = DATA.packages.filter(p => !f ||
+    [p.id, p.name, p.desc, (p.tags||[]).join(" "), (p.aliases||[]).join(" ")]
+      .join(" ").toLowerCase().includes(f));
   if (!rows.length){ box.innerHTML = '<div class="empty">没有匹配的包</div>'; return; }
   for (const p of rows){
     const d = document.createElement("div");
@@ -519,8 +491,7 @@ function renderList(){
     d.innerHTML = iconHTML(p, "ico") +
       '<div style="min-width:0;flex:1">' +
         '<div class="nm">' + esc(p.name) + ' <span class="sub">:' + esc(p.id) + '</span></div>' +
-        '<div class="ds">' + esc(p.desc) + '</div>' +
-      '</div>' +
+        '<div class="ds">' + esc(p.desc) + '</div></div>' +
       '<span class="lamp" data-state="' + stateOf(p.id).state + '" title="' +
         esc(stateLabel(stateOf(p.id))) + '"></span>';
     d.onclick = () => select(p.id);
@@ -547,16 +518,18 @@ function iconHTML(p, cls){
   if (p.icon) return '<span class="' + cls + '"><img src="' + p.icon + '" alt=""></span>';
   return '<span class="' + cls + '"></span>';
 }
-function select(id){
-  cur = DATA.packages.find(p => p.id === id) || null;
-  renderList(); renderDetail(); setTab("detail");
-}
 function pkgRel(p){
   const norm = s => String(s || "").replace(/\\/g, "/").replace(/\/+$/, "");
   const d = norm(p.dir), userd = norm(DATA.user_data), sysroot = norm(DATA.home) + "/system";
   if (d === userd || d.startsWith(userd + "/")) return "user" + d.slice(userd.length);
   if (d === sysroot || d.startsWith(sysroot + "/")) return "system" + d.slice(sysroot.length);
   return null;
+}
+function select(id){
+  cur = DATA.packages.find(p => p.id === id) || null;
+  renderList(); renderDetail(); setTab("detail");
+  // 换了包 → 文件管理跟着换到"这个包的那一套"（每个包一份上下文，互不干扰）
+  if (cur) fmSelect(cur.id, /*keepTab*/ true);
 }
 function renderDetail(){
   const box = $("#pane-detail");
@@ -599,11 +572,9 @@ function renderDetail(){
       '<div class="sub" style="margin-top:8px">命令预览：<span class="mono" id="preview"></span></div></div>' +
     '<div class="sec"><h2>这个包的文件</h2><div class="row-inline">' +
       '<span class="mono" style="flex:1;word-break:break-all">' + esc(p.dir) + '</span>' +
-      '<button class="iconbtn" id="btn-files" title="在「文件管理」里打开这个包的目录">' +
-        ico("folder-open", "i") + '<span>文件</span></button>' +
-    '</div></div>';
+      '<button class="iconbtn" id="btn-files" title="打开这个包的文件管理">' +
+        ico("folder-open", "i") + '<span>文件管理</span></button></div></div>';
   box.innerHTML = html;
-
   const upd = () => {
     $("#preview").textContent = "moss :" + p.id +
       ($("#args").value.trim() ? " " + $("#args").value.trim() : "");
@@ -618,8 +589,7 @@ function renderDetail(){
     const btn = $("#btn-run"); btn.disabled = true;
     const args = $("#args").value, cmd = $("#preview").textContent;
     lastRun = {id: p.id, args: args, label: cmd};
-    setTab("console"); setCmd(cmd);
-    setState(p.id, "running");
+    setTab("console"); setCmd(cmd); setState(p.id, "running");
     out("$ " + cmd);
     const t0 = performance.now();
     const r = await pywebview.api.run(p.id, args);
@@ -635,201 +605,454 @@ function renderDetail(){
              {code: r.ok ? undefined : -1, note: r.ok ? "已后台启动 · 结果未知" : "启动失败"});
     out(r.msg || "");
   };
-  $("#btn-files").onclick = () => {
-    const rel = pkgRel(p);
-    if (!rel){ toast("这个包不在 system/ 或 user_data/ 下面", true); return; }
-    fbOpen(rel);
-  };
+  $("#btn-files").onclick = () => fmSelect(p.id);
 }
 
 /* ================================================================ 文件管理
-   像资源管理器那样：后退/前进/向上 + 面包屑；单击选中、Ctrl/Shift 多选、
-   双击进入或打开；右键菜单；键盘 Enter/F2/Delete/Backspace/Ctrl+C·X·V·A；
-   列头点一下换排序。复制/剪切/粘贴由**宿主**执行（`fs_copy`），
-   同名不覆盖、按资源管理器规矩起 `名字 (2).ext`。 */
-const FB = {
-  rel: null, entries: [], hist: [], hpos: -1,
-  sel: new Set(), lastIdx: -1, clip: null,
-  sort: {key:"name", dir:1}, ctxRel: null,
-};
+   上下文按"包 id"分（外加一个 `__all__` 给"没有选包时"用）：
+   每个上下文记自己的当前目录、历史、选中、剪贴板、排序，以及**打开的文件子选项卡**。
+   切到别的包 = 换一套上下文，互不干扰；切回来还在原处。 */
+const FM = { ctx: null, st: {} };
 
-async function fbOpen(rel, push){
+function fmState(key){
+  if (!key) key = "__all__";
+  if (!FM.st[key]){
+    FM.st[key] = {rel:null, hist:[], hpos:-1, entries:[], sel:new Set(), clip:null,
+                  sort:{key:"name", dir:1}, tabs:[], active:"__browse__"};
+  }
+  return FM.st[key];
+}
+function fmDefaultRel(key){
+  if (key === "__all__") return "user";
+  const p = DATA.packages.find(x => x.id === key);
+  return (p && pkgRel(p)) || "user";
+}
+function fmLabel(key){
+  if (key === "__all__") return "全部文件";
+  const p = DATA.packages.find(x => x.id === key);
+  return p ? (p.name + "（:" + p.id + "）") : key;
+}
+function isDirty(t){ return t && !t.binary && t.text !== t.original; }
+function fmActiveTab(){
+  const s = fmState(FM.ctx);
+  return s.tabs.find(t => t.rel === s.active) || null;
+}
+
+async function fmSelect(key, keepTab){
+  FM.ctx = key;
+  const s = fmState(key);
+  if (!s.rel) await fmGoto(fmDefaultRel(key), true, true);   // quiet: 不切顶层选项卡
+  else fmRender();
+  if (!keepTab) setTab("file");
+}
+async function fmGoto(rel, push, quiet){
+  const s = fmState(FM.ctx);
   const r = await pywebview.api.fs_list(rel);
   if (!r.ok){ toast("✗ " + r.msg, true); return; }
-  FB.rel = r.rel || rel;
-  FB.entries = r.entries || [];
-  FB.sel.clear(); FB.lastIdx = -1;
+  s.rel = r.rel || rel;
+  s.entries = r.entries || [];
+  s.sel.clear();
   if (push !== false){
-    FB.hist = FB.hist.slice(0, FB.hpos + 1);
-    FB.hist.push(FB.rel);
-    FB.hpos = FB.hist.length - 1;
+    s.hist = s.hist.slice(0, s.hpos + 1);
+    s.hist.push(s.rel);
+    s.hpos = s.hist.length - 1;
   }
-  setTab("file");
-  fbRender();
+  s.active = "__browse__";
+  if (!quiet) setTab("file");
+  fmRender();
 }
-function fbRefresh(){ if (FB.rel) fbOpen(FB.rel, false); }
-function fbUp(){
-  const parts = (FB.rel || "").split("/");
-  if (parts.length <= 1) return;
-  fbOpen(parts.slice(0, -1).join("/"));
+function fmHome(){ fmGoto(fmDefaultRel(FM.ctx)); }        // ★ 一键回到默认
+function fmRefresh(){ if (fmState(FM.ctx).rel) fmGoto(fmState(FM.ctx).rel, false); }
+function fmUp(){
+  const parts = (fmState(FM.ctx).rel || "").split("/");
+  if (parts.length > 1) fmGoto(parts.slice(0, -1).join("/"));
 }
-function fbBack(){ if (FB.hpos > 0){ FB.hpos--; fbOpen(FB.hist[FB.hpos], false); } }
-function fbFwd(){ if (FB.hpos < FB.hist.length - 1){ FB.hpos++; fbOpen(FB.hist[FB.hpos], false); } }
+function fmBack(){ const s = fmState(FM.ctx); if (s.hpos > 0){ s.hpos--; fmGoto(s.hist[s.hpos], false); } }
+function fmFwd(){ const s = fmState(FM.ctx); if (s.hpos < s.hist.length - 1){ s.hpos++; fmGoto(s.hist[s.hpos], false); } }
 
-function fbSorted(){
-  const {key, dir} = FB.sort;
-  return FB.entries.slice().sort((a, b) => {
-    if (a.dir !== b.dir) return a.dir ? -1 : 1;          // 文件夹永远在前
-    let x, y;
-    if (key === "name"){ x = a.name.toLowerCase(); y = b.name.toLowerCase(); }
-    else if (key === "mtime"){ x = a.mtime || 0; y = b.mtime || 0; }
-    else if (key === "size"){ x = a.size || 0; y = b.size || 0; }
-    else { x = typeLabel(a).toLowerCase(); y = typeLabel(b).toLowerCase(); }
-    if (x < y) return -1 * dir;
-    if (x > y) return 1 * dir;
-    return 0;
+/* ---- 打开 / 关闭文件子选项卡 ---- */
+async function fmOpenPage(rel){
+  const s = fmState(FM.ctx);
+  let t = s.tabs.find(x => x.rel === rel);
+  if (!t){
+    const r = await pywebview.api.fs_read(rel);
+    if (!r.ok){ toast("✗ " + r.msg, true); return; }
+    const name = rel.split("/").pop();
+    const meta = extOf({name: name, ext: (name.split(".").pop() || "").toLowerCase()});
+    t = {rel: rel, name: name, lang: meta.l || "plaintext",
+         text: r.text || "", original: r.text || "",
+         binary: !!(r.binary || r.too_big),
+         note: r.binary ? "binary" : (r.too_big ? r.msg : ""),
+         factory: rel.split("/")[0] === "system"};
+    s.tabs.push(t);
+  }
+  s.active = rel;
+  setTab("file");
+  fmRender();
+  const page = pageOf(rel);
+  const ta = page && page.querySelector("textarea");
+  if (ta && !t.binary) ta.focus();          // 打开就把光标放进编辑器，直接能打字
+}
+function fmClosePage(rel){
+  const s = fmState(FM.ctx);
+  const t = s.tabs.find(x => x.rel === rel);
+  if (!t) return;
+  const doClose = () => {
+    s.tabs = s.tabs.filter(x => x.rel !== rel);
+    if (s.active === rel) s.active = s.tabs.length ? s.tabs[s.tabs.length - 1].rel : "__browse__";
+    fmRender();
+  };
+  if (isDirty(t)) askConfirm("有未保存的改动", "“" + t.name + "” 改过但没保存，关掉就丢了。确定关吗？", doClose);
+  else doClose();
+}
+function fmSave(t){
+  if (!t || t.binary) return;
+  pywebview.api.fs_write(t.rel, t.text).then(r => {
+    toast(r.ok ? ("已保存 " + t.rel + (r.factory ? "（出厂件）" : "")) : ("✗ " + r.msg), !r.ok);
+    if (r.ok){ t.original = t.text; fmPaintBar(); fmPaintDirty(t); }
   });
 }
 
-function fbRender(){
-  const wrap = $("#fb-wrap");
-  const rows = fbSorted();
-  const arrow = k => FB.sort.key === k
-    ? '<span class="arrow">' + (FB.sort.dir === 1 ? "▲" : "▼") + '</span>' : '';
-  let html = '<table class="fb"><thead><tr>' +
-    '<th data-sort="name">名称' + arrow("name") + '</th>' +
-    '<th data-sort="mtime" style="width:150px">修改日期' + arrow("mtime") + '</th>' +
-    '<th data-sort="type" style="width:110px">类型' + arrow("type") + '</th>' +
-    '<th data-sort="size" style="width:100px">大小' + arrow("size") + '</th>' +
+/* ---- 渲染：子选项卡条 + 各页 ---- */
+function fmRender(){
+  const s = fmState(FM.ctx);
+  const bar = $("#fm-bar");
+  bar.innerHTML =
+    '<button class="fmtab' + (s.active === "__browse__" ? " on" : "") + '" data-fm="__browse__" ' +
+      'title="目录浏览（这一页不能关）">' + ico("folder", "i") +
+      '<span class="fname">' + esc(fmLabel(FM.ctx)) + '</span></button>' +
+    s.tabs.map(t =>
+      '<button class="fmtab' + (s.active === t.rel ? " on" : "") + '" data-fm="' + esc(t.rel) + '" ' +
+        'title="' + esc(t.rel) + '">' + fileIconHTML({name:t.name, ext:(t.name.split(".").pop()||"").toLowerCase()}) +
+        '<span class="fname">' + esc(t.name) + '</span>' +
+        (isDirty(t) ? '<span class="fdot" title="有未保存的改动"></span>' : "") +
+        '<span class="x" data-close="' + esc(t.rel) + '" title="关闭">×</span></button>').join("") +
+    '<button class="iconbtn" id="fm-home" title="回到默认目录">' + ico("home", "i") + '</button>';
+
+  bar.querySelectorAll(".fmtab").forEach(b => {
+    b.onclick = (ev) => {
+      if (ev.target.dataset.close !== undefined) return;
+      s.active = b.dataset.fm;
+      fmRender();
+    };
+  });
+  bar.querySelectorAll(".x").forEach(x => {
+    x.onclick = (ev) => { ev.stopPropagation(); fmClosePage(x.dataset.close); };
+  });
+  $("#fm-home").onclick = fmHome;
+
+  const body = $("#fm-body");
+  body.innerHTML = browsePageHTML(s) + s.tabs.map(filePageHTML).join("");
+  body.querySelectorAll(".fmpage").forEach(p =>
+    p.classList.toggle("on", p.dataset.page === s.active));
+  bindBrowse(s);
+  s.tabs.forEach(t => bindFilePage(t));
+}
+
+function browsePageHTML(s){
+  const rows = fmSorted(s);
+  const arrow = k => s.sort.key === k
+    ? '<span class="arrow">' + (s.sort.dir === 1 ? "▲" : "▼") + '</span>' : '';
+  let html = '<div class="fmpage" data-page="__browse__">' +
+    '<div class="fbnav">' +
+      '<button class="iconbtn b-back" title="后退"></button>' +
+      '<button class="iconbtn b-fwd" title="前进"></button>' +
+      '<button class="iconbtn b-up" title="向上一级（Backspace）"></button>' +
+      '<button class="iconbtn b-reload" title="刷新（F5）"></button>' +
+      '<div class="crumbs"></div>' +
+      '<button class="iconbtn b-root-user" title="切到 user_data">user_data</button>' +
+      '<button class="iconbtn b-root-system" title="切到 system">system</button>' +
+    '</div>' +
+    '<div class="fbtools">' +
+      '<button class="iconbtn b-newdir" title="新建文件夹"></button>' +
+      '<button class="iconbtn b-newfile" title="新建文件"></button>' +
+      '<button class="iconbtn b-rename" title="重命名（F2）"></button>' +
+      '<button class="iconbtn warn b-del" title="删除（Delete）→ 挪进回收站"></button>' +
+      '<span class="gap"></span>' +
+      '<button class="iconbtn b-copy" title="复制（Ctrl+C）"></button>' +
+      '<button class="iconbtn b-cut" title="剪切（Ctrl+X）"></button>' +
+      '<button class="iconbtn b-paste" title="粘贴（Ctrl+V）"></button>' +
+      '<span class="gap"></span>' +
+      '<button class="iconbtn b-default" title="用默认程序打开"></button>' +
+      '<button class="iconbtn b-reveal" title="在资源管理器里显示"></button>' +
+    '</div>' +
+    '<div class="fbwrap"><table class="fb"><thead><tr>' +
+      '<th data-sort="name">名称' + arrow("name") + '</th>' +
+      '<th data-sort="mtime" style="width:150px">修改日期' + arrow("mtime") + '</th>' +
+      '<th data-sort="type" style="width:110px">类型' + arrow("type") + '</th>' +
+      '<th data-sort="size" style="width:100px">大小' + arrow("size") + '</th>' +
     '</tr></thead><tbody>';
   if (!rows.length){
     html += '<tr><td colspan="4" class="dim" style="padding:22px;text-align:center">' +
             '这个文件夹是空的</td></tr>';
   }
   for (const e of rows){
-    html += '<tr class="row' + (FB.sel.has(e.rel) ? " sel" : "") + '" data-rel="' + esc(e.rel) +
+    html += '<tr class="row' + (s.sel.has(e.rel) ? " sel" : "") + '" data-rel="' + esc(e.rel) +
       '" data-dir="' + (e.dir ? 1 : 0) + '">' +
       '<td class="nmcell">' + fileIconHTML(e, false) + '<span>' + esc(e.name) + '</span></td>' +
       '<td class="dim">' + fmtTime(e.mtime) + '</td>' +
       '<td class="dim">' + typeLabel(e) + '</td>' +
       '<td class="num">' + (e.dir ? "" : humanSize(e.size)) + '</td></tr>';
   }
-  html += '</tbody></table>';
-  wrap.innerHTML = html;
+  html += '</tbody></table></div><div class="fbstatus"><span class="info">—</span>' +
+          '<span class="clipinfo"></span></div></div>';
+  return html;
+}
 
-  wrap.querySelectorAll("th[data-sort]").forEach(th => {
-    th.onclick = () => {
-      const k = th.dataset.sort;
-      FB.sort = {key: k, dir: (FB.sort.key === k ? -FB.sort.dir : 1)};
-      fbRender();
-    };
+function filePageHTML(t){
+  const meta = extOf({name: t.name, ext: (t.name.split(".").pop() || "").toLowerCase()});
+  let note = "";
+  if (t.binary) note = ico("binary", "i") + " 二进制文件，编辑不了；要看就用「默认程序打开」";
+  else if (t.note) note = ico("alert-triangle", "i") + " " + t.note;
+  else if (t.factory) note = ico("alert-triangle", "i") +
+      " 这是出厂件（system/）—— 能改，但将来升级时会被整体替换";
+  return '<div class="fmpage" data-page="' + esc(t.rel) + '">' +
+    '<div class="outbar">' +
+      '<span style="color:' + meta.c + ';display:flex">' + ico(meta.i, "i") + '</span>' +
+      '<span class="mono">' + esc(t.rel) + '</span>' +
+      '<span class="dirtydot"' + (isDirty(t) ? "" : " hidden") + ' title="有未保存的改动"></span>' +
+      '<span style="flex:1"></span>' +
+      '<button class="iconbtn b-save" title="保存（Ctrl+S）"' + (isDirty(t) ? "" : " disabled") + '></button>' +
+      '<button class="iconbtn b-revert" title="放弃改动，重新读一遍"></button>' +
+      '<button class="iconbtn b-default" title="用系统默认程序打开"></button>' +
+      '<button class="iconbtn b-reveal" title="在资源管理器里显示"></button>' +
+      '<button class="iconbtn b-close" title="关闭这个选项卡"></button>' +
+    '</div>' +
+    (note ? '<div class="note">' + note + '</div>' : '') +
+    '<div class="editor"><pre aria-hidden="true"><code class="hljs"></code></pre>' +
+      '<textarea spellcheck="false" wrap="off"' + (t.binary ? " readonly" : "") + '></textarea></div>' +
+  '</div>';
+}
+
+/* ---- 浏览页的事件 ---- */
+function fmSorted(s){
+  const {key, dir} = s.sort;
+  return s.entries.slice().sort((a, b) => {
+    if (a.dir !== b.dir) return a.dir ? -1 : 1;
+    let x, y;
+    if (key === "name"){ x = a.name.toLowerCase(); y = b.name.toLowerCase(); }
+    else if (key === "mtime"){ x = a.mtime || 0; y = b.mtime || 0; }
+    else if (key === "size"){ x = a.size || 0; y = b.size || 0; }
+    else { x = typeLabel(a).toLowerCase(); y = typeLabel(b).toLowerCase(); }
+    return x < y ? -1 * dir : (x > y ? 1 * dir : 0);
   });
-  wrap.querySelectorAll("tr.row").forEach((tr, idx) => {
-    const rel = tr.dataset.rel;
-    tr.onclick = (ev) => {
-      if (ev.ctrlKey || ev.metaKey){
-        FB.sel.has(rel) ? FB.sel.delete(rel) : FB.sel.add(rel);
-        FB.lastIdx = idx;
-      } else if (ev.shiftKey && FB.lastIdx >= 0){
-        const a = Math.min(FB.lastIdx, idx), b = Math.max(FB.lastIdx, idx);
-        FB.sel.clear();
-        for (let i = a; i <= b; i++) FB.sel.add(rows[i].rel);
-      } else {
-        FB.sel.clear(); FB.sel.add(rel); FB.lastIdx = idx;
-      }
-      fbPaintSel();
-    };
-    tr.ondblclick = () => (tr.dataset.dir === "1" ? fbOpen(rel) : openFile(rel));
-    tr.oncontextmenu = (ev) => {
-      ev.preventDefault();
-      if (!FB.sel.has(rel)){ FB.sel.clear(); FB.sel.add(rel); FB.lastIdx = idx; fbPaintSel(); }
-      showCtx(ev.clientX, ev.clientY, rel);
-    };
-  });
-  wrap.oncontextmenu = (ev) => {
-    if (ev.target.closest("tr.row")) return;
-    ev.preventDefault(); FB.sel.clear(); fbPaintSel();
-    showCtx(ev.clientX, ev.clientY, null);
-  };
+}
+function fmPaintInfo(s, page){
+  const rows = fmSorted(s), n = s.sel.size;
+  const bytes = rows.filter(e => s.sel.has(e.rel) && !e.dir).reduce((a, e) => a + (e.size || 0), 0);
+  page.querySelector(".info").textContent = rows.length + " 项" +
+    (n ? " · 选中 " + n + " 项" + (bytes ? "（" + humanSize(bytes) + "）" : "") : "") +
+    " · " + s.rel;
+  page.querySelector(".clipinfo").textContent = s.clip
+    ? ("剪贴板：" + s.clip.rels.length + " 项" + (s.clip.cut ? "（剪切）" : "（复制）")) : "";
+  const dis = (sel, need) => { const b = page.querySelector(sel); if (b) b.disabled = !need; };
+  dis(".b-rename", n === 1); dis(".b-del", n > 0); dis(".b-copy", n > 0); dis(".b-cut", n > 0);
+  dis(".b-default", n > 0); dis(".b-reveal", n > 0); dis(".b-paste", !!s.clip);
+}
+
+function bindBrowse(s){
+  const page = $('#fm-body .fmpage[data-page="__browse__"]');
+  if (!page) return;
+  const rows = fmSorted(s);
+  const setIcon = (sel, name) => { const b = page.querySelector(sel); if (b) b.innerHTML = ico(name, "i"); };
+  setIcon(".b-back", "corner-up-left"); setIcon(".b-fwd", "corner-up-right");
+  setIcon(".b-up", "arrow-up"); setIcon(".b-reload", "refresh-cw");
+  setIcon(".b-newdir", "folder-plus"); setIcon(".b-newfile", "file-plus");
+  setIcon(".b-rename", "pencil"); setIcon(".b-del", "trash-2");
+  setIcon(".b-copy", "copy"); setIcon(".b-cut", "scissors"); setIcon(".b-paste", "clipboard-paste");
+  setIcon(".b-default", "external-link"); setIcon(".b-reveal", "folder-open");
 
   // 面包屑
-  const segs = (FB.rel || "").split("/");
+  const segs = (s.rel || "").split("/");
   let acc = "", crumb = "";
-  segs.forEach((s, i) => {
-    acc = i === 0 ? s : acc + "/" + s;
-    const label = i === 0 ? (s === "user" ? "user_data" : "system") : s;
+  segs.forEach((seg, i) => {
+    acc = i === 0 ? seg : acc + "/" + seg;
+    const label = i === 0 ? (seg === "user" ? "user_data" : "system") : seg;
     if (i) crumb += '<span class="sep">›</span>';
     crumb += (i === segs.length - 1)
       ? '<span class="here">' + esc(label) + '</span>'
       : '<span class="seg" data-rel="' + esc(acc) + '">' + esc(label) + '</span>';
   });
-  $("#fb-crumbs").innerHTML = crumb;
-  $("#fb-crumbs").querySelectorAll(".seg").forEach(el => {
-    el.onclick = () => fbOpen(el.dataset.rel);
+  page.querySelector(".crumbs").innerHTML = crumb;
+  page.querySelectorAll(".crumbs .seg").forEach(el => { el.onclick = () => fmGoto(el.dataset.rel); });
+
+  page.querySelector(".b-back").onclick = fmBack;
+  page.querySelector(".b-fwd").onclick = fmFwd;
+  page.querySelector(".b-up").onclick = fmUp;
+  page.querySelector(".b-reload").onclick = fmRefresh;
+  page.querySelector(".b-root-user").onclick = () => fmGoto("user");
+  page.querySelector(".b-root-system").onclick = () => fmGoto("system");
+  page.querySelector(".b-newdir").onclick = () => fmCmd("newdir");
+  page.querySelector(".b-newfile").onclick = () => fmCmd("newfile");
+  page.querySelector(".b-rename").onclick = () => fmCmd("rename");
+  page.querySelector(".b-del").onclick = () => fmCmd("del");
+  page.querySelector(".b-copy").onclick = () => fmCmd("copy");
+  page.querySelector(".b-cut").onclick = () => fmCmd("cut");
+  page.querySelector(".b-paste").onclick = () => fmCmd("paste");
+  page.querySelector(".b-default").onclick = () => fmCmd("default");
+  page.querySelector(".b-reveal").onclick = () => fmCmd("reveal");
+
+  page.querySelectorAll("th[data-sort]").forEach(th => {
+    th.onclick = () => {
+      const k = th.dataset.sort;
+      s.sort = {key: k, dir: (s.sort.key === k ? -s.sort.dir : 1)};
+      fmRender();
+    };
   });
-
-  $("#fb-back").disabled = FB.hpos <= 0;
-  $("#fb-fwd").disabled = FB.hpos >= FB.hist.length - 1;
-  $("#fb-up").disabled = segs.length <= 1;
-  fbButtons();
-
-  const selArr = [...FB.sel];
-  const selFiles = rows.filter(e => FB.sel.has(e.rel) && !e.dir);
-  const total = rows.filter(e => FB.sel.has(e.rel) && !e.dir)
-                    .reduce((n, e) => n + (e.size || 0), 0);
-  $("#fb-info").textContent = rows.length + " 项" +
-    (selArr.length ? " · 选中 " + selArr.length + " 项" +
-      (selFiles.length ? "（" + humanSize(total) + "）" : "") : "") +
-    " · " + FB.rel;
-  $("#fb-clip").textContent = FB.clip
-    ? ("剪贴板：" + FB.clip.rels.length + " 项" + (FB.clip.cut ? "（剪切）" : "（复制）")) : "";
-  $("#fb-paste").disabled = !FB.clip;
+  page.querySelectorAll("tr.row").forEach((tr, idx) => {
+    const rel = tr.dataset.rel;
+    tr.onclick = (ev) => {
+      if (ev.ctrlKey || ev.metaKey){
+        s.sel.has(rel) ? s.sel.delete(rel) : s.sel.add(rel);
+        s.lastIdx = idx;
+      } else if (ev.shiftKey && s.lastIdx >= 0){
+        const a = Math.min(s.lastIdx, idx), b = Math.max(s.lastIdx, idx);
+        s.sel.clear();
+        for (let i = a; i <= b; i++) s.sel.add(rows[i].rel);
+      } else {
+        s.sel.clear(); s.sel.add(rel); s.lastIdx = idx;
+      }
+      page.querySelectorAll("tr.row").forEach(r2 =>
+        r2.classList.toggle("sel", s.sel.has(r2.dataset.rel)));
+      fmPaintInfo(s, page);
+    };
+    tr.ondblclick = () => (tr.dataset.dir === "1" ? fmGoto(rel) : fmOpenPage(rel));
+    tr.oncontextmenu = (ev) => {
+      ev.preventDefault();
+      if (!s.sel.has(rel)){
+        s.sel.clear(); s.sel.add(rel); s.lastIdx = idx;
+        page.querySelectorAll("tr.row").forEach(r2 =>
+          r2.classList.toggle("sel", s.sel.has(r2.dataset.rel)));
+        fmPaintInfo(s, page);
+      }
+      showCtx(ev.clientX, ev.clientY, rel);
+    };
+  });
+  page.querySelector(".fbwrap").oncontextmenu = (ev) => {
+    if (ev.target.closest("tr.row")) return;
+    ev.preventDefault();
+    s.sel.clear();
+    page.querySelectorAll("tr.row").forEach(r2 => r2.classList.remove("sel"));
+    fmPaintInfo(s, page);
+    showCtx(ev.clientX, ev.clientY, null);
+  };
+  page.querySelector(".b-back").disabled = s.hpos <= 0;
+  page.querySelector(".b-fwd").disabled = s.hpos >= s.hist.length - 1;
+  page.querySelector(".b-up").disabled = segs.length <= 1;
+  fmPaintInfo(s, page);
 }
 
-function fbPaintSel(){
-  const wrap = $("#fb-wrap");
-  wrap.querySelectorAll("tr.row").forEach(tr =>
-    tr.classList.toggle("sel", FB.sel.has(tr.dataset.rel)));
-  const rows = fbSorted();
-  const n = FB.sel.size;
-  const bytes = rows.filter(e => FB.sel.has(e.rel) && !e.dir)
-                    .reduce((a, e) => a + (e.size || 0), 0);
-  $("#fb-info").textContent = rows.length + " 项" +
-    (n ? " · 选中 " + n + " 项（" + humanSize(bytes) + "）" : "") + " · " + FB.rel;
-  fbButtons();
+/* ---- 文件页（子选项卡）的事件 ---- */
+function hlInto(t, code){
+  const text = t.text || "";
+  if (text.length > 300000){ code.textContent = text + "\n"; return; }
+  if (window.hljs && t.lang && hljs.getLanguage(t.lang)){
+    try{
+      code.innerHTML = hljs.highlight(text, {language: t.lang, ignoreIllegals: true}).value + "\n";
+      return;
+    }catch(e){}
+  }
+  code.textContent = text + "\n";
+}
+function pageOf(rel){
+  // ★ 不用 `[data-page="…"]` 选择器去找：文件名里可能有引号/反斜杠，
+  //   拼进选择器会炸（也不安全）。直接遍历比对 dataset。
+  const pages = document.querySelectorAll("#fm-body .fmpage");
+  for (const p of pages) if (p.dataset.page === rel) return p;
+  return null;
+}
+function fmPaintDirty(t){
+  const page = pageOf(t.rel);
+  if (page){
+    const dot = page.querySelector(".dirtydot");
+    if (dot) dot.hidden = !isDirty(t);
+    const save = page.querySelector(".b-save");
+    if (save) save.disabled = !isDirty(t);
+  }
+  fmPaintBar();
+}
+function fmPaintBar(){
+  const s = fmState(FM.ctx);
+  const bar = $("#fm-bar");
+  bar.querySelectorAll(".fmtab").forEach(b => {
+    const rel = b.dataset.fm;
+    if (rel === "__browse__") return;
+    const t = s.tabs.find(x => x.rel === rel);
+    const has = b.querySelector(".fdot");
+    if (t && isDirty(t) && !has){
+      const sp = document.createElement("span");
+      sp.className = "fdot"; sp.title = "有未保存的改动";
+      b.insertBefore(sp, b.querySelector(".x"));
+    } else if ((!t || !isDirty(t)) && has){
+      has.remove();
+    }
+  });
+}
+function bindFilePage(t){
+  const page = pageOf(t.rel);
+  if (!page) return;
+  const ta = page.querySelector("textarea"), code = page.querySelector("code");
+  ta.value = t.text || "";
+  hlInto(t, code);
+  const setIcon = (sel, name) => { const b = page.querySelector(sel); if (b) b.innerHTML = ico(name, "i"); };
+  setIcon(".b-save", "save"); setIcon(".b-revert", "undo-2");
+  setIcon(".b-default", "external-link"); setIcon(".b-reveal", "folder-open");
+  setIcon(".b-close", "x");
+
+  let timer = null;
+  ta.addEventListener("input", () => {
+    t.text = ta.value;
+    clearTimeout(timer);
+    timer = setTimeout(() => hlInto(t, code), 120);
+    fmPaintDirty(t);
+  });
+  ta.addEventListener("scroll", () => {
+    const pre = code.parentElement;
+    pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft;
+  });
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Tab"){
+      e.preventDefault();
+      const p = ta.selectionStart;
+      ta.value = ta.value.slice(0, p) + "    " + ta.value.slice(ta.selectionEnd);
+      ta.selectionStart = ta.selectionEnd = p + 4;
+      t.text = ta.value; hlInto(t, code); fmPaintDirty(t);
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s"){ e.preventDefault(); fmSave(t); }
+  });
+  page.querySelector(".b-save").onclick = () => fmSave(t);
+  page.querySelector(".b-revert").onclick = () => {
+    askConfirm("放弃改动", "“" + t.name + "” 重新从磁盘读一遍，没保存的改动会丢。确定吗？", async () => {
+      const r = await pywebview.api.fs_read(t.rel);
+      if (!r.ok){ toast("✗ " + r.msg, true); return; }
+      t.text = r.text || ""; t.original = r.text || "";
+      ta.value = t.text; hlInto(t, code); fmPaintDirty(t);
+    });
+  };
+  page.querySelector(".b-default").onclick = async () => {
+    const r = await pywebview.api.fs_open_default(t.rel); toast(r.msg, !r.ok);
+  };
+  page.querySelector(".b-reveal").onclick = async () => {
+    const r = await pywebview.api.fs_reveal(t.rel); toast(r.msg, !r.ok);
+  };
+  page.querySelector(".b-close").onclick = () => fmClosePage(t.rel);
 }
 
-/* 没选中东西时，"重命名/删除/复制/剪切"该是灰的 —— 点下去才报错是坏习惯 */
-function fbButtons(){
-  const n = FB.sel.size;
-  $("#fb-rename").disabled = n !== 1;
-  $("#fb-del").disabled = n === 0;
-  $("#fb-copyb").disabled = n === 0;
-  $("#fb-cut").disabled = n === 0;
-  $("#fb-paste").disabled = !FB.clip;
-  $("#fb-open").disabled = n === 0;
-  $("#fb-reveal").disabled = n === 0;
-}
-
-/* ---- 右键菜单 ---- */
+/* ---- 文件操作（浏览页的按钮 / 右键菜单 / 键盘）---- */
 function showCtx(x, y, rel){
-  FB.ctxRel = rel;
-  const has = !!rel;
-  const one = FB.sel.size === 1;
+  const s = fmState(FM.ctx);
+  const has = !!rel, one = s.sel.size === 1;
   const items = has
     ? [["folder-open", "打开", "open"],
        ["external-link", "用默认程序打开", "default"],
        ["app-window", "在资源管理器里显示", "reveal"],
        ["sep"],
-       ["copy", "复制", "copy"],
-       ["scissors", "剪切", "cut"],
+       ["copy", "复制", "copy"], ["scissors", "剪切", "cut"],
        ["sep"],
        ["pencil", "重命名", "rename", one],
-       ["trash-2", "删除（进回收站）", "del", true, "warn"]]
-    : [["file-plus", "新建文件", "newfile"],
-       ["folder-plus", "新建文件夹", "newdir"],
-       ["sep"],
-       ["clipboard-paste", "粘贴", "paste", !!FB.clip],
+       ["trash-2", "删除（进回收站）", "del"]]
+    : [["file-plus", "新建文件", "newfile"], ["folder-plus", "新建文件夹", "newdir"],
+       ["sep"], ["clipboard-paste", "粘贴", "paste", !!s.clip],
        ["refresh-cw", "刷新", "reload"]];
   const menu = $("#ctxmenu");
   menu.innerHTML = items.map(it => {
@@ -844,27 +1067,27 @@ function showCtx(x, y, rel){
   menu.style.top = Math.min(y, window.innerHeight - h - 8) + "px";
   menu.querySelectorAll(".mi").forEach(mi => {
     if (mi.classList.contains("dis")) return;
-    mi.onclick = () => { hideCtx(); fbCmd(mi.dataset.act); };
+    mi.onclick = () => { hideCtx(); fmCmd(mi.dataset.act); };
   });
 }
 function hideCtx(){ $("#ctxmenu").hidden = true; }
 
-/* ---- 操作 ---- */
-function fbTargetDir(){
-  // 有选中目录就用它，否则用当前目录
-  const selArr = [...FB.sel];
+function fmTargetDir(){
+  const s = fmState(FM.ctx);
+  const selArr = [...s.sel];
   if (selArr.length === 1){
-    const e = FB.entries.find(x => x.rel === selArr[0]);
+    const e = s.entries.find(x => x.rel === selArr[0]);
     if (e && e.dir) return e.rel;
   }
-  return FB.rel;
+  return s.rel;
 }
-async function fbCmd(act){
-  const selArr = [...FB.sel];
+async function fmCmd(act){
+  const s = fmState(FM.ctx);
+  const selArr = [...s.sel];
   if (act === "open"){
     if (selArr.length === 1){
-      const e = FB.entries.find(x => x.rel === selArr[0]);
-      if (e && e.dir) fbOpen(e.rel); else if (e) openFile(e.rel);
+      const e = s.entries.find(x => x.rel === selArr[0]);
+      if (e && e.dir) fmGoto(e.rel); else if (e) fmOpenPage(e.rel);
     }
     return;
   }
@@ -877,85 +1100,94 @@ async function fbCmd(act){
   }
   if (act === "copy" || act === "cut"){
     if (!selArr.length) return;
-    FB.clip = {rels: selArr, cut: act === "cut"};
-    fbRender();
+    s.clip = {rels: selArr, cut: act === "cut"};
+    fmRender();
     toast((act === "cut" ? "已剪切 " : "已复制 ") + selArr.length + " 项");
     return;
   }
   if (act === "paste"){
-    if (!FB.clip) return;
-    const r = await pywebview.api.fs_copy(FB.clip.rels, FB.rel, FB.clip.cut);
+    if (!s.clip) return;
+    const r = await pywebview.api.fs_copy(s.clip.rels, s.rel, s.clip.cut);
     toast(r.msg, !r.ok);
-    if (r.ok && FB.clip.cut) FB.clip = null;
-    fbRefresh();
+    if (r.ok && s.clip.cut) s.clip = null;
+    fmRefresh();
     return;
   }
   if (act === "newfile" || act === "newdir"){
-    const dir = fbTargetDir(), isDir = act === "newdir";
+    const dir = fmTargetDir(), isDir = act === "newdir";
     askText(isDir ? "新建文件夹" : "新建文件", isDir ? "新建文件夹" : "untitled.py", async (name) => {
       const r = isDir ? await pywebview.api.fs_mkdir(dir, name)
                       : await pywebview.api.fs_touch(dir, name);
       toast(r.msg, !r.ok);
       if (r.ok){
-        if (dir !== FB.rel) await fbOpen(dir); else fbRefresh();
-        FB.sel.clear(); FB.sel.add(r.rel); fbPaintSel();
-        if (!isDir) openFile(r.rel);
+        if (dir !== s.rel) await fmGoto(dir, true); else await fmRefresh();
+        const s2 = fmState(FM.ctx);
+        s2.sel.clear(); s2.sel.add(r.rel);
+        if (!isDir) fmOpenPage(r.rel); else fmRender();
       }
     });
     return;
   }
   if (act === "rename"){
-    if (selArr.length !== 1) { toast("重命名一次只能一个", true); return; }
-    const e = FB.entries.find(x => x.rel === selArr[0]);
+    if (selArr.length !== 1){ toast("重命名一次只能一个", true); return; }
+    const e = s.entries.find(x => x.rel === selArr[0]);
     askText("重命名", e ? e.name : "", async (name) => {
       const r = await pywebview.api.fs_rename(selArr[0], name);
       toast(r.msg, !r.ok);
       if (r.ok){
-        if (ED.rel === r.old){ ED.rel = r.rel; $("#edpath").textContent = r.rel; }
-        FB.sel.clear(); FB.sel.add(r.rel);
-        fbRefresh();
+        const s2 = fmState(FM.ctx);
+        const t = s2.tabs.find(x => x.rel === r.old);
+        if (t){ t.rel = r.rel; t.name = r.rel.split("/").pop(); }
+        s2.sel.clear(); s2.sel.add(r.rel);
+        fmRefresh();
       }
     });
     return;
   }
   if (act === "del"){
     if (!selArr.length) return;
-    const names = FB.entries.filter(e => FB.sel.has(e.rel)).map(e => e.name);
-    askConfirm("删除", "把 " + (names.length === 1 ? "“" + names[0] + "”"
-      : names.length + " 项") + " 挪进 user_data/trash/（**不是真删**，能拿回来）。确定吗？",
-      async () => {
+    const names = s.entries.filter(e => s.sel.has(e.rel)).map(e => e.name);
+    askConfirm("删除", "把 " + (names.length === 1 ? "“" + names[0] + "”" : names.length + " 项") +
+      " 挪进 user_data/trash/（**不是真删**，能拿回来）。确定吗？", async () => {
         const r = await pywebview.api.fs_delete(selArr);
         toast(r.msg, !r.ok);
         if (r.ok){
-          if (ED.rel && selArr.some(s => ED.rel === s || ED.rel.startsWith(s + "/"))) closeFile();
-          FB.sel.clear();
-          fbRefresh();
+          const s2 = fmState(FM.ctx);
+          s2.tabs = s2.tabs.filter(t => !selArr.some(x => t.rel === x || t.rel.startsWith(x + "/")));
+          if (!s2.tabs.some(t => t.rel === s2.active)) s2.active = "__browse__";
+          s2.sel.clear();
+          fmRefresh();
         }
       });
     return;
   }
-  if (act === "reload"){ fbRefresh(); return; }
+  if (act === "reload") fmRefresh();
 }
 
 /* ---- 键盘 ---- */
-document.addEventListener("keydown", async (e) => {
+document.addEventListener("keydown", (e) => {
   if ($("#modal").classList.contains("on")) return;
   const typing = /^(INPUT|TEXTAREA)$/.test((e.target.tagName || "").toUpperCase());
   if (tab === "file" && !typing){
-    const k = e.key;
-    if (k === "Enter"){ e.preventDefault(); fbCmd("open"); return; }
-    if (k === "F2"){ e.preventDefault(); fbCmd("rename"); return; }
-    if (k === "Delete"){ e.preventDefault(); fbCmd("del"); return; }
-    if (k === "Backspace"){ e.preventDefault(); fbUp(); return; }
-    if (k === "F5"){ e.preventDefault(); fbRefresh(); return; }
-    if (k === "Escape"){ FB.sel.clear(); fbPaintSel(); hideCtx(); return; }
-    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "c"){ e.preventDefault(); fbCmd("copy"); return; }
-    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "x"){ e.preventDefault(); fbCmd("cut"); return; }
-    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "v"){ e.preventDefault(); fbCmd("paste"); return; }
+    const s = fmState(FM.ctx), k = e.key;
+    if (k === "Enter"){ e.preventDefault(); fmCmd("open"); return; }
+    if (k === "F2"){ e.preventDefault(); fmCmd("rename"); return; }
+    if (k === "Delete"){ e.preventDefault(); fmCmd("del"); return; }
+    if (k === "Backspace"){ e.preventDefault(); fmUp(); return; }
+    if (k === "F5"){ e.preventDefault(); fmRefresh(); return; }
+    if (k === "Escape"){ hideCtx(); return; }
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "c"){ e.preventDefault(); fmCmd("copy"); return; }
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "x"){ e.preventDefault(); fmCmd("cut"); return; }
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "v"){ e.preventDefault(); fmCmd("paste"); return; }
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "w"){
+      e.preventDefault();
+      if (s.active !== "__browse__") fmClosePage(s.active);
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "a"){
       e.preventDefault();
-      FB.entries.forEach(x => FB.sel.add(x.rel));
-      fbPaintSel();
+      s.entries.forEach(x => s.sel.add(x.rel));
+      fmRender();
       return;
     }
   }
@@ -963,69 +1195,6 @@ document.addEventListener("keydown", async (e) => {
 });
 document.addEventListener("click", (e) => { if (!e.target.closest("#ctxmenu")) hideCtx(); });
 window.addEventListener("blur", hideCtx);
-
-/* ================================================================ 编辑器 */
-const ED = {rel:null, lang:"plaintext", original:"", loaded:false, binary:false};
-
-function setEditLamp(st){ const l = $("#editlamp"); if (l) l.dataset.state = st; }
-function markDirty(){
-  const dirty = ED.loaded && !ED.binary && $("#code").value !== ED.original;
-  $("#eddirty").hidden = !dirty;
-  if (ED.loaded) setEditLamp(ED.binary ? "idle" : (dirty ? "warn" : "ok"));
-  $("#btn-save").disabled = !(dirty && !ED.binary);
-}
-function highlightNow(){
-  const text = $("#code").value, target = $("#hl");
-  if (text.length > 300000){ target.textContent = text + "\n"; return; }
-  if (window.hljs && ED.lang && hljs.getLanguage(ED.lang)){
-    try{
-      target.innerHTML = hljs.highlight(text, {language: ED.lang, ignoreIllegals: true}).value + "\n";
-      return;
-    }catch(e){}
-  }
-  target.textContent = text + "\n";
-}
-let hlTimer = null;
-function scheduleHighlight(){ clearTimeout(hlTimer); hlTimer = setTimeout(highlightNow, 120); }
-function syncScroll(){
-  const ta = $("#code"), pre = $("#hl").parentElement;
-  if (ta && pre){ pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; }
-}
-async function openFile(rel){
-  const r = await pywebview.api.fs_read(rel);
-  if (!r.ok){ toast("✗ " + r.msg, true); return; }
-  const name = rel.split("/").pop();
-  const meta = extOf({name: name, ext: (name.split(".").pop() || "").toLowerCase()});
-  ED.rel = rel; ED.lang = meta.l || "plaintext";
-  ED.original = r.text || ""; ED.binary = !!(r.binary || r.too_big); ED.loaded = true;
-  const code = $("#code");
-  code.value = ED.original;
-  code.readOnly = ED.binary;
-  $("#edpath").textContent = rel;
-  const factory = rel.split("/")[0] === "system";
-  let msg = "";
-  if (r.binary) msg = ico("binary", "i") + " 二进制文件，编辑不了；要看就用「默认程序打开」";
-  else if (r.too_big) msg = ico("alert-triangle", "i") + " " + r.msg;
-  else if (factory) msg = ico("alert-triangle", "i") +
-      " 这是出厂件（system/）—— 能改，但将来升级时会被整体替换";
-  $("#ednote").innerHTML = msg;
-  $("#ednote").hidden = !msg;
-  setTab("editor");
-  highlightNow(); syncScroll(); markDirty();
-}
-function closeFile(){
-  ED.rel = null; ED.loaded = false; ED.binary = false; ED.original = "";
-  $("#code").value = ""; $("#hl").textContent = "";
-  $("#edpath").textContent = "没打开文件";
-  $("#ednote").hidden = true; $("#eddirty").hidden = true;
-  setEditLamp("idle"); $("#btn-save").disabled = true;
-}
-async function saveFile(){
-  if (!ED.loaded || ED.binary) return;
-  const r = await pywebview.api.fs_write(ED.rel, $("#code").value);
-  toast(r.ok ? ("已保存 " + ED.rel + (r.factory ? "（出厂件）" : "")) : ("✗ " + r.msg), !r.ok);
-  if (r.ok){ ED.original = $("#code").value; markDirty(); if (tab === "file") fbRefresh(); }
-}
 
 /* ---------------------------------------------------------------- 模态 / 提示 */
 let modalCb = null;
@@ -1064,59 +1233,30 @@ async function init(){
   $("#meta").textContent =
     DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home;
   renderList(); paintStates();
+  // 默认上下文：不选包时给一个"全部文件"（根 = user_data），能自己往上走到 system
+  FM.ctx = "__all__";
+  const s = fmState("__all__");
+  const r = await pywebview.api.fs_list("user");
+  if (r.ok){ s.rel = r.rel; s.entries = r.entries || []; s.hist = [s.rel]; s.hpos = 0; }
+  fmRender();
 }
 function paintStaticIcons(){
-  $("#btn-browse").innerHTML    = ico("folder-tree", "i");
   $("#btn-selfcheck").innerHTML = ico("activity", "i");
   $("#btn-refresh").innerHTML   = ico("refresh-cw", "i");
   $("#btn-quit").innerHTML      = ico("x", "i");
   $("#btn-copy").innerHTML      = ico("copy", "i");
   $("#btn-rerun").innerHTML     = ico("rotate-cw", "i");
   $("#btn-clear").innerHTML     = ico("eraser", "i");
-  $("#btn-save").innerHTML      = ico("save", "i");
-  $("#btn-revert").innerHTML    = ico("undo-2", "i");
-  $("#btn-default").innerHTML   = ico("external-link", "i");
-  $("#btn-reveal2").innerHTML   = ico("folder-open", "i");
-  $("#fb-back").innerHTML   = ico("corner-up-left", "i");
-  $("#fb-fwd").innerHTML    = ico("corner-up-right", "i");
-  $("#fb-up").innerHTML     = ico("arrow-up", "i");
-  $("#fb-reload").innerHTML = ico("refresh-cw", "i");
-  $("#fb-newdir").innerHTML = ico("folder-plus", "i");
-  $("#fb-newfile").innerHTML= ico("file-plus", "i");
-  $("#fb-rename").innerHTML = ico("pencil", "i");
-  $("#fb-del").innerHTML    = ico("trash-2", "i");
-  $("#fb-copyb").innerHTML  = ico("copy", "i");
-  $("#fb-cut").innerHTML    = ico("scissors", "i");
-  $("#fb-paste").innerHTML  = ico("clipboard-paste", "i");
-  $("#fb-open").innerHTML   = ico("external-link", "i");
-  $("#fb-reveal").innerHTML = ico("folder-open", "i");
 }
 $("#q").addEventListener("input", renderList);
 $("#btn-refresh").onclick = init;
 $("#btn-quit").onclick = () => pywebview.api.quit();
-$("#btn-browse").onclick = () => fbOpen("user");
-document.querySelectorAll(".tab").forEach(b => b.onclick = () => setTab(b.dataset.tab));
+document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
+  if (b.dataset.tab === "file") fmSelect(cur ? cur.id : "__all__");
+  else setTab(b.dataset.tab);
+});
 $("#btn-copy").onclick = copyOut;
 $("#btn-clear").onclick = () => { out(""); setCmd(""); clearConsoleState(); };
-$("#btn-save").onclick = saveFile;
-$("#btn-revert").onclick = () => { if (ED.rel) openFile(ED.rel); };
-$("#btn-default").onclick = () => { if (ED.rel) pywebview.api.fs_open_default(ED.rel); };
-$("#btn-reveal2").onclick = () => { if (ED.rel) pywebview.api.fs_reveal(ED.rel); };
-$("#fb-back").onclick = fbBack;
-$("#fb-fwd").onclick = fbFwd;
-$("#fb-up").onclick = fbUp;
-$("#fb-reload").onclick = fbRefresh;
-$("#fb-root-user").onclick = () => fbOpen("user");
-$("#fb-root-system").onclick = () => fbOpen("system");
-$("#fb-newdir").onclick = () => fbCmd("newdir");
-$("#fb-newfile").onclick = () => fbCmd("newfile");
-$("#fb-rename").onclick = () => fbCmd("rename");
-$("#fb-del").onclick = () => fbCmd("del");
-$("#fb-copyb").onclick = () => fbCmd("copy");
-$("#fb-cut").onclick = () => fbCmd("cut");
-$("#fb-paste").onclick = () => fbCmd("paste");
-$("#fb-open").onclick = () => fbCmd("default");
-$("#fb-reveal").onclick = () => fbCmd("reveal");
 $("#m-cancel").onclick = closeModal;
 $("#m-ok").onclick = () => { const cb = modalCb; closeModal(); if (cb) cb(); };
 $("#m-input").addEventListener("keydown", e => {
@@ -1124,18 +1264,6 @@ $("#m-input").addEventListener("keydown", e => {
   if (e.key === "Escape") closeModal();
 });
 $("#modal").addEventListener("click", e => { if (e.target.id === "modal") closeModal(); });
-$("#code").addEventListener("input", () => { scheduleHighlight(); markDirty(); });
-$("#code").addEventListener("scroll", syncScroll);
-$("#code").addEventListener("keydown", e => {
-  if (e.key === "Tab"){
-    e.preventDefault();
-    const el = e.target, p = el.selectionStart;
-    el.value = el.value.slice(0, p) + "    " + el.value.slice(el.selectionEnd);
-    el.selectionStart = el.selectionEnd = p + 4;
-    highlightNow(); markDirty();
-  }
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s"){ e.preventDefault(); saveFile(); }
-});
 $("#btn-rerun").onclick = async () => {
   if (!lastRun || busy) return;
   busy = true;
