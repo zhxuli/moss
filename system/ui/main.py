@@ -275,12 +275,47 @@ def _top_windows():
 _HELPER_CLASSES = ("TtkMonitorClass",)
 
 
-def _pkg_windows(pkg):
+def _env_pkg_id(pid):
+    """问一个进程：你的环境变量里 `MOSS_PKG_ID` 是什么。
+
+    ★ 为什么要它：光靠"我们自己拉起过的进程树"认不出这些情况 ——
+      ① 用户是**从终端**敲 `moss :exec` 开的（我们没经手）；
+      ② 包的父进程 fork 出界面之后**自己退出了**（PID 树断了，界面成了孤儿）；
+      ③ moss 界面重启过（内存里那份进程表没了）。
+      而宿主给每个包调用都注入了 `MOSS_PKG_ID`（`core/engine.py:144`），
+      它跟着子进程一路继承下去 —— 所以"谁在跑这个包"这件事，
+      **进程自己身上就写着**，比我们记的账可靠。
+    ⚠️ 已知副作用（`P-18` ⬜）：`MOSS_*` 会顺着长驻服务往下漏（实测 dsh 那棵树里
+      node/pwsh 都带着 `MOSS_PKG_ID=dsh`），所以对 `dsh` 这种包，认出来的可能偏多。
+      `P-18` 那条定了之后这里会更准。
+    """
+    try:
+        import psutil
+        return (psutil.Process(int(pid)).environ() or {}).get("MOSS_PKG_ID")
+    except Exception:              # 提权进程读不到环境、进程已退出……
+        return None
+
+
+def _pkg_pids(pkg):
+    """属于这个包的进程：我们记的进程树 ∪ 环境变量里写着它的（只查"有窗口"的那些，省时间）。"""
+    pids = set()
     roots = _pkg_procs.get(str(pkg)) or set()
-    if not roots:
-        return []
-    pids = _with_descendants(roots)
+    if roots:
+        pids |= _with_descendants(roots)
+    for w in _top_windows():
+        pid = w["pid"]
+        if pid == os.getpid() or pid in pids:
+            continue
+        if _env_pkg_id(pid) == str(pkg):
+            pids.add(pid)
     pids.discard(os.getpid())                # 别把 moss 自己的界面窗口算进去
+    return pids
+
+
+def _pkg_windows(pkg):
+    pids = _pkg_pids(pkg)
+    if not pids:
+        return []
     return [w for w in _top_windows()
             if w["pid"] in pids and w["class"] not in _HELPER_CLASSES]
 
@@ -418,12 +453,29 @@ class Api:
         return {"ok": True, "msg": "已后台启动：" + " ".join(argv[1:])}
 
     # ------------------------------------------------ 包自己的界面窗口（显示/隐藏）
-    def pkg_vis(self, pid):
-        """这个包现在有没有开着的窗口、是显示还是隐藏着。"""
-        ws = _pkg_windows(pid)
+    def pkg_state(self, pid):
+        """这个包**现在在不在跑**、有没有窗口、窗口是显示还是隐藏。
+
+        「在不在跑」不只算我们自己拉起的：从终端开的、父进程退了的，都认得出
+        （看进程环境里的 `MOSS_PKG_ID`）。界面右上角那个按钮就靠它决定
+        显示「运行」还是「停止」。
+        """
+        pids = _pkg_pids(pid)
+        ws = [w for w in _top_windows()
+              if w["pid"] in pids and w["class"] not in _HELPER_CLASSES]
         vis = [w for w in ws if w["visible"]]
-        return {"ok": True, "windows": len(ws), "visible": len(vis) > 0,
+        return {"ok": True, "running": bool(pids), "pids": len(pids),
+                "windows": len(ws), "visible": len(vis) > 0,
                 "titles": [w["title"] for w in ws][:5]}
+
+    def pkg_stop(self, pid):
+        """把这个包正在跑的进程停掉（连子孙一起）—— 不管是谁把它拉起来的。"""
+        pids = _pkg_pids(pid)
+        if not pids:
+            return {"ok": False, "msg": "这个包现在没在跑"}
+        for p in pids:
+            _kill_tree(p)
+        return {"ok": True, "msg": "已停掉这个包（%d 个进程，连同它们的子进程）" % len(pids)}
 
     def pkg_hide(self, pid):
         """把它的窗口藏起来（不关、不杀，随时能再显示）。"""

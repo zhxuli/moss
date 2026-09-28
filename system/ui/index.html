@@ -447,7 +447,7 @@ function setTab(name){
   ["detail", "console", "file"].forEach(t =>
     $("#pane-" + t).classList.toggle("on", t === name));
   hideCtx();
-  if (name === "detail" && cur) refreshVis(cur);      // 回到详情时对一下窗口状态
+  if (name === "detail" && cur) refreshPkgState(cur);   // 回到详情时对一下"在不在跑 / 有没有窗口"
 }
 function stripAnsi(s){
   return String(s == null ? "" : s)
@@ -482,17 +482,60 @@ function setCmd(t){ $("#tabcmd").textContent = t || ""; }
 /* ---------------------------------------------------------------- 运行 / 停止
    跑包不再是"一个阻塞调用"（那样跑起来就停不了，长驻的东西会把界面卡住）。
    走宿主的 `run_start` / `run_poll` / `run_stop`：200ms 轮询一次，
-   输出**流式**刷进「命令行」，随时能按停止（连子孙进程一起杀）。 */
-let RUN = null;                 // {id, rid, cmd, timer}
+   输出**流式**刷进「命令行」，随时能按停止（连子孙进程一起杀）。
 
-function runToggleUI(running){
+   ★ 但"这个包在不在跑"**不能只看我这份 RUN**：包可能是从终端开的、
+   或者它的父进程 fork 出界面后自己退了、或者 moss 界面重启过。
+   所以按钮状态一律问宿主 `pkg_state`（它按进程环境里的 `MOSS_PKG_ID` 认，
+   不管是谁拉起来的）。本地的 RUN 只用来决定"输出还能不能流式看"。 */
+let RUN = null;                 // {id, rid, cmd, timer}
+const PST = {};                 // 包 id -> {running, pids, windows, visible, titles}
+let pstTimer = null;
+
+async function refreshPkgState(p){
+  if (!p) return;
+  try{ PST[p.id] = await pywebview.api.pkg_state(p.id); }
+  catch(e){ PST[p.id] = {running: false, windows: 0, visible: false}; }
+  paintActions(p);
+}
+
+function paintActions(p){
+  if (!cur || cur.id !== p.id) return;
+  const st = PST[p.id] || {running: false, windows: 0, visible: false};
+  const mine = !!(RUN && RUN.id === p.id);
+  const running = mine || !!st.running;
   const b = $("#btn-run");
-  if (!b) return;
-  b.innerHTML = running ? (ico("square", "i") + "<span>停止</span>")
-                        : (ico("play", "i") + "<span>运行</span>");
-  b.title = running ? "停掉这次运行（连同它拉起的子进程）"
-                    : "运行这个包（输出进「命令行」；参数留空 = 通常开界面）";
-  b.classList.toggle("warn", !!running);
+  if (b){
+    b.innerHTML = running ? (ico("square", "i") + "<span>停止</span>")
+                          : (ico("play", "i") + "<span>运行</span>");
+    b.title = running
+      ? (mine ? "停掉这次运行（连同它拉起的子进程）"
+              : "停掉这个包正在跑的进程（它是从别处启动的）")
+      : "运行这个包（输出进「命令行」；参数留空 = 通常开界面）";
+    b.classList.toggle("warn", running);
+  }
+  const v = $("#btn-vis");
+  if (v){
+    v.innerHTML = ico(st.visible ? "eye-off" : "eye", "i");
+    v.disabled = !st.windows;
+    v.title = !st.windows
+      ? "这个包现在没有开着的窗口（先「运行」或「打开界面」）"
+      : (st.visible ? "隐藏它的窗口（不关掉，随时能再显示出来）"
+                    : "把它的窗口显示出来并叫到前面");
+  }
+}
+
+async function clickRun(p){
+  const mine = !!(RUN && RUN.id === p.id);
+  const st = PST[p.id] || {};
+  if (mine){ await stopRun(); return; }
+  if (st.running){                       // 别处启动的：直接停掉它的进程
+    const r = await pywebview.api.pkg_stop(p.id);
+    toast(r.msg, !r.ok);
+    setTimeout(() => refreshPkgState(p), 500);
+    return;
+  }
+  startRun(p, $("#args").value);
 }
 
 async function startRun(p, args){
@@ -508,7 +551,7 @@ async function startRun(p, args){
   const r = await pywebview.api.run_start(p.id, args || "");
   if (!r.ok){ toast("✗ " + (r.msg || "启动失败"), true); setState(p.id, "fail", {code: -1}); return; }
   RUN = {id: p.id, rid: r.run_id, cmd: cmd, timer: null};
-  renderDetail();                       // 让按钮立刻变成「停止」
+  refreshPkgState(p);                    // 让按钮立刻变成「停止」
   pollRun();
 }
 
@@ -526,13 +569,15 @@ function pollRun(){
 
 function finishRun(code, text){
   if (!RUN) return;
-  const id = RUN.id, cmd = RUN.cmd;
+  const id = RUN.id, cmd = RUN.cmd, p = cur;
   clearTimeout(RUN.timer);
   RUN = null;
   out("$ " + cmd + "\n\n" + (text || "(这个包没有输出)") + "\n[退出码] " + code);
   setState(id, code === 0 ? "ok" : "fail", {code: code});
   renderDetail();
-  if (cur) setTimeout(() => refreshVis(cur), 600);   // 这次运行可能把它的界面也开出来了
+  // ★ 退出码回来了不等于"它没在跑" —— 有的包 fork 出界面自己就退了。
+  //   所以状态以宿主那份为准（800ms 后再问一次）。
+  if (p && p.id === id) setTimeout(() => refreshPkgState(p), 800);
 }
 
 async function stopRun(){
@@ -543,32 +588,20 @@ async function stopRun(){
 
 /* ---------------------------------------------------------------- 显示 / 隐藏
    管的是**这个包自己的界面窗口**（GUI 包跑起来那扇窗）：藏起来 ≠ 关掉，
-   还能再叫出来。窗口归属由宿主按"我们为它拉起过的进程树"认出来（比按标题猜可靠）。 */
-const VIS = {};                 // 包 id -> {windows, visible}
-
-async function refreshVis(p){
-  if (!p) return;
-  try{
-    VIS[p.id] = await pywebview.api.pkg_vis(p.id);
-  }catch(e){ VIS[p.id] = {windows:0, visible:false}; }
-  paintVis(p);
-}
-function paintVis(p){
-  const b = $("#btn-vis");
-  if (!b || !cur || cur.id !== p.id) return;
-  const v = VIS[p.id] || {windows: 0, visible: false};
-  b.innerHTML = ico(v.visible ? "eye-off" : "eye", "i");
-  b.disabled = v.windows === 0;
-  b.title = v.windows === 0
-    ? "这个包现在没有开着的窗口（先「打开界面」或「运行」）"
-    : (v.visible ? "隐藏它的窗口（不关掉，随时能再显示出来）" : "把它的窗口显示出来并叫到前面");
-}
+   还能再叫出来。窗口归属由宿主认（进程树 ∪ 进程环境里的 MOSS_PKG_ID），
+   所以从终端开的也认得出来。 */
 async function toggleVis(p){
-  const v = VIS[p.id] || {windows: 0, visible: false};
-  const r = v.visible ? await pywebview.api.pkg_hide(p.id)
-                      : await pywebview.api.pkg_show(p.id);
+  const st = PST[p.id] || {windows: 0, visible: false};
+  const r = st.visible ? await pywebview.api.pkg_hide(p.id)
+                       : await pywebview.api.pkg_show(p.id);
   toast(r.msg, !r.ok);
-  setTimeout(() => refreshVis(p), 400);       // 等窗口状态真变了再问一次
+  setTimeout(() => refreshPkgState(p), 400);
+}
+
+/* 详情页开着的时候，每 2.5 秒对一次状态（包可能是从别处启动/关掉的） */
+function pkgPollStart(){
+  if (pstTimer) return;
+  pstTimer = setInterval(() => { if (tab === "detail" && cur) refreshPkgState(cur); }, 2500);
 }
 
 /* ---------------------------------------------------------------- 包列表 */
@@ -689,14 +722,11 @@ function renderDetail(){
   box.querySelectorAll(".chip.click").forEach(c => {
     c.onclick = () => { $("#args").value = c.dataset.args || ""; upd(); };
   });
-  // 右上角：一个按钮，跑着的时候是「停止」
-  runToggleUI(!!(RUN && RUN.id === p.id));
-  $("#btn-run").onclick = () => (RUN ? stopRun() : startRun(p, $("#args").value));
-  // 右上角另一个：显示/隐藏它的窗口（状态得问宿主，先给个中性样子）
-  $("#btn-vis").innerHTML = ico("eye", "i");
-  $("#btn-vis").disabled = true;
+  // 右上角：跑着的时候是「停止」（状态问宿主，不问本地那份 RUN）
+  paintActions(p);
+  $("#btn-run").onclick = () => clickRun(p);
   $("#btn-vis").onclick = () => toggleVis(p);
-  refreshVis(p);
+  refreshPkgState(p);
   $("#btn-run").onclick = async () => {
     if (busy) return;
     busy = true;
@@ -718,9 +748,9 @@ function renderDetail(){
     setState(p.id, r.ok ? "warn" : "fail",
              {code: r.ok ? undefined : -1, note: r.ok ? "已后台启动 · 结果未知" : "启动失败"});
     out(r.msg || "");
-    // 界面窗口要几秒才出来，等一会儿再问"它有没有窗口"
-    setTimeout(() => refreshVis(p), 1500);
-    setTimeout(() => refreshVis(p), 3500);
+    // 界面窗口要几秒才出来，等一会儿再问"它有没有窗口 / 在不在跑"
+    setTimeout(() => refreshPkgState(p), 1500);
+    setTimeout(() => refreshPkgState(p), 3500);
   };
   $("#btn-files").onclick = () => fmSelect(p.id);
 }
@@ -1397,6 +1427,7 @@ async function init(){
   $("#meta").textContent =
     DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home;
   renderList(); paintStates();
+  pkgPollStart();          // 详情页开着时每 2.5 秒对一次"在不在跑 / 有没有窗口"
   // 默认上下文：不选包时给一个"全部文件"（根 = user_data），能自己往上走到 system
   FM.ctx = "__all__";
   const s = fmState("__all__");
