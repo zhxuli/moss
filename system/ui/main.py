@@ -21,6 +21,7 @@ import ctypes
 import ctypes.wintypes as wt
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -99,25 +100,58 @@ ROOTS = [
      "why": "出厂件（随 moss.exe 分发）—— 能改，但升级时会被整体替换"},
 ]
 
+# ★ 第三个根：**绝对路径**（页面写的 `abs/D:/python/wwwroot/ZeEn`）。
+#   为什么要它（2026-09-28 你定的）：历史里那些**路径调用**的目标本来就散在磁盘各处
+#   （`D:\python\wwwroot\ZeEn` 这类），而前两个根只覆盖 `user_data/` 和 `system/`。
+#   历史条目要能"点进去看看那个目录"，就必须能走到根外面 —— 否则它的「文件管理」
+#   永远只会说"路径跑到根外面去了"。
+#   保护措施照旧不变：删除仍然只进 `user_data/trash/`、二进制与 >2MB 仍然只读、
+#   `..` 段仍然拒绝（往上走用界面上那个 ⬆ 按钮，它算的是真正的父目录）。
+ABS_KEY = "abs"
+ABS_ROOT = {"key": ABS_KEY, "label": "外部目录", "path": None, "writable": True,
+            "why": "历史调用所在的目录（不在 user_data/ 和 system/ 里）"}
+
 
 def _root_by_key(key):
+    if key == ABS_KEY:
+        return ABS_ROOT
     for r in ROOTS:
         if r["key"] == key:
             return r
     return None
 
 
+def _abs_of(sub):
+    """`abs/` 后面那段 → 绝对路径。半截盘符（`D:`）补成盘根（`D:/`）。"""
+    s = str(sub or "").strip()
+    if re.fullmatch(r"[A-Za-z]:", s):
+        s += "/"
+    p = Path(s)
+    if not p.is_absolute():
+        raise ValueError("`%s/` 后面要跟一个**绝对路径**，收到的是 '%s'" % (ABS_KEY, sub))
+    return p
+
+
 def _resolve(rel):
     """把 `user/pkgs/x/main.py` 解析成绝对路径，并确保没跑出根本身。
 
     返回 (root_dict, Path)；不合法就抛 ValueError（页面把 message 显示出来）。
+    `abs/<绝对路径>` 是第三个根 —— 它没有"根目录"可比，所以不做越界检查
+    （它本来就是"根外面"），但仍然拒绝 `..` 段。
     """
     rel = str(rel or "").replace("\\", "/").strip().strip("/")
     key, _, sub = rel.partition("/")
     root = _root_by_key(key)
     if root is None:
         raise ValueError("不认识的根 '%s'（只允许 %s）"
-                         % (key, " / ".join(r["key"] for r in ROOTS)))
+                         % (key, " / ".join([r["key"] for r in ROOTS] + [ABS_KEY])))
+    if key == ABS_KEY:
+        if ".." in sub.split("/"):
+            raise ValueError("路径里不许有 `..`（要用上一级请点界面上的 ⬆）")
+        try:
+            return root, _abs_of(sub).resolve()
+        except OSError as e:
+            raise ValueError("路径解析失败：%s" % e)
     base = Path(root["path"])
     try:
         base_r = base.resolve()
@@ -130,7 +164,7 @@ def _resolve(rel):
 
 
 def _rel_of(path):
-    """绝对路径 → 页面用的 `key/子路径`。"""
+    """绝对路径 → 页面用的 `key/子路径`。在三个根里都不成立就返回 None。"""
     p = Path(path).resolve()
     for r in ROOTS:
         base = Path(r["path"]).resolve()
@@ -141,18 +175,33 @@ def _rel_of(path):
     return None
 
 
-def _trash(path):
-    """把东西挪进 `user_data/trash/<时间戳>/<原相对路径>`（不真删）。"""
-    import time
+def _rel_page(path):
+    """页面用的 rel：先按两个真根算，算不出来就落到 `abs/<绝对路径>`。
+
+    ★ 和 `_rel_of` 分开：`_rel_of` 答的是"这东西在哪一层的账上"（`_trash` 要用它
+      决定往哪放），`_rel_page` 答的是"页面该拿什么字符串来引用它"。
+    """
     rel = _rel_of(path)
-    if not rel:
-        raise ValueError("这东西不在两个根里面")
+    if rel:
+        return rel
+    return ABS_KEY + "/" + Path(path).resolve().as_posix()
+
+
+def _trash(path):
+    """把东西挪进 `user_data/trash/<时间戳>/...`（不真删）。
+
+    `abs/` 那些（磁盘上任意位置）也照样进回收站 —— 只是路径里不能带 `:`，
+    所以去掉盘符的冒号，落成 `trash/<时间戳>/abs/D/python/...` 这样。
+    """
+    import time
+    rel = _rel_page(path)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    dest = USER_DATA / TRASH_DIRNAME / stamp / Path(rel.replace("/", os.sep))
+    safe = rel.replace(":", "")
+    dest = USER_DATA / TRASH_DIRNAME / stamp / Path(safe.replace("/", os.sep))
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest = _unique(dest)
     shutil.move(str(path), str(dest))
-    return rel, _rel_of(dest)
+    return rel, _rel_page(dest)
 
 
 def _unique(path):
@@ -282,6 +331,41 @@ def _top_windows():
 # 尺寸还是 2880×1563 —— 靠尺寸/样式根本认不出来）。它们不是"包的界面"，
 # 而且一旦被 ShowWindow 放出来，屏幕上会多出一扇莫名其妙的空窗，所以按类名排掉。
 _HELPER_CLASSES = ("TtkMonitorClass",)
+
+
+def rerun_argv(target, cwd="", args=""):
+    """把一条历史记录翻成"你在终端里会手敲的那条命令"。返回 (argv, cwd)，空目标给 (None, None)。
+
+    ★ 为什么不能直接用绝对路径（2026-09-28 实测踩到）：
+      `core/resolve.py:find()` 只在 cwd 往上做**名字前缀匹配** —— 绝对路径会被
+      当成一个名字（`C:\\x\\y.py` 里还要按 `/` 拆段），永远匹配不到任何候选，
+      于是界面上点「运行」只会得到一句"没找到以 … 开头的可运行目标"。
+      CLI 自己的 `--history` 回车之所以能跑，是因为它走 `cmd_rerun_record`，
+      **直接构造 Invocation、绕过解析器**。界面这边不另开执行通道（`U-16`），
+      所以只能翻成手敲形式：
+
+          cwd  = 当初记录的 cwd（不是目录了就退到目标自己所在的目录，再退 user_data）
+          名字 = 目标**相对这个 cwd** 的写法；目标不在它下面时只给文件名
+                 （只给文件名时靠 `V-20` 那条历史兜底 —— 也就是你说的 `moss zeen`）
+
+      cwd=`D:\\python\\wwwroot\\ZeEn` + 目标=同目录 `main.py` → `moss /main.py`
+      目标在子目录里（cwd 是上层）                        → `moss /ZeEn/main.py`
+    """
+    target = str(target or "").strip()
+    if not target:
+        return None, None
+    tp = Path(target)
+    if cwd and Path(cwd).is_dir():
+        workdir = Path(cwd)
+    elif tp.parent.is_dir():
+        workdir = tp.parent
+    else:
+        workdir = USER_DATA
+    try:
+        name = tp.resolve().relative_to(workdir.resolve()).as_posix()
+    except (ValueError, OSError):
+        name = tp.name
+    return HOST + ["/" + name] + _split(args), workdir
 
 
 def _dir_icon(folder, exts):
@@ -603,21 +687,22 @@ class Api:
         return {"ok": True, "items": items}
 
     def path_start(self, target, cwd="", args=""):
-        """重跑一次**路径调用**（历史里点一下就是它）。
+        """重跑一次**路径调用**（历史条目点「运行」就是它）。
 
-        用 `moss /<目标>`（`/` = "别切目录"，照抄 CLI 的语义），并把 cwd 设成
-        当初那次记录的 cwd —— 这样重跑出来的东西和上次是同一回事。
-        跑起来之后 `run_poll` / `run_stop` 照旧能用（它们只认 run_id）。
+        ★ 关键：**不能把绝对路径直接丢给 moss**（2026-09-28 实测踩到）。
+          `resolve.find()` 只会在 cwd 往上做**名字前缀匹配**，绝对路径会被当成名字，
+          于是永远"候选 0 个" —— 也就是说这条路**从来没真正跑起来过**。
+          （CLI 自己的 `--history` 回车能跑，是因为它走 `cmd_rerun_record`，
+            直接构造调用、不过解析器。你举的 `moss zeen` 走的是 `V-20` 那条历史兜底。）
+          所以这里换成**和你在终端里手敲完全一样的形式** —— 规则见 `rerun_argv()`。
         """
-        target = str(target or "").strip()
-        if not target:
+        argv, workdir = rerun_argv(target, cwd, args)
+        if argv is None:
             return {"ok": False, "msg": "这条历史没有目标路径"}
-        argv = HOST + ["/" + target] + _split(args)
-        workdir = cwd if (cwd and Path(cwd).is_dir()) else str(USER_DATA)
         try:
             proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, encoding="utf-8", errors="replace",
-                                    bufsize=1, cwd=workdir, creationflags=NO_WINDOW)
+                                    bufsize=1, cwd=str(workdir), creationflags=NO_WINDOW)
         except OSError as e:
             return {"ok": False, "msg": "启动失败：%s" % e}
         rid = uuid.uuid4().hex[:10]
@@ -629,7 +714,9 @@ class Api:
                     if RUNS[old]["code"] is not None:
                         RUNS.pop(old, None)
         threading.Thread(target=_pump_output, args=(rid,), daemon=True).start()
-        return {"ok": True, "run_id": rid, "pid": proc.pid}
+        # 把**真正要跑的命令和当前目录**回报给界面（界面照着显示，不自己另算一遍）
+        return {"ok": True, "run_id": rid, "pid": proc.pid,
+                "cmd": "moss " + " ".join(argv[len(HOST):]), "cwd": str(workdir)}
 
     # ------------------------------------------------ 包自己的界面窗口（显示/隐藏）
     def pkg_states(self, ids):
@@ -723,7 +810,11 @@ class Api:
 
     # ------------------------------------------------ 文件浏览 / 编辑（v0.5）
     def fs_roots(self):
-        """两个根（页面把它画成树的顶层）。"""
+        """账上的两个根（`user_data` / `system`）。
+
+        ★ 注意这只是**账**的那两层；页面还能引用第三种：`abs/<绝对路径>`，
+          给历史里那些散在磁盘各处的路径调用用（见 `ABS_ROOT`）。
+        """
         return {"roots": [{"key": r["key"], "label": r["label"],
                            "path": str(r["path"]), "writable": r["writable"],
                            "why": r["why"],
@@ -749,12 +840,12 @@ class Api:
                     size, mtime = st.st_size, int(st.st_mtime)
                 except OSError:
                     size, mtime = 0, 0
-                entries.append({"name": child.name, "rel": _rel_of(child),
+                entries.append({"name": child.name, "rel": _rel_page(child),
                                 "dir": child.is_dir(), "size": size, "mtime": mtime,
                                 "ext": child.suffix.lower().lstrip(".")})
         except OSError as e:
             return {"ok": False, "msg": "读目录失败：%s" % e}
-        return {"ok": True, "rel": _rel_of(p), "entries": entries,
+        return {"ok": True, "rel": _rel_page(p), "entries": entries,
                 "writable": root["writable"], "path": str(p)}
 
     def fs_read(self, rel):
@@ -779,7 +870,7 @@ class Api:
         except UnicodeDecodeError:
             text = raw.decode("utf-8", "replace")
         return {"ok": True, "binary": False, "too_big": False, "size": size,
-                "text": text, "rel": _rel_of(p), "path": str(p),
+                "text": text, "rel": _rel_page(p), "path": str(p),
                 "writable": root["writable"],
                 "mtime": int(p.stat().st_mtime)}
 
@@ -833,7 +924,7 @@ class Api:
                     pass
         except OSError as e:
             return {"ok": False, "msg": "建不了：%s" % e}
-        return {"ok": True, "rel": _rel_of(target), "msg": "已创建 %s" % name}
+        return {"ok": True, "rel": _rel_page(target), "msg": "已创建 %s" % name}
 
     def fs_rename(self, rel, new_name):
         try:
@@ -843,6 +934,8 @@ class Api:
         new_name = str(new_name or "").strip()
         if _bad_name(new_name):
             return {"ok": False, "msg": "名字不合法"}
+        if p.parent == p:                          # 盘根没有"父目录里的名字"
+            return {"ok": False, "msg": "盘根不能改名"}
         target = p.with_name(new_name)
         if target.exists():
             return {"ok": False, "msg": "已经有一个同名的了"}
@@ -850,10 +943,14 @@ class Api:
             p.rename(target)
         except OSError as e:
             return {"ok": False, "msg": "改不了名：%s" % e}
-        return {"ok": True, "rel": _rel_of(target), "old": rel, "msg": "已改名为 %s" % new_name}
+        return {"ok": True, "rel": _rel_page(target), "old": rel, "msg": "已改名为 %s" % new_name}
 
     def fs_delete(self, rels):
-        """删除 = **挪进 user_data/trash/**（可恢复），不真删。收一个或多个。"""
+        """删除 = **挪进 user_data/trash/**（可恢复），不真删。收一个或多个。
+
+        ★ 两种"根本身"不许删：`user` / `system` 这两个账上的根，
+          以及 `abs/` 那边**盘根**（`abs/D:/` —— 那一下就是把整块盘搬走）。
+        """
         if isinstance(rels, str):
             rels = [rels]
         done, bad = [], []
@@ -863,7 +960,11 @@ class Api:
             except ValueError as e:
                 bad.append("%s：%s" % (rel, e))
                 continue
-            if p == Path(root["path"]).resolve():
+            if root["key"] == ABS_KEY:
+                if p.parent == p:                     # D:\ 这种盘根（父目录就是自己）
+                    bad.append("%s：盘根不能删" % rel)
+                    continue
+            elif p == Path(root["path"]).resolve():
                 bad.append("%s：根本身不能删" % rel)
                 continue
             try:
@@ -915,7 +1016,7 @@ class Api:
                     shutil.copytree(str(src), str(target))
                 else:
                     shutil.copy2(str(src), str(target))
-                made.append(_rel_of(target))
+                made.append(_rel_page(target))
             except (OSError, shutil.Error) as e:
                 bad.append("%s：%s" % (src.name, e))
         if not made:
