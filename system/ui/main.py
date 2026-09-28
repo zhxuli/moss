@@ -217,14 +217,16 @@ def _pid_parents():
     return out
 
 
-def _with_descendants(roots):
+def _with_descendants(roots, parents=None):
     """roots 以及它们的全部子孙 pid —— **只算还活着的**（包的启动器 → 真身常常两三层）。
 
     ★ 必须按快照过滤掉死 pid：`roots` 是我们当初记下的 pid，进程退出后那个号
       还留在表里；不过滤的话 `pkg_state` 会永远报"它还在跑" ——
       **实测踩到**：点「停止」把图片工具退出了，按钮却一直显示"停止"不变回来。
+    ★ `parents` 允许传进来复用：批量查十几个包时，进程快照只取一次就够（省几十毫秒）。
     """
-    parents = _pid_parents()
+    if parents is None:
+        parents = _pid_parents()
     alive = set(parents)
     kids = {}
     for pid, ppid in parents.items():
@@ -302,18 +304,52 @@ def _env_pkg_id(pid):
         return None
 
 
-def _pkg_pids(pkg):
-    """属于这个包的**还活着**的进程：我们记的进程树 ∪ 环境变量里写着它的（只查有窗口的，省时间）。"""
+def _pids_by_cmdline():
+    """{pid: 命令行（小写、反斜杠统一成正斜杠）}。
+
+    ★ 这是最便宜也最广的一条线索（实测 391 个进程只要 **22ms**）：包不管是界面型的
+      还是后台服务型的，只要是被 `python.exe bootstrap.py …\\pkgs\\<id>\\main.py`
+      这种方式拉起来的，命令行里就写着它在哪个包目录里 —— **不用它有窗口**。
+      （只读环境的代价是 219ms，所以那条只在"有窗口的进程"上用。）
+    """
+    out = {}
+    try:
+        import psutil
+        for p in psutil.process_iter(["pid", "cmdline"]):
+            try:
+                cl = " ".join(p.info["cmdline"] or [])
+            except Exception:
+                continue
+            if cl:
+                out[int(p.info["pid"])] = cl.replace("\\", "/").lower()
+    except Exception:
+        pass
+    return out
+
+
+def _pkg_pids(pkg, parents=None, cmdlines=None, owner_pkg=None):
+    """属于这个包、**还活着**的进程：
+       ① 我们记下的进程树（点过运行/打开界面的）
+       ② 命令行里带着 `pkgs/<id>/` 的（从终端开的、后台服务都算）
+       ③ 拥有窗口、且环境里 `MOSS_PKG_ID` 等于它的（包自己 re-exec 之类的情况）
+    """
+    pkg = str(pkg)
     pids = set()
-    roots = _pkg_procs.get(str(pkg)) or set()
+    roots = _pkg_procs.get(pkg) or set()
     if roots:
-        pids |= _with_descendants(roots)
-    for w in _top_windows():
-        pid = w["pid"]
-        if pid == os.getpid() or pid in pids:
-            continue
-        if _env_pkg_id(pid) == str(pkg):
-            pids.add(pid)
+        pids |= _with_descendants(roots, parents)
+    if cmdlines is None:
+        cmdlines = _pids_by_cmdline()
+    needle = "/pkgs/%s/" % pkg
+    pids |= {pid for pid, cl in cmdlines.items() if needle in cl}
+    if owner_pkg is None:
+        owner_pkg = {}
+        for w in _top_windows():
+            pid = w["pid"]
+            if pid == os.getpid() or pid in owner_pkg:
+                continue
+            owner_pkg[pid] = _env_pkg_id(pid)
+    pids |= {pid for pid, k in owner_pkg.items() if k == pkg}
     pids.discard(os.getpid())                # 别把 moss 自己的界面窗口算进去
     return pids
 
@@ -459,6 +495,34 @@ class Api:
         return {"ok": True, "msg": "已后台启动：" + " ".join(argv[1:])}
 
     # ------------------------------------------------ 包自己的界面窗口（显示/隐藏）
+    def pkg_states(self, ids):
+        """**一次**把"这些包分别在不在跑、有没有窗口"全算出来。
+
+        ★ 为什么要批量：左侧列表要给**每一个**包显示状态（跑着的显示绿色停止图标），
+          一个包一次调用的话，每轮要重复枚举窗口 N 遍。
+          这里只枚举一次窗口、只对"有窗口的进程"读一遍环境，再把结果分给各个包。
+        """
+        want = [str(x) for x in (ids or [])]
+        wins = [w for w in _top_windows() if w["class"] not in _HELPER_CLASSES]
+        me = os.getpid()
+        owner_pkg = {}                       # 有窗口的 pid -> 它属于哪个包（每个只读一次环境）
+        for w in wins:
+            pid = w["pid"]
+            if pid == me or pid in owner_pkg:
+                continue
+            owner_pkg[pid] = _env_pkg_id(pid)
+        allp = _pid_parents()                # 进程快照也只取一次，所有包共用
+        cmdlines = _pids_by_cmdline()        # 命令行也只扫一次（22ms）
+        out = {}
+        for pkg in want:
+            pids = _pkg_pids(pkg, allp, cmdlines, owner_pkg)
+            ws = [w for w in wins if w["pid"] in pids]
+            vis = [w for w in ws if w["visible"]]
+            out[pkg] = {"running": bool(pids), "pids": len(pids),
+                        "windows": len(ws), "visible": len(vis) > 0,
+                        "titles": [w["title"] for w in ws][:5]}
+        return {"ok": True, "states": out}
+
     def pkg_state(self, pid):
         """这个包**现在在不在跑**、有没有窗口、窗口是显示还是隐藏。
 
