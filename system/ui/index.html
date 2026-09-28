@@ -704,11 +704,7 @@ function renderDetail(){
       '<button class="iconbtn" id="btn-openui" title="打开这个包自己的界面（后台运行，不等它）">' +
         ico("app-window", "i") + '<span>打开界面</span></button></div>' +
       '<div class="sub" style="margin-top:8px">命令预览：<span class="mono" id="preview"></span>' +
-      '　·　右上角是「运行 / 停止」</div></div>' +
-    '<div class="sec"><h2>这个包的文件</h2><div class="row-inline">' +
-      '<span class="mono" style="flex:1;word-break:break-all">' + esc(p.dir) + '</span>' +
-      '<button class="iconbtn" id="btn-files" title="打开这个包的文件管理">' +
-        ico("folder-open", "i") + '<span>文件管理</span></button></div></div>';
+      '　·　右上角是「运行 / 停止」</div></div>';
   box.innerHTML = html;
   const upd = () => {
     $("#preview").textContent = "moss :" + p.id +
@@ -723,25 +719,12 @@ function renderDetail(){
     c.onclick = () => { $("#args").value = c.dataset.args || ""; upd(); };
   });
   // 右上角：跑着的时候是「停止」（状态问宿主，不问本地那份 RUN）
+  // ★ 这里**只能绑一次**：上一版遗留的那段老处理函数（先 disabled=true 再调阻塞式 run）
+  //   还留在下面，正好把这一行覆盖掉 —— 表现就是"停止按钮是灰的、点了没反应"。
   paintActions(p);
   $("#btn-run").onclick = () => clickRun(p);
   $("#btn-vis").onclick = () => toggleVis(p);
   refreshPkgState(p);
-  $("#btn-run").onclick = async () => {
-    if (busy) return;
-    busy = true;
-    const btn = $("#btn-run"); btn.disabled = true;
-    const args = $("#args").value, cmd = $("#preview").textContent;
-    lastRun = {id: p.id, args: args, label: cmd};
-    setTab("console"); setCmd(cmd); setState(p.id, "running");
-    out("$ " + cmd);
-    const t0 = performance.now();
-    const r = await pywebview.api.run(p.id, args);
-    out("$ " + cmd + "\n\n" + (r.out || "(这个包没有输出)") + "\n[退出码] " + r.code);
-    setState(p.id, r.code === 0 ? "ok" : "fail",
-             {code: r.code, ms: Math.round(performance.now() - t0)});
-    btn.disabled = false; busy = false;
-  };
   $("#btn-openui").onclick = async () => {
     const r = await pywebview.api.open_ui(p.id, $("#args").value);
     setTab("console"); setCmd("moss :" + p.id);
@@ -752,7 +735,6 @@ function renderDetail(){
     setTimeout(() => refreshPkgState(p), 1500);
     setTimeout(() => refreshPkgState(p), 3500);
   };
-  $("#btn-files").onclick = () => fmSelect(p.id);
 }
 
 /* ================================================================ 文件管理
@@ -941,8 +923,8 @@ function browsePageHTML(s){
       '<button class="iconbtn b-cut" title="剪切（Ctrl+X）"></button>' +
       '<button class="iconbtn b-paste" title="粘贴（Ctrl+V）"></button>' +
       '<span class="gap"></span>' +
-      '<button class="iconbtn b-default" title="用默认程序打开"></button>' +
-      '<button class="iconbtn b-reveal" title="在资源管理器里显示"></button>' +
+      '<button class="iconbtn b-default" title="用默认程序打开选中的东西"></button>' +
+      '<button class="iconbtn b-opendir" title="用 Windows 资源管理器打开这个文件夹"></button>' +
     '</div>' +
     '<div class="fbwrap"><table class="fb"><thead><tr>' +
       '<th data-sort="name">名称' + arrow("name") + '</th>' +
@@ -1028,7 +1010,7 @@ function bindBrowse(s){
   setIcon(".b-newdir", "folder-plus"); setIcon(".b-newfile", "file-plus");
   setIcon(".b-rename", "pencil"); setIcon(".b-del", "trash-2");
   setIcon(".b-copy", "copy"); setIcon(".b-cut", "scissors"); setIcon(".b-paste", "clipboard-paste");
-  setIcon(".b-default", "external-link"); setIcon(".b-reveal", "folder-open");
+  setIcon(".b-default", "external-link"); setIcon(".b-opendir", "folder-open");
 
   // 面包屑
   const segs = (s.rel || "").split("/");
@@ -1084,7 +1066,7 @@ function bindBrowse(s){
   page.querySelector(".b-cut").onclick = () => fmCmd("cut");
   page.querySelector(".b-paste").onclick = () => fmCmd("paste");
   page.querySelector(".b-default").onclick = () => fmCmd("default");
-  page.querySelector(".b-reveal").onclick = () => fmCmd("reveal");
+  page.querySelector(".b-opendir").onclick = () => fmCmd("opendir");
 
   page.querySelectorAll("th[data-sort]").forEach(th => {
     th.onclick = () => {
@@ -1289,6 +1271,12 @@ async function fmCmd(act){
     if (!selArr.length) return;
     const r = act === "default" ? await pywebview.api.fs_open_default(selArr[0])
                                 : await pywebview.api.fs_reveal(selArr[0]);
+    toast(r.msg, !r.ok);
+    return;
+  }
+  if (act === "opendir"){
+    // 对目录调 startfile 就是"用 Windows 资源管理器打开它"
+    const r = await pywebview.api.fs_open_default(s.rel);
     toast(r.msg, !r.ok);
     return;
   }
