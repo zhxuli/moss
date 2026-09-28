@@ -333,12 +333,16 @@ def _top_windows():
 _HELPER_CLASSES = ("TtkMonitorClass",)
 
 
-# ================================================================ 历史账（只读 + 墓碑）
-# ★ 这一小段是 `core/history.py` 里 `dedup_key` / `should_record` / 墓碑那三样的
-#   **逐字镜像**。为什么要抄一遍：界面进程不能 import core（发行版里 core 编在 exe 里），
+# ================================================================ 历史账（读 + 删）
+# ★ 这一小段是 `core/history.py` 里 `dedup_key` / `should_record` 的**逐字镜像**。
+#   为什么要抄一遍：界面进程不能 import core（发行版里 core 编在 exe 里），
 #   而两边读的是**同一本账** —— 键算法一旦不同，"界面里删掉一条"在 CLI 的
 #   `--history` 里就会又冒出来。**改这里必须同时改 `core/history.py`。**
-HIST_TOMBSTONE = "tombstone"
+# ★ 删除走的是**真删**（把那些行从 jsonl 里抠掉，见 `_hist_drop_lines`），
+#   不是"追加一条墓碑、读的时候跳过" —— 墓碑那种做法，**能不能跳过取决于读的人
+#   那份代码认不认它**：界面后端在 exe 外面、改完就是新的，而终端里的
+#   `moss --history` 跑的是编在 exe 里的旧代码，于是会"界面里删了、终端里还在"。
+#   真删就没这个问题（谁来读都看不见了），也不用为它重打一次包。
 
 
 def _hist_read_all():
@@ -374,13 +378,50 @@ def _hist_key(r):
 
 def _hist_is_record(r):
     """这条算不算一条历史（= `core.history.should_record`）。"""
-    return (r.get("kind") or "") not in ("pkg", HIST_TOMBSTONE)
+    return (r.get("kind") or "") != "pkg"
 
 
-def _hist_forgotten(rows):
-    """被墓碑点名的去重键。"""
-    return {str(r.get("forget") or "") for r in rows
-            if (r.get("kind") or "") == HIST_TOMBSTONE and r.get("forget")}
+def _hist_drop_lines(path, key):
+    """把账里去重键等于 `key` 的那几行**原地抠掉**。返回删掉的行数。
+
+    ★ 全用二进制：行尾原样保留（不去翻译 `\\r\\n`），只按 `\\n` 切。
+    ★ "读完 → 检查有没有变长 → 把新长出来的那段原样续写到后面 → truncate"：
+      这样即使正好有一次调用在这期间结束并追加了它那条，也不会被我们截掉。
+    """
+    try:
+        with open(path, "rb+") as fh:
+            data = fh.read()
+            read_to = fh.tell()
+            keep, hit = [], 0
+            for raw in data.split(b"\n"):
+                s = raw.strip()
+                if not s:
+                    continue
+                try:
+                    r = json.loads(s.decode("utf-8"))
+                except (ValueError, UnicodeDecodeError):
+                    keep.append(raw)
+                    continue
+                if _hist_key(r) == key:
+                    hit += 1
+                else:
+                    keep.append(raw)
+            if not hit:
+                return 0
+            # 期间有没有别人追加？（有就原样带上，别截掉）
+            fh.seek(0, 2)
+            size_now = fh.tell()
+            tail = b""
+            if size_now > read_to:
+                fh.seek(read_to)
+                tail = fh.read()
+            new = b"".join(b + b"\n" for b in keep) + tail
+            fh.seek(0)
+            fh.write(new)
+            fh.truncate()
+            return hit
+    except OSError:
+        return 0
 
 
 # ================================================================ 文本编码
@@ -748,16 +789,14 @@ class Api:
         ★ 数据就是 `user_data/history/*.jsonl` —— 界面进程不 import core（发行版里
           core 编在 exe 里），所以这里直接读那本账，**格式就是接口**。
         ★ 去重/过滤口径**必须和宿主一模一样**（`core/history.py` 的 `dedup_key` /
-          `should_record` / 墓碑）：两边读的是同一本账，键算法一旦不同，
-          界面里"删掉一条"在 CLI 的 `--history` 里就会**又冒出来**。
-          所以下面 `_hist_key` / `_hist_is_record` / `_hist_forgotten` 是那三个函数的
-          **逐字镜像**（改一处必须改两处 —— 这两份代码注定要重复，因为不能 import）。
+          `should_record`）：两边读的是同一本账，键算法一旦不同，界面里"删掉一条"
+          在 CLI 的 `--history` 里就会**又冒出来**。所以下面 `_hist_key` /
+          `_hist_is_record` 是那两个函数的**逐字镜像**
+          （改一处必须改两处 —— 这两份注定要重复，因为不能 import）。
         ★ 图标按你说的来：**目标所在目录里若有 `icon.xxx` 就用它**（包列表那边
           宿主的 `pkg.icon_path` 早就在这么做了，这里是同一套前缀顺序）。
         """
-        rows = _hist_read_all()
-        dead = _hist_forgotten(rows)
-        rows = [r for r in rows if _hist_is_record(r) and _hist_key(r) not in dead]
+        rows = [r for r in _hist_read_all() if _hist_is_record(r)]
         # 去重：同一条命令只留最新那次
         best = {}
         for r in rows:
@@ -802,27 +841,38 @@ class Api:
         return {"ok": True, "items": items}
 
     def hist_forget(self, key):
-        """把一条历史"删掉" = **追加一条墓碑**（账不回头重写，见 `core/history.py`）。
+        """把一条历史**真删掉**：把那几行从账里抠掉（原地改、保留行尾、原子截断）。
 
-        为什么不重写那个 jsonl：这本账是追加写的 —— 重写有可能正好盖掉
-        "另一头正在跑的那次调用结束时补的那条"。追加一条墓碑既安全，
-        又让 CLI 和界面两边读的时候一致地看不见它。
+        ★ 为什么不是"追加一条墓碑"（第一版是那么做的，你一问就看出问题了）：
+          墓碑只是"读的时候跳过"，**能不能跳过取决于读的人那份代码认不认它**。
+          界面后端在 exe 外面、改完就是新的；而终端里的 `moss --history` 跑的是
+          **编在 exe 里的 `core/history.py`** —— 旧 exe 不认识墓碑，于是
+          "界面里删了、终端里还在"，还得为此专门重打一次包。**删就该真的删掉。**
+
+        ★ 怎么做到既真删又不丢正在写的账：
+          · **原地改**（`rb+`）而不是"另写一个文件再替换"—— 后者会把"另一头正在跑
+            的那次调用结束时补的那条"整个盖掉；
+          · 先把当前内容读完、记下读到哪，再检查文件在这期间有没有变长
+            （有人追加了），变长就把那段**原样接着写到新内容后面**；
+          · 最后 `truncate()` 收尾。行尾不翻译（二进制读写），只按 `\\n` 切。
+
+        找不到这条（比如已经被删过）就什么都不做，报"已经不在了"。
         """
         key = str(key or "").strip()
         if not key:
             return {"ok": False, "msg": "没给要删的那条的键"}
-        import datetime
         hist_dir = USER_DATA / "history"
-        try:
-            hist_dir.mkdir(parents=True, exist_ok=True)
-            f = hist_dir / (datetime.datetime.now().strftime("%Y-%m") + ".jsonl")
-            entry = {"via": "ui", "kind": "tombstone", "forget": key,
-                     "ts": datetime.datetime.now().isoformat(timespec="seconds")}
-            with open(f, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except OSError as e:
-            return {"ok": False, "msg": "写不进历史账：%s" % e}
-        return {"ok": True, "msg": "已从历史里删掉这条"}
+        if not hist_dir.is_dir():
+            return {"ok": False, "msg": "历史账不在：%s" % hist_dir}
+        removed, touched = 0, []
+        for f in sorted(hist_dir.glob("*.jsonl")):
+            hit = _hist_drop_lines(f, key)
+            if hit:
+                removed += hit
+                touched.append(f.name)
+        if not removed:
+            return {"ok": False, "msg": "账里已经没有这条了"}
+        return {"ok": True, "msg": "已删掉这条记录（%d 行，%s）" % (removed, "、".join(touched))}
 
     def path_start(self, target, cwd="", args=""):
         """重跑一次**路径调用**（历史条目点「运行」就是它）。
