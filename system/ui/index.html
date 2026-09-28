@@ -11,7 +11,7 @@
   --hover:#f0f0f4; --sel:#e8f1ff; --out-bg:#14161a; --out-fg:#d7dae0;
   --code-bg:#fbfbfd; --field-focus:rgba(10,132,255,.20);
   --mono: ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,monospace;
-  /* 语法配色照抄 exec（GitHub 那套浅/深色），不引第三方主题 */
+  /* 语法配色照抄 exec（GitHub 那套浅/深色） */
   --syn-comment:#6e7781; --syn-keyword:#cf222e; --syn-string:#0a3069;
   --syn-number:#0550ae;  --syn-title:#8250df;   --syn-builtin:#953800;
   --syn-attr:#0550ae;    --syn-meta:#6e7781;
@@ -25,19 +25,17 @@
          --syn-attr:#79c0ff;    --syn-meta:#8b949e; }
 }
 *{box-sizing:border-box}
-/* ★ 必须有一条兜底：`#treewrap{display:flex}` 这类规则会**压过**浏览器默认的
+/* ★ 必须有这条兜底：`display:flex` 之类的规则会压过浏览器默认的
    `[hidden]{display:none}`，于是 `el.hidden = true` 看起来毫无反应（实测坑）。 */
 [hidden]{display:none !important}
 html,body{height:100%}
 body{margin:0;height:100vh;display:flex;flex-direction:column;overflow:hidden;
   font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
   color:var(--fg);background:var(--bg)}
-/* ---- 图标：Lucide（ISC），统一 16px / 1.5 描边 / 跟随 currentColor ---- */
 svg.i{width:16px;height:16px;flex:none;display:block}
-svg.i.lg{width:20px;height:20px}
 .iconbtn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
   padding:6px 8px;min-width:32px;border-radius:8px;border:1px solid var(--line);
-  background:var(--panel2);color:var(--fg);cursor:pointer}
+  background:var(--panel2);color:var(--fg);cursor:pointer;font:inherit}
 .iconbtn:hover{background:var(--hover)}
 .iconbtn:disabled{opacity:.4;cursor:default}
 .iconbtn.warn:hover{border-color:#d64545;color:#d64545}
@@ -45,36 +43,15 @@ header{display:flex;align-items:center;gap:10px;padding:9px 14px;
   border-bottom:1px solid var(--line);background:var(--panel);flex:none}
 .brand{font-weight:600;display:flex;align-items:center;gap:7px}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--accent)}
-#q{width:250px;padding:7px 11px;border-radius:9px;border:1px solid var(--line);
+#q{width:230px;padding:7px 11px;border-radius:9px;border:1px solid var(--line);
   background:var(--panel2);color:var(--fg);outline:none}
 #q:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
 .meta{flex:1;color:var(--dim);font-size:12px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;text-align:right}
-button{font:inherit}
 main{flex:1;display:flex;min-height:0}
-/* ---- 左栏：包 / 文件 两副面孔，高度占满 ---- */
 aside{width:320px;flex:none;border-right:1px solid var(--line);background:var(--panel);
   display:flex;flex-direction:column;min-height:0}
-#sideswitch{display:flex;gap:4px;padding:7px 10px;border-bottom:1px solid var(--line2);flex:none}
-#sideswitch button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  padding:5px 8px;border-radius:8px;border:1px solid transparent;background:transparent;
-  color:var(--dim);cursor:pointer;font-size:13px}
-#sideswitch button:hover{background:var(--hover)}
-#sideswitch button.on{background:var(--panel2);border-color:var(--line);color:var(--fg);font-weight:500}
 #list{flex:1;overflow:auto;min-height:0}
-#treewrap{flex:1;display:flex;flex-direction:column;min-height:0}
-#treebar{display:flex;gap:2px;padding:6px 8px;border-bottom:1px solid var(--line2);flex:none;flex-wrap:wrap}
-#treebar .iconbtn{padding:4px 6px;min-width:28px}
-#tree{flex:1;overflow:auto;min-height:0;padding-bottom:8px}
-.row{display:flex;align-items:center;gap:6px;padding:3px 10px;cursor:pointer;
-  white-space:nowrap;font-size:13px;position:relative}
-.row:hover{background:var(--hover)}
-.row.sel{background:var(--sel)}
-.row .tw{width:14px;flex:none;color:var(--dim);display:flex;align-items:center}
-.row .nm{overflow:hidden;text-overflow:ellipsis}
-.row .ext{color:var(--dim);font-size:11px;margin-left:auto;padding-left:8px}
-.row.ro{opacity:.85}
-.row .lock{color:var(--dim);margin-left:4px}
 .item{display:flex;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line2);
   cursor:pointer;align-items:center}
 .item:hover{background:var(--hover)}
@@ -86,7 +63,6 @@ aside{width:320px;flex:none;border-right:1px solid var(--line);background:var(--
 .nm{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ds,.sub{color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sub{font-family:var(--mono);font-size:11px}
-/* ---- 右栏 ---- */
 #right{flex:1;display:flex;flex-direction:column;min-width:0}
 #tabs{display:flex;gap:4px;align-items:center;padding:7px 12px;flex:none;
   border-bottom:1px solid var(--line);background:var(--panel)}
@@ -98,19 +74,18 @@ aside{width:320px;flex:none;border-right:1px solid var(--line);background:var(--
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46%}
 .pane{flex:1;min-height:0;display:none}
 .pane.on{display:flex;flex-direction:column}
-/* ★ 别在这里写 `#pane-console{display:none}`：ID 选择器优先级高于 `.pane.on`，
-   那样即使加了 .on，面板也永远是 0×0（实测踩到）。显隐只由 .pane/.pane.on 决定。 */
+/* ★ 别写 `#pane-x{display:none}`：ID 选择器优先级高于 `.pane.on`，面板会永远 0×0 */
 #pane-detail{overflow:auto;padding:18px 22px}
 #pane-detail.on{display:block}
 #pane-console.on{display:flex;flex-direction:column}
+#pane-file.on{display:flex;flex-direction:column}
 #pane-editor.on{display:flex;flex-direction:column}
 .outbar{display:flex;gap:6px;align-items:center;padding:6px 12px;flex:none;
   border-bottom:1px solid var(--line2);background:var(--panel);color:var(--dim);font-size:12px}
 .outbar .iconbtn{padding:4px 6px;min-width:28px}
 #out{flex:1;overflow:auto;margin:0;padding:12px 14px;background:var(--out-bg);
   color:var(--out-fg);font-family:var(--mono);font-size:13px;line-height:1.55;
-  white-space:pre-wrap;word-break:break-word;
-  user-select:text;-webkit-user-select:text;cursor:text}
+  white-space:pre-wrap;word-break:break-word;user-select:text;cursor:text}
 #out::selection{background:#3a5a8c;color:#fff}
 /* ---- 状态灯 ---- */
 .lamp{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block;
@@ -136,8 +111,46 @@ aside{width:320px;flex:none;border-right:1px solid var(--line);background:var(--
   animation:spin .7s linear infinite}
 .spin.on{display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
-/* ---- 编辑器：高亮层 + 透明 textarea 叠在一起（抄 exec 的做法）----
-   两层字号/行高/字距/内边距/制表位**必须完全一致**，否则光标和字形会错位。 */
+/* ---- 文件管理：像资源管理器那样 ---- */
+.fbnav{display:flex;gap:4px;align-items:center;padding:6px 10px;flex:none;
+  border-bottom:1px solid var(--line2);background:var(--panel)}
+.crumbs{flex:1;display:flex;align-items:center;gap:2px;min-width:0;overflow:hidden;
+  padding:3px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);
+  font-size:12.5px;white-space:nowrap}
+.crumbs span.seg{padding:1px 5px;border-radius:5px;cursor:pointer}
+.crumbs span.seg:hover{background:var(--hover)}
+.crumbs span.sep{color:var(--dim)}
+.crumbs span.here{color:var(--dim);cursor:default}
+.fbtools{display:flex;gap:4px;align-items:center;padding:5px 10px;flex:none;flex-wrap:wrap;
+  border-bottom:1px solid var(--line2);background:var(--panel)}
+.fbtools .iconbtn{padding:4px 6px;min-width:28px}
+.fbtools .gap{width:8px}
+.fbwrap{flex:1;overflow:auto;min-height:0}
+table.fb{width:100%;border-collapse:collapse;font-size:13px;user-select:none}
+table.fb th{position:sticky;top:0;z-index:1;text-align:left;font-weight:500;color:var(--dim);
+  background:var(--panel);border-bottom:1px solid var(--line);padding:6px 10px;cursor:pointer;
+  white-space:nowrap}
+table.fb th .arrow{color:var(--accent);margin-left:4px}
+table.fb td{padding:4px 10px;border-bottom:1px solid var(--line2);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+table.fb td.nmcell{display:flex;align-items:center;gap:8px;max-width:420px}
+table.fb tr.row:hover{background:var(--hover)}
+table.fb tr.row.sel{background:var(--sel)}
+table.fb td.num{text-align:right;color:var(--dim);font-variant-numeric:tabular-nums}
+table.fb td.dim{color:var(--dim)}
+.fbstatus{padding:5px 12px;font-size:12px;color:var(--dim);border-top:1px solid var(--line2);
+  background:var(--panel);flex:none;display:flex;gap:12px;align-items:center}
+/* 右键菜单 */
+#ctxmenu{position:fixed;z-index:70;min-width:200px;background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;padding:5px;
+  box-shadow:0 14px 40px rgba(0,0,0,.28)}
+#ctxmenu .mi{display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;
+  cursor:pointer;font-size:13px;color:var(--fg)}
+#ctxmenu .mi:hover{background:var(--hover)}
+#ctxmenu .mi.dis{opacity:.4;cursor:default}
+#ctxmenu .mi.dis:hover{background:transparent}
+#ctxmenu .sep{height:1px;background:var(--line2);margin:4px 6px}
+/* ---- 编辑器 ---- */
 .editor{position:relative;flex:1;min-height:0;margin:10px 12px 12px;overflow:hidden;
   background:var(--code-bg);border:1px solid var(--line);border-radius:8px}
 .editor:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
@@ -149,8 +162,6 @@ aside{width:320px;flex:none;border-right:1px solid var(--line);background:var(--
 .editor > textarea{background:transparent;color:transparent;caret-color:var(--fg);
   resize:none;outline:none;user-select:text}
 .editor > textarea::selection{background:rgba(10,132,255,.30)}
-.editor > textarea[readonly]{caret-color:transparent}
-/* 语法高亮：用应用自己的 token（照抄 exec 的 GitHub 配色） */
 .hljs-comment,.hljs-quote{color:var(--syn-comment);font-style:italic}
 .hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-section,
 .hljs-doctag,.hljs-type,.hljs-name,.hljs-tag{color:var(--syn-keyword)}
@@ -175,9 +186,9 @@ h1{font-size:19px;margin:0 0 4px}
   border:1px solid var(--line);font-size:12px;color:var(--dim);margin:0 6px 6px 0}
 .chip.click{cursor:pointer;font-family:var(--mono)}
 .chip.click:hover{border-color:var(--accent);color:var(--accent)}
-table{border-collapse:collapse;width:100%;margin:6px 0 12px;font-size:13px}
-th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line2);vertical-align:top}
-th{color:var(--dim);font-weight:500}
+table.p{width:100%;border-collapse:collapse;margin:6px 0 12px;font-size:13px}
+table.p th,table.p td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line2);vertical-align:top}
+table.p th{color:var(--dim);font-weight:500}
 code,.mono{font-family:var(--mono);font-size:12.5px}
 .sec{margin-top:16px}
 .sec h2{font-size:11.5px;letter-spacing:.06em;color:var(--dim);margin:0 0 6px;
@@ -189,13 +200,9 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
 .empty{color:var(--dim);text-align:center;margin-top:70px;font-size:13px}
 .note{padding:6px 12px;font-size:12px;color:var(--dim);border-bottom:1px solid var(--line2);
   background:var(--panel2);display:flex;align-items:center;gap:7px}
-.note[hidden]{display:none}
 .dirtydot{width:7px;height:7px;border-radius:50%;background:#dfa100;flex:none}
-.dirtydot[hidden]{display:none}
-/* ---- 小模态框（新建 / 重命名 / 确认删除）----
-   不用 window.prompt：WebView2 里 prompt 是被禁掉的（返回 null、界面没反应）。 */
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;
-  align-items:center;justify-content:center;z-index:50}
+  align-items:center;justify-content:center;z-index:80}
 #modal.on{display:flex}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
   padding:16px 18px;min-width:340px;max-width:520px;box-shadow:0 18px 50px rgba(0,0,0,.28)}
@@ -206,12 +213,11 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
 .card input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
 .card .btns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 .card .btns button{padding:6px 14px;border-radius:8px;border:1px solid var(--line);
-  background:var(--panel2);color:var(--fg);cursor:pointer}
+  background:var(--panel2);color:var(--fg);cursor:pointer;font:inherit}
 .card .btns button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
 .card .btns button.danger{background:#d64545;border-color:#d64545;color:#fff}
-/* ---- 轻提示：不抢焦点、不换页（文件操作的结果在这里说一声就够）---- */
 #toasts{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);
-  display:flex;flex-direction:column;gap:6px;align-items:center;z-index:60;pointer-events:none}
+  display:flex;flex-direction:column;gap:6px;align-items:center;z-index:90;pointer-events:none}
 .toast{background:var(--panel);border:1px solid var(--line);border-radius:9px;
   padding:7px 14px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.22);
   max-width:70vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -223,28 +229,19 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
   <div class="brand"><span class="dot"></span>moss</div>
   <input id="q" placeholder="搜索包名 / 说明 / 标签…">
   <div class="meta" id="meta"></div>
+  <button id="btn-browse" class="iconbtn" title="文件管理（user_data / system）"></button>
   <button id="btn-selfcheck" class="iconbtn" title="自检（moss --selfcheck）"></button>
   <button id="btn-refresh" class="iconbtn" title="刷新包列表"></button>
   <button id="btn-quit" class="iconbtn" title="退出"></button>
 </header>
 
 <main>
-  <aside>
-    <div id="sideswitch">
-      <button id="sw-pkg" class="on" title="已安装的包"></button>
-      <button id="sw-file" title="浏览 system/ 与 user_data/（可编辑）"></button>
-    </div>
-    <div id="list"></div>
-    <div id="treewrap" hidden>
-      <div id="treebar"></div>
-      <div id="tree"></div>
-    </div>
-  </aside>
-
+  <aside><div id="list"></div></aside>
   <div id="right">
     <div id="tabs">
       <button class="tab active" data-tab="detail">详情</button>
       <button class="tab" data-tab="console">命令行<span class="lamp tiny" id="tablamp" data-state="idle"></span></button>
+      <button class="tab" data-tab="file">文件管理</button>
       <button class="tab" data-tab="editor">编辑器<span class="lamp tiny" id="editlamp" data-state="idle"></span></button>
       <span id="tabcmd"></span>
     </div>
@@ -264,6 +261,33 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
       <pre id="out">就绪。选一个包，填参数，点「运行」。</pre>
     </section>
 
+    <section class="pane" id="pane-file">
+      <div class="fbnav">
+        <button id="fb-back" class="iconbtn" title="后退"></button>
+        <button id="fb-fwd" class="iconbtn" title="前进"></button>
+        <button id="fb-up" class="iconbtn" title="向上一级（Backspace）"></button>
+        <button id="fb-reload" class="iconbtn" title="刷新（F5）"></button>
+        <div class="crumbs" id="fb-crumbs"></div>
+        <button class="iconbtn" id="fb-root-user" title="切到 user_data">user_data</button>
+        <button class="iconbtn" id="fb-root-system" title="切到 system">system</button>
+      </div>
+      <div class="fbtools">
+        <button id="fb-newdir" class="iconbtn" title="新建文件夹"></button>
+        <button id="fb-newfile" class="iconbtn" title="新建文件"></button>
+        <button id="fb-rename" class="iconbtn" title="重命名（F2）"></button>
+        <button id="fb-del" class="iconbtn warn" title="删除（Delete）→ 挪进回收站"></button>
+        <span class="gap"></span>
+        <button id="fb-copyb" class="iconbtn" title="复制（Ctrl+C）"></button>
+        <button id="fb-cut" class="iconbtn" title="剪切（Ctrl+X）"></button>
+        <button id="fb-paste" class="iconbtn" title="粘贴（Ctrl+V）"></button>
+        <span class="gap"></span>
+        <button id="fb-open" class="iconbtn" title="用默认程序打开（Enter 是进编辑器）"></button>
+        <button id="fb-reveal" class="iconbtn" title="在资源管理器里显示"></button>
+      </div>
+      <div class="fbwrap" id="fb-wrap"></div>
+      <div class="fbstatus"><span id="fb-info">—</span><span id="fb-clip"></span></div>
+    </section>
+
     <section class="pane" id="pane-editor">
       <div class="outbar">
         <span id="edpath" class="mono">没打开文件</span>
@@ -271,6 +295,7 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
         <span style="flex:1"></span>
         <button id="btn-save" class="iconbtn" title="保存（Ctrl+S）"></button>
         <button id="btn-revert" class="iconbtn" title="放弃改动，重新读一遍"></button>
+        <button id="btn-default" class="iconbtn" title="用系统默认程序打开"></button>
         <button id="btn-reveal2" class="iconbtn" title="在资源管理器里显示"></button>
       </div>
       <div class="note" id="ednote" hidden></div>
@@ -282,6 +307,7 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
   </div>
 </main>
 
+<div id="ctxmenu" hidden></div>
 <div id="modal"><div class="card">
   <h3 id="m-title">标题</h3>
   <p id="m-text"></p>
@@ -299,18 +325,16 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
 <script src="vendor/lucide.js"></script>
 <script>
 /* ============================================================================
-   moss 界面。三块：包列表（跑包）+ 文件树（浏览/编辑）+ 编辑器（代码高亮）。
-   高亮层与编辑器抄 exec 的做法（highlight.js + pre/textarea 叠加）。
+   moss 界面：包列表 / 命令行 / 文件管理（资源管理器式）/ 代码编辑器（高亮）
+   高亮与编辑器结构照抄 exec；图标用 Lucide。
    ========================================================================== */
 
 let DATA = null, cur = null, busy = false, tab = "detail";
-let lastRun = null;                     // {id, args, label}
-let side = "pkg";                       // pkg | file
+let lastRun = null;
 
 const $ = s => document.querySelector(s);
 
-/* ---------------------------------------------------------------- 图标 */
-/* ---------- 后缀 → 图标 + 颜色 + 高亮语言（Lucide 的名子，颜色照各语言习惯 ---------- */
+/* ---------------------------------------------------------------- 后缀 → 图标/颜色/语言 */
 const EXT = {
   py:{i:"file-code",c:"#3572A5",l:"python"}, pyw:{i:"file-code",c:"#3572A5",l:"python"},
   js:{i:"file-code",c:"#c9a227",l:"javascript"}, mjs:{i:"file-code",c:"#c9a227",l:"javascript"},
@@ -348,7 +372,7 @@ const EXT = {
 };
 const NO_EXT = {
   LICENSE:{i:"copyright",c:"#6e7781",l:"plaintext"},
-  "pkg.json":{i:"file-json",c:"#c9a227",l:"json"},
+  "pkg.json":{i:"braces",c:"#c9a227",l:"json"},
   ".gitignore":{i:"file-cog",c:"#8a8a8a",l:"plaintext"},
   ".gitattributes":{i:"file-cog",c:"#8a8a8a",l:"plaintext"},
 };
@@ -356,39 +380,47 @@ const NO_EXT = {
 function extOf(entry){
   const name = (entry.name || "").toLowerCase();
   if (NO_EXT[name]) return Object.assign({ext:""}, NO_EXT[name]);
-  return Object.assign({ext:entry.ext || ""}, EXT[entry.ext] || {i:"file", c:"#8a8a8a"});
+  return Object.assign({ext: entry.ext || ""}, EXT[entry.ext] || {i:"file", c:"#8a8a8a"});
 }
-
-function fileIcon(entry, open){
-  if (entry.dir) return ico(open ? "folder-open" : "folder", "i");
+function fileIconHTML(entry, open){
+  if (entry.dir) return '<span style="color:#e0a800;display:flex">' + ico(open ? "folder-open" : "folder", "i") + '</span>';
   const e = extOf(entry);
   return '<span style="color:' + e.c + ';display:flex">' + ico(e.i, "i") + '</span>';
 }
-
-function escapeHtml(s){
-  return String(s == null ? "" : s)
-    .replace(/[&<>]/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
+function typeLabel(entry){
+  if (entry.dir) return "文件夹";
+  const e = entry.ext || "";
+  if (!e) return "文件";
+  return e.toUpperCase() + " 文件";
 }
-
 function humanSize(n){
   if (n == null) return "";
   if (n < 1024) return n + " B";
   if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
   return (n / 1048576).toFixed(1) + " MB";
 }
+function fmtTime(sec){
+  if (!sec) return "";
+  const d = new Date(sec * 1000);
+  const p = n => String(n).padStart(2, "0");
+  return d.getFullYear() + "/" + p(d.getMonth() + 1) + "/" + p(d.getDate()) + " " +
+         p(d.getHours()) + ":" + p(d.getMinutes());
+}
+function escapeHtml(s){
+  return String(s == null ? "" : s)
+    .replace(/[&<>"]/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+}
+const esc = escapeHtml;
 
 /* ---------------------------------------------------------------- 状态灯 */
 const STATE = {};
 let consoleWho = null;
-
 function stateOf(id){ return STATE[id] || {state:"idle"}; }
-
 function setState(id, st, extra){
   STATE[id] = Object.assign({state:st, ts:Date.now()}, extra || {});
   consoleWho = id;
   paintStates();
 }
-
 function stateLabel(s){
   if (s.state === "running") return "运行中";
   if (s.state === "ok") return "已完成 · 退出码 " + (s.code === undefined ? 0 : s.code) +
@@ -398,7 +430,6 @@ function stateLabel(s){
   if (s.state === "warn") return s.note || "有情况（结果未知）";
   return "还没跑过";
 }
-
 function paintStates(){
   document.querySelectorAll(".item").forEach(el => {
     const st = stateOf(el.dataset.id).state;
@@ -420,53 +451,37 @@ function paintStates(){
     if (t) t.textContent = stateLabel(cs);
   }
 }
-
 function clearConsoleState(){
   consoleWho = null;
   const sp = $("#outspin");
   if (sp) sp.classList.remove("on");
   [$("#tablamp"), $("#outlamp")].forEach(l => { if (l) l.dataset.state = "idle"; });
-  const info = $("#outinfo");
-  if (info) info.textContent = "还没跑过";
+  $("#outinfo").textContent = "还没跑过";
 }
 
-/* ---------------------------------------------------------------- 面板 / 选项卡 */
+/* ---------------------------------------------------------------- 面板 */
 function setTab(name){
   tab = name;
   document.querySelectorAll(".tab").forEach(b =>
     b.classList.toggle("active", b.dataset.tab === name));
-  ["detail", "console", "editor"].forEach(t =>
+  ["detail", "console", "file", "editor"].forEach(t =>
     $("#pane-" + t).classList.toggle("on", t === name));
+  hideCtx();
+  // 第一次点「文件管理」才去读目录（不在启动时白读一次，也不抢走「详情」）
+  if (name === "file" && !FB.rel) fbOpen("user");
 }
-
-function setSide(which){
-  side = which;
-  $("#sw-pkg").classList.toggle("on", which === "pkg");
-  $("#sw-file").classList.toggle("on", which === "file");
-  $("#list").hidden = which !== "pkg";
-  $("#treewrap").hidden = which !== "file";
-  $("#q").placeholder = which === "pkg" ? "搜索包名 / 说明 / 标签…" : "在已展开的目录里按名字过滤…";
-  if (which === "file") renderTree(); else renderList();
-}
-
-/* ---------------------------------------------------------------- 输出区 */
 function stripAnsi(s){
   return String(s == null ? "" : s)
     .replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "")
     .replace(/\x1b[()][A-Za-z0-9]/g, "")
     .replace(/[\r\f]/g, "");
 }
-
 function out(text, info){
   const el = $("#out");
   el.textContent = stripAnsi(text);
   el.scrollTop = el.scrollHeight;
-  if (info !== undefined && info !== null){
-    const i = $("#outinfo");
-    if (i) i.textContent = info;
-  }
+  if (info !== undefined && info !== null) $("#outinfo").textContent = info;
 }
-
 async function copyOut(){
   const text = $("#out").textContent;
   let ok = false;
@@ -483,8 +498,7 @@ async function copyOut(){
   $("#outinfo").textContent = ok ? ("已复制 " + text.length + " 个字符")
                                  : "复制失败（可以手动选中后 Ctrl+C）";
 }
-
-function setCmd(text){ $("#tabcmd").textContent = text || ""; }
+function setCmd(t){ $("#tabcmd").textContent = t || ""; }
 
 /* ---------------------------------------------------------------- 包列表 */
 function renderList(){
@@ -492,38 +506,32 @@ function renderList(){
   const box = $("#list");
   box.innerHTML = "";
   const rows = DATA.packages.filter(p => {
-    if (side !== "pkg" || !f) return true;
-    const hay = [p.id, p.name, p.desc, (p.tags||[]).join(" "), (p.aliases||[]).join(" ")]
-      .join(" ").toLowerCase();
-    return hay.includes(f);
+    if (!f) return true;
+    return [p.id, p.name, p.desc, (p.tags||[]).join(" "), (p.aliases||[]).join(" ")]
+      .join(" ").toLowerCase().includes(f);
   });
-  if (!rows.length){
-    box.innerHTML = '<div class="empty">没有匹配的包</div>';
-    return;
-  }
+  if (!rows.length){ box.innerHTML = '<div class="empty">没有匹配的包</div>'; return; }
   for (const p of rows){
     const d = document.createElement("div");
     d.className = "item" + (cur && cur.id === p.id ? " sel" : "");
     d.dataset.id = p.id;
     d.dataset.state = stateOf(p.id).state;
-    const lampState = stateOf(p.id).state;
     d.innerHTML = iconHTML(p, "ico") +
       '<div style="min-width:0;flex:1">' +
         '<div class="nm">' + esc(p.name) + ' <span class="sub">:' + esc(p.id) + '</span></div>' +
         '<div class="ds">' + esc(p.desc) + '</div>' +
       '</div>' +
-      '<span class="lamp" data-state="' + lampState + '" title="' +
+      '<span class="lamp" data-state="' + stateOf(p.id).state + '" title="' +
         esc(stateLabel(stateOf(p.id))) + '"></span>';
     d.onclick = () => select(p.id);
     box.appendChild(d);
   }
 }
-
 function safeSvg(text){
   try{
     const doc = new DOMParser().parseFromString(text, "image/svg+xml");
     if (doc.querySelector("parsererror")) return "";
-    doc.querySelectorAll("script,foreignObject,iframe,use[href^='http']").forEach(n => n.remove());
+    doc.querySelectorAll("script,foreignObject,iframe").forEach(n => n.remove());
     doc.querySelectorAll("*").forEach(n => {
       [...n.attributes].forEach(a => {
         if (/^on/i.test(a.name) || /^(href|xlink:href)$/i.test(a.name)) n.removeAttribute(a.name);
@@ -534,100 +542,81 @@ function safeSvg(text){
     return svg.outerHTML;
   }catch(e){ return ""; }
 }
-
 function iconHTML(p, cls){
   if (p.icon_svg){ const s = safeSvg(p.icon_svg); if (s) return '<span class="' + cls + '">' + s + '</span>'; }
   if (p.icon) return '<span class="' + cls + '"><img src="' + p.icon + '" alt=""></span>';
   return '<span class="' + cls + '"></span>';
 }
-
-function esc(s){ return escapeHtml(s); }
-
 function select(id){
   cur = DATA.packages.find(p => p.id === id) || null;
-  renderList();
-  renderDetail();
-  setTab("detail");
+  renderList(); renderDetail(); setTab("detail");
 }
-
+function pkgRel(p){
+  const norm = s => String(s || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const d = norm(p.dir), userd = norm(DATA.user_data), sysroot = norm(DATA.home) + "/system";
+  if (d === userd || d.startsWith(userd + "/")) return "user" + d.slice(userd.length);
+  if (d === sysroot || d.startsWith(sysroot + "/")) return "system" + d.slice(sysroot.length);
+  return null;
+}
 function renderDetail(){
   const box = $("#pane-detail");
   if (!cur){ box.innerHTML = '<div class="empty">左边选一个包</div>'; return; }
-  const p = cur;
-  const params = p.params || [];
-  const st = stateOf(p.id);
+  const p = cur, params = p.params || [], st = stateOf(p.id);
   let html = '<div class="hd">' + iconHTML(p, "bigico") +
-      '<div style="min-width:0">' +
-        '<h1>' + esc(p.name) + '</h1>' +
-        '<div class="sub">:' + esc(p.id) + '　v' + esc(p.version || "?") + '　' + esc(p.kind) +
-          '　' + esc(p.layer) + ' 层' +
-          (p.shadowed ? "　（遮住了 " + esc(p.shadowed) + " 层的同名包）" : "") + '</div>' +
-        '<div class="status" id="statuspill" data-state="' + st.state + '">' +
-          '<span class="lamp big" data-state="' + st.state + '"></span>' +
-          '<span id="statustext">' + esc(stateLabel(st)) + '</span>' +
-        '</div>' +
-      '</div></div>' +
-    '<p style="margin:12px 0 4px">' + esc(p.desc) + '</p>' +
-    '<div>' + (p.aliases||[]).map(a => '<span class="chip">:' + esc(a) + '</span>').join("") +
+      '<div style="min-width:0"><h1>' + esc(p.name) + '</h1>' +
+      '<div class="sub">:' + esc(p.id) + '　v' + esc(p.version || "?") + '　' + esc(p.kind) +
+        '　' + esc(p.layer) + ' 层' +
+        (p.shadowed ? "　（遮住了 " + esc(p.shadowed) + " 层的同名包）" : "") + '</div>' +
+      '<div class="status" id="statuspill" data-state="' + st.state + '">' +
+        '<span class="lamp big" data-state="' + st.state + '"></span>' +
+        '<span id="statustext">' + esc(stateLabel(st)) + '</span></div></div></div>' +
+    '<p style="margin:12px 0 4px">' + esc(p.desc) + '</p><div>' +
+      (p.aliases||[]).map(a => '<span class="chip">:' + esc(a) + '</span>').join("") +
       (p.tags||[]).map(t => '<span class="chip">' + esc(t) + '</span>').join("") +
       (p.ai_expose ? '<span class="chip">AI 可调用 · 风险 ' + esc(p.ai_risk || "?") + '</span>' : "") +
     '</div>';
-
   if (params.length){
-    html += '<div class="sec"><h2>参数</h2><table>' +
+    html += '<div class="sec"><h2>参数</h2><table class="p">' +
       '<tr><th style="width:120px">名称</th><th style="width:70px">类型</th>' +
       '<th style="width:60px">必填</th><th>说明</th></tr>' +
-      params.map(pa => '<tr>' +
-        '<td class="mono">' + esc(pa.name) + (pa.rest ? ' <span class="chip">rest</span>' : "") + '</td>' +
-        '<td class="mono">' + esc(pa.type || "string") + '</td>' +
-        '<td>' + (pa.required ? "是" : "否") + '</td>' +
-        '<td>' + esc(pa.desc || "") +
-          (pa.placeholder ? '<div class="sub">例：' + esc(pa.placeholder) + '</div>' : "") +
+      params.map(pa => '<tr><td class="mono">' + esc(pa.name) +
+        (pa.rest ? ' <span class="chip">rest</span>' : "") + '</td><td class="mono">' +
+        esc(pa.type || "string") + '</td><td>' + (pa.required ? "是" : "否") + '</td><td>' +
+        esc(pa.desc || "") + (pa.placeholder ? '<div class="sub">例：' + esc(pa.placeholder) + '</div>' : "") +
         '</td></tr>').join("") + '</table></div>';
   }
-
   if ((p.examples || []).length){
     html += '<div class="sec"><h2>例子（点一下填进参数框）</h2><div>' +
       p.examples.map(e => '<span class="chip click" data-args="' + esc(e) + '">' + esc(e) + '</span>').join("") +
       '</div></div>';
   }
-
   html += '<div class="sec"><h2>跑一下</h2><div class="row-inline">' +
       '<input id="args" placeholder="参数（可留空；留空 = 通常是开界面）">' +
       '<button class="iconbtn" id="btn-run" title="带参数运行，输出进「命令行」">' +
         ico("play", "i") + '<span>运行</span></button>' +
       '<button class="iconbtn" id="btn-openui" title="打开这个包自己的界面（后台运行）">' +
-        ico("app-window", "i") + '</button>' +
-    '</div>' +
-    '<div class="sub" style="margin-top:8px">命令预览：<span class="mono" id="preview"></span></div>' +
-  '</div>' +
-  '<div class="sec"><h2>位置</h2><div class="row-inline">' +
-    '<span class="mono" style="flex:1;word-break:break-all">' + esc(p.dir) + '</span>' +
-    '<button class="iconbtn" id="btn-dir" title="在资源管理器里打开包目录">' +
-      ico("folder-open", "i") + '</button>' +
-    '<button class="iconbtn" id="btn-browse" title="在「文件」里定位到这个包">' +
-      ico("list-tree", "i") + '</button>' +
-  '</div></div>';
-
+        ico("app-window", "i") + '</button></div>' +
+      '<div class="sub" style="margin-top:8px">命令预览：<span class="mono" id="preview"></span></div></div>' +
+    '<div class="sec"><h2>这个包的文件</h2><div class="row-inline">' +
+      '<span class="mono" style="flex:1;word-break:break-all">' + esc(p.dir) + '</span>' +
+      '<button class="iconbtn" id="btn-files" title="在「文件管理」里打开这个包的目录">' +
+        ico("folder-open", "i") + '<span>文件</span></button>' +
+    '</div></div>';
   box.innerHTML = html;
 
   const upd = () => {
     $("#preview").textContent = "moss :" + p.id +
       ($("#args").value.trim() ? " " + $("#args").value.trim() : "");
   };
-  $("#args").addEventListener("input", upd);
-  upd();
-
+  $("#args").addEventListener("input", upd); upd();
   box.querySelectorAll(".chip.click").forEach(c => {
     c.onclick = () => { $("#args").value = c.dataset.args || ""; upd(); };
   });
-
   $("#btn-run").onclick = async () => {
     if (busy) return;
     busy = true;
     const btn = $("#btn-run"); btn.disabled = true;
-    const args = $("#args").value;
-    const cmd = $("#preview").textContent;
+    const args = $("#args").value, cmd = $("#preview").textContent;
     lastRun = {id: p.id, args: args, label: cmd};
     setTab("console"); setCmd(cmd);
     setState(p.id, "running");
@@ -637,8 +626,7 @@ function renderDetail(){
     out("$ " + cmd + "\n\n" + (r.out || "(这个包没有输出)") + "\n[退出码] " + r.code);
     setState(p.id, r.code === 0 ? "ok" : "fail",
              {code: r.code, ms: Math.round(performance.now() - t0)});
-    btn.disabled = false;
-    busy = false;
+    btn.disabled = false; busy = false;
   };
   $("#btn-openui").onclick = async () => {
     const r = await pywebview.api.open_ui(p.id, $("#args").value);
@@ -647,327 +635,400 @@ function renderDetail(){
              {code: r.ok ? undefined : -1, note: r.ok ? "已后台启动 · 结果未知" : "启动失败"});
     out(r.msg || "");
   };
-  $("#btn-dir").onclick = () => pywebview.api.open_path(p.dir);
-  $("#btn-browse").onclick = () => {
-    // 包目录 → 文件树节点：靠**宿主给的两个根**算，别去正则猜路径
-    //（原来写的是 `/moss\//` 硬匹配 —— 安装目录不叫 moss 就整个失效）
-    const norm = s => String(s || "").replace(/\\/g, "/").replace(/\/+$/, "");
-    const d = norm(p.dir), userd = norm(DATA.user_data), sysroot = norm(DATA.home) + "/system";
-    let rel = null;
-    if (d === userd || d.startsWith(userd + "/")) rel = "user" + d.slice(userd.length);
-    else if (d === sysroot || d.startsWith(sysroot + "/")) rel = "system" + d.slice(sysroot.length);
-    if (!rel){ toast("这个包不在 system/ 或 user_data/ 下面，文件树里定位不到", true); return; }
-    setSide("file");
-    revealInTree(rel);
+  $("#btn-files").onclick = () => {
+    const rel = pkgRel(p);
+    if (!rel){ toast("这个包不在 system/ 或 user_data/ 下面", true); return; }
+    fbOpen(rel);
   };
 }
 
-/* ---------------------------------------------------------------- 文件树 */
-let ROOTS = [];
-const TREE = { open: new Set(), cache: new Map(), sel: null };
+/* ================================================================ 文件管理
+   像资源管理器那样：后退/前进/向上 + 面包屑；单击选中、Ctrl/Shift 多选、
+   双击进入或打开；右键菜单；键盘 Enter/F2/Delete/Backspace/Ctrl+C·X·V·A；
+   列头点一下换排序。复制/剪切/粘贴由**宿主**执行（`fs_copy`），
+   同名不覆盖、按资源管理器规矩起 `名字 (2).ext`。 */
+const FB = {
+  rel: null, entries: [], hist: [], hpos: -1,
+  sel: new Set(), lastIdx: -1, clip: null,
+  sort: {key:"name", dir:1}, ctxRel: null,
+};
 
-async function treeInit(){
-  const r = await pywebview.api.fs_roots();
-  ROOTS = (r.roots || []).filter(x => x.exists);
-  TREE.cache.clear(); TREE.open.clear();
-  // 默认展开两层：根 + pkgs（不然进来是一片折叠）
-  ROOTS.forEach(x => TREE.open.add(x.key));
-  for (const x of ROOTS){ TREE.cache.set(x.key, await fsList(x.key)); }
-  renderTree();
-}
-
-async function fsList(rel){
+async function fbOpen(rel, push){
   const r = await pywebview.api.fs_list(rel);
-  return (r && r.ok) ? r.entries : [];
+  if (!r.ok){ toast("✗ " + r.msg, true); return; }
+  FB.rel = r.rel || rel;
+  FB.entries = r.entries || [];
+  FB.sel.clear(); FB.lastIdx = -1;
+  if (push !== false){
+    FB.hist = FB.hist.slice(0, FB.hpos + 1);
+    FB.hist.push(FB.rel);
+    FB.hpos = FB.hist.length - 1;
+  }
+  setTab("file");
+  fbRender();
+}
+function fbRefresh(){ if (FB.rel) fbOpen(FB.rel, false); }
+function fbUp(){
+  const parts = (FB.rel || "").split("/");
+  if (parts.length <= 1) return;
+  fbOpen(parts.slice(0, -1).join("/"));
+}
+function fbBack(){ if (FB.hpos > 0){ FB.hpos--; fbOpen(FB.hist[FB.hpos], false); } }
+function fbFwd(){ if (FB.hpos < FB.hist.length - 1){ FB.hpos++; fbOpen(FB.hist[FB.hpos], false); } }
+
+function fbSorted(){
+  const {key, dir} = FB.sort;
+  return FB.entries.slice().sort((a, b) => {
+    if (a.dir !== b.dir) return a.dir ? -1 : 1;          // 文件夹永远在前
+    let x, y;
+    if (key === "name"){ x = a.name.toLowerCase(); y = b.name.toLowerCase(); }
+    else if (key === "mtime"){ x = a.mtime || 0; y = b.mtime || 0; }
+    else if (key === "size"){ x = a.size || 0; y = b.size || 0; }
+    else { x = typeLabel(a).toLowerCase(); y = typeLabel(b).toLowerCase(); }
+    if (x < y) return -1 * dir;
+    if (x > y) return 1 * dir;
+    return 0;
+  });
 }
 
-function isWritable(rel){ return !!rel && rel.split("/")[0] === "user"; }
-
-async function toggleDir(rel){
-  if (TREE.open.has(rel)){ TREE.open.delete(rel); renderTree(); return; }
-  TREE.open.add(rel);
-  if (!TREE.cache.has(rel)) TREE.cache.set(rel, await fsList(rel));
-  renderTree();
-}
-
-function renderTree(){
-  const box = $("#tree");
-  const q = side === "file" ? $("#q").value.trim().toLowerCase() : "";
-  const lines = [];
-
-  function walk(rel, entry, depth){
-    const open = TREE.open.has(rel);
-    const e = extOf(entry);
-    const lock = !isWritable(rel) && depth === 0
-      ? '<span class="lock" title="只读：出厂件，升级时会被整体替换">' + ico("file-lock", "i") + '</span>'
-      : "";
-    lines.push(
-      '<div class="row' + (TREE.sel === rel ? " sel" : "") + '" data-rel="' + esc(rel) + '"' +
-        ' data-dir="' + (entry.dir ? "1" : "0") + '" style="padding-left:' + (10 + depth * 14) + 'px">' +
-        '<span class="tw">' + (entry.dir ? ico(open ? "chevron-down" : "chevron-right", "i") : "") + '</span>' +
-        fileIcon(entry, open) +
-        '<span class="nm">' + esc(entry.name) + '</span>' + lock +
-        (entry.dir ? "" : '<span class="ext">' + (entry.size != null ? humanSize(entry.size) : "") + '</span>') +
-      '</div>');
-
-    if (entry.dir && open){
-      const kids = TREE.cache.get(rel) || [];
-      for (const k of kids){
-        if (q && !k.dir && !k.name.toLowerCase().includes(q)) continue;
-        walk(k.rel, k, depth + 1);
-      }
-      if (!kids.length){
-        lines.push('<div class="empty" style="margin:10px 0;font-size:12px">（空目录）</div>');
-      }
-    }
+function fbRender(){
+  const wrap = $("#fb-wrap");
+  const rows = fbSorted();
+  const arrow = k => FB.sort.key === k
+    ? '<span class="arrow">' + (FB.sort.dir === 1 ? "▲" : "▼") + '</span>' : '';
+  let html = '<table class="fb"><thead><tr>' +
+    '<th data-sort="name">名称' + arrow("name") + '</th>' +
+    '<th data-sort="mtime" style="width:150px">修改日期' + arrow("mtime") + '</th>' +
+    '<th data-sort="type" style="width:110px">类型' + arrow("type") + '</th>' +
+    '<th data-sort="size" style="width:100px">大小' + arrow("size") + '</th>' +
+    '</tr></thead><tbody>';
+  if (!rows.length){
+    html += '<tr><td colspan="4" class="dim" style="padding:22px;text-align:center">' +
+            '这个文件夹是空的</td></tr>';
   }
-
-  for (const root of ROOTS){
-    const rec = {name: root.label, dir: true, rel: root.key,
-                 size: null, ext: ""};
-    // 先画根本身，再画它的孩子（根永远展开，且不显示折叠箭头）
-    const open = true;
-    lines.push(
-      '<div class="row' + (TREE.sel === root.key ? " sel" : "") + '" data-rel="' + esc(root.key) + '" data-dir="1">' +
-        '<span class="tw">' + ico("chevron-down", "i") + '</span>' +
-        '<span style="color:' + (root.writable ? "#0a84ff" : "#8a8a8a") + ';display:flex">' +
-          ico("folder-tree", "i") + '</span>' +
-        '<span class="nm" style="font-weight:500">' + esc(root.label) + '</span>' +
-        (root.writable ? "" : '<span class="lock" title="只读：出厂件，升级时会被整体替换">' +
-          ico("file-lock", "i") + '</span>') +
-        '<span class="ext" title="' + esc(root.why) + '">' + (root.writable ? "可写" : "只读") + '</span>' +
-      '</div>');
-    for (const k of (TREE.cache.get(root.key) || [])){
-      if (q && !k.dir && !k.name.toLowerCase().includes(q)) continue;
-      walk(k.rel, k, 1);
-    }
+  for (const e of rows){
+    html += '<tr class="row' + (FB.sel.has(e.rel) ? " sel" : "") + '" data-rel="' + esc(e.rel) +
+      '" data-dir="' + (e.dir ? 1 : 0) + '">' +
+      '<td class="nmcell">' + fileIconHTML(e, false) + '<span>' + esc(e.name) + '</span></td>' +
+      '<td class="dim">' + fmtTime(e.mtime) + '</td>' +
+      '<td class="dim">' + typeLabel(e) + '</td>' +
+      '<td class="num">' + (e.dir ? "" : humanSize(e.size)) + '</td></tr>';
   }
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
 
-  box.innerHTML = lines.join("");
-  box.querySelectorAll(".row").forEach(el => {
-    el.onclick = async () => {
-      const rel = el.dataset.rel;
-      TREE.sel = rel;
-      renderTreeBar();
-      if (el.dataset.dir === "1"){
-        if (rel.split("/").length === 1) return;      // 根不给折叠
-        await toggleDir(rel);
-      } else {
-        await openFile(rel);
-      }
-      renderTree();
+  wrap.querySelectorAll("th[data-sort]").forEach(th => {
+    th.onclick = () => {
+      const k = th.dataset.sort;
+      FB.sort = {key: k, dir: (FB.sort.key === k ? -FB.sort.dir : 1)};
+      fbRender();
     };
   });
+  wrap.querySelectorAll("tr.row").forEach((tr, idx) => {
+    const rel = tr.dataset.rel;
+    tr.onclick = (ev) => {
+      if (ev.ctrlKey || ev.metaKey){
+        FB.sel.has(rel) ? FB.sel.delete(rel) : FB.sel.add(rel);
+        FB.lastIdx = idx;
+      } else if (ev.shiftKey && FB.lastIdx >= 0){
+        const a = Math.min(FB.lastIdx, idx), b = Math.max(FB.lastIdx, idx);
+        FB.sel.clear();
+        for (let i = a; i <= b; i++) FB.sel.add(rows[i].rel);
+      } else {
+        FB.sel.clear(); FB.sel.add(rel); FB.lastIdx = idx;
+      }
+      fbPaintSel();
+    };
+    tr.ondblclick = () => (tr.dataset.dir === "1" ? fbOpen(rel) : openFile(rel));
+    tr.oncontextmenu = (ev) => {
+      ev.preventDefault();
+      if (!FB.sel.has(rel)){ FB.sel.clear(); FB.sel.add(rel); FB.lastIdx = idx; fbPaintSel(); }
+      showCtx(ev.clientX, ev.clientY, rel);
+    };
+  });
+  wrap.oncontextmenu = (ev) => {
+    if (ev.target.closest("tr.row")) return;
+    ev.preventDefault(); FB.sel.clear(); fbPaintSel();
+    showCtx(ev.clientX, ev.clientY, null);
+  };
+
+  // 面包屑
+  const segs = (FB.rel || "").split("/");
+  let acc = "", crumb = "";
+  segs.forEach((s, i) => {
+    acc = i === 0 ? s : acc + "/" + s;
+    const label = i === 0 ? (s === "user" ? "user_data" : "system") : s;
+    if (i) crumb += '<span class="sep">›</span>';
+    crumb += (i === segs.length - 1)
+      ? '<span class="here">' + esc(label) + '</span>'
+      : '<span class="seg" data-rel="' + esc(acc) + '">' + esc(label) + '</span>';
+  });
+  $("#fb-crumbs").innerHTML = crumb;
+  $("#fb-crumbs").querySelectorAll(".seg").forEach(el => {
+    el.onclick = () => fbOpen(el.dataset.rel);
+  });
+
+  $("#fb-back").disabled = FB.hpos <= 0;
+  $("#fb-fwd").disabled = FB.hpos >= FB.hist.length - 1;
+  $("#fb-up").disabled = segs.length <= 1;
+  fbButtons();
+
+  const selArr = [...FB.sel];
+  const selFiles = rows.filter(e => FB.sel.has(e.rel) && !e.dir);
+  const total = rows.filter(e => FB.sel.has(e.rel) && !e.dir)
+                    .reduce((n, e) => n + (e.size || 0), 0);
+  $("#fb-info").textContent = rows.length + " 项" +
+    (selArr.length ? " · 选中 " + selArr.length + " 项" +
+      (selFiles.length ? "（" + humanSize(total) + "）" : "") : "") +
+    " · " + FB.rel;
+  $("#fb-clip").textContent = FB.clip
+    ? ("剪贴板：" + FB.clip.rels.length + " 项" + (FB.clip.cut ? "（剪切）" : "（复制）")) : "";
+  $("#fb-paste").disabled = !FB.clip;
 }
 
-function selectedEntry(){
-  if (!TREE.sel) return null;
-  const key = TREE.sel.split("/")[0];
-  if (TREE.sel.split("/").length === 1) return {name: key, dir: true, rel: TREE.sel};
-  const parent = TREE.sel.split("/").slice(0, -1).join("/");
-  return (TREE.cache.get(parent) || []).find(x => x.rel === TREE.sel) || null;
+function fbPaintSel(){
+  const wrap = $("#fb-wrap");
+  wrap.querySelectorAll("tr.row").forEach(tr =>
+    tr.classList.toggle("sel", FB.sel.has(tr.dataset.rel)));
+  const rows = fbSorted();
+  const n = FB.sel.size;
+  const bytes = rows.filter(e => FB.sel.has(e.rel) && !e.dir)
+                    .reduce((a, e) => a + (e.size || 0), 0);
+  $("#fb-info").textContent = rows.length + " 项" +
+    (n ? " · 选中 " + n + " 项（" + humanSize(bytes) + "）" : "") + " · " + FB.rel;
+  fbButtons();
 }
 
-function renderTreeBar(){
-  const bar = $("#treebar");
-  const ent = selectedEntry();
-  const writable = isWritable(TREE.sel);
-  const dirTarget = ent && ent.dir ? TREE.sel
-                  : (TREE.sel ? TREE.sel.split("/").slice(0, -1).join("/") : "user");
-  const btns = [
-    ["file-plus", "新建文件", "newfile", writable, dirTarget],
-    ["folder-plus", "新建文件夹", "newdir", writable, dirTarget],
-    ["pencil", "重命名", "rename", writable && !!ent, TREE.sel],
-    ["trash-2", "删除（挪进回收站，可恢复）", "del", writable && !!ent, TREE.sel],
-    ["refresh-cw", "重新读一遍这个目录", "reload", true, dirTarget],
-    ["external-link", "在资源管理器里显示", "reveal", !!ent, TREE.sel],
-  ];
-  bar.innerHTML = btns.map(b =>
-    '<button class="iconbtn' + (b[2] === "del" ? " warn" : "") + '" data-act="' + b[2] +
-    '" data-target="' + esc(b[4] || "") + '" title="' + esc(b[1]) + '"' +
-    (b[3] ? "" : " disabled") + '>' + ico(b[0], "i") + '</button>').join("") +
-    '<span style="flex:1"></span>' +
-    '<span class="mono" style="font-size:11px;color:var(--dim);align-self:center;' +
-    'max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' +
-    esc(TREE.sel || "") + '">' + esc((TREE.sel || "").replace(/^[^/]+\//, "")) + '</span>';
+/* 没选中东西时，"重命名/删除/复制/剪切"该是灰的 —— 点下去才报错是坏习惯 */
+function fbButtons(){
+  const n = FB.sel.size;
+  $("#fb-rename").disabled = n !== 1;
+  $("#fb-del").disabled = n === 0;
+  $("#fb-copyb").disabled = n === 0;
+  $("#fb-cut").disabled = n === 0;
+  $("#fb-paste").disabled = !FB.clip;
+  $("#fb-open").disabled = n === 0;
+  $("#fb-reveal").disabled = n === 0;
+}
 
-  bar.querySelectorAll("button").forEach(b => {
-    b.onclick = () => treeAction(b.dataset.act, b.dataset.target);
+/* ---- 右键菜单 ---- */
+function showCtx(x, y, rel){
+  FB.ctxRel = rel;
+  const has = !!rel;
+  const one = FB.sel.size === 1;
+  const items = has
+    ? [["folder-open", "打开", "open"],
+       ["external-link", "用默认程序打开", "default"],
+       ["app-window", "在资源管理器里显示", "reveal"],
+       ["sep"],
+       ["copy", "复制", "copy"],
+       ["scissors", "剪切", "cut"],
+       ["sep"],
+       ["pencil", "重命名", "rename", one],
+       ["trash-2", "删除（进回收站）", "del", true, "warn"]]
+    : [["file-plus", "新建文件", "newfile"],
+       ["folder-plus", "新建文件夹", "newdir"],
+       ["sep"],
+       ["clipboard-paste", "粘贴", "paste", !!FB.clip],
+       ["refresh-cw", "刷新", "reload"]];
+  const menu = $("#ctxmenu");
+  menu.innerHTML = items.map(it => {
+    if (it[0] === "sep") return '<div class="sep"></div>';
+    const dis = it[3] === false;
+    return '<div class="mi' + (dis ? " dis" : "") + '" data-act="' + it[2] + '">' +
+      ico(it[0], "i") + '<span>' + esc(it[1]) + '</span></div>';
+  }).join("");
+  menu.hidden = false;
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  menu.style.left = Math.min(x, window.innerWidth - w - 8) + "px";
+  menu.style.top = Math.min(y, window.innerHeight - h - 8) + "px";
+  menu.querySelectorAll(".mi").forEach(mi => {
+    if (mi.classList.contains("dis")) return;
+    mi.onclick = () => { hideCtx(); fbCmd(mi.dataset.act); };
   });
 }
+function hideCtx(){ $("#ctxmenu").hidden = true; }
 
-async function reloadTreeAt(rel){
-  const dir = rel && rel.split("/").length > 1
-    ? (selectedEntry() && selectedEntry().dir ? rel : rel.split("/").slice(0, -1).join("/"))
-    : rel;
-  if (dir && TREE.cache.has(dir)) TREE.cache.set(dir, await fsList(dir));
-  renderTree(); renderTreeBar();
+/* ---- 操作 ---- */
+function fbTargetDir(){
+  // 有选中目录就用它，否则用当前目录
+  const selArr = [...FB.sel];
+  if (selArr.length === 1){
+    const e = FB.entries.find(x => x.rel === selArr[0]);
+    if (e && e.dir) return e.rel;
+  }
+  return FB.rel;
 }
-
-async function treeAction(act, target){
-  if (act === "reload"){ await reloadTreeAt(target); return; }
-  if (act === "reveal"){ const r = await pywebview.api.fs_reveal(target); toast(r.msg, !r.ok); return; }
+async function fbCmd(act){
+  const selArr = [...FB.sel];
+  if (act === "open"){
+    if (selArr.length === 1){
+      const e = FB.entries.find(x => x.rel === selArr[0]);
+      if (e && e.dir) fbOpen(e.rel); else if (e) openFile(e.rel);
+    }
+    return;
+  }
+  if (act === "default" || act === "reveal"){
+    if (!selArr.length) return;
+    const r = act === "default" ? await pywebview.api.fs_open_default(selArr[0])
+                                : await pywebview.api.fs_reveal(selArr[0]);
+    toast(r.msg, !r.ok);
+    return;
+  }
+  if (act === "copy" || act === "cut"){
+    if (!selArr.length) return;
+    FB.clip = {rels: selArr, cut: act === "cut"};
+    fbRender();
+    toast((act === "cut" ? "已剪切 " : "已复制 ") + selArr.length + " 项");
+    return;
+  }
+  if (act === "paste"){
+    if (!FB.clip) return;
+    const r = await pywebview.api.fs_copy(FB.clip.rels, FB.rel, FB.clip.cut);
+    toast(r.msg, !r.ok);
+    if (r.ok && FB.clip.cut) FB.clip = null;
+    fbRefresh();
+    return;
+  }
   if (act === "newfile" || act === "newdir"){
-    const isDir = act === "newdir";
-    askText(isDir ? "新建文件夹" : "新建文件", isDir ? "新建文件夹" : "untitled.py",
-      async (name) => {
-        const r = isDir ? await pywebview.api.fs_mkdir(target, name)
-                        : await pywebview.api.fs_touch(target, name);
-        toast(r.msg, !r.ok);
-        if (r.ok){
-          if (!TREE.open.has(target)) TREE.open.add(target);
-          TREE.cache.set(target, await fsList(target));
-          TREE.sel = r.rel;
-          renderTree(); renderTreeBar();
-          if (!isDir) await openFile(r.rel);
-        }
-      });
+    const dir = fbTargetDir(), isDir = act === "newdir";
+    askText(isDir ? "新建文件夹" : "新建文件", isDir ? "新建文件夹" : "untitled.py", async (name) => {
+      const r = isDir ? await pywebview.api.fs_mkdir(dir, name)
+                      : await pywebview.api.fs_touch(dir, name);
+      toast(r.msg, !r.ok);
+      if (r.ok){
+        if (dir !== FB.rel) await fbOpen(dir); else fbRefresh();
+        FB.sel.clear(); FB.sel.add(r.rel); fbPaintSel();
+        if (!isDir) openFile(r.rel);
+      }
+    });
     return;
   }
   if (act === "rename"){
-    const ent = selectedEntry();
-    askText("重命名", ent ? ent.name : "", async (name) => {
-      const r = await pywebview.api.fs_rename(target, name);
+    if (selArr.length !== 1) { toast("重命名一次只能一个", true); return; }
+    const e = FB.entries.find(x => x.rel === selArr[0]);
+    askText("重命名", e ? e.name : "", async (name) => {
+      const r = await pywebview.api.fs_rename(selArr[0], name);
       toast(r.msg, !r.ok);
       if (r.ok){
-        const parent = r.rel.split("/").slice(0, -1).join("/");
-        TREE.cache.set(parent, await fsList(parent));
-        TREE.sel = r.rel;
-        if (ED.rel === r.old){ ED.rel = r.rel; ED.path = r.rel; $("#edpath").textContent = r.rel; }
-        renderTree(); renderTreeBar();
+        if (ED.rel === r.old){ ED.rel = r.rel; $("#edpath").textContent = r.rel; }
+        FB.sel.clear(); FB.sel.add(r.rel);
+        fbRefresh();
       }
     });
     return;
   }
   if (act === "del"){
-    const ent = selectedEntry();
-    askConfirm("删除", "把 “" + (ent ? ent.name : target) +
-      "” 挪进 user_data/trash/（**不是真删**，后悔了能拿回来）。确定吗？", async () => {
-        const r = await pywebview.api.fs_delete(target);
+    if (!selArr.length) return;
+    const names = FB.entries.filter(e => FB.sel.has(e.rel)).map(e => e.name);
+    askConfirm("删除", "把 " + (names.length === 1 ? "“" + names[0] + "”"
+      : names.length + " 项") + " 挪进 user_data/trash/（**不是真删**，能拿回来）。确定吗？",
+      async () => {
+        const r = await pywebview.api.fs_delete(selArr);
         toast(r.msg, !r.ok);
         if (r.ok){
-          if (ED.rel === target || (ED.rel || "").startsWith(target + "/")) closeFile();
-          const parent = target.split("/").slice(0, -1).join("/") || target.split("/")[0];
-          TREE.cache.set(parent, await fsList(parent));
-          TREE.sel = parent;
-          renderTree(); renderTreeBar();
+          if (ED.rel && selArr.some(s => ED.rel === s || ED.rel.startsWith(s + "/"))) closeFile();
+          FB.sel.clear();
+          fbRefresh();
         }
       });
+    return;
   }
+  if (act === "reload"){ fbRefresh(); return; }
 }
 
-async function revealInTree(rel){
-  // 逐级展开到目标，并把光标定位过去
-  const parts = rel.split("/");
-  let acc = parts[0];
-  TREE.open.add(acc);
-  TREE.cache.set(acc, TREE.cache.get(acc) || await fsList(acc));
-  for (let i = 1; i < parts.length; i++){
-    acc = parts.slice(0, i + 1).join("/");
-    TREE.open.add(acc);
-    if (!TREE.cache.has(acc)) TREE.cache.set(acc, await fsList(acc));
+/* ---- 键盘 ---- */
+document.addEventListener("keydown", async (e) => {
+  if ($("#modal").classList.contains("on")) return;
+  const typing = /^(INPUT|TEXTAREA)$/.test((e.target.tagName || "").toUpperCase());
+  if (tab === "file" && !typing){
+    const k = e.key;
+    if (k === "Enter"){ e.preventDefault(); fbCmd("open"); return; }
+    if (k === "F2"){ e.preventDefault(); fbCmd("rename"); return; }
+    if (k === "Delete"){ e.preventDefault(); fbCmd("del"); return; }
+    if (k === "Backspace"){ e.preventDefault(); fbUp(); return; }
+    if (k === "F5"){ e.preventDefault(); fbRefresh(); return; }
+    if (k === "Escape"){ FB.sel.clear(); fbPaintSel(); hideCtx(); return; }
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "c"){ e.preventDefault(); fbCmd("copy"); return; }
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "x"){ e.preventDefault(); fbCmd("cut"); return; }
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "v"){ e.preventDefault(); fbCmd("paste"); return; }
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "a"){
+      e.preventDefault();
+      FB.entries.forEach(x => FB.sel.add(x.rel));
+      fbPaintSel();
+      return;
+    }
   }
-  TREE.sel = rel;
-  setSide("file");
-  renderTree(); renderTreeBar();
-}
+  if (e.key === "Escape" && $("#modal").classList.contains("on")) closeModal();
+});
+document.addEventListener("click", (e) => { if (!e.target.closest("#ctxmenu")) hideCtx(); });
+window.addEventListener("blur", hideCtx);
 
-/* ---------------------------------------------------------------- 编辑器 */
-const ED = {rel:null, path:null, lang:"plaintext", original:"", writable:false, loaded:false};
+/* ================================================================ 编辑器 */
+const ED = {rel:null, lang:"plaintext", original:"", loaded:false, binary:false};
 
-function setEditLamp(st){
-  const l = $("#editlamp");
-  if (l) l.dataset.state = st;
-}
-
+function setEditLamp(st){ const l = $("#editlamp"); if (l) l.dataset.state = st; }
 function markDirty(){
-  const dirty = ED.loaded && $("#code").value !== ED.original;
+  const dirty = ED.loaded && !ED.binary && $("#code").value !== ED.original;
   $("#eddirty").hidden = !dirty;
-  if (ED.loaded) setEditLamp(dirty ? "warn" : "ok");
-  $("#btn-save").disabled = !(dirty && ED.writable);
+  if (ED.loaded) setEditLamp(ED.binary ? "idle" : (dirty ? "warn" : "ok"));
+  $("#btn-save").disabled = !(dirty && !ED.binary);
 }
-
 function highlightNow(){
-  const text = $("#code").value;
-  const target = $("#hl");
-  // 大文件不逐键高亮：几十万字符每次输入都重排一遍，打字会卡（按纯文本显示）
+  const text = $("#code").value, target = $("#hl");
   if (text.length > 300000){ target.textContent = text + "\n"; return; }
   if (window.hljs && ED.lang && hljs.getLanguage(ED.lang)){
     try{
       target.innerHTML = hljs.highlight(text, {language: ED.lang, ignoreIllegals: true}).value + "\n";
       return;
-    }catch(e){ /* 退回纯文本 */ }
+    }catch(e){}
   }
   target.textContent = text + "\n";
 }
-
 let hlTimer = null;
-function scheduleHighlight(){
-  clearTimeout(hlTimer);
-  hlTimer = setTimeout(highlightNow, 120);      // 打字时别每个字符都重算
-}
-
+function scheduleHighlight(){ clearTimeout(hlTimer); hlTimer = setTimeout(highlightNow, 120); }
 function syncScroll(){
   const ta = $("#code"), pre = $("#hl").parentElement;
-  if (!ta || !pre) return;
-  pre.scrollTop = ta.scrollTop;
-  pre.scrollLeft = ta.scrollLeft;
+  if (ta && pre){ pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; }
 }
-
 async function openFile(rel){
   const r = await pywebview.api.fs_read(rel);
   if (!r.ok){ toast("✗ " + r.msg, true); return; }
   const name = rel.split("/").pop();
-  const entry = {name: name, ext: (name.split(".").pop() || "").toLowerCase()};
-  const meta = extOf(entry);
-  ED.rel = rel; ED.path = r.path || rel; ED.lang = meta.l || "plaintext";
-  ED.original = r.text || ""; ED.writable = !!r.writable;
-  ED.loaded = true;
+  const meta = extOf({name: name, ext: (name.split(".").pop() || "").toLowerCase()});
+  ED.rel = rel; ED.lang = meta.l || "plaintext";
+  ED.original = r.text || ""; ED.binary = !!(r.binary || r.too_big); ED.loaded = true;
   const code = $("#code");
   code.value = ED.original;
-  code.readOnly = !(r.writable && !r.binary && !r.too_big);
-  $("#edpath").textContent = rel + (r.writable ? "" : "　（只读）");
-  const note = $("#ednote");
+  code.readOnly = ED.binary;
+  $("#edpath").textContent = rel;
+  const factory = rel.split("/")[0] === "system";
   let msg = "";
-  if (r.binary) msg = ico("binary", "i") + " 二进制文件，只读打开";
+  if (r.binary) msg = ico("binary", "i") + " 二进制文件，编辑不了；要看就用「默认程序打开」";
   else if (r.too_big) msg = ico("alert-triangle", "i") + " " + r.msg;
-  else if (!r.writable) msg = ico("file-lock", "i") + " 出厂件（system/）—— 只读；想改先复制到 user_data/";
-  note.innerHTML = msg;
-  note.hidden = !msg;
+  else if (factory) msg = ico("alert-triangle", "i") +
+      " 这是出厂件（system/）—— 能改，但将来升级时会被整体替换";
+  $("#ednote").innerHTML = msg;
+  $("#ednote").hidden = !msg;
   setTab("editor");
-  highlightNow();
-  syncScroll();
-  markDirty();
+  highlightNow(); syncScroll(); markDirty();
 }
-
 function closeFile(){
-  ED.rel = null; ED.loaded = false; ED.original = "";
-  $("#code").value = "";
-  $("#hl").textContent = "";
+  ED.rel = null; ED.loaded = false; ED.binary = false; ED.original = "";
+  $("#code").value = ""; $("#hl").textContent = "";
   $("#edpath").textContent = "没打开文件";
-  $("#ednote").hidden = true;
-  $("#eddirty").hidden = true;
-  setEditLamp("idle");
-  $("#btn-save").disabled = true;
+  $("#ednote").hidden = true; $("#eddirty").hidden = true;
+  setEditLamp("idle"); $("#btn-save").disabled = true;
 }
-
 async function saveFile(){
-  if (!ED.loaded) return;
-  if (!ED.writable){ toast("这是只读文件（system/）—— 想改就复制到 user_data/", true); return; }
+  if (!ED.loaded || ED.binary) return;
   const r = await pywebview.api.fs_write(ED.rel, $("#code").value);
-  toast(r.ok ? ("已保存 " + ED.rel) : ("✗ " + r.msg), !r.ok);
-  if (r.ok){
-    ED.original = $("#code").value;
-    markDirty();
-    const parent = ED.rel.split("/").slice(0, -1).join("/");
-    TREE.cache.set(parent, await fsList(parent));
-    renderTree();
-  }
+  toast(r.ok ? ("已保存 " + ED.rel + (r.factory ? "（出厂件）" : "")) : ("✗ " + r.msg), !r.ok);
+  if (r.ok){ ED.original = $("#code").value; markDirty(); if (tab === "file") fbRefresh(); }
 }
 
-/* ---------------------------------------------------------------- 小模态框 */
+/* ---------------------------------------------------------------- 模态 / 提示 */
 let modalCb = null;
-
 function askText(title, value, cb){
   $("#m-title").textContent = title;
   $("#m-text").textContent = "";
@@ -978,7 +1039,6 @@ function askText(title, value, cb){
   setTimeout(() => { inp.focus(); inp.select(); }, 30);
   modalCb = () => cb(inp.value.trim());
 }
-
 function askConfirm(title, text, cb){
   $("#m-title").textContent = title;
   $("#m-text").textContent = text.replace(/\*\*/g, "");
@@ -988,12 +1048,7 @@ function askConfirm(title, text, cb){
   setTimeout(() => $("#m-ok").focus(), 30);
   modalCb = () => cb();
 }
-
 function closeModal(){ $("#modal").classList.remove("on"); modalCb = null; }
-
-/* 轻提示：文件操作（保存/新建/改名/删除）的结果用这个说一声 ——
-   ★ 不能像以前那样 `out()` + 切到「命令行」：存个文件就把人从编辑器拽走，
-   而且那个 tab 里还留着上一次跑包的输出，混在一起。 */
 function toast(text, bad){
   const box = $("#toasts");
   const el = document.createElement("div");
@@ -1008,14 +1063,10 @@ async function init(){
   DATA = await pywebview.api.state();
   $("#meta").textContent =
     DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home;
-  renderList();
-  paintStates();
-  renderTreeBar();
-  await treeInit();
+  renderList(); paintStates();
 }
-
-/* 静态按钮：把文字换成图标（图标库 Lucide，tooltip 走 title） */
 function paintStaticIcons(){
+  $("#btn-browse").innerHTML    = ico("folder-tree", "i");
   $("#btn-selfcheck").innerHTML = ico("activity", "i");
   $("#btn-refresh").innerHTML   = ico("refresh-cw", "i");
   $("#btn-quit").innerHTML      = ico("x", "i");
@@ -1024,37 +1075,59 @@ function paintStaticIcons(){
   $("#btn-clear").innerHTML     = ico("eraser", "i");
   $("#btn-save").innerHTML      = ico("save", "i");
   $("#btn-revert").innerHTML    = ico("undo-2", "i");
-  $("#btn-reveal2").innerHTML   = ico("external-link", "i");
-  $("#sw-pkg").innerHTML        = ico("package", "i") + "<span>包</span>";
-  $("#sw-file").innerHTML       = ico("folder-tree", "i") + "<span>文件</span>";
+  $("#btn-default").innerHTML   = ico("external-link", "i");
+  $("#btn-reveal2").innerHTML   = ico("folder-open", "i");
+  $("#fb-back").innerHTML   = ico("corner-up-left", "i");
+  $("#fb-fwd").innerHTML    = ico("corner-up-right", "i");
+  $("#fb-up").innerHTML     = ico("arrow-up", "i");
+  $("#fb-reload").innerHTML = ico("refresh-cw", "i");
+  $("#fb-newdir").innerHTML = ico("folder-plus", "i");
+  $("#fb-newfile").innerHTML= ico("file-plus", "i");
+  $("#fb-rename").innerHTML = ico("pencil", "i");
+  $("#fb-del").innerHTML    = ico("trash-2", "i");
+  $("#fb-copyb").innerHTML  = ico("copy", "i");
+  $("#fb-cut").innerHTML    = ico("scissors", "i");
+  $("#fb-paste").innerHTML  = ico("clipboard-paste", "i");
+  $("#fb-open").innerHTML   = ico("external-link", "i");
+  $("#fb-reveal").innerHTML = ico("folder-open", "i");
 }
-
-$("#q").addEventListener("input", () => { if (side === "file") renderTree(); else renderList(); });
+$("#q").addEventListener("input", renderList);
 $("#btn-refresh").onclick = init;
 $("#btn-quit").onclick = () => pywebview.api.quit();
+$("#btn-browse").onclick = () => fbOpen("user");
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => setTab(b.dataset.tab));
-$("#sw-pkg").onclick = () => setSide("pkg");
-$("#sw-file").onclick = () => { setSide("file"); renderTreeBar(); };
 $("#btn-copy").onclick = copyOut;
 $("#btn-clear").onclick = () => { out(""); setCmd(""); clearConsoleState(); };
 $("#btn-save").onclick = saveFile;
 $("#btn-revert").onclick = () => { if (ED.rel) openFile(ED.rel); };
+$("#btn-default").onclick = () => { if (ED.rel) pywebview.api.fs_open_default(ED.rel); };
 $("#btn-reveal2").onclick = () => { if (ED.rel) pywebview.api.fs_reveal(ED.rel); };
+$("#fb-back").onclick = fbBack;
+$("#fb-fwd").onclick = fbFwd;
+$("#fb-up").onclick = fbUp;
+$("#fb-reload").onclick = fbRefresh;
+$("#fb-root-user").onclick = () => fbOpen("user");
+$("#fb-root-system").onclick = () => fbOpen("system");
+$("#fb-newdir").onclick = () => fbCmd("newdir");
+$("#fb-newfile").onclick = () => fbCmd("newfile");
+$("#fb-rename").onclick = () => fbCmd("rename");
+$("#fb-del").onclick = () => fbCmd("del");
+$("#fb-copyb").onclick = () => fbCmd("copy");
+$("#fb-cut").onclick = () => fbCmd("cut");
+$("#fb-paste").onclick = () => fbCmd("paste");
+$("#fb-open").onclick = () => fbCmd("default");
+$("#fb-reveal").onclick = () => fbCmd("reveal");
 $("#m-cancel").onclick = closeModal;
 $("#m-ok").onclick = () => { const cb = modalCb; closeModal(); if (cb) cb(); };
 $("#m-input").addEventListener("keydown", e => {
   if (e.key === "Enter"){ e.preventDefault(); $("#m-ok").click(); }
-  if (e.key === "Escape"){ closeModal(); }
+  if (e.key === "Escape") closeModal();
 });
 $("#modal").addEventListener("click", e => { if (e.target.id === "modal") closeModal(); });
-
-$("#code").addEventListener("input", () => {
-  scheduleHighlight();
-  markDirty();
-});
+$("#code").addEventListener("input", () => { scheduleHighlight(); markDirty(); });
 $("#code").addEventListener("scroll", syncScroll);
 $("#code").addEventListener("keydown", e => {
-  if (e.key === "Tab"){                       // Tab 插四个空格（不然焦点跳走）
+  if (e.key === "Tab"){
     e.preventDefault();
     const el = e.target, p = el.selectionStart;
     el.value = el.value.slice(0, p) + "    " + el.value.slice(el.selectionEnd);
@@ -1063,26 +1136,19 @@ $("#code").addEventListener("keydown", e => {
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s"){ e.preventDefault(); saveFile(); }
 });
-document.addEventListener("keydown", e => {
-  if (e.key === "Escape" && $("#modal").classList.contains("on")) closeModal();
-});
-
 $("#btn-rerun").onclick = async () => {
   if (!lastRun || busy) return;
   busy = true;
   const btn = $("#btn-rerun"); btn.disabled = true;
-  setCmd(lastRun.label);
-  setState(lastRun.id, "running");
+  setCmd(lastRun.label); setState(lastRun.id, "running");
   out("$ " + lastRun.label);
   const t0 = performance.now();
   const r = await pywebview.api.run(lastRun.id, lastRun.args);
   out("$ " + lastRun.label + "\n\n" + (r.out || "(这个包没有输出)") + "\n[退出码] " + r.code);
   setState(lastRun.id, r.code === 0 ? "ok" : "fail",
            {code: r.code, ms: Math.round(performance.now() - t0)});
-  btn.disabled = false;
-  busy = false;
+  btn.disabled = false; busy = false;
 };
-
 $("#btn-selfcheck").onclick = async () => {
   setTab("console"); setCmd("moss --selfcheck");
   setState("__host__", "running");
