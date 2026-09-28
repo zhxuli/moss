@@ -220,8 +220,15 @@ def main():
     SHOTS.mkdir(parents=True, exist_ok=True)
     url = (PRE / "index.html").as_uri()
     scenes = [a for a in sys.argv[1:] if not a.startswith("-")] or SCENES
+    # `--size=1280,1200`：整页比一屏高时用得上（看看卡片下面是什么样）
+    size = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--size=")),
+                "1280,860")
+    # `--dark`：让 `prefers-color-scheme: dark` 生效 —— 深色那套令牌是另一份值，
+    # 不单独看一眼很容易只在浅色下"看着没事"。
+    dark = "--dark" in sys.argv[1:]
     print("浏览器 : %s" % exe)
     print("临时副本: %s" % PRE)
+    print("窗口    : %s%s" % (size, "  （深色）" if dark else ""))
     print("=" * 64)
     bad = 0
     for sc in scenes:
@@ -231,8 +238,10 @@ def main():
         cmd = [exe, "--headless=new", "--disable-gpu", "--hide-scrollbars",
                "--no-first-run", "--no-default-browser-check",
                "--user-data-dir=" + str(prof), "--allow-file-access-from-files",
-               "--window-size=1280,860", "--virtual-time-budget=6000",
+               "--window-size=" + size, "--virtual-time-budget=6000",
                "--screenshot=" + str(out), url + "#" + sc]
+        if dark:
+            cmd.insert(2, "--force-dark-mode")
         r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=120)
         shutil.rmtree(prof, ignore_errors=True)
         ok = out.is_file() and out.stat().st_size > 2000
