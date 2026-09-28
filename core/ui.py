@@ -53,7 +53,7 @@ _ICON_MAX_BYTES = 200 * 1024
 def _icon(pkg, pkg_dir):
     """图标给界面用。返回 (data URI, 内联 svg 文本)。
 
-    ★ svg 要**内联**（而不是塞进 `<img src=...>`）：我们那 18 个图标画的是
+    ★ svg 要**内联**（而不是塞进 `<img src=...>`）：那 18 个图标画的是
       `stroke="currentColor"`，只有内联进 DOM 才会跟着主题变色；
       放进 `<img>` 里 currentColor 会退化成黑色，深色主题下直接看不见。
       图标是**数据不是指令**（`X-16`），前端内联前会剥掉 script / 事件属性。
@@ -145,8 +145,8 @@ def build_payload():
     for rec in registry.scan_all():
         p = rec["pkg"]
         # ★ 多语言 name/desc 要**先摊平**：`display_name` 是**就地改 pkg 并返回 pkg
-        #   自己**（不是返回名字字符串）。第一版我直接把它当名字用，界面上 18 个包
-        #   全显示成 `[object Object]` —— 截图一看就露了。
+        #   自己**（不是返回名字字符串）。曾经把它当名字字符串用，18 个包
+        #   全显示成 `[object Object]`。
         pkg_mod.display_name(p)
         ai = p.get("ai") or {}
         icon_uri, icon_svg = _icon(p, rec["dir"])
@@ -178,7 +178,7 @@ def build_payload():
         "host_cmd": host_cmd(),
         "launch_kind": shell_mod.launch_kind(),
         # 图标后缀顺序由宿主带过去：界面那侧要按同一套顺序去"历史目标目录"里
-        # 找 `icon.xxx`（你说的那条），两边共用一份顺序，免得以后 F-29 改了漏改
+        # 找 `icon.xxx`，两边共用一份顺序，免得以后 `F-29` 改了漏改
         "icon_exts": list(pkg_mod.ICON_EXTS),
         "packages": pkgs,
     }

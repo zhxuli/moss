@@ -26,47 +26,46 @@ USAGE = """moss —— 多语言启动器
                                例: moss m        → main.py / main.go / main.html
                                    moss b/m      → 进 b 开头的子目录再找 m 开头
                                    moss s/t/main → 逐级往下
-                               ★ 文件系统里找不到时，会去**历史**里找同名的那次调用
-                                 （比如 `moss zeen` 直接进上次那个 ZeEn），
-                                 命中多个就进最近的一次
-  moss /<名字>                 同上，但**不切换目录**（在当前目录里跑）
+                               文件系统里找不到时，会去「历史」里找同名的那次调用
+                               （例如 moss zeen 直接进上次那个 ZeEn），命中多个取最近的
+  moss /<名字>                 同上，但不切换目录（在当前目录里跑）
   moss ~<名字>                 后台脱离运行，不阻塞当前控制台
 
   moss :<别名> [参数...]       运行一个已安装的包
                                例: moss :md5 hello
 
-  moss ui                      打开界面（★ 双击 moss.exe / 快捷方式 / 快速启动栏
-                               也是这个 —— 没有控制台时不开命令行，直接开界面）
+  moss ui                      打开界面（双击 moss.exe / 快捷方式 / 快速启动栏也是这个 ——
+                               没有控制台时不开命令行，直接开界面）
   moss --ui                    同上（写全一点的形式，脚本里更显眼）
 
   moss cd <目标>               智能找目录并切过去（认出父 shell 后把命令注入控制台）
   moss cd --install            把 cd 包装函数写进 PowerShell 配置 → 屏幕上不留回显
   moss cd --uninstall          删掉那个包装函数
 
-  moss --history               最近启动记录：**方向键选择，回车直接再跑一次**（去重，最多 20 条）
-                               回车进入程序后，程序退出就**彻底退出**，不会再回到列表
+  moss --history               最近启动记录：方向键选择，回车直接再跑一次（去重，最多 20 条）
+                               回车进入程序后，程序退出即结束，不会回到列表
   moss --history <条数>        只打印不交互（管道 / 脚本用这种）
-  moss --remove <别名>         卸载一个包：**包本体 + 它的数据**（真删，要先确认；-y 跳过）
-  moss --spec                  打印「插件契约」：怎么写一个插件（★ AI 请先读它）
+  moss --remove <别名>         卸载一个包：包本体 + 它的数据（永久删除，需确认；-y 跳过）
+  moss --spec                  打印「插件契约」：怎么写一个插件（写插件 / AI 调用前请先读）
   moss --new <id>              生成一个能跑的插件骨架到 user_data/pkgs/<id>/
   moss --resolve <名字>        只看解析结果，不执行（排障用：为什么选中它 / 为什么没找到）
   moss --selfcheck             自检：安装根 / runner 表 / 包 / 自带运行时 / cd 注入
 
 说明:
   · 参数写法二选一：位置参数（按 params 顺序）或 key=value
-  · 包可以把某个参数标成 rest:true，表示「剩下的参数全归我，我自己解释」
-    （img 就是这种：`moss :img webp 60% 1200 *.png`）
+  · 包可以把某个参数标成 rest:true，表示「剩下的参数全部交给这个包自己解释」
+    （img 就是这种：moss :img webp 60% 1200 *.png）
   · 环境变量 MOSS_HOME / MOSS_PLUGIN_DATA_DIR 会注入给子进程
-  · 配置在 user_data\\config.toml（**带注释**：命令前缀符号 / 输出横幅 / 清屏 /
+  · 配置在 user_data\\config.toml（带注释：命令前缀符号 / 输出横幅 / 清屏 /
     搜索层数 / Ctrl-C 策略 —— 打开那个文件就知道每一项是干什么的）
-  · **裸名（不带前缀）归谁可以改**：默认 `moss m` 找文件、`moss :img` 跑包；
-    若你主要用途是"跑装好的包"（不常写脚本），把 config.toml 里的 plugin_mode 留空、
-    path_mode 填 ":" —— 于是 `moss img` 直接跑包，`moss :img` 才是找文件
-  · **有没有参数决定干什么，有没有控制台决定怎么进来**（`G-19` ✅）：
-      终端里敲 `moss`         → 用法 + 包列表（命令行）
-      终端里敲 `moss ui`      → 界面
+  · 裸名（不带前缀）归谁可以改：默认 moss m 找文件、moss :img 跑包；
+    若主要用途是"跑装好的包"（不常写脚本），把 config.toml 里的 plugin_mode 留空、
+    path_mode 填 ":" —— 于是 moss img 直接跑包，moss :img 才是找文件
+  · 有没有参数决定干什么，有没有控制台决定怎么进来：
+      终端里敲 moss           → 用法 + 包列表（命令行）
+      终端里敲 moss ui        → 界面
       双击 / 快捷方式 / 快速启动栏 → 界面（没有控制台，命令行打给谁看呢）
-      带参数（`moss :img 60%`）→ 一律按参数干活，不看有没有控制台
+      带参数（moss :img 60%） → 一律按参数干活，不看有没有控制台
 """
 
 
@@ -283,7 +282,7 @@ def _hist_time(r):
 # ---------------------------------------------------------------- 显示宽度
 # ★ 排版必须按**显示宽度**算，不能用 len()：中文 / 全角字符在终端里占两列。
 #   而且 `▶ … ✔ ·` 这类符号的宽度是"不确定"的（East Asian Ambiguous，
-#   有的字体按 1 列、有的按 2 列）—— 你屏幕上 `▶` 后面就多出一格。
+#   有的字体按 1 列、有的按 2 列）—— 实测 `▶` 后面就多出一格。
 #   所以下面只用宽度确定的字符：ASCII 一定 1 列，汉字 / 全角标点一定 2 列。
 def _cw(ch):
     return 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
@@ -383,7 +382,7 @@ def _print_history(rows):
     print(_hist_head(width, width - _HIST_FIXED >= 10))
     for i, r in enumerate(rows, 1):
         print(_hist_row(i, r, width))
-    print("\n想再跑一次上面某条：直接敲它的名字（比如 `moss zeen`），不用先 cd 过去。")
+    print("\n想再跑一次上面某条：直接敲它的名字（比如 moss zeen），不用先 cd 过去。")
     return 0
 
 
@@ -458,9 +457,9 @@ def _history_browser(rows, table):
             paint(True)
             continue
         if ch in ("\r", "\n"):
-            # ★ 从历史进入程序：跑完就**彻底退出**，不再回到列表（你要求的）。
+            # ★ 从历史进入程序：跑完就**彻底退出**，不再回到列表（`V-19`）。
             #   理由：从历史进入等于"再跑一次那个程序"，跟直接敲命令是一回事 ——
-            #   程序结束就该回到 shell 提示符，而不是又甩一个列表给你。
+            #   程序结束就该回到 shell 提示符，而不是再弹一次列表。
             out.clear_screen()
             return cmd_rerun(idx + 1, table, rows=rows)
 
@@ -688,12 +687,12 @@ def _human_size(n):
 def cmd_remove(name, table, assume_yes=False):
     """卸载一个包：**包本体 + 它产生的数据**。
 
-    ★ 按你定的：**真删**（不进 trash），所以"先把要删什么打出来 + 确认"这一步不能省。
+    ★ 这是**永久删除**（不进回收站），所以"先列出要删什么 + 确认"这一步不能省。
     ★ 历史记录里提到它的条目**不动** —— 历史是流水账，不是资产。
     """
     rec = registry.find_alias(name)
     if not rec:
-        out.print_cyan("[错误] 没有这个包：'%s'。直接敲 `moss` 看有哪些。" % name)
+        out.print_cyan("[错误] 没有这个包：'%s'。直接敲 moss 看有哪些。" % name)
         return 1
 
     pid = rec["id"]
@@ -719,7 +718,7 @@ def cmd_remove(name, table, assume_yes=False):
     if shadowed:
         out.print_cyan("  提示：它还遮住了 %s 层的同名包 —— 删掉之后那个会重新生效。"
                        % dict((k, c) for k, c, _, _ in _LAYERS).get(shadowed, shadowed))
-    out.print_cyan("★ 这是真删（不进回收站），删了就没了。")
+    out.print_cyan("注意：这是永久删除（不进回收站），删除后无法恢复。")
 
     if not assume_yes:
         if not sys.stdin.isatty():
@@ -756,7 +755,7 @@ def cmd_resolve(name, table):
     输出刻意按"层"分组 —— 因为真正的搜索语义是
     **第一层有候选就不再往上找**（照抄 pa.py:908 的 generate_search_paths 用法）。
     """
-    out.print_cyan("[解析] `moss %s` —— 逐层向上搜索，第一层有候选就停" % name)
+    out.print_cyan("[解析] moss %s —— 逐层向上搜索，第一层有候选就停" % name)
     depth = config.max_parent_depth()
     hit_base, hit_cands = None, []
     for base in resolve.search_bases(Path.cwd(), depth):
@@ -780,7 +779,7 @@ def cmd_resolve(name, table):
     if hit_base is None:
         out.print_cyan("\n[结论] 在 %s 及向上 %d 层内没找到以 '%s' 开头的可运行目标。"
                        % (Path.cwd(), depth, name))
-        print("       注意：只有装了对应 runner 的才算候选（`moss --selfcheck` 看 runner 表）。")
+        print("       注意：只有装了对应 runner 的才算候选（moss --selfcheck 看 runner 表）。")
         return 1
 
     try:
@@ -829,7 +828,7 @@ def cmd_selfcheck(table):
     for r in rts:
         exe = (Path(r["dir"]) / r["interpreter"]) if r["interpreter"] else None
         good = bool(exe and exe.is_file())
-        pin = " ★默认" if r["isDefault"] else ""
+        pin = " (默认)" if r["isDefault"] else ""
         print("     - %-8s %-9s [%s]%s  %s"
               % (r["family"], r["version"], r["layer"], pin,
                  "✔" if good else "✗ 缺解释器 " + r["interpreter"]))
@@ -862,7 +861,7 @@ def cmd_selfcheck(table):
             ok = False
             print("     ✗ %s: %s" % (r["id"], prob))
     # ★ 必须把"层"打出来：不然根本分不清哪些会随发行版发给用户
-    #   （`system` = 出厂件，随 exe 分发；`user` = 你自己写的 / 商店装的，打包时排除）
+    #   （`system` = 出厂件，随 exe 分发；`user` = 本地安装的 / 商店装的，打包时排除）
     cd_ok, cd_why = shell.console_available()
     who = shell.parent_shell()
     print("  cd 注入   : %s   （%s）" % ("可用" if cd_ok else "✗ 不可用", cd_why))
@@ -871,7 +870,7 @@ def cmd_selfcheck(table):
              " ← ".join("%s" % n for n, _ in shell.parent_chain()[:5])))
     # ★ 启动方式（`G-19` ✅）：这一行决定"不带参数时会发生什么"
     print("  启动方式  : %s" % shell.launch_kind())
-    print("              → 现在敲 `moss`（不带参数）会%s"
+    print("              → 现在敲 moss（不带参数）会%s"
           % ("开界面" if shell.gui_mode() else "打用法 + 包列表"))
     ui_ok, ui_why = ui.available(table)
     print("  界面      : %s   （%s）" % ("可用" if ui_ok else "✗ 不可用", ui_why))
@@ -880,10 +879,10 @@ def cmd_selfcheck(table):
         ok = False
     for label, p, has in shell.installed_state():
         print("  %-9s: %s   （%s）" % (label, "已装包装函数" if has else "未装包装函数", p))
-    print("            装了包装函数的话，`moss cd` 在屏幕上不留任何回显；"
+    print("            装了包装函数的话，moss cd 在屏幕上不留任何回显；"
           "没装则用注入（命令会显示出来）")
     print("=" * 60)
-    out.print_cyan("结论: %s" % ("✅ 自检通过" if ok else "✗ 自检失败"))
+    out.print_cyan("结论: %s" % ("自检通过" if ok else "✗ 自检失败"))
     return 0 if ok else 1
 
 
@@ -975,8 +974,8 @@ def cmd_cd_install():
     if bad:
         out.print_cyan("有 %d 个文件没写成功，上面有原因。" % bad)
         return 1
-    out.print_cyan("装好了。**新开一个 PowerShell 窗口**才生效（老窗口执行 . $PROFILE 也行）。")
-    out.print_cyan("之后 `moss cd <目标>` 屏幕上不会出现任何命令；"
+    out.print_cyan("装好了。新开一个 PowerShell 窗口才生效（老窗口执行 . $PROFILE 也行）。")
+    out.print_cyan("之后 moss cd <目标> 屏幕上不会出现任何命令；"
                    "cmd 窗口没有等价物，仍走注入。")
     out.print_cyan("不想要了: moss cd --uninstall")
     return 0
@@ -1002,7 +1001,7 @@ def cmd_cd_uninstall():
     if not removed:
         out.print_cyan("这两个配置文件里本来就没装过包装函数，没动它们。")
         return 0
-    out.print_cyan("已移除。新开窗口后 `moss cd` 回到注入方式（命令会显示在屏幕上）。")
+    out.print_cyan("已移除。新开窗口后 moss cd 回到注入方式（命令会显示在屏幕上）。")
     return 0
 
 
@@ -1025,7 +1024,7 @@ def main(argv):
 
     # ---- 帮助（照抄 pa.py:861-866：先文档再列表） ----
     if not argv or argv[0] in ("-h", "--help", "help"):
-        # ★ 不带参数时先看"我是怎么被启动的"（`G-19` ✅）：
+        # ★ 不带参数时先看"程序是怎么被启动的"（`G-19` ✅）：
         #   双击 / 快捷方式 / 快速启动栏启动 → 没有控制台 → 打用法没人看得见，
         #   直接开界面。终端里敲 → 照旧打用法 + 包列表。
         if not argv and shell.gui_mode():
@@ -1054,13 +1053,13 @@ def main(argv):
     # ---- cd（照抄 pa.py:876-881） ----
     if first.lower() == 'cd':
         if '--print' in rest:
-            # 2026-09-27 你去掉了这个开关（"没啥用"）：留给零回显那条路的是**环境变量**
+            # 手敲 `--print` 已不再支持（零回显那条路留给**环境变量**）：
             # MOSS_CD_PRINT=1（`moss cd --install` 装好的包装函数就是这么调的），
             # 手动敲 `--print` 没有额外好处 —— 所以这里明说一句，别让它悄悄变成"目标路径"。
-            out.print_cyan("[提示] `moss cd --print` 已经去掉了：")
-            out.print_cyan("       零回显是靠包装函数（`moss cd --install`）设 MOSS_CD_PRINT=1 实现的，"
+            out.print_cyan("[提示] moss cd --print 已经去掉了：")
+            out.print_cyan("       零回显是靠包装函数（moss cd --install）设 MOSS_CD_PRINT=1 实现的，"
                            "不需要手动加开关。")
-            out.print_cyan("       只想看解析出的路径：`moss --resolve <名字>`。")
+            out.print_cyan("       只想看解析出的路径：moss --resolve <名字>。")
             return 1
         args = list(rest)
         # `--install` / `--uninstall`：装/卸 PowerShell 的包装函数（③，零回显）
@@ -1081,7 +1080,7 @@ def main(argv):
         args = [a for a in rest if a not in ("-y", "--yes")]
         yes = len(args) != len(rest)
         if not args:
-            out.print_cyan("[错误] --remove 需要一个包名（别名或 id）。直接敲 `moss` 看有哪些。")
+            out.print_cyan("[错误] --remove 需要一个包名（别名或 id）。直接敲 moss 看有哪些。")
             return 1
         return cmd_remove(args[0], table, assume_yes=yes)
     if first == "--spec":
@@ -1112,7 +1111,7 @@ def main(argv):
     #   历史列表回车、或直接敲名字来做）
     if first.startswith("-"):
         out.print_cyan("[错误] 不认识的选项：%s" % first)
-        out.print_cyan("       直接敲 `moss` 看用法和包列表。")
+        out.print_cyan("       直接敲 moss 看用法和包列表。")
         return 1
 
     # ---- 分派到两个命名空间（`CL-12`：显式符号优先，裸名归谁由配置决定）----
@@ -1142,20 +1141,19 @@ def main(argv):
 def _run_package(alias, rest, table, detach, quiet_missing=False):
     """跑一个装好的包。`quiet_missing=True` 时"没这个包"返回 None（交给调用方回退路径）。
 
-    `alias` 为空 = 光敲了一个前缀符号（`moss :`）：**原来会打开交互式选择器，
-    2026-09-27 你去掉了那个选择器**（`pick`/`select`/`menu` 一起去掉），所以这里
-    直接告诉用户该怎么写。
+    `alias` 为空 = 光敲了一个前缀符号（`moss :`）：交互式选择器已经去掉
+    （`H-11`），所以这里直接告诉用户该怎么写。
     """
     if not alias:
         psym = config.plugin_symbol()
         out.print_cyan("[错误] '%s' 后面要写包名。例：moss %simg" % (psym, psym))
-        out.print_cyan("       直接敲 `moss` 看有哪些包。")
+        out.print_cyan("       直接敲 moss 看有哪些包。")
         return 1
     rec = registry.find_alias(alias)
     if not rec:
         if quiet_missing:
             return None
-        out.print_cyan("[错误] 没有这个包：'%s'。直接敲 `moss` 看有哪些包。" % alias)
+        out.print_cyan("[错误] 没有这个包：'%s'。直接敲 moss 看有哪些包。" % alias)
         return 1
     params = parse_params(rec["pkg"], rest)
     inv, err = build_pkg_inv(rec, params, via="cli")
@@ -1172,7 +1170,7 @@ def _run_package(alias, rest, table, detach, quiet_missing=False):
 def _run_path(name, rest, table, detach, change_dir):
     """路径调用：在 cwd 往上找以 `name` 开头的可运行目标（`E-23` 判定链）。
 
-    找不到时**再问一次历史**（`V-20`：你在别的目录，凭记忆敲 `moss zeen` 就想进上次那个）；
+    找不到时**再查一次历史**（`V-20`：人在别的目录，凭记忆敲 `moss zeen` 想进上次那个）；
     还是没有，就报错 —— 并且**顺带提示有没有同名的包**（`CL-12`：这是最省事的发现性改进，
     "moss img 少打个冒号"的人一眼就知道该怎么办）。
     """
@@ -1188,13 +1186,13 @@ def _run_path(name, rest, table, detach, change_dir):
             return cmd_rerun_record(rec, table)
         out.print_cyan("[错误] 在 %s 及上层没找到以 '%s' 开头的可运行目标。"
                        % (Path.cwd(), name))
-        print("       （只在装了对应 runner 的情况下才算候选：用 `moss --resolve %s` 看细节）"
+        print("       （只在装了对应 runner 的情况下才算候选：用 moss --resolve %s 看细节）"
               % name)
         # ★ 同名包提示：默认档位是"裸名=路径"，所以想跑包的人经常会漏掉前缀
         if registry.find_alias(name):
             psym = config.plugin_symbol()
             hint = ("%s%s" % (psym, name)) if psym else name
-            out.print_cyan("[提示] 有个同名的包 '%s'：要跑它就敲 `moss %s`" % (name, hint))
+            out.print_cyan("[提示] 有个同名的包 '%s'：要跑它就敲 moss %s" % (name, hint))
         return 1
 
     out.print_cyan("[选中] %s  ← %s" % (cand["path"], why))

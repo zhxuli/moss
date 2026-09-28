@@ -16,8 +16,8 @@
 ★ 解释器顺序为什么分两组（照抄 pa.py 的既有语义，`E-20`）：
     pa.py 的**插件模式**是  自带 runtime → venv → 系统 python（`pa.py:677` 传 runtime_python）
     pa.py 的**项目模式**是  venv → 系统 python（`pa.py:926` 不传 runtime_python）
-  也就是：**我们自己写的包用我们自己的 Python（保证依赖在）；
-  用户的脚本用用户项目的 venv（尊重项目环境）。** 这个区分是对的，保留。
+  也就是：**包用随发行版附带的 Python（保证依赖在）；
+  用户脚本用用户项目自己的 venv（尊重项目环境）。** 这个区分保留。
 """
 import json
 import os
@@ -231,7 +231,7 @@ def runtime_dir(family, requirement=None):
       `PATH:xxx` 或 builtin 去找自己的解释器。
 
     ★ 默认版本是**钉住的**（`default.json`），**不是自动取最高版本**。
-      否则以后新装一个 3.14，所有没声明版本的包会在你毫无察觉的情况下换解释器。
+      否则以后新装一个 3.14，所有没声明版本的包会在无人察觉的情况下换解释器。
       要换默认版本，必须显式改 `default.json` —— 那是一个有意识的决定。
 
     ★ 包可以钉死自己的版本：`pkg.json` 里 `"requires": { "python": "3.12" }`。
@@ -331,7 +331,7 @@ def detect_venv(interpreter):
 def probe(name, spec, ctx, kind="path", requirement=None):
     """探测这个 runner 在这台机器上能不能用。
 
-    kind:        "package"（跑我们自己的包）| "path"（跑用户项目里的脚本）
+    kind:        "package"（跑随发行版附带的包）| "path"（跑用户项目里的脚本）
                 两者解释器顺序不同，见模块 docstring。
     requirement: 包钉的运行时版本，如 "3.12"。钉了但没装 → 直接不可用，
                 绝不退而求其次用别的版本。
