@@ -204,6 +204,7 @@ table.fb td.dim{color:var(--dim)}
 /* ---- 详情 ---- */
 h1{font-size:19px;margin:0 0 4px}
 .hd{display:flex;gap:14px;align-items:flex-start}
+.hd .actions{margin-left:auto;display:flex;gap:6px;flex:none}
 .bigico{width:44px;height:44px;flex:none;color:var(--dim)}
 .bigico svg,.bigico img{width:44px;height:44px}
 .chip{display:inline-block;padding:1px 8px;border-radius:20px;background:var(--panel2);
@@ -446,6 +447,7 @@ function setTab(name){
   ["detail", "console", "file"].forEach(t =>
     $("#pane-" + t).classList.toggle("on", t === name));
   hideCtx();
+  if (name === "detail" && cur) refreshVis(cur);      // 回到详情时对一下窗口状态
 }
 function stripAnsi(s){
   return String(s == null ? "" : s)
@@ -476,6 +478,98 @@ async function copyOut(){
                                  : "复制失败（可以手动选中后 Ctrl+C）";
 }
 function setCmd(t){ $("#tabcmd").textContent = t || ""; }
+
+/* ---------------------------------------------------------------- 运行 / 停止
+   跑包不再是"一个阻塞调用"（那样跑起来就停不了，长驻的东西会把界面卡住）。
+   走宿主的 `run_start` / `run_poll` / `run_stop`：200ms 轮询一次，
+   输出**流式**刷进「命令行」，随时能按停止（连子孙进程一起杀）。 */
+let RUN = null;                 // {id, rid, cmd, timer}
+
+function runToggleUI(running){
+  const b = $("#btn-run");
+  if (!b) return;
+  b.innerHTML = running ? (ico("square", "i") + "<span>停止</span>")
+                        : (ico("play", "i") + "<span>运行</span>");
+  b.title = running ? "停掉这次运行（连同它拉起的子进程）"
+                    : "运行这个包（输出进「命令行」；参数留空 = 通常开界面）";
+  b.classList.toggle("warn", !!running);
+}
+
+async function startRun(p, args){
+  if (RUN){
+    if (RUN.id !== p.id){ toast("先停掉正在跑的 :" + RUN.id, true); return; }
+    return;
+  }
+  const cmd = "moss :" + p.id + ((args || "").trim() ? " " + args.trim() : "");
+  lastRun = {id: p.id, args: args, label: cmd};
+  setTab("console"); setCmd(cmd);
+  setState(p.id, "running");
+  out("$ " + cmd);
+  const r = await pywebview.api.run_start(p.id, args || "");
+  if (!r.ok){ toast("✗ " + (r.msg || "启动失败"), true); setState(p.id, "fail", {code: -1}); return; }
+  RUN = {id: p.id, rid: r.run_id, cmd: cmd, timer: null};
+  renderDetail();                       // 让按钮立刻变成「停止」
+  pollRun();
+}
+
+function pollRun(){
+  if (!RUN) return;
+  RUN.timer = setTimeout(async () => {
+    if (!RUN) return;
+    const r = await pywebview.api.run_poll(RUN.rid);
+    if (!r.ok){ finishRun(-1, ""); return; }
+    out("$ " + RUN.cmd + "\n\n" + (r.out || "（还没有输出）"));
+    if (r.running) pollRun();
+    else finishRun(r.code, r.out);
+  }, 200);
+}
+
+function finishRun(code, text){
+  if (!RUN) return;
+  const id = RUN.id, cmd = RUN.cmd;
+  clearTimeout(RUN.timer);
+  RUN = null;
+  out("$ " + cmd + "\n\n" + (text || "(这个包没有输出)") + "\n[退出码] " + code);
+  setState(id, code === 0 ? "ok" : "fail", {code: code});
+  renderDetail();
+  if (cur) setTimeout(() => refreshVis(cur), 600);   // 这次运行可能把它的界面也开出来了
+}
+
+async function stopRun(){
+  if (!RUN) return;
+  const r = await pywebview.api.run_stop(RUN.rid);
+  toast(r.msg, !r.ok);
+}
+
+/* ---------------------------------------------------------------- 显示 / 隐藏
+   管的是**这个包自己的界面窗口**（GUI 包跑起来那扇窗）：藏起来 ≠ 关掉，
+   还能再叫出来。窗口归属由宿主按"我们为它拉起过的进程树"认出来（比按标题猜可靠）。 */
+const VIS = {};                 // 包 id -> {windows, visible}
+
+async function refreshVis(p){
+  if (!p) return;
+  try{
+    VIS[p.id] = await pywebview.api.pkg_vis(p.id);
+  }catch(e){ VIS[p.id] = {windows:0, visible:false}; }
+  paintVis(p);
+}
+function paintVis(p){
+  const b = $("#btn-vis");
+  if (!b || !cur || cur.id !== p.id) return;
+  const v = VIS[p.id] || {windows: 0, visible: false};
+  b.innerHTML = ico(v.visible ? "eye-off" : "eye", "i");
+  b.disabled = v.windows === 0;
+  b.title = v.windows === 0
+    ? "这个包现在没有开着的窗口（先「打开界面」或「运行」）"
+    : (v.visible ? "隐藏它的窗口（不关掉，随时能再显示出来）" : "把它的窗口显示出来并叫到前面");
+}
+async function toggleVis(p){
+  const v = VIS[p.id] || {windows: 0, visible: false};
+  const r = v.visible ? await pywebview.api.pkg_hide(p.id)
+                      : await pywebview.api.pkg_show(p.id);
+  toast(r.msg, !r.ok);
+  setTimeout(() => refreshVis(p), 400);       // 等窗口状态真变了再问一次
+}
 
 /* ---------------------------------------------------------------- 包列表 */
 function renderList(){
@@ -545,7 +639,13 @@ function renderDetail(){
         (p.shadowed ? "　（遮住了 " + esc(p.shadowed) + " 层的同名包）" : "") + '</div>' +
       '<div class="status" id="statuspill" data-state="' + st.state + '">' +
         '<span class="lamp big" data-state="' + st.state + '"></span>' +
-        '<span id="statustext">' + esc(stateLabel(st)) + '</span></div></div></div>' +
+        '<span id="statustext">' + esc(stateLabel(st)) + '</span></div></div>' +
+      // ★ 右侧动作：运行/停止（同一个按钮切换）+ 显示/隐藏这个包自己的界面窗口
+      '<div class="actions">' +
+        '<button class="iconbtn" id="btn-run"></button>' +
+        '<button class="iconbtn" id="btn-vis"></button>' +
+      '</div>' +
+    '</div>' +
     '<p style="margin:12px 0 4px">' + esc(p.desc) + '</p><div>' +
       (p.aliases||[]).map(a => '<span class="chip">:' + esc(a) + '</span>').join("") +
       (p.tags||[]).map(t => '<span class="chip">' + esc(t) + '</span>').join("") +
@@ -567,12 +667,11 @@ function renderDetail(){
       '</div></div>';
   }
   html += '<div class="sec"><h2>跑一下</h2><div class="row-inline">' +
-      '<input id="args" placeholder="参数（可留空；留空 = 通常是开界面）">' +
-      '<button class="iconbtn" id="btn-run" title="带参数运行，输出进「命令行」">' +
-        ico("play", "i") + '<span>运行</span></button>' +
-      '<button class="iconbtn" id="btn-openui" title="打开这个包自己的界面（后台运行）">' +
-        ico("app-window", "i") + '</button></div>' +
-      '<div class="sub" style="margin-top:8px">命令预览：<span class="mono" id="preview"></span></div></div>' +
+      '<input id="args" placeholder="参数（可留空；回车 = 运行）">' +
+      '<button class="iconbtn" id="btn-openui" title="打开这个包自己的界面（后台运行，不等它）">' +
+        ico("app-window", "i") + '<span>打开界面</span></button></div>' +
+      '<div class="sub" style="margin-top:8px">命令预览：<span class="mono" id="preview"></span>' +
+      '　·　右上角是「运行 / 停止」</div></div>' +
     '<div class="sec"><h2>这个包的文件</h2><div class="row-inline">' +
       '<span class="mono" style="flex:1;word-break:break-all">' + esc(p.dir) + '</span>' +
       '<button class="iconbtn" id="btn-files" title="打开这个包的文件管理">' +
@@ -582,10 +681,22 @@ function renderDetail(){
     $("#preview").textContent = "moss :" + p.id +
       ($("#args").value.trim() ? " " + $("#args").value.trim() : "");
   };
-  $("#args").addEventListener("input", upd); upd();
+  $("#args").addEventListener("input", upd);
+  $("#args").addEventListener("keydown", (e) => {
+    if (e.key === "Enter"){ e.preventDefault(); startRun(p, $("#args").value); }
+  });
+  upd();
   box.querySelectorAll(".chip.click").forEach(c => {
     c.onclick = () => { $("#args").value = c.dataset.args || ""; upd(); };
   });
+  // 右上角：一个按钮，跑着的时候是「停止」
+  runToggleUI(!!(RUN && RUN.id === p.id));
+  $("#btn-run").onclick = () => (RUN ? stopRun() : startRun(p, $("#args").value));
+  // 右上角另一个：显示/隐藏它的窗口（状态得问宿主，先给个中性样子）
+  $("#btn-vis").innerHTML = ico("eye", "i");
+  $("#btn-vis").disabled = true;
+  $("#btn-vis").onclick = () => toggleVis(p);
+  refreshVis(p);
   $("#btn-run").onclick = async () => {
     if (busy) return;
     busy = true;
@@ -607,6 +718,9 @@ function renderDetail(){
     setState(p.id, r.ok ? "warn" : "fail",
              {code: r.ok ? undefined : -1, note: r.ok ? "已后台启动 · 结果未知" : "启动失败"});
     out(r.msg || "");
+    // 界面窗口要几秒才出来，等一会儿再问"它有没有窗口"
+    setTimeout(() => refreshVis(p), 1500);
+    setTimeout(() => refreshVis(p), 3500);
   };
   $("#btn-files").onclick = () => fmSelect(p.id);
 }
