@@ -6,17 +6,18 @@
 <title>moss</title>
 <style>
 :root{
-  --bg:#f5f5f7; --panel:#fff; --panel2:#fbfbfd; --line:#e2e2e8; --line2:#eeeef3;
-  --fg:#1c1c1e; --dim:#6b6b73; --accent:#0a84ff; --accent-fg:#fff;
-  --hover:#f0f0f4; --sel:#e8f1ff; --out-bg:#14161a; --out-fg:#d7dae0;
-  --code-bg:#fbfbfd; --field-focus:rgba(10,132,255,.20);
+  /* 配色按参考稿（苹果官网那套灰阶）：正文 #1d1d1f / 次级 #515154 / 说明 #86868b /
+     更淡 #a1a1a6；线 #f0f0f0（卡片描边）与 #d2d2d7（控件描边）分开；
+     强调色用 #0071e3（官网蓝）。 */
+  --bg:#f5f5f7; --panel:#fff; --panel2:#fbfbfd; --line:#f0f0f0; --line2:#e8e8ed;
+  --ctl:#d2d2d7;
+  --fg:#1d1d1f; --fg2:#515154; --dim:#86868b; --dim2:#a1a1a6;
+  --tile:#f5f5f7; --tag:#e8e8ed;
+  --accent:#0071e3; --accent-fg:#fff;
+  --hover:#f5f5f7; --sel:#e8f1ff; --out-bg:#14161a; --out-fg:#d7dae0;
+  --code-bg:#fbfbfd; --field-focus:rgba(0,113,227,.12);
   --mono: ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,monospace;
-  /* ---- Apple 那套「标签色阶 + 填充色阶」----
-     苹果的层级不是靠边框画的，而是靠**三档标签色**（label / secondary / tertiary）
-     和**四档填充**（fill / secondaryFill / tertiaryFill / quaternaryFill）。
-     只有 `--fg` 是正文，`--dim` 次要，`--dim2` 再退一档（小节标签、脚注）；
-     填充色统一用中性灰的透明度，**不画 1px 边框** —— 满屏描边正是"网页感"的来源。 */
-  --dim2:#8e8e96;
+  /* 老名字保留：别处还在用（填充色阶那一套） */
   --fill:rgba(120,120,128,.10); --fill2:rgba(120,120,128,.18);
   --group:#fff; --hair:rgba(60,60,67,.10);
   /* 语法配色照抄 exec（GitHub 那套浅/深色） */
@@ -25,20 +26,19 @@
   --syn-attr:#0550ae;    --syn-meta:#6e7781;
 }
 @media (prefers-color-scheme: dark){
-  :root{ --bg:#16181d; --panel:#1d2026; --panel2:#22252c; --line:#2c3038; --line2:#262a31;
-         --fg:#e8eaed; --dim:#9aa0aa; --hover:#262a31; --sel:#1f2c3d; --out-bg:#0f1114;
+  /* 参考稿只有浅色；深色按同一套层级关系翻译过来（不要照抄灰值） */
+  :root{ --bg:#151517; --panel:#1c1c1e; --panel2:#232326; --line:#2c2c30; --line2:#2c2c30;
+         --ctl:#3a3a3f;
+         --fg:#f5f5f7; --fg2:#d1d1d6; --dim:#a1a1a6; --dim2:#7c7c82;
+         --tile:#2a2a2e; --tag:#3a3a3f;
+         --accent:#0a84ff; --accent-fg:#fff;
+         --hover:#2a2a2e; --sel:#1f2c3d; --out-bg:#0f1114;
          --out-fg:#c9ced6; --code-bg:#1b1e24; --field-focus:rgba(10,132,255,.28);
-         --dim2:#797f89;
          --fill:rgba(120,120,128,.22); --fill2:rgba(120,120,128,.34);
-         --group:#1d2026; --hair:rgba(255,255,255,.09);
+         --group:#1c1c1e; --hair:rgba(255,255,255,.09);
          --syn-comment:#8b949e; --syn-keyword:#ff7b72; --syn-string:#a5d6ff;
          --syn-number:#79c0ff;  --syn-title:#d2a8ff;   --syn-builtin:#ffa657;
          --syn-attr:#79c0ff;    --syn-meta:#8b949e; }
-}
-@media (prefers-reduced-motion: reduce){
-  /* 系统里关了动效就别缩放/位移，但**保留颜色类反馈**（那不影响前庭） */
-  *{animation-duration:.01ms !important;transition-duration:.01ms !important}
-  .iconbtn:active,.tab:active{transform:none !important}
 }
 *{box-sizing:border-box}
 /* ★ 必须有这条兜底：`display:flex` 之类会压过浏览器默认的 `[hidden]{display:none}`，
@@ -50,20 +50,18 @@ body{margin:0;height:100vh;display:flex;flex-direction:column;overflow:hidden;
   color:var(--fg);background:var(--bg)}
 svg.i{width:16px;height:16px;flex:none;display:block}
 /* 按钮：**填充，不描边**。满屏 1px 描边是"网页后台"的味道；
-   苹果的工具栏按钮是"平时没有底、指上去浮一层灰、按下去缩一下"。 */
+/* 工具栏按钮：和详情里的 `.btn` **同一套语言** —— 白底 + 1px 细描边，指上去浮一层灰，
+   按下缩一点。整套界面只有一种按钮长相，不做"填充块 / 描边块"两种。 */
 .iconbtn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  padding:6px 9px;min-width:32px;border-radius:8px;border:0;
-  background:var(--fill);color:var(--fg);cursor:pointer;font:inherit;font-size:13px;
-  transition:background .12s ease-out,transform .10s ease-out,color .12s ease-out}
-.iconbtn:hover{background:var(--fill2)}
-.iconbtn:active{transform:scale(.97)}
-.iconbtn:disabled{opacity:.38;cursor:default;transform:none}
-.iconbtn.warn{color:#d64545}
-.iconbtn.warn:hover{background:color-mix(in srgb, #d64545 14%, transparent)}
-/* 「运行」是这一屏的主动作 → 蓝底；跑起来之后变成灰底的「停止」（图标是绿的，
-   颜色仍然只表达"在跑 / 没在跑"）。详情里那个「运行」也走同一套。 */
-.iconbtn.primary{background:var(--accent);color:var(--accent-fg)}
-.iconbtn.primary:hover{background:var(--accent);filter:brightness(1.06)}
+  padding:6px 10px;min-width:32px;border-radius:8px;
+  background:var(--panel);border:1px solid var(--ctl);color:var(--fg);
+  cursor:pointer;font:inherit;font-size:13px;
+  transition:background .15s ease-out,transform .10s ease-out,color .15s ease-out}
+.iconbtn:hover{background:var(--hover)}
+.iconbtn:active{transform:scale(.98)}
+.iconbtn:disabled{opacity:.4;cursor:default;transform:none}
+.iconbtn.warn{color:#ef4444}
+.iconbtn.warn:hover{background:color-mix(in srgb, #ef4444 10%, var(--panel))}
 header{display:flex;align-items:center;gap:10px;padding:9px 14px;
   border-bottom:1px solid var(--hair);background:var(--panel);flex:none}
 .brand{font-weight:600;display:flex;align-items:center;gap:7px}
@@ -274,89 +272,109 @@ table.fb td.dim{color:var(--dim)}
 #ctxmenu .mi.dis{opacity:.4;cursor:default}
 #ctxmenu .mi.dis:hover{background:transparent}
 #ctxmenu .sep{height:1px;background:var(--line2);margin:4px 6px}
-/* ---- 详情（包 / 历史共用一套骨架）----
-   ★ 这一版是按**苹果的设计原则**重做的，不是"多加几个圆角框"：
-   1. **层级靠留白和字重，不靠描边** —— 上一版给每小节画了 1px 边框，
-      满屏线条正是"网页感"。现在整页只在「组与组之间」留白，
-      组内才有一条条**内缩的发丝线**（像 iOS 设置那样不顶到边）。
-   2. **标签色阶三档**：正文 `--fg` / 次要 `--dim` / 再退一档 `--dim2`（小节标签、脚注）。
-      上一版这些全是同一个灰，于是"什么都一样重要" = 什么都看不清。
-   3. **字号阶梯 + 字距**：标题 22px 且**负字距**（字大了字距不收就散）、
-      正文 13.5px 接近 0、小节标签 11.5px 略正 —— 苹果的 tracking 是随字号变的，
-      写死一个值必然有一档是错的。
-   4. **反馈在按下那一瞬间**（`pointer-down` 就缩放），不是松手才动。
-   5. 参数表从"四列表格"改成**一行一个参数**（名字 + 类型后缀，说明在下一行）——
-      表格是"看数据"的形状，这里是"读说明"的形状。
-*/
+/* ---- 详情（包 / 历史共用一套骨架，按参考稿的视觉语言）----
+   参考稿给的是一套**很克制的浅色语言**，要点照搬：
+   · 头部居中：一个 64px 的圆角图标块（浅灰底、无描边）+ 24px 标题 +
+     等宽的 meta 行 + 居中说明（最宽 540px）—— 视线有明确的中轴；
+   · 每块是一张 12px 圆角的浅灰卡片（#fbfbfd 底 + #f0f0f0 极细描边 + 24px 内边距），
+     **留白比上一版大得多**，块与块之间 20px；
+   · 小节标题 12px / 600 / #86868b / 字距 1px；
+   · "标签 : 值" 的行：标签固定 100px、值加粗，行与行之间 16px + 一条满宽细线；
+   · 控件是**白底 + 1px #d2d2d7 描边**（不是填充块），聚焦才出现蓝色描边 + 一圈极淡的环；
+   · 危险区单独一张淡红卡（#fffcfc 底 / #fee2e2 描边 / 红字 + 淡红按钮）。
+   深色模式按同一套层级关系翻译，不照抄灰值。 */
 #pane-detail{overflow:auto;padding:0}
-.dwrap{max-width:720px;margin:0 auto;padding:22px 28px 48px}
+/* ★ 参考稿的关键一层：**内容坐在一张白卡上**（白底 + 16px 圆角 + 极弱阴影 + 细描边）。
+   少了它，那个 64px 的图标块（浅灰）会和面板底色撞成一片、
+   看着像没有底 —— 这层白卡就是图标块和浅灰小节能被看出来的对照面。 */
+.dwrap{max-width:760px;margin:24px auto;padding:40px;background:var(--panel);
+  border:1px solid var(--line);border-radius:16px;
+  box-shadow:0 4px 24px rgba(0,0,0,.03)}
 
-/* ---------- 头部：大标题 + 一行次要信息 ---------- */
-.hd{display:flex;gap:14px;align-items:center}
-h1{font-size:22px;line-height:1.25;margin:0;font-weight:600;letter-spacing:-.02em}
-.bigico{width:40px;height:40px;flex:none;color:var(--dim)}
-.bigico svg,.bigico img{width:40px;height:40px}
-.lead{color:var(--dim);font-size:12.5px;line-height:1.5;margin-top:3px;
-  word-break:break-all;letter-spacing:0}
-.desc{margin:14px 0 0;color:var(--fg);font-size:13.5px;line-height:1.62;
+/* ---------- 头部：居中 ---------- */
+.dhead{text-align:center;margin-bottom:28px}
+.dicon{display:inline-flex;align-items:center;justify-content:center;width:64px;height:64px;
+  background:var(--tile);border-radius:16px;margin-bottom:16px;color:var(--fg2)}
+.dicon svg,.dicon img{width:30px;height:30px}
+h1.dtitle{font-size:24px;font-weight:600;margin:0 0 8px;letter-spacing:.4px;line-height:1.3}
+.dmeta{font-size:13px;color:var(--dim);font-family:var(--mono);margin-bottom:16px;
+  word-break:break-all}
+.ddesc{font-size:14px;color:var(--fg2);line-height:1.6;max-width:540px;margin:0 auto;
   word-break:break-word}
 
-/* ---------- 组：标签在外面，内容在一张无边框的圆角面上 ---------- */
-.grp{margin-top:22px}
-.glabel{color:var(--dim2);font-size:11.5px;font-weight:600;letter-spacing:.02em;
-  margin:0 0 7px 3px}
-.gbody{background:var(--group);border-radius:11px;overflow:hidden}
-.grow{padding:11px 14px;font-size:13.5px;line-height:1.55}
-/* 组内的分隔线**内缩**（左边留出 14px，和文字对齐）—— 顶到边的线是"框" */
-.grow + .grow{position:relative}
-.grow + .grow::before{content:"";position:absolute;left:14px;right:0;top:0;height:1px;
-  background:var(--hair)}
-.grp.danger .glabel{color:#c0392b}
-.grp.danger .gbody{background:color-mix(in srgb, #d64545 7%, var(--group))}
+/* ---------- 卡片 ---------- */
+.dsec{background:var(--panel2);border:1px solid var(--line);border-radius:12px;
+  padding:22px 24px;margin-bottom:20px}
+.dsec:last-child{margin-bottom:0}
+.dsec-t{font-size:12px;font-weight:600;color:var(--dim);letter-spacing:1px;
+  text-transform:uppercase;margin:0 0 18px}
+.dsec.danger{background:color-mix(in srgb, #ef4444 5%, var(--panel2));
+  border-color:color-mix(in srgb, #ef4444 22%, var(--line));
+  display:flex;justify-content:space-between;align-items:center;gap:16px}
+.dsec.danger .dsec-t{color:#ef4444;margin-bottom:4px}
+.danger-text{font-size:13px;color:var(--dim);line-height:1.6;word-break:break-word}
 
-/* 组里"标签 : 值"那种一行（别名 / 标签 / 工作目录 …） */
-.kv{display:flex;gap:14px;align-items:baseline}
-.kv .k{flex:none;width:74px;color:var(--dim2);font-size:12px;letter-spacing:.01em}
-.kv .v{min-width:0;flex:1;word-break:break-all}
-.kv .v.dim{color:var(--dim);font-size:12.5px}
+/* ---------- "标签 : 值" 的行 ---------- */
+.props{display:flex;flex-direction:column}
+.prop{display:flex;align-items:flex-start;gap:16px;padding-bottom:16px;
+  border-bottom:1px solid var(--line)}
+.prop:last-child{padding-bottom:0;border-bottom:none}
+.prop + .prop{padding-top:16px}
+.prop-k{width:100px;flex:none;font-size:14px;color:var(--dim);line-height:1.5;
+  padding-top:1px}
+.prop-v{flex:1;min-width:0;font-size:14px;font-weight:500;color:var(--fg);line-height:1.5;
+  word-break:break-all}
+.prop-v .soft{font-weight:400;color:var(--dim)}
+.prop-v .pdesc{font-weight:400;color:var(--dim);font-size:13px;line-height:1.6;margin-top:4px}
+.prop-v .pex{font-weight:400;color:var(--dim2);font-size:12.5px;line-height:1.6;margin-top:4px;
+  font-family:var(--mono)}
+.tag{display:inline-block;background:var(--tag);color:var(--fg2);padding:2px 8px;
+  border-radius:6px;font-size:12px;margin:0 6px 4px 0}
 
-/* ---------- 参数：一行一个，不是表格 ---------- */
-.prow .pname{font-family:var(--mono);font-size:13px}
-.prow .ptype{font-family:inherit;color:var(--dim2);font-size:11.5px;margin-left:7px;
-  letter-spacing:.01em}
-.prow .pneed{color:var(--dim2);font-size:11.5px;margin-left:6px}
-.prow .pdesc{color:var(--dim);font-size:12.5px;line-height:1.6;margin-top:3px}
-.prow .pex{color:var(--dim2);font-size:12px;line-height:1.6;margin-top:3px;
-  font-family:var(--mono);word-break:break-all}
-
-/* ---------- 按钮：填充而不是描边；按下就缩 ---------- */
-.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border:0;
-  border-radius:8px;background:var(--fill);color:var(--fg);font:inherit;font-size:13px;
-  cursor:pointer;transition:background .12s ease-out,transform .10s ease-out}
-.btn:hover{background:var(--fill2)}
-.btn:active{transform:scale(.97)}
-.btn:disabled{opacity:.38;cursor:default;transform:none}
-.btn.primary{background:var(--accent);color:var(--accent-fg)}
-.btn.primary:hover{background:var(--accent);filter:brightness(1.06)}
-.btn.tint{color:var(--accent)}
-.btn.tint.warn{color:#d64545}
-.btn.tint.warn:hover{background:color-mix(in srgb, #d64545 12%, transparent)}
-
-/* ---------- 可点的小药丸（例子）：填充式，无描边 ---------- */
+/* ---------- 可点的例子 ---------- */
 .chips{display:flex;flex-wrap:wrap;gap:6px}
-.chip{padding:3px 10px;border-radius:7px;background:var(--fill);color:var(--fg);
-  font-size:12px;border:0;cursor:pointer;font-family:var(--mono);
-  transition:background .12s ease-out,transform .10s ease-out}
+.chip{background:var(--tag);color:var(--fg2);border:0;border-radius:6px;padding:3px 9px;
+  font-size:12px;font-family:var(--mono);cursor:pointer;
+  transition:background .15s ease-out,transform .1s ease-out}
 .chip:hover{background:var(--fill2)}
 .chip:active{transform:scale(.97)}
 
-/* 输入框：填充式，聚焦给一圈柔和 accent（不是粗描边） */
-#args,#hargs{flex:1;min-width:180px;max-width:420px;padding:7px 11px;border-radius:8px;
-  border:0;background:var(--fill);color:var(--fg);font-family:var(--mono);font-size:12.5px;
-  outline:none;transition:box-shadow .12s ease-out,background .12s ease-out}
-#args:focus,#hargs:focus{background:var(--group);box-shadow:0 0 0 3.5px var(--field-focus)}
+/* ---------- 控件：白底 + 细描边（不是填充块） ---------- */
+.runrow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+#args,#hargs{flex:1;min-width:200px;padding:10px 16px;background:var(--panel);
+  border:1px solid var(--ctl);border-radius:8px;font-size:14px;color:var(--fg);
+  font-family:var(--mono);outline:none;
+  transition:border-color .2s ease,box-shadow .2s ease}
 #args::placeholder,#hargs::placeholder{color:var(--dim2)}
+#args:focus,#hargs:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+#args:disabled,#hargs:disabled{opacity:.5;cursor:default}
 
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 20px;
+  border-radius:8px;font-size:14px;font-weight:500;font-family:inherit;cursor:pointer;
+  background:var(--panel);border:1px solid var(--ctl);color:var(--fg);
+  transition:background .15s ease-out,transform .1s ease-out,border-color .15s ease-out}
+.btn:hover{background:var(--hover)}
+.btn:active{transform:scale(.98)}
+.btn:disabled{opacity:.4;cursor:default;transform:none}
+.btn.danger{background:color-mix(in srgb, #ef4444 7%, var(--panel));
+  border-color:color-mix(in srgb, #ef4444 28%, var(--ctl));color:#ef4444}
+.btn.danger:hover{background:color-mix(in srgb, #ef4444 13%, var(--panel))}
+
+.runhint{font-size:12px;color:var(--dim);margin-top:12px;line-height:1.7;word-break:break-all}
+.runhint .mono{font-family:var(--mono);background:var(--tag);color:var(--fg2);
+  padding:2px 6px;border-radius:4px;font-size:11.5px}
+.note-line{font-size:12.5px;color:var(--dim);line-height:1.7;margin-top:8px}
+.note-line .mono{font-family:var(--mono);font-size:12px}
+
+/* ---------- 提示条 ---------- */
+.warnbox{display:flex;gap:10px;align-items:flex-start;text-align:left;margin:0 auto 20px;
+  max-width:540px;padding:12px 16px;border-radius:10px;
+  background:color-mix(in srgb, #f59e0b 10%, var(--panel2));
+  border:1px solid color-mix(in srgb, #f59e0b 26%, var(--line));
+  font-size:13px;line-height:1.6;color:var(--fg2)}
+.warnbox svg.i{color:#b45309;margin-top:2px;flex:none}
+code,.mono{font-family:var(--mono);font-size:12.5px}
+.row-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .row-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .row-split{display:flex;gap:12px;align-items:center;justify-content:space-between}
 .row-split .hint{margin-top:0;flex:1 1 auto;min-width:0}
@@ -766,7 +784,6 @@ function paintActions(p){
     b.title = gone ? "这个文件已经不在了，跑不了"
                    : (running ? "停掉这次调用（连同它的子进程）"
                               : "在它当初的目录里再跑一次（输出进「命令行」）");
-    b.classList.toggle("primary", !running && !gone);   // 主动作 = 蓝底；跑着的时候是灰底
     b.classList.toggle("warn", running);
     v.disabled = true;
     v.innerHTML = ico("eye", "i") + '<span>显示</span>';
@@ -783,7 +800,6 @@ function paintActions(p){
   b.title = !p ? "先在左边选一个包或一条历史"
                : (running ? "停掉它（连同它拉起的子进程）"
                           : "运行这个包，输出进「命令行」");
-  b.classList.toggle("primary", !running && !!p);
   b.classList.toggle("warn", running);
   v.disabled = !p || !st.windows;
   v.innerHTML = ico(st.visible ? "eye-off" : "eye", "i") +
@@ -1185,64 +1201,64 @@ function renderDetail(){
   if (!who){ box.innerHTML = '<div class="empty">左边选一个包，或者一条历史</div>'; return; }
   if (isHist(who)) return renderDetailHist(who, box);
   const p = cur, params = p.params || [];
-  const kv = (k, v, dim) => '<div class="grow kv"><span class="k">' + esc(k) +
-    '</span><span class="v' + (dim ? ' dim' : '') + '">' + v + '</span></div>';
-  let html = '<div class="dwrap"><div class="hd">' + iconHTML(p, "bigico") +
-      '<div style="min-width:0"><h1>' + esc(p.name) + '</h1>' +
-      '<div class="lead">:' + esc(p.id) + ' · v' + esc(p.version || "?") + ' · ' +
+  const prop = (k, v) => '<div class="prop"><div class="prop-k">' + esc(k) +
+    '</div><div class="prop-v">' + v + '</div></div>';
+  let html = '<div class="dwrap"><div class="dhead">' +
+      '<div class="dicon">' + iconHTML(p, "") + '</div>' +
+      '<h1 class="dtitle">' + esc(p.name) + '</h1>' +
+      '<div class="dmeta">:' + esc(p.id) + ' · v' + esc(p.version || "?") + ' · ' +
         esc(p.kind) + ' · ' + esc(p.layer) + ' 层' +
         (p.shadowed ? ' · 遮住了 ' + esc(p.shadowed) + ' 层的同名包' : '') + '</div>' +
-      '</div></div>' +
-    // ★ 这里**不要再建 #btn-run / #btn-vis**：它们已经钉在选项卡那一行上了。
-    //   上次挪位置时把这段留下了 —— 结果是同一对 id 在页面里出现两次，
-    //   `$("#btn-run")` 只会命中先出现的那个，详情里这两个永远空着。
-    '<p class="desc">' + esc(p.desc) + '</p>';
+      (p.desc ? '<p class="ddesc">' + esc(p.desc) + '</p>' : '') +
+    '</div>';
 
-  // 别名 / 标签 / AI：**用"标签 : 值"的行**（像设置的检查器），不再是一堆药丸 —— 药丸只留给
-  // "点一下就填进去"那种真动作（例子）。
-  const meta = [];
+  // 属性：别名 / 标签 / AI。**用"标签 : 值"的行**，不做成一堆药丸 ——
+  // 药丸只留给"点一下就填进去"那种真动作（例子）。
+  const props = [];
   if ((p.aliases || []).length)
-    meta.push(kv("别名", (p.aliases || []).map(a => '<span class="mono">:' + esc(a) +
+    props.push(prop("别名", (p.aliases || []).map(a => '<span class="mono">:' + esc(a) +
       '</span>').join('&nbsp; ')));
-  if ((p.tags || []).length) meta.push(kv("标签", esc((p.tags || []).join(' · ')), true));
-  if (p.ai_expose) meta.push(kv("AI", '可调用 · 风险 ' + esc(p.ai_risk || "?"), true));
-  if (meta.length) html += '<div class="grp"><div class="glabel">' + '属性' +
-    '</div><div class="gbody">' + meta.join("") + '</div></div>';
+  if ((p.tags || []).length)
+    props.push(prop("标签", (p.tags || []).map(t => '<span class="tag">' + esc(t) +
+      '</span>').join("")));
+  if (p.ai_expose)
+    props.push(prop("AI", '可调用 <span class="soft">· 风险 ' +
+      esc(p.ai_risk || "?") + '</span>'));
+  if (props.length)
+    html += '<section class="dsec"><h2 class="dsec-t">属性</h2><div class="props">' +
+      props.join("") + '</div></section>';
 
   if (params.length){
-    html += '<div class="grp"><div class="glabel">参数</div><div class="gbody">' +
-      params.map(pa => '<div class="grow prow">' +
-        '<div><span class="pname">' + esc(pa.name) + '</span>' +
-        '<span class="ptype">' + esc(pa.type || "string") + '</span>' +
-        '<span class="pneed">' + (pa.required ? "必填" : "可留空") +
-        (pa.rest ? " · 余下全给它" : "") + '</span></div>' +
+    html += '<section class="dsec"><h2 class="dsec-t">参数</h2><div class="props">' +
+      params.map(pa => '<div class="prop"><div class="prop-k mono">' + esc(pa.name) +
+        '</div><div class="prop-v">' + esc(pa.type || "string") +
+        '<span class="soft"> · ' + (pa.required ? "必填" : "可留空") +
+        (pa.rest ? " · 余下全给它" : "") + '</span>' +
         (pa.desc ? '<div class="pdesc">' + esc(pa.desc) + '</div>' : '') +
         (pa.placeholder ? '<div class="pex">例：' + esc(pa.placeholder) + '</div>' : '') +
-        '</div>').join("") + '</div></div>';
+        '</div></div>').join("") + '</div></section>';
   }
   // ★ 过滤掉空的例子：`pkg.json` 里 `ai.examples` 的 `args` 可能是空串
-  //   （md5 这个包就是 `['', '']`），不过滤的话会画出一排**空药丸**、
-  //   整组看着像坏了。界面上不做"空壳"。
+  //   （有的包就是 ['', '']），不过滤会画出一排**空药丸**、整组看着像坏了。
   const exs = (p.examples || []).map(x => String(x || "")).filter(x => x.trim());
   if (exs.length){
-    html += '<div class="grp"><div class="glabel">例子</div>' +
-      '<div class="gbody"><div class="grow chips">' +
+    html += '<section class="dsec"><h2 class="dsec-t">例子</h2><div class="chips">' +
       exs.map(e => '<button class="chip" data-args="' + esc(e) + '">' + esc(e) +
-        '</button>').join("") + '</div></div></div>';
+        '</button>').join("") + '</div></section>';
   }
-  html += '<div class="grp"><div class="glabel">跑一下</div><div class="gbody">' +
-      '<div class="grow"><div class="row-inline">' +
+
+  html += '<section class="dsec"><h2 class="dsec-t">跑一下</h2>' +
+      '<div class="runrow">' +
       '<input id="args" placeholder="参数（可留空；回车 = 运行）">' +
       '<button class="btn" id="btn-openui" title="打开这个包自己的界面（后台运行，不等它）">' +
         ico("app-window", "i") + '<span>打开界面</span></button></div>' +
-      '<div class="hint">命令预览：<span class="mono" id="preview"></span>' +
-      '　·　右上角是「运行 / 停止」</div></div></div>' +
-    '<div class="grp danger"><div class="glabel">卸载</div><div class="gbody">' +
-      '<div class="grow row-split">' +
-      '<span class="hint">永久删除：包本体 + 它的数据（不进回收站）</span>' +
-      '<button class="btn tint warn" id="btn-remove" title="卸载这个包（moss --remove）">' +
-        ico("trash-2", "i") + '<span>卸载</span></button>' +
-      '</div></div></div></div>';
+      '<div class="runhint">命令预览: <span class="mono" id="preview"></span>' +
+      ' · 右上角是「运行 / 停止」</div></section>' +
+    '<section class="dsec danger"><div>' +
+      '<h2 class="dsec-t">卸载</h2>' +
+      '<div class="danger-text">永久删除: 包本体 + 它的数据（不进回收站）</div></div>' +
+      '<button class="btn danger" id="btn-remove" title="卸载这个包（moss --remove）">' +
+        ico("trash-2", "i") + '<span>卸载</span></button></section></div>';
   box.innerHTML = html;
   const upd = () => {
     $("#preview").textContent = "moss :" + p.id +
@@ -1280,47 +1296,49 @@ function renderDetail(){
 function renderDetailHist(it, box){
   const when = (it.ts || "").replace("T", " ");
   const gone = it.exists === false;
-  // 只放"真有值"的行；一行都没有，整组就不出现
+  // 只放"真有值"的行；一行都没有，这一块就不出现
   const rows = [];
-  if (it.cwd) rows.push(["工作目录", it.cwd, it.cwd_exists === false ? "这个目录也不在了" : ""]);
+  if (it.cwd) rows.push(["工作目录", it.cwd,
+    it.cwd_exists === false ? "这个目录也不在了" : ""]);
   if (it.args) rows.push(["参数", it.args, ""]);
   if (when) rows.push(["时间", when, ""]);
-  if (it.exit !== null && it.exit !== undefined) rows.push(["上次退出码", String(it.exit), ""]);
-  let html = '<div class="dwrap"><div class="hd">' + histIconHTML(it, "bigico") +
-      '<div style="min-width:0"><h1>' + esc(it.name) + '</h1>' +
-      '<div class="lead mono">' + esc(it.target || "") + '</div>' +
-      '</div></div>';
+  if (it.exit !== null && it.exit !== undefined)
+    rows.push(["上次退出码", String(it.exit), ""]);
+  let html = '<div class="dwrap"><div class="dhead">' +
+      '<div class="dicon">' + histIconHTML(it, "") + '</div>' +
+      '<h1 class="dtitle">' + esc(it.name) + '</h1>' +
+      '<div class="dmeta">' + esc(it.target || "") + '</div>' +
+    '</div>';
   if (gone){
     html += '<div class="warnbox">' + ico("alert-triangle", "i") +
-      '<span>这个文件已经不在了 —— 跑不了了。记录还留着，想清掉就点下面那个按钮。</span></div>';
+      '<span>这个文件已经不在了，跑不了。记录还留着，想清掉就点下面那个按钮。</span></div>';
   }
-  html += '<div class="grp"><div class="glabel">跑一下</div><div class="gbody">' +
-      '<div class="grow"><div class="row-inline">' +
+  html += '<section class="dsec"><h2 class="dsec-t">跑一下</h2>' +
+      '<div class="runrow">' +
       // ★ 这里用 `#hargs` / `#hpreview`（而不是包详情那对 `#args` / `#preview`）：
-      //   两个详情虽然**同一个时刻只会存在一个**（都往 #pane-detail 里写），
-      //   但静态检查"整个页面每个 id 只能出现一次"就分不清了 —— 换成不同的 id
+      //   两个详情同一个时刻只会存在一个（都往 #pane-detail 里写），
+      //   但静态检查"整个页面每个 id 只能出现一次"就分不清了 —— 换成不同的 id，
       //   那条检查才继续有用。要取输入框请走 `argsInput()`。
       '<input id="hargs" placeholder="参数（留空 = 上次那样；回车 = 运行）" value="' +
         esc(it.args || "") + '"' + (gone ? " disabled" : "") + '>' +
-      '<button class="btn primary" id="btn-run2"' + (gone ? " disabled" : "") + '>' +
+      '<button class="btn" id="btn-run2"' + (gone ? " disabled" : "") + '>' +
         ico("play", "i") + '<span>运行</span></button>' +
-      '<button class="btn tint" id="btn-opendir" title="用 Windows 资源管理器打开它所在的目录">' +
+      '<button class="btn" id="btn-opendir" title="用 Windows 资源管理器打开它所在的目录">' +
         ico("folder-open", "i") + '<span>打开所在目录</span></button></div>' +
-      '<div class="hint">命令预览：<span class="mono" id="hpreview"></span></div>' +
-      '</div></div>';
+      '<div class="runhint">命令预览: <span class="mono" id="hpreview"></span></div>' +
+      '</section>';
   if (rows.length){
-    html += '<div class="grp"><div class="glabel">这条记录</div><div class="gbody">' +
-      rows.map(r => '<div class="grow kv"><span class="k">' + esc(r[0]) +
-        '</span><span class="v mono">' + esc(r[1]) +
-        (r[2] ? ' <span class="dim">' + esc(r[2]) + '</span>' : '') +
-        '</span></div>').join("") + '</div></div>';
+    html += '<section class="dsec"><h2 class="dsec-t">这条记录</h2><div class="props">' +
+      rows.map(r => '<div class="prop"><div class="prop-k">' + esc(r[0]) +
+        '</div><div class="prop-v mono">' + esc(r[1]) +
+        (r[2] ? ' <span class="soft">' + esc(r[2]) + '</span>' : '') +
+        '</div></div>').join("") + '</div></section>';
   }
-  html += '<div class="grp danger"><div class="glabel">删除</div><div class="gbody">' +
-      '<div class="grow row-split">' +
-      '<span class="hint">只删这条<b>记录</b>，那个文件本身不动</span>' +
-      '<button class="btn tint warn" id="btn-forget" title="从历史里删掉这条记录">' +
-        ico("trash-2", "i") + '<span>删除这条记录</span></button>' +
-      '</div></div></div></div>';
+  html += '<section class="dsec danger"><div>' +
+      '<h2 class="dsec-t">删除</h2>' +
+      '<div class="danger-text">只删这条记录，那个文件本身不动</div></div>' +
+      '<button class="btn danger" id="btn-forget" title="从历史里删掉这条记录">' +
+        ico("trash-2", "i") + '<span>删除这条记录</span></button></section></div>';
   box.innerHTML = html;
 
   const upd = () => {
