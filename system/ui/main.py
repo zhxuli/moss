@@ -16,11 +16,16 @@ v0 只做四件事：列包、看一个包的说明与参数、带参数跑并�
 界面本身（`index.html`）以后随时改 —— 改它**不用重新打包 exe**，这正是把它
 放在 exe 外面的理由（`K-10`）。
 """
+import ctypes
+import ctypes.wintypes as wt
 import json
 import os
 import shlex
 import shutil
 import subprocess
+import threading
+import time
+import uuid
 from pathlib import Path
 
 import webview
@@ -165,6 +170,189 @@ def _bad_name(name):
     return (not name) or any(c in name for c in '\\/:*?"<>|') or name in (".", "..")
 
 
+# ================================================================ 包自己的界面窗口
+# 「显示 / 隐藏」那个按钮要管的是**这个包自己的界面窗口**（GUI 包跑起来的那扇窗）。
+# 怎么知道哪扇窗是它的：**记我们为它拉起过的进程根**（`open_ui` / `run_start` 时记），
+# 然后按 PID 树找出这些进程以及它们的子孙，再用 EnumWindows 找属于这些 PID 的顶层窗口。
+# 比"按窗口标题猜"可靠得多（标题会被包自己改，也可能撞名）。
+_pkg_procs = {}          # 包 id -> {我们为它拉起过的进程根 pid}
+_pkg_hidden = {}         # 包 id -> [我们自己藏起来的窗口句柄]（显示时只放这几个）
+
+
+def _remember_proc(pkg, pid):
+    _pkg_procs.setdefault(str(pkg), set()).add(int(pid))
+
+
+class _PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [("dwSize", wt.DWORD), ("cntUsage", wt.DWORD),
+                ("th32ProcessID", wt.DWORD),
+                ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+                ("th32ModuleID", wt.DWORD), ("cntThreads", wt.DWORD),
+                ("th32ParentProcessID", wt.DWORD),
+                ("pcPriClassBase", ctypes.c_long), ("dwFlags", wt.DWORD),
+                ("szExeFile", ctypes.c_wchar * 260)]
+
+
+def _pid_parents():
+    """{pid: 父 pid} 快照。"""
+    out = {}
+    try:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p          # HANDLE 是 64 位，别截断
+        k32.CreateToolhelp32Snapshot.argtypes = [wt.DWORD, wt.DWORD]
+        snap = k32.CreateToolhelp32Snapshot(0x00000002, 0)             # TH32CS_SNAPPROCESS
+        if not snap or snap == ctypes.c_void_p(-1).value:
+            return out
+        try:
+            e = _PROCESSENTRY32W()
+            e.dwSize = ctypes.sizeof(_PROCESSENTRY32W)
+            ok = k32.Process32FirstW(ctypes.c_void_p(snap), ctypes.byref(e))
+            while ok:
+                out[int(e.th32ProcessID)] = int(e.th32ParentProcessID)
+                ok = k32.Process32NextW(ctypes.c_void_p(snap), ctypes.byref(e))
+        finally:
+            k32.CloseHandle(ctypes.c_void_p(snap))
+    except Exception:
+        pass
+    return out
+
+
+def _with_descendants(roots):
+    """roots 以及它们的全部子孙 pid（包常常是"启动器 → 真身"两层甚至更多）。"""
+    parents = _pid_parents()
+    kids = {}
+    for pid, ppid in parents.items():
+        kids.setdefault(ppid, []).append(pid)
+    seen, stack = set(), [int(r) for r in roots]
+    while stack:
+        p = stack.pop()
+        if p in seen:
+            continue
+        seen.add(p)
+        stack.extend(kids.get(p, []))
+    return seen
+
+
+def _top_windows():
+    """所有**顶层且有标题**的窗口：[{hwnd, pid, visible, title, class}]。"""
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    out = []
+    try:
+        u32.EnumWindows.argtypes = [ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p,
+                                                       ctypes.c_void_p), ctypes.c_void_p]
+        u32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(wt.DWORD)]
+        u32.GetWindowTextLengthW.argtypes = [ctypes.c_void_p]
+        u32.GetWindowTextW.argtypes = [ctypes.c_void_p, wt.LPWSTR, ctypes.c_int]
+        u32.GetClassNameW.argtypes = [ctypes.c_void_p, wt.LPWSTR, ctypes.c_int]
+        u32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+        u32.GetWindow.argtypes = [ctypes.c_void_p, wt.UINT]
+
+        def cb(hwnd, _l):
+            if u32.GetWindow(hwnd, 4):        # GW_OWNER != 0 → 附属窗（工具窗/对话框）
+                return True
+            n = u32.GetWindowTextLengthW(hwnd)
+            if n <= 0:
+                return True
+            buf = ctypes.create_unicode_buffer(n + 1)
+            u32.GetWindowTextW(hwnd, buf, n + 1)
+            cls = ctypes.create_unicode_buffer(256)
+            u32.GetClassNameW(hwnd, cls, 256)
+            pid = wt.DWORD(0)
+            u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            out.append({"hwnd": hwnd, "pid": int(pid.value), "class": cls.value,
+                        "visible": bool(u32.IsWindowVisible(hwnd)), "title": buf.value})
+            return True
+
+        u32.EnumWindows(ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(cb), 0)
+    except Exception:
+        pass
+    return out
+
+
+# Tk 会给自己建几个**看不见的辅助窗**（实测：`TtkMonitorWindow`，类名 TtkMonitorClass，
+# 尺寸还是 2880×1563 —— 靠尺寸/样式根本认不出来）。它们不是"包的界面"，
+# 而且一旦被 ShowWindow 放出来，屏幕上会多出一扇莫名其妙的空窗，所以按类名排掉。
+_HELPER_CLASSES = ("TtkMonitorClass",)
+
+
+def _pkg_windows(pkg):
+    roots = _pkg_procs.get(str(pkg)) or set()
+    if not roots:
+        return []
+    pids = _with_descendants(roots)
+    pids.discard(os.getpid())                # 别把 moss 自己的界面窗口算进去
+    return [w for w in _top_windows()
+            if w["pid"] in pids and w["class"] not in _HELPER_CLASSES]
+
+
+def _is_window(hwnd):
+    try:
+        return bool(ctypes.WinDLL("user32").IsWindow(ctypes.c_void_p(hwnd)))
+    except Exception:
+        return False
+
+
+def _show_window(hwnd, show):
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    SW_SHOW, SW_HIDE, SW_RESTORE = 5, 0, 9
+    try:
+        u32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        u32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+        u32.ShowWindow(hwnd, SW_RESTORE if show else SW_HIDE)
+        if show:
+            u32.SetForegroundWindow(hwnd)
+        return True
+    except Exception:
+        return False
+
+
+# ================================================================ 后台运行
+# 「运行」不能再是"一个阻塞调用" —— 那样跑起来就**没法停**，长驻的东西（服务、
+# 开界面的包）会把界面卡在那儿。所以照 exec 的做法拆成三件：
+#     run_start  → 起进程、拿一个 run_id，输出丢给一个读线程攒着
+#     run_poll   → 问"还在跑吗 / 到现在为止输出了什么"
+#     run_stop   → 连子孙一起杀掉（taskkill /T）
+# 页面每 200ms 轮询一次，于是输出是**流式**刷出来的，而且随时能停。
+RUNS = {}
+RUNS_LOCK = threading.Lock()
+RUNS_KEEP = 20
+
+
+def _kill_tree(pid):
+    """连子进程一起杀。包可能自己又起了进程（服务、界面），只杀父的会留孤儿。"""
+    try:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       creationflags=NO_WINDOW)
+    except Exception:
+        pass
+
+
+def _pump_output(rid):
+    """读线程：把子进程的输出一行行攒进 RUNS[rid]['lines']。"""
+    r = RUNS.get(rid)
+    if not r:
+        return
+    proc = r["proc"]
+    try:
+        for line in proc.stdout:
+            with RUNS_LOCK:
+                r["lines"].append(line)
+    except Exception:
+        pass
+    finally:
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        with RUNS_LOCK:
+            r["code"] = proc.returncode
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+
+
 class Api:
     """给页面用的接口。每个方法都是一个前端可 await 的调用。"""
 
@@ -172,18 +360,96 @@ class Api:
         return DATA
 
     def run(self, pid, args_text=""):
-        """带参数跑一个包，输出回页面（会等它跑完）。"""
+        """带参数跑一个包并等它跑完（老的阻塞式；界面现在走 run_start 那一套）。"""
         return _run_capture(HOST + [":" + str(pid)] + _split(args_text))
+
+    def run_start(self, pid, args_text=""):
+        """起一个后台运行，立刻返回 run_id（输出靠 `run_poll` 拿）。"""
+        argv = HOST + [":" + str(pid)] + _split(args_text)
+        try:
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, encoding="utf-8", errors="replace",
+                                    bufsize=1, creationflags=NO_WINDOW)
+        except OSError as e:
+            return {"ok": False, "msg": "启动失败：%s" % e}
+        _remember_proc(pid, proc.pid)          # 记下来，之后才找得到它的界面窗口
+        rid = uuid.uuid4().hex[:10]
+        with RUNS_LOCK:
+            RUNS[rid] = {"proc": proc, "lines": [], "code": None, "t0": time.time(),
+                         "pid": proc.pid, "cmd": " ".join(argv[1:])}
+            if len(RUNS) > RUNS_KEEP:                    # 只留最近这些，别越攒越多
+                for old in sorted(RUNS, key=lambda k: RUNS[k]["t0"])[:-RUNS_KEEP]:
+                    if RUNS[old]["code"] is not None:
+                        RUNS.pop(old, None)
+        threading.Thread(target=_pump_output, args=(rid,), daemon=True).start()
+        return {"ok": True, "run_id": rid, "pid": proc.pid}
+
+    def run_poll(self, run_id):
+        """问一次状态：还在跑吗、输出到哪了、结束了的话退出码是多少。"""
+        with RUNS_LOCK:
+            r = RUNS.get(run_id)
+            if not r:
+                return {"ok": False, "msg": "没有这次运行（可能已经被清掉了）"}
+            return {"ok": True, "running": r["code"] is None, "code": r["code"],
+                    "out": "".join(r["lines"]),
+                    "ms": int((time.time() - r["t0"]) * 1000), "pid": r["pid"]}
+
+    def run_stop(self, run_id):
+        """停掉：连子孙进程一起杀。"""
+        with RUNS_LOCK:
+            r = RUNS.get(run_id)
+            if not r:
+                return {"ok": False, "msg": "没有这次运行"}
+            if r["code"] is not None:
+                return {"ok": True, "msg": "它已经结束了"}
+            pid = r["pid"]
+        _kill_tree(pid)
+        return {"ok": True, "msg": "已终止这次运行（连同它拉起的子进程）"}
 
     def open_ui(self, pid, args_text=""):
         """把包的界面开起来：**脱离**当前进程、不抓输出，所以不会卡住界面。"""
         argv = HOST + [":" + str(pid)] + _split(args_text)
         try:
-            subprocess.Popen(argv, stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL,
-                             creationflags=NO_WINDOW | DETACHED, close_fds=True)
+            proc = subprocess.Popen(argv, stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL,
+                                    creationflags=NO_WINDOW | DETACHED, close_fds=True)
         except OSError as e:
             return {"ok": False, "msg": "启动失败：%s" % e}
+        _remember_proc(pid, proc.pid)          # 同上：留着，好找它的窗口
         return {"ok": True, "msg": "已后台启动：" + " ".join(argv[1:])}
+
+    # ------------------------------------------------ 包自己的界面窗口（显示/隐藏）
+    def pkg_vis(self, pid):
+        """这个包现在有没有开着的窗口、是显示还是隐藏着。"""
+        ws = _pkg_windows(pid)
+        vis = [w for w in ws if w["visible"]]
+        return {"ok": True, "windows": len(ws), "visible": len(vis) > 0,
+                "titles": [w["title"] for w in ws][:5]}
+
+    def pkg_hide(self, pid):
+        """把它的窗口藏起来（不关、不杀，随时能再显示）。"""
+        ws = _pkg_windows(pid)
+        if not ws:
+            return {"ok": False, "msg": "没找到它的窗口 —— 先「打开界面」或「运行」一次"}
+        vis = [w for w in ws if w["visible"]]      # ★ 只碰**当前可见**的，辅助窗本来就没显示
+        if not vis:
+            return {"ok": True, "msg": "它的窗口本来就是隐藏的"}
+        done = [w["hwnd"] for w in vis if _show_window(w["hwnd"], False)]
+        if done:
+            _pkg_hidden[str(pid)] = done            # 记下"是我们藏的"，显示时只放这几个
+        return {"ok": bool(done), "msg": "已隐藏 %d 个窗口（没关掉，还能再显示出来）" % len(done)}
+
+    def pkg_show(self, pid):
+        """再显示出来，并把它叫到前面。"""
+        hs = [h for h in _pkg_hidden.get(str(pid), []) if _is_window(h)]
+        if not hs:
+            ws = _pkg_windows(pid)
+            if not ws:
+                return {"ok": False, "msg": "没找到它的窗口 —— 先「打开界面」或「运行」一次"}
+            hs = [w["hwnd"] for w in ws]            # 不是我们藏的（比如被最小化过）→ 全放出来
+        n = sum(1 for h in hs if _show_window(h, True))
+        if n:
+            _pkg_hidden.pop(str(pid), None)
+        return {"ok": n > 0, "msg": "已显示 %d 个窗口" % n}
 
     def run_host(self, text):
         """跑一条宿主命令（自检用）：`--selfcheck` / `--history 20` 之类，不带包名。"""
