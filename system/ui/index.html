@@ -74,6 +74,33 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);overflow:auto;bac
   white-space:pre-wrap;word-break:break-word;
   user-select:text;-webkit-user-select:text;cursor:text}
 #out::selection{background:#3a5a8c;color:#fff}
+/* ---- 状态灯：**不同颜色 = 不同状态**，别往输出里写"跑着呢"那种假日志 ----
+   灰=就绪（空圈） · 蓝=运行中（呼吸） · 绿=成功 · 红=失败 */
+.lamp{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block;
+  box-sizing:border-box;background:transparent;border:1.5px solid var(--line);vertical-align:middle}
+.lamp[data-state=idle]{border-color:#bfc0c9}
+.lamp[data-state=running]{border-color:transparent;background:var(--accent);
+  animation:lamp-pulse 1.15s ease-in-out infinite}
+.lamp[data-state=ok]{border-color:transparent;background:#1f9d55;box-shadow:0 0 7px rgba(31,157,85,.6)}
+.lamp[data-state=fail]{border-color:transparent;background:#d64545;box-shadow:0 0 7px rgba(214,69,69,.6)}
+.lamp.big{width:11px;height:11px}
+.lamp.tiny{width:7px;height:7px;margin-left:6px}
+@keyframes lamp-pulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(10,132,255,.5);opacity:1}
+  50%{box-shadow:0 0 0 5px rgba(10,132,255,0);opacity:.5}
+}
+/* 列表里那一行也跟着变色：运行中浅蓝底，成功/失败只靠右侧小灯区分 */
+.item[data-state=running]{background:var(--sel)}
+.item[data-state=fail] .nm{color:#c0392b}
+.item .lamp{margin-left:6px}
+/* 详情里的状态胶囊 */
+.status{display:inline-flex;align-items:center;gap:7px;padding:3px 11px;border-radius:20px;
+  background:var(--panel2);border:1px solid var(--line);font-size:12px;color:var(--dim);margin-top:9px}
+.spin{width:11px;height:11px;border-radius:50%;flex:none;display:none;
+  border:1.6px solid rgba(127,127,127,.35);border-top-color:var(--accent);
+  animation:spin .7s linear infinite}
+.spin.on{display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
 h1{font-size:19px;margin:0 0 4px}
 .hd{display:flex;gap:14px;align-items:flex-start}
 .bigico{width:44px;height:44px;flex:none;color:var(--dim)}
@@ -110,16 +137,19 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
   <div id="right">
     <div id="tabs">
       <button class="tab active" data-tab="detail">详情</button>
-      <button class="tab" data-tab="console">命令行</button>
+      <button class="tab" data-tab="console">命令行<span class="lamp tiny" id="tablamp" data-state="idle"></span></button>
       <span id="tabcmd"></span>
     </div>
     <section class="pane on" id="pane-detail"><div class="empty">左边选一个包</div></section>
     <section class="pane" id="pane-console">
       <div class="outbar">
+        <span class="lamp" id="outlamp" data-state="idle"></span>
+        <span class="spin" id="outspin"></span>
+        <span id="outinfo">就绪</span>
+        <span style="flex:1"></span>
         <button id="btn-copy">复制全部</button>
         <button id="btn-rerun">再跑一次</button>
         <button id="btn-clear">清空</button>
-        <span id="outinfo">输出</span>
       </div>
       <pre id="out">就绪。选一个包，填参数，点「运行（看输出）」。</pre>
     </section>
@@ -178,6 +208,62 @@ function setTab(name){
   $("#pane-console").classList.toggle("on", name === "console");
 }
 
+/* ---------------------------------------------------------------- 状态灯
+   每个包一份状态：idle / running / ok / fail。左栏那一行、详情里的胶囊、
+   "命令行"选项卡上的小灯、输出工具条上的灯 —— 全部由这一份状态驱动。
+   ★ 不许再往输出区里写"（跑着呢…）"这种假日志：状态是**灯**的事，
+     输出区只放"命令 + 真实输出"。 */
+const STATE = {};          // id -> {state, code, ms}
+let consoleWho = null;     // 输出区当前显示的是谁的状态
+
+function stateOf(id){ return STATE[id] || {state:"idle"}; }
+
+function setState(id, st, extra){
+  STATE[id] = Object.assign({state:st, ts:Date.now()}, extra || {});
+  consoleWho = id;
+  paintStates();
+}
+
+function stateLabel(s){
+  if (s.state === "running") return "运行中";
+  if (s.state === "ok") return "完成 · 退出码 " + (s.code === undefined ? 0 : s.code) +
+      (s.ms ? " · " + (s.ms / 1000).toFixed(2) + " 秒" : "");
+  if (s.state === "fail") return "失败 · 退出码 " + (s.code === undefined ? "?" : s.code) +
+      (s.ms ? " · " + (s.ms / 1000).toFixed(2) + " 秒" : "");
+  return "就绪";
+}
+
+function paintStates(){
+  document.querySelectorAll(".item").forEach(el => {
+    const st = stateOf(el.dataset.id).state;
+    el.dataset.state = st;
+    const lamp = el.querySelector(".lamp");
+    if (lamp) lamp.dataset.state = st;
+  });
+  const s = consoleWho ? stateOf(consoleWho) : {state:"idle"};
+  [$("#tablamp"), $("#outlamp")].forEach(l => { if (l) l.dataset.state = s.state; });
+  const sp = $("#outspin");
+  if (sp) sp.classList.toggle("on", s.state === "running");
+  const info = $("#outinfo");
+  if (info && consoleWho) info.textContent = stateLabel(s);
+  const pill = $("#statuspill");
+  if (pill && cur){
+    const cs = stateOf(cur.id);
+    pill.querySelector(".lamp").dataset.state = cs.state;
+    const t = $("#statustext");
+    if (t) t.textContent = stateLabel(cs);
+  }
+}
+
+function clearConsoleState(){
+  consoleWho = null;
+  const sp = $("#outspin");
+  if (sp) sp.classList.remove("on");
+  [$("#tablamp"), $("#outlamp")].forEach(l => { if (l) l.dataset.state = "idle"; });
+  const info = $("#outinfo");
+  if (info) info.textContent = "就绪";
+}
+
 function setCmd(text){
   $("#tabcmd").textContent = text || "";
 }
@@ -186,7 +272,10 @@ function out(text, info){
   const el = $("#out");
   el.textContent = stripAnsi(text);
   el.scrollTop = el.scrollHeight;
-  $("#outinfo").textContent = info || "输出";
+  if (info !== undefined && info !== null){
+    const i = $("#outinfo");
+    if (i) i.textContent = info;
+  }
 }
 
 async function copyOut(){
@@ -222,11 +311,15 @@ function renderList(){
   for (const p of rows){
     const d = document.createElement("div");
     d.className = "item" + (cur && cur.id === p.id ? " sel" : "");
+    d.dataset.id = p.id;
+    d.dataset.state = stateOf(p.id).state;
+    const lampState = stateOf(p.id).state;
     d.innerHTML = iconHTML(p, "ico") +
       `<div style="min-width:0;flex:1">
          <div class="nm">${esc(p.name)} <span class="sub">:${esc(p.id)}</span></div>
          <div class="ds">${esc(p.desc)}</div>
-       </div>`;
+       </div>
+       <span class="lamp" data-state="${lampState}" title="${esc(stateLabel(stateOf(p.id)))}"></span>`;
     d.onclick = () => select(p.id);
     box.appendChild(d);
   }
@@ -244,10 +337,15 @@ function renderDetail(){
   if (!cur){ box.innerHTML = '<div class="empty">左边选一个包</div>'; return; }
   const p = cur;
   const params = p.params || [];
+  const st = stateOf(p.id);
   let html = `<div class="hd">${iconHTML(p, "bigico")}
       <div style="min-width:0">
         <h1>${esc(p.name)}</h1>
         <div class="sub">:${esc(p.id)}　v${esc(p.version || "?")}　${esc(p.kind)}　${esc(p.layer)} 层${p.shadowed ? "　（遮住了 " + esc(p.shadowed) + " 层的同名包）" : ""}</div>
+        <div class="status" id="statuspill" data-state="${st.state}">
+          <span class="lamp big" data-state="${st.state}"></span>
+          <span id="statustext">${esc(stateLabel(st))}</span>
+        </div>
       </div></div>
     <p style="margin:12px 0 4px">${esc(p.desc)}</p>
     <div>${(p.aliases||[]).map(a => `<span class="chip">:${esc(a)}</span>`).join("")}
@@ -305,17 +403,21 @@ function renderDetail(){
     const cmd = $("#preview").textContent;
     lastRun = {id: p.id, args: args, label: cmd};
     setTab("console"); setCmd(cmd);
-    out("$ " + cmd + "\n（跑着呢…）", "运行中");
+    setState(p.id, "running");            // 灯亮 → 呼吸的蓝点 + 转圈，不往输出里写字
+    out("$ " + cmd);
+    const t0 = performance.now();
     const r = await pywebview.api.run(p.id, args);
-    out("$ " + cmd + "\n\n" + (r.out || "(这个包没有输出)") + "\n[退出码] " + r.code,
-        "退出码 " + r.code + " · " + (r.out || "").length + " 字符");
+    out("$ " + cmd + "\n\n" + (r.out || "(这个包没有输出)") + "\n[退出码] " + r.code);
+    setState(p.id, r.code === 0 ? "ok" : "fail",
+             {code: r.code, ms: Math.round(performance.now() - t0)});
     btn.disabled = false; btn.textContent = "运行（看输出）";
     busy = false;
   };
   $("#btn-openui").onclick = async () => {
     const r = await pywebview.api.open_ui(p.id, $("#args").value);
     setTab("console"); setCmd("moss :" + p.id);
-    out(r.msg, "后台");
+    setState(p.id, r.ok ? "ok" : "fail", {code: r.ok ? 0 : undefined});
+    out(r.msg || "");
   };
   $("#btn-dir").onclick = () => pywebview.api.open_path(p.dir);
 }
@@ -325,6 +427,7 @@ async function init(){
   $("#meta").textContent =
     `${DATA.packages.length} 个包 · 启动方式：${DATA.launch_kind} · ${DATA.home}`;
   renderList();
+  paintStates();
 }
 
 $("#q").addEventListener("input", renderList);
@@ -332,22 +435,31 @@ $("#btn-refresh").onclick = init;
 $("#btn-quit").onclick = () => pywebview.api.quit();
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => setTab(b.dataset.tab));
 $("#btn-copy").onclick = copyOut;
-$("#btn-clear").onclick = () => { out("", "输出"); setCmd(""); };
+$("#btn-clear").onclick = () => { out(""); setCmd(""); clearConsoleState(); };
 $("#btn-rerun").onclick = async () => {
   if (!lastRun || busy) return;
-  busy = true; $("#outinfo").textContent = "运行中";
-  out("$ " + lastRun.label + "\n（跑着呢…）", "运行中");
+  busy = true;
+  const btn = $("#btn-rerun"); btn.disabled = true;
+  setCmd(lastRun.label);
+  setState(lastRun.id, "running");
+  out("$ " + lastRun.label);
+  const t0 = performance.now();
   const r = await pywebview.api.run(lastRun.id, lastRun.args);
-  out("$ " + lastRun.label + "\n\n" + (r.out || "(这个包没有输出)") + "\n[退出码] " + r.code,
-      "退出码 " + r.code);
+  out("$ " + lastRun.label + "\n\n" + (r.out || "(这个包没有输出)") + "\n[退出码] " + r.code);
+  setState(lastRun.id, r.code === 0 ? "ok" : "fail",
+           {code: r.code, ms: Math.round(performance.now() - t0)});
+  btn.disabled = false;
   busy = false;
 };
 $("#btn-selfcheck").onclick = async () => {
   setTab("console"); setCmd("moss --selfcheck");
-  out("$ moss --selfcheck\n（跑着呢…）", "运行中");
+  setState("__host__", "running");
+  out("$ moss --selfcheck");
+  const t0 = performance.now();
   const r = await pywebview.api.run_host("--selfcheck");
-  out("$ moss --selfcheck\n\n" + (r.out || "(没有输出)") + "\n[退出码] " + r.code,
-      "退出码 " + r.code);
+  out("$ moss --selfcheck\n\n" + (r.out || "(没有输出)") + "\n[退出码] " + r.code);
+  setState("__host__", r.code === 0 ? "ok" : "fail",
+           {code: r.code, ms: Math.round(performance.now() - t0)});
 };
 
 window.addEventListener("pywebviewready", init);
