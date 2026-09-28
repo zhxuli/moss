@@ -18,6 +18,64 @@ CYAN = '\033[36;1m'
 RESET = '\033[0m'
 
 
+def stdout_is_terminal():
+    """stdout 是不是**真的终端**（不是管道 / 文件 / 无控制台时接的 NUL）。
+
+    ★ 用途有两个，都是被实测逼出来的（2026-09-27 界面 v0）：
+      ① 颜色：管道那头没人解释 ANSI，界面输出框里会显示成 `[36;1m[执行] ...`
+         这种乱码；`moss --history 3 > 记录.txt` 也不该往文件里塞转义字节。
+      ② 清屏：`cls` 是靠 `cmd.exe` 干的，它会往 stdout 里吐一个 **`\\f`**；
+         输出被重定向时那个字节就留在文件/界面上（实测在界面里看到了）。
+         而且"清屏"这个动作本来就只对终端有意义。
+    ★ 判据用 isatty 而不是"有没有控制台"：在终端里把输出管道给 `more` 时，
+      颜色和清屏也都该关掉。
+    """
+    stream = sys.stdout
+    if stream is None:
+        return False
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, ValueError):
+        return False
+
+
+if not stdout_is_terminal():
+    CYAN = ''
+    RESET = ''
+
+
+def null_streams_if_no_console():
+    """没有控制台时，把 `sys.stdout/stderr/stdin` 接到 NUL 上。
+
+    ★ 为什么必须做（`G-18` ✅）：exe 虽然用 `--windows-console-mode=hide` 打包
+      （控制台子系统，谁都有控制台），但这段留着当**保险** —— 只要哪天有人把档位
+      换成 `attach` / `disable`（GUI 子系统），双击启动时 CPython 的三件套就是
+      **None**（和 `pythonw` 一样）。
+      产物是 **GUI 子系统** —— 双击 / 快捷方式 / 快速启动栏启动时 Windows
+      不给它控制台，于是 CPython 的三件套就是 **None**（和 `pythonw` 一样）。
+      那种情况下任何一次 `print` 都会
+          AttributeError: 'NoneType' object has no attribute 'write'
+      而且是崩在最不起眼的日志上。
+
+    ★ 这是**实测**不是推断（2026-09-27 第 55 版）：用 `pythonw.exe` 跑探针，
+      `sys.stdout is None` 为真、`GetConsoleProcessList` 返回 0。
+      `pythonw` 和 attach 档双击是**同一种处境**（都是 GUI 子系统、无控制台）。
+
+    接上 NUL 之后：输出无害地丢掉，程序照跑。真要留痕的地方走文件
+    （界面有自己的日志，见 `system/ui/`）。
+    """
+    for name, mode in (("stdout", "w"), ("stderr", "w"), ("stdin", "r")):
+        if getattr(sys, name, None) is None:
+            try:
+                setattr(sys, name, open(os.devnull, mode,
+                                        encoding="utf-8", errors="replace"))
+            except OSError:
+                pass
+
+
+null_streams_if_no_console()
+
+
 def ensure_utf8_console():
     """让控制台吃得下 ✔ ✗ ⚠ 这类符号。两步，缺一不可：
 
@@ -60,7 +118,16 @@ def print_cyan(*args, **kwargs):
 
 
 def clear_screen():
-    """照抄 pa.py:201-202。"""
+    """照抄 pa.py:201-202。
+
+    两条不许清的情况（`G-18` ✅ / 界面 v0 实测）：
+      · **没有控制台**（双击启动）：`cls` 会拉起一个 `cmd.exe`，而 GUI 子系统
+        自己没有控制台 ⇒ 那个 cmd 会**新建一个黑框闪一下**。
+      · **输出被重定向**（管道 / 文件 / 界面抓输出）：清了也白清，而 `cls`
+        还会往 stdout 吐一个 `\\f`，那个字节就留在文件/界面上（实测到的）。
+    """
+    if not stdout_is_terminal():
+        return
     os.system('cls')
 
 

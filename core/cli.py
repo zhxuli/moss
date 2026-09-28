@@ -17,7 +17,7 @@ import unicodedata
 from pathlib import Path
 
 from . import (config, engine, events, history, out, paths, pkg as pkg_mod,
-               registry, resolve, runners as runners_mod, shell)
+               registry, resolve, runners as runners_mod, shell, ui)
 
 USAGE = """moss —— 多语言启动器
 
@@ -34,6 +34,10 @@ USAGE = """moss —— 多语言启动器
 
   moss :<别名> [参数...]       运行一个已安装的包
                                例: moss :md5 hello
+
+  moss ui                      打开界面（★ 双击 moss.exe / 快捷方式 / 快速启动栏
+                               也是这个 —— 没有控制台时不开命令行，直接开界面）
+  moss --ui                    同上（写全一点的形式，脚本里更显眼）
 
   moss cd <目标>               智能找目录并切过去（认出父 shell 后把命令注入控制台）
   moss cd --install            把 cd 包装函数写进 PowerShell 配置 → 屏幕上不留回显
@@ -58,6 +62,11 @@ USAGE = """moss —— 多语言启动器
   · **裸名（不带前缀）归谁可以改**：默认 `moss m` 找文件、`moss :img` 跑包；
     若你主要用途是"跑装好的包"（不常写脚本），把 config.toml 里的 plugin_mode 留空、
     path_mode 填 ":" —— 于是 `moss img` 直接跑包，`moss :img` 才是找文件
+  · **有没有参数决定干什么，有没有控制台决定怎么进来**（`G-19` ✅）：
+      终端里敲 `moss`         → 用法 + 包列表（命令行）
+      终端里敲 `moss ui`      → 界面
+      双击 / 快捷方式 / 快速启动栏 → 界面（没有控制台，命令行打给谁看呢）
+      带参数（`moss :img 60%`）→ 一律按参数干活，不看有没有控制台
 """
 
 
@@ -860,6 +869,15 @@ def cmd_selfcheck(table):
     print("  父 shell  : %s   （沿父进程链: %s）"
           % (who or "✗ 没认出来",
              " ← ".join("%s" % n for n, _ in shell.parent_chain()[:5])))
+    # ★ 启动方式（`G-19` ✅）：这一行决定"不带参数时会发生什么"
+    print("  启动方式  : %s" % shell.launch_kind())
+    print("              → 现在敲 `moss`（不带参数）会%s"
+          % ("开界面" if shell.gui_mode() else "打用法 + 包列表"))
+    ui_ok, ui_why = ui.available(table)
+    print("  界面      : %s   （%s）" % ("可用" if ui_ok else "✗ 不可用", ui_why))
+    print("              → 界面要跑包时调这个：%s" % " ".join(ui.host_cmd()))
+    if not ui_ok:
+        ok = False
     for label, p, has in shell.installed_state():
         print("  %-9s: %s   （%s）" % (label, "已装包装函数" if has else "未装包装函数", p))
     print("            装了包装函数的话，`moss cd` 在屏幕上不留任何回显；"
@@ -867,6 +885,19 @@ def cmd_selfcheck(table):
     print("=" * 60)
     out.print_cyan("结论: %s" % ("✅ 自检通过" if ok else "✗ 自检失败"))
     return 0 if ok else 1
+
+
+# ---------------------------------------------------------------- 界面
+def cmd_ui(args):
+    """开宿主界面（`G-19` ✅）。
+
+    入口有三个，都落到这里：
+      · `moss ui`（终端里显式要界面）
+      · 双击 / 快捷方式 / 快速启动栏启动（没有控制台 → 只能开界面）
+      · 以后常驻贴边面板（`U-10` ⬜）也走它
+    界面本体在 `system/ui/`，用自带运行时跑 —— **不编进 exe**，改界面不用重新打包（`K-10`）。
+    """
+    return ui.launch(args)
 
 
 # ---------------------------------------------------------------- cd
@@ -994,6 +1025,11 @@ def main(argv):
 
     # ---- 帮助（照抄 pa.py:861-866：先文档再列表） ----
     if not argv or argv[0] in ("-h", "--help", "help"):
+        # ★ 不带参数时先看"我是怎么被启动的"（`G-19` ✅）：
+        #   双击 / 快捷方式 / 快速启动栏启动 → 没有控制台 → 打用法没人看得见，
+        #   直接开界面。终端里敲 → 照旧打用法 + 包列表。
+        if not argv and shell.gui_mode():
+            return cmd_ui([])
         out.conditional_clear_screen()
         print(USAGE)
         print()
@@ -1008,6 +1044,12 @@ def main(argv):
     if first.startswith(dsym):
         detach = True
         first = first[len(dsym):]
+
+    # ---- ui：宿主界面（`G-19` ✅；和 `cd` 一样是**宿主保留词**） ----
+    # 保留字的理由：`moss ui` 要能和"找文件/跑包"区分开。`cd` 已经是这么做的
+    # 先例；真要跑一个叫 ui 的包，用 `moss :ui`，路径调用用 `moss ./ui`。
+    if first.lower() in ("ui", "--ui"):
+        return cmd_ui(rest)
 
     # ---- cd（照抄 pa.py:876-881） ----
     if first.lower() == 'cd':
