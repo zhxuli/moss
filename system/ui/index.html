@@ -87,16 +87,15 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--
   white-space:pre-wrap;word-break:break-word;user-select:text;cursor:text}
 #out::selection{background:#3a5a8c;color:#fff}
 /* ---- 状态灯 ---- */
-/* ---- 状态：**不用小圆点了，颜色直接给图标**（2026-09-27 你定的）----
-   绿=运行中（图标是"停止"）/ 红=故障 / 黄=警告（已停止、结果未知）/ 其余=默认色。
-   只在"有话要说"的时候才显示图标，跑完正常的那种不占地方。 */
+/* ---- 状态：**只有两种** —— 运行中（绿色停止图标）/ 没运行（灰色播放图标）----
+   ★ 不再显示"故障红 / 警告黄"（2026-09-27 你定的：「要么就停止 要么就运行，
+     请忽略那个错误啥的 —— 很多正确的退出、没有报错，也经常误报错误，看起来很碍眼」）。
+     退出码本身还是照记（在「命令行」那行文字里），只是**不拿出来当状态报警**了。 */
 .ic-run{color:#1f9d55}
-.ic-fail{color:#d64545}
-.ic-warn{color:#dfa100}
-/* 左侧列表行尾的状态图标（运行中那颗可点：停掉它）
-   ★ 这里**千万别写 `color:inherit`**：`.rowstat button` 的优先级(0,1,1)高过
-     `.ic-run`(0,1,0)，会把按钮上的状态颜色整个压掉 —— 表现就是"列表里的图标
-     一点颜色都没有"（你实测发现的）。按钮的颜色交给 `.ic-run/.ic-fail/.ic-warn`。 */
+/* 左侧列表行尾那颗"没在跑"的播放图标：平时很淡，鼠标移上去才亮 —— 不抢视线 */
+.rowstat .idle{color:var(--dim);opacity:.45}
+.rowstat .idle:hover{opacity:1;color:var(--fg)}
+/* 左侧列表行尾的状态图标 */
 .rowstat{flex:none;display:flex;align-items:center;margin-left:6px}
 .rowstat button{display:flex;align-items:center;justify-content:center;padding:3px;
   border:none;border-radius:6px;background:transparent;cursor:pointer}
@@ -259,7 +258,7 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
       <button class="tab" data-tab="console">命令行</button>
       <button class="tab" data-tab="file">文件管理</button>
       <!-- ★ 运行/停止 + 显示/隐藏，钉在选项卡这一行的最右边：不用先点开「详情」。
-           **状态用图标自己的颜色表示**（绿=运行中、红=故障、黄=警告），没有小圆点了。 -->
+           状态**只有两种**：运行中 = 绿色停止图标，没在跑 = 普通播放图标（不再有红/黄）。 -->
       <div id="tabactions">
         <button class="iconbtn" id="btn-run" disabled></button>
         <button class="iconbtn" id="btn-vis" disabled></button>
@@ -391,25 +390,13 @@ function escapeHtml(s){
 }
 const esc = escapeHtml;
 
-/* ---------------------------------------------------------------- 状态灯 */
-const STATE = {};
-function stateOf(id){ return STATE[id] || {state:"idle"}; }
-function setState(id, st, extra){
-  STATE[id] = Object.assign({state:st, ts:Date.now()}, extra || {});
-  paintStates();
-}
-function stateLabel(s){
-  if (s.state === "running") return "运行中";
-  if (s.state === "ok") return "已完成 · 退出码 " + (s.code === undefined ? 0 : s.code) +
-      (s.ms ? " · " + (s.ms / 1000).toFixed(2) + " 秒" : "");
-  if (s.state === "fail") return "故障 · 退出码 " + (s.code === undefined ? "?" : s.code) +
-      (s.ms ? " · " + (s.ms / 1000).toFixed(2) + " 秒" : "");
-  if (s.state === "warn") return s.note || "有情况（结果未知）";
-  return "还没跑过";
-}
+/* ---------------------------------------------------------------- 状态（只有两种）
+   ★ 状态**只有"在跑 / 没在跑"两种**，而且唯一来源是**宿主**那份 (`PST`)：
+     它会答"这个包有没有活着的进程"（按进程环境里的 MOSS_PKG_ID + 命令行认），
+     不管是谁拉起来的。界面上不再自己维护一套"上次跑成什么样"——
+     那套原来只用来染红/黄，而退出码误报太多（你要求忽略），已经删掉。
+     需要退出码时它就在「命令行」那行文字里（"退出码 1"），不拿出来报警。 */
 function paintStates(){
-  // 状态颜色现在只出现在两处：**顶部的运行/停止按钮的图标**、**左侧列表行尾的状态图标**。
-  // 这里只负责把行尾那颗更新掉（颜色/图标由 `paintRowStats` 统一算）。
   paintRowStats();
   if (cur) paintActions(cur);
 }
@@ -526,15 +513,12 @@ async function refreshAllStates(){
   if (cur) paintActions(cur);
 }
 
-/* ---------------------------------------------------------------- 状态颜色
-   只有两处显示状态，**都是图标本身的颜色**（没有小圆点了）：
-     · 顶部「运行/停止」按钮的图标
-     · 左侧列表行尾的状态图标（运行中那颗可以点 —— 直接在列表里停掉它） */
+/* ---------------------------------------------------------------- 状态：只有两种
+   运行中 = 绿色停止图标（点它停）；没在跑 = 淡灰播放图标（点它跑）。
+   **不再有红/黄**（退出码误报太多，你要求忽略）。 */
 function rowStateOf(id){
   const st = PST[id] || {};
-  if (st.running) return "running";
-  const s = stateOf(id).state;
-  return s === "running" ? "idle" : s;        // 宿主说没跑，就别显示"运行中"
+  return st.running ? "running" : "idle";
 }
 
 function paintRowStats(){
@@ -542,22 +526,26 @@ function paintRowStats(){
     const id = el.dataset.id;
     const box = el.querySelector(".rowstat");
     if (!box) return;
-    const st = rowStateOf(id);
-    if (st === "running"){
-      box.innerHTML = '<button class="ic-run" title="正在运行 —— 点这里停掉它">' +
-                      ico("square", "i") + '</button>';
-      const b = box.querySelector("button");
-      if (b) b.onclick = (ev) => { ev.stopPropagation(); stopFromList(id); };
-    } else if (st === "fail"){
-      box.innerHTML = '<span class="ic-fail" style="display:flex" title="' +
-                      esc(stateLabel(stateOf(id))) + '">' + ico("circle-x", "i") + '</span>';
-    } else if (st === "warn"){
-      box.innerHTML = '<span class="ic-warn" style="display:flex" title="' +
-                      esc(stateLabel(stateOf(id))) + '">' + ico("circle-alert", "i") + '</span>';
-    } else {
-      box.innerHTML = "";                    // 没跑过 / 跑完正常 → 不占地方
-    }
+    const running = rowStateOf(id) === "running";
+    box.innerHTML = running
+      ? '<button class="ic-run" title="正在运行 —— 点这里停掉它">' + ico("square", "i") + '</button>'
+      : '<button class="idle" title="运行这个包（:﻿' + esc(id) + '）">' + ico("play", "i") + '</button>';
+    const b = box.querySelector("button");
+    if (b) b.onclick = (ev) => {
+      ev.stopPropagation();                       // 点图标不要连带选中那一行
+      if (running) stopFromList(id); else runFromList(id);
+    };
   });
+}
+
+/* 列表里直接跑：参数留空（就是"平常那样跑它"），不动左边的选中 */
+async function runFromList(id){
+  const p = DATA.packages.find(x => x.id === id);
+  if (!p) return;
+  if (RUNS[id]) return;
+  const st = PST[id] || {};
+  if (st.running){ toast(":" + id + " 已经在跑了"); return; }
+  startRun(p, "");
 }
 
 /* 列表里直接停掉：是我们起的就走 run_stop（好把输出收尾），否则按进程停 */
@@ -568,7 +556,7 @@ async function stopFromList(id){
     RUNS[id].stopped = true;
   } else {
     r = await pywebview.api.pkg_stop(id);
-    if (r.ok) setState(id, "warn", {note: "已停止"});
+    paintRowStats();
   }
   toast(r.msg, !r.ok);
   setTimeout(refreshAllStates, 400);
@@ -582,16 +570,13 @@ function paintActions(p){
   const st = (p && PST[p.id]) || {running: false, windows: 0, visible: false};
   const mine = !!(p && RUNS[p.id]);
   const running = mine || !!st.running;
-  const last = p ? stateOf(p.id).state : "idle";
-  const colorCls = running ? "ic-run" : (last === "fail" ? "ic-fail" : (last === "warn" ? "ic-warn" : ""));
   b.disabled = !p;
-  // ★ 颜色给 svg 图标本身（你要求的），不再有小圆点
-  b.innerHTML = ico(running ? "square" : "play", "i " + colorCls) +
+  // ★ 颜色只在"运行中"时给（绿色停止图标）；不再按"上次是否非 0"染红/黄 —— 误报太多
+  b.innerHTML = ico(running ? "square" : "play", running ? "i ic-run" : "i") +
                 '<span>' + (running ? "停止" : "运行") + '</span>';
   b.title = !p ? "先在左边选一个包"
-               : ((running ? "停掉它（连同它拉起的子进程）"
-                           : "运行这个包，输出进「命令行」") +
-                  "　·　状态：" + (running ? "运行中" : stateLabel(stateOf(p.id))));
+               : (running ? "停掉它（连同它拉起的子进程）"
+                          : "运行这个包，输出进「命令行」");
   b.classList.toggle("warn", running);
   v.disabled = !p || !st.windows;
   v.innerHTML = ico(st.visible ? "eye-off" : "eye", "i") +
@@ -609,7 +594,7 @@ async function clickRun(p){
   if (st.running){                       // 别处启动的：直接停掉它的进程
     const r = await pywebview.api.pkg_stop(p.id);
     toast(r.msg, !r.ok);
-    if (r.ok) setState(p.id, "warn", {note: "已停止"});
+    paintRowStats();
     setTimeout(() => refreshPkgState(p), 400);
     return;
   }
@@ -620,13 +605,11 @@ async function startRun(p, args){
   if (RUNS[p.id]) return;                // ★ 只拦"同一个包重复起"，不再拦别的包
   const cmd = "moss :" + p.id + ((args || "").trim() ? " " + args.trim() : "");
   lastRun = {id: p.id, args: args, label: cmd};
-  setState(p.id, "running");
   consoleKey = p.id;                     // 输出落进"这个包自己的"那份
   setConsole(p.id, "$ " + cmd, "运行中");
   const r = await pywebview.api.run_start(p.id, args || "");
   if (!r.ok){
     setConsole(p.id, "$ " + cmd + "\n\n启动失败：" + (r.msg || ""), "启动失败");
-    setState(p.id, "fail", {code: -1});
     toast("✗ " + (r.msg || "启动失败"), true);
     return;
   }
@@ -680,10 +663,10 @@ function finishRun(id, code, text){
   maybeAutoSwitch(id, run, text);        // 跑得太快、第一轮就结束时也要按规则切一次
   setConsole(id, "$ " + run.cmd + "\n\n" + (text || "(这个包没有输出)") + "\n" +
              runTail(code, text, stopped),
-             stopped ? "已停止" : (code === 0 ? "完成 · 退出码 0" : "故障 · 退出码 " + code));
+             // ★ 只说事实（退出码是多少），不判"故障" —— 非 0 在很多包里是正常现象
+             stopped ? "已停止" : ("退出码 " + code));
   // 我们自己按的停止不算"故障"（红）—— 是"已停止"（黄）
-  setState(id, stopped ? "warn" : (code === 0 ? "ok" : "fail"),
-           {code: code, note: stopped ? "已停止" : ""});
+  paintRowStats();
   if (cur && cur.id === id) renderDetail();
   // ★ 退出码回来了不等于"它没在跑" —— 有的包 fork 出界面自己就退了。
   //   所以状态以宿主那份为准（600ms 后再问一次）。
@@ -744,7 +727,7 @@ function renderList(){
     const d = document.createElement("div");
     d.className = "item" + (cur && cur.id === p.id ? " sel" : "");
     d.dataset.id = p.id;
-    d.dataset.state = stateOf(p.id).state;
+    d.dataset.state = rowStateOf(p.id);      // 宿主口径：在跑 / 没在跑
     d.innerHTML = iconHTML(p, "ico") +
       '<div style="min-width:0;flex:1">' +
         '<div class="nm">' + esc(p.name) + ' <span class="sub">:' + esc(p.id) + '</span></div>' +
@@ -792,7 +775,7 @@ function select(id){
 function renderDetail(){
   const box = $("#pane-detail");
   if (!cur){ box.innerHTML = '<div class="empty">左边选一个包</div>'; return; }
-  const p = cur, params = p.params || [], st = stateOf(p.id);
+  const p = cur, params = p.params || [];
   let html = '<div class="hd">' + iconHTML(p, "bigico") +
       '<div style="min-width:0"><h1>' + esc(p.name) + '</h1>' +
       '<div class="sub">:' + esc(p.id) + '　v' + esc(p.version || "?") + '　' + esc(p.kind) +
@@ -851,8 +834,7 @@ function renderDetail(){
   $("#btn-openui").onclick = async () => {
     const r = await pywebview.api.open_ui(p.id, $("#args").value);
     // 不切选项卡：带界面的包本来就没有命令行输出（你指出的），停在详情更合理
-    setState(p.id, r.ok ? "warn" : "fail",
-             {code: r.ok ? undefined : -1, note: r.ok ? "已后台启动 · 结果未知" : "启动失败"});
+    paintRowStats();
     setTimeout(() => refreshPkgState(p), 1500);
     setTimeout(() => refreshPkgState(p), 3500);
   };
@@ -1601,8 +1583,7 @@ $("#btn-selfcheck").onclick = async () => {
   const ms = Math.round(performance.now() - t0);
   setConsole("__host__",
              "$ moss --selfcheck\n\n" + (r.out || "(没有输出)") + "\n[退出码] " + r.code,
-             r.code === 0 ? ("完成 · 退出码 0 · " + (ms / 1000).toFixed(2) + " 秒")
-                          : ("故障 · 退出码 " + r.code));
+             "退出码 " + r.code + " · " + (ms / 1000).toFixed(2) + " 秒");
 };
 
 paintStaticIcons();
