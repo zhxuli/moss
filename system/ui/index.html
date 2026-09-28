@@ -593,9 +593,9 @@ async function startRun(p, args){
   }
   const cmd = "moss :" + p.id + ((args || "").trim() ? " " + args.trim() : "");
   lastRun = {id: p.id, args: args, label: cmd};
-  setTab("console"); setState(p.id, "running");
-  out("$ " + cmd);
-  const r = await pywebview.api.run_start(p.id, args || "");
+  setState(p.id, "running");             // ★ 不再自动跳到「命令行」：
+  out("$ " + cmd);                       //   带界面的包根本没有命令行输出（你指出的），
+  const r = await pywebview.api.run_start(p.id, args || "");   // 停在原地更合理
   if (!r.ok){ toast("✗ " + (r.msg || "启动失败"), true); setState(p.id, "fail", {code: -1}); return; }
   RUN = {id: p.id, rid: r.run_id, cmd: cmd, timer: null};
   refreshPkgState(p);                    // 让按钮立刻变成「停止」
@@ -619,7 +619,7 @@ function finishRun(code, text){
   const id = RUN.id, cmd = RUN.cmd, p = cur, stopped = !!RUN.stopped;
   clearTimeout(RUN.timer);
   RUN = null;
-  out("$ " + cmd + "\n\n" + (text || "(这个包没有输出)") + "\n[退出码] " + code);
+  out("$ " + cmd + "\n\n" + (text || "(这个包没有输出)") + "\n" + runTail(code, text, stopped));
   // 我们自己按的停止不算"故障"（红）—— 是"已停止"（黄）
   setState(id, stopped ? "warn" : (code === 0 ? "ok" : "fail"),
            {code: code, note: stopped ? "已停止" : ""});
@@ -627,6 +627,19 @@ function finishRun(code, text){
   // ★ 退出码回来了不等于"它没在跑" —— 有的包 fork 出界面自己就退了。
   //   所以状态以宿主那份为准（800ms 后再问一次）。
   if (p && p.id === id) setTimeout(() => refreshPkgState(p), 800);
+}
+
+/* 收尾那一行怎么措辞。
+   ★ 为什么要专门做：GUI 包被**我们自己按停止**时，进程是被强杀的，退出码必然是 1 ——
+     直接写"[退出码] 1"会让人以为它报错了（你实测反馈过："我正常关闭的，感觉也没报错呀"）。
+     另外"非 0 但一句话都没输出"这种情况也点明，省得盯着屏幕找不存在的报错。 */
+function runTail(code, text, stopped){
+  if (stopped) return "[已停止]（这次是点了停止 —— 不是故障）";
+  const body = String(text || "").split(/\r?\n/).map(l => l.trim()).filter(l =>
+    l && !/^\[(执行|目录|PID|运行总长|结果)\]/.test(l) &&
+    !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(l)).join("");
+  if (code !== 0 && !body) return "[退出码] " + code + "（它没有输出任何错误信息）";
+  return "[退出码] " + code;
 }
 
 async function stopRun(){
@@ -723,12 +736,9 @@ function renderDetail(){
         '　' + esc(p.layer) + ' 层' +
         (p.shadowed ? "　（遮住了 " + esc(p.shadowed) + " 层的同名包）" : "") + '</div>' +
       '</div></div>' +
-      // ★ 右侧动作：运行/停止（同一个按钮切换）+ 显示/隐藏这个包自己的界面窗口
-      '<div class="actions">' +
-        '<button class="iconbtn" id="btn-run"></button>' +
-        '<button class="iconbtn" id="btn-vis"></button>' +
-      '</div>' +
-    '</div>' +
+    // ★ 这里**不要再建 #btn-run / #btn-vis**：它们已经钉在选项卡那一行上了。
+    //   上次挪位置时把这段留下了 —— 结果是同一对 id 在页面里出现两次，
+    //   `$("#btn-run")` 只会命中先出现的那个，详情里这两个永远空着（你看到的"两个空元素"）。
     '<p style="margin:12px 0 4px">' + esc(p.desc) + '</p><div>' +
       (p.aliases||[]).map(a => '<span class="chip">:' + esc(a) + '</span>').join("") +
       (p.tags||[]).map(t => '<span class="chip">' + esc(t) + '</span>').join("") +
@@ -777,10 +787,9 @@ function renderDetail(){
   refreshPkgState(p);
   $("#btn-openui").onclick = async () => {
     const r = await pywebview.api.open_ui(p.id, $("#args").value);
-    setTab("console"); setState(p.id, r.ok ? "warn" : "fail",
+    // 不切选项卡：带界面的包本来就没有命令行输出（你指出的），停在详情更合理
+    setState(p.id, r.ok ? "warn" : "fail",
              {code: r.ok ? undefined : -1, note: r.ok ? "已后台启动 · 结果未知" : "启动失败"});
-    out(r.msg || "");
-    // 界面窗口要几秒才出来，等一会儿再问"它有没有窗口 / 在不在跑"
     setTimeout(() => refreshPkgState(p), 1500);
     setTimeout(() => refreshPkgState(p), 3500);
   };
