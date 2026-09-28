@@ -12,10 +12,16 @@ moss b/m                 # 先进 b 开头的子目录，再找 m 开头的
 moss :md5 abc            # 跑名为 md5 的包（":" 前缀 = 包命名空间）
 moss :img webp 60% *.png # 包自己解释参数（rest 型参数）
 moss ~name               # 后台脱离运行，不占住当前控制台
+moss ui                  # 打开界面（双击 moss.exe / 快捷方式 / 快速启动栏也是这个）
 moss --history           # 最近的启动记录，方向键选、回车再跑一次
 moss -h                  # 完整用法
-moss --selfcheck         # 自检：安装根 / runner 表 / 包 / 自带运行时 / 配置
+moss --selfcheck         # 自检：安装根 / runner 表 / 包 / 自带运行时 / 启动方式 / 配置
 ```
+
+> **有没有参数决定干什么，有没有控制台决定怎么进来**：终端里敲 `moss` = 用法 + 包列表；
+> 终端里敲 `moss ui`（或双击、快捷方式、快速启动栏）= 界面；带参数（`moss :img 60%`）就一律按参数干活。
+> 打包用的是 `--windows-console-mode=hide`：产物仍是**控制台子系统**（所以在终端里 shell 会照常等它跑完，
+> `moss cd` / `--history` / 交互式包都正常），但双击/快捷方式启动时那个控制台窗口会被立刻藏掉 —— 不弹黑框。
 
 > 不带前缀的**裸名默认当路径**处理（`moss m` = 找文件）。如果你主要用途是「跑装好的包」，
 > 打开 `user_data\config.toml` 把 `plugin_mode` 留空、`path_mode` 填 `":"` —— 于是 `moss img` 直接跑包。
@@ -28,6 +34,7 @@ moss --selfcheck         # 自检：安装根 / runner 表 / 包 / 自带运行�
 | `moss.exe` | 打包产物（由 `core/` 编译而成，**构建出来的**） | ❌ 不进 |
 | `core/` | 内核：解析算法 / 执行引擎 / 内核协议 | ✅ |
 | `system/` | 出厂件：内置包、自带运行时、插件契约、runner 表 | ✅ |
+| `system/ui/` | 宿主界面（`main.py` + `index.html`，由自带运行时跑）**不在 exe 里，改它不用重新打包** | ✅ |
 | `system/runtimes/` | 自带 Python 运行时（181 MB / 7863 个文件） | ❌ 不进，用脚本拉 |
 | `system/pkgs/<id>/` | 内置包，每个包一个 `AGENT.md` | ✅ |
 | `user_data/` | **你的数据**：用户包、状态、历史、`config.toml` | ❌ 不进 |

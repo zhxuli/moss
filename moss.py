@@ -11,7 +11,7 @@ r"""moss 入口。
  打包命令（留在这里一份，方便直接看、直接粘）
 ════════════════════════════════════════════════════════════════════════
 
-    venv\Scripts\python.exe -m nuitka --onefile --lto=yes --remove-output --assume-yes-for-downloads --onefile-tempdir-spec="{CACHE_DIR}/moss_build/{TIME}" --windows-icon-from-ico=icon.ico --include-package=core -o moss moss.py
+    venv\Scripts\python.exe -m nuitka --onefile --lto=yes --remove-output --assume-yes-for-downloads --onefile-tempdir-spec="{CACHE_DIR}/moss_build/{TIME}" --windows-icon-from-ico=icon.ico --windows-console-mode=hide --include-package=core -o moss moss.py
 
 ★ 上面这一行和 `tools\build.py` 里实际执行的是**同一条命令**。
   `build.py` 每次开工前会**自动核对这一行**：对不上就直接报错停下，
@@ -39,6 +39,24 @@ r"""moss 入口。
 · **不要**加 `--include-data-dir`
   包（`system/pkgs`）刻意留在 exe 外面 —— 那是 `K-10` 内核最小化：
   加功能 = 丢一个目录，不用重编 exe。
+
+· `--windows-console-mode=hide`（`G-18` ✅，2026-09-27）
+  一个 exe 要同时当命令行程序和界面程序用，就靠这一档。
+  nuitka 四档的差别只在"要不要给它一个控制台窗口"：
+      force（默认）从终端启动就用那个终端，没有就**新建一个**（双击弹黑框）
+      disable      完全不用也不建控制台（终端里敲就什么都看不见）
+      attach       有现成的控制台就用它输出，没有就一个都不建
+      hide         新建的控制台**藏起来**；已有控制台（终端里敲）时与 force 相同
+                   ← 就是它
+  `hide` 下产物仍是**控制台子系统**，这一点至关重要：**PowerShell 对 GUI 子系统的
+  exe 根本不等**（实测 `attach` 档下 `moss ui` 0.04 秒就返回、窗口还在开），
+  而 `moss cd`（要靠父 shell 阻塞着才读得到注入进去的按键）、`--history` 的
+  方向键列表、`img` 那种命令行菜单**全都依赖"shell 在等我"**。
+  `hide` 两样都要到了：终端里一切照旧（连 Ctrl-C、交互输入都不变），
+  双击 / 快捷方式 / 快速启动栏启动时那个黑框在 bootstrap 阶段就被 `SW_HIDE` 掉
+  （判据是它当时是那个控制台上唯一的进程）。
+  判"我是不是被双击启动的"因此不能只看"有没有控制台"，还得看那个控制台窗口
+  是不是被藏起来的 —— 见 `core/shell.py:gui_mode()`。
 
 发行与自检
 ----------

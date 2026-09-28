@@ -24,7 +24,7 @@ import time
 import webbrowser
 from pathlib import Path
 
-from . import appearance, config, events, out, paths, runners as runners_mod
+from . import appearance, config, events, out, paths, runners as runners_mod, shell as shell_mod
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _DETACHED = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
@@ -285,6 +285,14 @@ def run(inv, runners_table, detach=False):
 
                 cflags = 0
                 if _hide_window(inv):
+                    cflags |= _NO_WINDOW
+                # ★ 界面模式（双击启动 / `moss ui`，见 `shell.gui_mode()`）下一律别让
+                #   子进程建控制台窗口（`E-27` ✅）：那时候去跑一个控制台程序
+                #   （python.exe / go run / cmd /c xxx.bat），会多出一个窗口 / 闪一下。
+                #   判据是"宿主自己处在什么模式"，不是去猜包想干什么：
+                #   终端里子进程继承父控制台（今天的行为，输出看得见），
+                #   界面模式下输出本来就无处可去（接 NUL / MOSS_RESULT_FILE）。
+                if shell_mod.gui_mode():
                     cflags |= _NO_WINDOW
                 if detach:
                     cflags |= _DETACHED | _NEW_GROUP

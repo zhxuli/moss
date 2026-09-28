@@ -167,6 +167,109 @@ def console_available():
     return True, "mode=0x%X" % mode.value
 
 
+# ================================================================ ② 启动方式
+# ★ 「从终端敲的」和「双击/快捷方式启动的」怎么分（`G-19` ✅，2026-09-27 实测）。
+#   主判据就是**父链上有没有 shell + 控制台是不是"给我新建并藏起来的"**。
+#   （`G-18` ✅ 的档位从 attach 改成了 hide：attach 的产物是 GUI 子系统，
+#     而 PowerShell 对 GUI 子系统的 exe **不等** —— `moss cd` / `--history` /
+#     命令行菜单都要靠"shell 在等我"才成立。见那一行的实测数据。）
+#   打包（`G-18` ✅ 最终档 = `hide`）：终端里敲 → 用的是终端那个控制台（shell 会等）；
+#       双击 / 快捷方式 / 快速启动栏 → 控制台是**为它新建**的，然后被 bootstrap 藏起来。
+#   第 55/56 版实测数据（探针见那两天的对话记录）：
+#       终端启动            控制台窗口=有且可见   sys.stdout 不是 None
+#       CREATE_NEW_CONSOLE  有               不是 None
+#       pythonw（GUI 子系统） 无              **是 None**
+#       经 explorer.exe 打开  无（双击那条路） **是 None**
+#       hide 档 + explorer    有但**不可见**  不是 None   ← 现在就是这条
+#   为什么不用 GetConsoleProcessList（"这个控制台上还挂着谁"）：它只能当旁证 ——
+#   venv 的 python.exe 会再套一层（实测新建控制台时该数是 2 不是 1）。
+_console_memo = []
+
+
+def has_console():
+    """moss 自己有没有真控制台。**一个进程里只问一次**（启动方式不会变）。
+
+    注意：`hide` 档下**双击启动也有控制台**（console 子系统 → Windows 建一个，
+    然后 bootstrap 把它藏起来）。所以"有没有控制台"只回答一半问题，
+    要判"是不是被双击启动"得看 `gui_mode()`。
+    """
+    if not _console_memo:
+        _console_memo.append(bool(console_available()[0]))
+    return _console_memo[0]
+
+
+_hidden_memo = []
+
+
+def console_is_hidden():
+    """自己那个控制台窗口是不是**被藏起来的**（= 它是为我新建的，不是我挂上去的）。
+
+    `--windows-console-mode=hide` 的 bootstrap 在"我独占这个控制台"时调
+    `ShowWindow(SW_HIDE)`（nuitka `OnefileBootstrap.c:1037` / `HelpersConsole.c:200`，
+    判据是 `GetConsoleProcessList() <= 1`，那时子进程还没生出来，所以判得准）。
+    于是：双击 / 快捷方式 / 快速启动栏启动 → **窗口不可见**；
+    终端里敲 → 那个窗口是终端自己的（可见，哪怕最小化也算可见）→ 不藏。
+    """
+    if not _hidden_memo:
+        hidden = False
+        if os.name == "nt":
+            try:
+                _k32.GetConsoleWindow.restype = ctypes.c_void_p   # 不设的话 64 位下句柄会被截断
+                _user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+                hwnd = _k32.GetConsoleWindow()
+                hidden = bool(hwnd) and not bool(_user32.IsWindowVisible(hwnd))
+            except Exception:
+                hidden = False
+        _hidden_memo.append(hidden)
+    return _hidden_memo[0]
+
+
+def gui_mode():
+    """是不是"被当成界面程序启动的"（双击 / 快捷方式 / 快速启动栏）—— `G-19` ✅。
+
+    三步判，顺序不能换：
+      ① **父进程链上有 shell** → 就是终端里敲出来的，**直接否掉**。
+         这一条必须排在最前面：Windows Terminal / VS Code / ConEmu 用的是
+         **ConPTY**，那种会话里 `GetConsoleWindow()` 拿到的是 conhost 的
+         **隐藏**窗口 —— 光看"窗口藏没藏"会把 WT 里的终端也判成双击（实测会）。
+      ② 没有 shell、**根本没有控制台**（attach / disable 档的处境）→ 是。
+      ③ 没有 shell、有控制台但**窗口是被藏起来的**（hide 档双击：bootstrap
+         发现这控制台是给自己新建的，`ShowWindow(SW_HIDE)`）→ 是。
+
+    终端里三问全落在①上，所以 `moss`（不带参数）照旧打用法 + 包列表。
+    """
+    if parent_shell() is not None:
+        return False
+    return (not has_console()) or console_is_hidden()
+
+
+def launcher_name(max_depth=12):
+    """父进程链上**第一个不是本程序**的进程名（小写）。找不到返回 ''。
+
+    只用于自检与提示 —— 判断"从终端启动"以 `has_console()` 为准，不要拿它当判据：
+    `explorer.exe` 是双击，但 `moss.exe` 被别的程序（编辑器、任务计划）拉起时
+    父进程名五花八门，逐个列举必然漏。
+    """
+    me = os.getpid()
+    for name, pid in parent_chain(max_depth):
+        if pid == me:
+            continue
+        return name
+    return ""
+
+
+def launch_kind():
+    """给自检和提示用的一句话：终端 / 界面（双击那条路）/ 管道。"""
+    if not has_console():
+        return "界面（没有控制台 —— 双击 / 快捷方式 / 快速启动栏）"
+    if console_is_hidden():
+        return "界面（控制台被新建后藏起来了 —— 双击 / 快捷方式 / 快速启动栏）"
+    shell_name = parent_shell()
+    if shell_name:
+        return "终端（父 shell: %s）" % shell_name
+    return "有控制台，但父链上没有 shell（可能是别的程序拉起的）"
+
+
 def cd_command(shell_name, path):
     """按 shell 生成那条"切目录"的命令。"""
     if shell_name == "cmd":

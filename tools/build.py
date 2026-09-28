@@ -164,6 +164,16 @@ def preflight():
         "--assume-yes-for-downloads",
         '--onefile-tempdir-spec={CACHE_DIR}/moss_build/{TIME}',
         "--windows-icon-from-ico=icon.ico",
+        # 一个 exe 同时当命令行程序和界面程序（G-18 ✅）：**控制台子系统**（终端里
+        # 一切照旧，shell 也会照常等它跑完），但那个控制台窗口如果是**为它新建的**
+        # （双击 / 快捷方式 / 快速启动栏），bootstrap 会把它藏起来 —— 所以双击不弹
+        # 黑框，而 `moss :md5 abc`、`moss cd`、`--history` 这些交互行为一个字没变。
+        #
+        # ★ 为什么不用 attach：attach 的产物是 **GUI 子系统**，而 PowerShell 对
+        #   GUI 子系统的 exe **不等**（实测 `moss ui` 0.04 秒就返回、窗口还在开），
+        #   于是 `moss cd`（要靠父 shell 阻塞着才读得到注入的按键）、`--history`
+        #   的方向键列表、img 那种命令行菜单全都会被"抢输入"。hide 两样都要到了。
+        "--windows-console-mode=hide",
         "--include-package=core",
         "-o", "moss",
         "moss.py",
