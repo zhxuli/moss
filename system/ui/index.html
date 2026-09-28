@@ -70,8 +70,9 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--
   color:var(--dim);cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:6px}
 .tab:hover{background:var(--hover)}
 .tab.active{background:var(--panel2);border-color:var(--line);color:var(--fg);font-weight:500}
-#tabcmd{margin-left:auto;color:var(--dim);font-family:var(--mono);font-size:12px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50%}
+#tabactions{margin-left:auto;display:flex;gap:6px;align-items:center;flex:none}
+#tabactions .iconbtn{padding:4px 10px}
+#tabactions .iconbtn .lamp{margin-right:1px}
 .pane{flex:1;min-height:0;display:none}
 .pane.on{display:flex;flex-direction:column}
 /* ★ 别写 `#pane-x{display:none}`：ID 选择器优先级高于 `.pane.on`，面板会永远 0×0 */
@@ -204,7 +205,6 @@ table.fb td.dim{color:var(--dim)}
 /* ---- 详情 ---- */
 h1{font-size:19px;margin:0 0 4px}
 .hd{display:flex;gap:14px;align-items:flex-start}
-.hd .actions{margin-left:auto;display:flex;gap:6px;flex:none}
 .bigico{width:44px;height:44px;flex:none;color:var(--dim)}
 .bigico svg,.bigico img{width:44px;height:44px}
 .chip{display:inline-block;padding:1px 8px;border-radius:20px;background:var(--panel2);
@@ -253,7 +253,6 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
   <div class="meta" id="meta"></div>
   <button id="btn-selfcheck" class="iconbtn" title="自检（moss --selfcheck）"></button>
   <button id="btn-refresh" class="iconbtn" title="刷新包列表"></button>
-  <button id="btn-quit" class="iconbtn" title="退出"></button>
 </header>
 
 <main>
@@ -263,7 +262,12 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
       <button class="tab active" data-tab="detail">详情</button>
       <button class="tab" data-tab="console">命令行<span class="lamp tiny" id="tablamp" data-state="idle"></span></button>
       <button class="tab" data-tab="file">文件管理</button>
-      <span id="tabcmd"></span>
+      <!-- ★ 状态灯 + 运行/停止 + 显示/隐藏 = 合成一组，钉在选项卡这一行的最右边：
+           不用先点开「详情」才能操作（你要求的），而且灯和按钮合成了一个控件。 -->
+      <div id="tabactions">
+        <button class="iconbtn" id="btn-run" disabled></button>
+        <button class="iconbtn" id="btn-vis" disabled></button>
+      </div>
     </div>
 
     <section class="pane on" id="pane-detail"><div class="empty">左边选一个包</div></section>
@@ -423,13 +427,7 @@ function paintStates(){
   if (sp) sp.classList.toggle("on", s.state === "running");
   const info = $("#outinfo");
   if (info && consoleWho) info.textContent = stateLabel(s);
-  const pill = $("#statuspill");
-  if (pill && cur){
-    const cs = stateOf(cur.id);
-    pill.querySelector(".lamp").dataset.state = cs.state;
-    const t = $("#statustext");
-    if (t) t.textContent = stateLabel(cs);
-  }
+  // 状态灯搬进"运行/停止"那个按钮里了（`paintActions` 管），这里不再管详情里的胶囊
 }
 function clearConsoleState(){
   consoleWho = null;
@@ -477,7 +475,6 @@ async function copyOut(){
   $("#outinfo").textContent = ok ? ("已复制 " + text.length + " 个字符")
                                  : "复制失败（可以手动选中后 Ctrl+C）";
 }
-function setCmd(t){ $("#tabcmd").textContent = t || ""; }
 
 /* ---------------------------------------------------------------- 运行 / 停止
    跑包不再是"一个阻塞调用"（那样跑起来就停不了，长驻的东西会把界面卡住）。
@@ -493,36 +490,40 @@ const PST = {};                 // 包 id -> {running, pids, windows, visible, t
 let pstTimer = null;
 
 async function refreshPkgState(p){
-  if (!p) return;
+  if (!p){ paintActions(null); return; }
   try{ PST[p.id] = await pywebview.api.pkg_state(p.id); }
   catch(e){ PST[p.id] = {running: false, windows: 0, visible: false}; }
   paintActions(p);
 }
 
+/* 状态灯 + 运行/停止 + 显示/隐藏：**一个控件**（灯就在按钮里）。
+   钉在选项卡那一行的最右边，所以不用先点开「详情」也能操作。 */
 function paintActions(p){
-  if (!cur || cur.id !== p.id) return;
-  const st = PST[p.id] || {running: false, windows: 0, visible: false};
-  const mine = !!(RUN && RUN.id === p.id);
+  const b = $("#btn-run"), v = $("#btn-vis");
+  if (!b || !v) return;
+  const st = (p && PST[p.id]) || {running: false, windows: 0, visible: false};
+  const mine = !!(p && RUN && RUN.id === p.id);
   const running = mine || !!st.running;
-  const b = $("#btn-run");
-  if (b){
-    b.innerHTML = running ? (ico("square", "i") + "<span>停止</span>")
-                          : (ico("play", "i") + "<span>运行</span>");
-    b.title = running
-      ? (mine ? "停掉这次运行（连同它拉起的子进程）"
-              : "停掉这个包正在跑的进程（它是从别处启动的）")
-      : "运行这个包（输出进「命令行」；参数留空 = 通常开界面）";
-    b.classList.toggle("warn", running);
-  }
-  const v = $("#btn-vis");
-  if (v){
-    v.innerHTML = ico(st.visible ? "eye-off" : "eye", "i");
-    v.disabled = !st.windows;
-    v.title = !st.windows
-      ? "这个包现在没有开着的窗口（先「运行」或「打开界面」）"
-      : (st.visible ? "隐藏它的窗口（不关掉，随时能再显示出来）"
-                    : "把它的窗口显示出来并叫到前面");
-  }
+  const inner = !p ? "idle"
+                   : (running ? "running"
+                              : (stateOf(p.id).state === "running" ? "idle" : stateOf(p.id).state));
+  b.disabled = !p;
+  b.innerHTML = '<span class="lamp" data-state="' + inner + '"></span>' +
+                ico(running ? "square" : "play", "i") +
+                '<span>' + (running ? "停止" : "运行") + '</span>';
+  b.title = !p ? "先在左边选一个包"
+               : ((running ? "停掉它（连同它拉起的子进程）"
+                           : "运行这个包，输出进「命令行」") +
+                  "　·　状态：" + (running ? "运行中" : stateLabel(stateOf(p.id))));
+  b.classList.toggle("warn", running);
+  v.disabled = !p || !st.windows;
+  v.innerHTML = ico(st.visible ? "eye-off" : "eye", "i") +
+                '<span>' + (st.visible ? "隐藏" : "显示") + '</span>';
+  v.title = !p ? "先在左边选一个包"
+               : (!st.windows
+                  ? "这个包现在没有开着的窗口（先「运行」或「打开界面」）"
+                  : (st.visible ? "隐藏它的窗口（不关掉，随时能再显示出来）"
+                                : "把它的窗口显示出来并叫到前面"));
 }
 
 async function clickRun(p){
@@ -532,7 +533,8 @@ async function clickRun(p){
   if (st.running){                       // 别处启动的：直接停掉它的进程
     const r = await pywebview.api.pkg_stop(p.id);
     toast(r.msg, !r.ok);
-    setTimeout(() => refreshPkgState(p), 500);
+    if (r.ok) setState(p.id, "warn", {note: "已停止"});
+    setTimeout(() => refreshPkgState(p), 400);
     return;
   }
   startRun(p, $("#args").value);
@@ -545,8 +547,7 @@ async function startRun(p, args){
   }
   const cmd = "moss :" + p.id + ((args || "").trim() ? " " + args.trim() : "");
   lastRun = {id: p.id, args: args, label: cmd};
-  setTab("console"); setCmd(cmd);
-  setState(p.id, "running");
+  setTab("console"); setState(p.id, "running");
   out("$ " + cmd);
   const r = await pywebview.api.run_start(p.id, args || "");
   if (!r.ok){ toast("✗ " + (r.msg || "启动失败"), true); setState(p.id, "fail", {code: -1}); return; }
@@ -569,11 +570,13 @@ function pollRun(){
 
 function finishRun(code, text){
   if (!RUN) return;
-  const id = RUN.id, cmd = RUN.cmd, p = cur;
+  const id = RUN.id, cmd = RUN.cmd, p = cur, stopped = !!RUN.stopped;
   clearTimeout(RUN.timer);
   RUN = null;
   out("$ " + cmd + "\n\n" + (text || "(这个包没有输出)") + "\n[退出码] " + code);
-  setState(id, code === 0 ? "ok" : "fail", {code: code});
+  // 我们自己按的停止不算"故障"（红）—— 是"已停止"（黄）
+  setState(id, stopped ? "warn" : (code === 0 ? "ok" : "fail"),
+           {code: code, note: stopped ? "已停止" : ""});
   renderDetail();
   // ★ 退出码回来了不等于"它没在跑" —— 有的包 fork 出界面自己就退了。
   //   所以状态以宿主那份为准（800ms 后再问一次）。
@@ -584,6 +587,8 @@ async function stopRun(){
   if (!RUN) return;
   const r = await pywebview.api.run_stop(RUN.rid);
   toast(r.msg, !r.ok);
+  if (RUN) RUN.stopped = true;           // 让 finishRun 别把它记成"故障"
+  setTimeout(() => { if (cur) refreshPkgState(cur); }, 500);
 }
 
 /* ---------------------------------------------------------------- 显示 / 隐藏
@@ -598,10 +603,11 @@ async function toggleVis(p){
   setTimeout(() => refreshPkgState(p), 400);
 }
 
-/* 详情页开着的时候，每 2.5 秒对一次状态（包可能是从别处启动/关掉的） */
+/* 详情页开着的时候，每 2.5 秒对一次状态（包可能是从别处启动/关掉的）
+   ★ 现在这组按钮钉在选项卡行上、任何时候都看得见，所以**不管在哪个选项卡都轮询**。 */
 function pkgPollStart(){
   if (pstTimer) return;
-  pstTimer = setInterval(() => { if (tab === "detail" && cur) refreshPkgState(cur); }, 2500);
+  pstTimer = setInterval(() => { if (cur) refreshPkgState(cur); }, 2500);
 }
 
 /* ---------------------------------------------------------------- 包列表 */
@@ -670,9 +676,7 @@ function renderDetail(){
       '<div class="sub">:' + esc(p.id) + '　v' + esc(p.version || "?") + '　' + esc(p.kind) +
         '　' + esc(p.layer) + ' 层' +
         (p.shadowed ? "　（遮住了 " + esc(p.shadowed) + " 层的同名包）" : "") + '</div>' +
-      '<div class="status" id="statuspill" data-state="' + st.state + '">' +
-        '<span class="lamp big" data-state="' + st.state + '"></span>' +
-        '<span id="statustext">' + esc(stateLabel(st)) + '</span></div></div>' +
+      '</div></div>' +
       // ★ 右侧动作：运行/停止（同一个按钮切换）+ 显示/隐藏这个包自己的界面窗口
       '<div class="actions">' +
         '<button class="iconbtn" id="btn-run"></button>' +
@@ -718,8 +722,8 @@ function renderDetail(){
   box.querySelectorAll(".chip.click").forEach(c => {
     c.onclick = () => { $("#args").value = c.dataset.args || ""; upd(); };
   });
-  // 右上角：跑着的时候是「停止」（状态问宿主，不问本地那份 RUN）
-  // ★ 这里**只能绑一次**：上一版遗留的那段老处理函数（先 disabled=true 再调阻塞式 run）
+  // 那组按钮现在钉在选项卡行上（paintActions 管），这里只挂钩子。
+  // ★ 只用绑一次：上一版遗留的那段老处理函数（先 disabled=true 再调阻塞式 run）
   //   还留在下面，正好把这一行覆盖掉 —— 表现就是"停止按钮是灰的、点了没反应"。
   paintActions(p);
   $("#btn-run").onclick = () => clickRun(p);
@@ -727,8 +731,7 @@ function renderDetail(){
   refreshPkgState(p);
   $("#btn-openui").onclick = async () => {
     const r = await pywebview.api.open_ui(p.id, $("#args").value);
-    setTab("console"); setCmd("moss :" + p.id);
-    setState(p.id, r.ok ? "warn" : "fail",
+    setTab("console"); setState(p.id, r.ok ? "warn" : "fail",
              {code: r.ok ? undefined : -1, note: r.ok ? "已后台启动 · 结果未知" : "启动失败"});
     out(r.msg || "");
     // 界面窗口要几秒才出来，等一会儿再问"它有没有窗口 / 在不在跑"
@@ -1424,22 +1427,21 @@ async function init(){
   fmRender();
 }
 function paintStaticIcons(){
+  // 注意：这里**没有"退出"按钮**了 —— 标题栏本来就有 ×，重复一个是我多做的（你指出的）
   $("#btn-selfcheck").innerHTML = ico("activity", "i");
   $("#btn-refresh").innerHTML   = ico("refresh-cw", "i");
-  $("#btn-quit").innerHTML      = ico("x", "i");
   $("#btn-copy").innerHTML      = ico("copy", "i");
   $("#btn-rerun").innerHTML     = ico("rotate-cw", "i");
   $("#btn-clear").innerHTML     = ico("eraser", "i");
 }
 $("#q").addEventListener("input", renderList);
 $("#btn-refresh").onclick = init;
-$("#btn-quit").onclick = () => pywebview.api.quit();
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
   if (b.dataset.tab === "file") fmSelect(cur ? cur.id : "__all__");
   else setTab(b.dataset.tab);
 });
 $("#btn-copy").onclick = copyOut;
-$("#btn-clear").onclick = () => { out(""); setCmd(""); clearConsoleState(); };
+$("#btn-clear").onclick = () => { out(""); clearConsoleState(); };
 $("#m-cancel").onclick = closeModal;
 $("#m-ok").onclick = () => { const cb = modalCb; closeModal(); if (cb) cb(); };
 $("#m-input").addEventListener("keydown", e => {
@@ -1451,7 +1453,7 @@ $("#btn-rerun").onclick = async () => {
   if (!lastRun || busy) return;
   busy = true;
   const btn = $("#btn-rerun"); btn.disabled = true;
-  setCmd(lastRun.label); setState(lastRun.id, "running");
+  setState(lastRun.id, "running");
   out("$ " + lastRun.label);
   const t0 = performance.now();
   const r = await pywebview.api.run(lastRun.id, lastRun.args);
@@ -1461,8 +1463,7 @@ $("#btn-rerun").onclick = async () => {
   btn.disabled = false; busy = false;
 };
 $("#btn-selfcheck").onclick = async () => {
-  setTab("console"); setCmd("moss --selfcheck");
-  setState("__host__", "running");
+  setTab("console"); setState("__host__", "running");
   out("$ moss --selfcheck");
   const t0 = performance.now();
   const r = await pywebview.api.run_host("--selfcheck");

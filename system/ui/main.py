@@ -218,12 +218,18 @@ def _pid_parents():
 
 
 def _with_descendants(roots):
-    """roots 以及它们的全部子孙 pid（包常常是"启动器 → 真身"两层甚至更多）。"""
+    """roots 以及它们的全部子孙 pid —— **只算还活着的**（包的启动器 → 真身常常两三层）。
+
+    ★ 必须按快照过滤掉死 pid：`roots` 是我们当初记下的 pid，进程退出后那个号
+      还留在表里；不过滤的话 `pkg_state` 会永远报"它还在跑" ——
+      **实测踩到**：点「停止」把图片工具退出了，按钮却一直显示"停止"不变回来。
+    """
     parents = _pid_parents()
+    alive = set(parents)
     kids = {}
     for pid, ppid in parents.items():
         kids.setdefault(ppid, []).append(pid)
-    seen, stack = set(), [int(r) for r in roots]
+    seen, stack = set(), [int(r) for r in roots if int(r) in alive]
     while stack:
         p = stack.pop()
         if p in seen:
@@ -297,7 +303,7 @@ def _env_pkg_id(pid):
 
 
 def _pkg_pids(pkg):
-    """属于这个包的进程：我们记的进程树 ∪ 环境变量里写着它的（只查"有窗口"的那些，省时间）。"""
+    """属于这个包的**还活着**的进程：我们记的进程树 ∪ 环境变量里写着它的（只查有窗口的，省时间）。"""
     pids = set()
     roots = _pkg_procs.get(str(pkg)) or set()
     if roots:
