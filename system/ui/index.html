@@ -244,11 +244,25 @@ table.fb td.dim{color:var(--dim)}
 #ctxmenu .mi.dis{opacity:.4;cursor:default}
 #ctxmenu .mi.dis:hover{background:transparent}
 #ctxmenu .sep{height:1px;background:var(--line2);margin:4px 6px}
-/* ---- 详情 ---- */
-h1{font-size:19px;margin:0 0 4px}
-.hd{display:flex;gap:14px;align-items:flex-start}
-.bigico{width:44px;height:44px;flex:none;color:var(--dim)}
-.bigico svg,.bigico img{width:44px;height:44px}
+/* ---- 详情（包 / 历史共用一套骨架）----
+   ★ 两条排版原则：**限宽** + **分块**。
+     之前是"一大片文字从上铺到底、每块都拉满整行"：窗口一宽，参数表铺到 1000px、
+     输入框 620px、"卸载"的说明和按钮之间空出一大片 —— 看着就是你说的「乱糟糟」。
+     现在：内容最多 780px 宽；每个小节是一张**卡片**（底色 + 描边 + 圆角），
+     小节标题缩成卡片里的小标签；表格去掉外圈、只留行分隔线。 */
+#pane-detail{overflow:auto;padding:0}
+/* ★ 限宽 + 居中：右侧面板通常比 820 宽得多，靠左贴边会让内容挤在左边、右边空一大片
+   （那还是"乱"）。居中之后左右留白对称，看着是「有意排版」而不是「没排」。 */
+.dwrap{max-width:820px;margin:0 auto;padding:18px 24px 40px}
+h1{font-size:20px;margin:0 0 4px;line-height:1.3}
+.hd{display:flex;gap:14px;align-items:flex-start;padding-bottom:14px;
+  border-bottom:1px solid var(--line2)}
+.bigico{width:42px;height:42px;flex:none;color:var(--dim)}
+.bigico svg,.bigico img{width:42px;height:42px}
+/* 标题底下那行小字（历史是完整路径；包是版本·类型·层）。**要能折行** ——
+   别套列表那套 `nowrap` + 省略号，长路径会被悄悄截掉。 */
+.lead{color:var(--dim);font-size:12.5px;line-height:1.6;word-break:break-all;margin-top:4px}
+.hd p{margin:12px 0 0;line-height:1.6;word-break:break-word}
 .chip{display:inline-block;padding:2px 9px;border-radius:20px;background:var(--panel2);
   border:1px solid var(--line);font-size:12px;color:var(--dim);margin:0 6px 6px 0}
 /* ★ chip 里放图标时**必须把它拉回行内**：全局那条 `svg.i{display:block}` 会让
@@ -257,14 +271,25 @@ h1{font-size:19px;margin:0 0 4px}
 .chip svg.i{display:inline-block;vertical-align:-3px;margin-right:5px}
 .chip.click{cursor:pointer;font-family:var(--mono)}
 .chip.click:hover{border-color:var(--accent);color:var(--accent)}
-table.p{width:100%;border-collapse:collapse;margin:6px 0 12px;font-size:13px}
-table.p th,table.p td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line2);vertical-align:top}
+/* 小节 = 一张卡片 */
+.sec{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:12px 14px;margin-top:12px}
+.sec > h2{font-size:12px;color:var(--dim);margin:0 0 9px;font-weight:600}
+.sec.danger{border-color:#e6b8b8}
+table.p{width:100%;border-collapse:collapse;font-size:13px}
+table.p th,table.p td{text-align:left;padding:6px 8px;vertical-align:top}
+table.p tbody tr + tr th,table.p tbody tr + tr td{border-top:1px solid var(--line2)}
 table.p th{color:var(--dim);font-weight:500}
+table.p thead th{border-bottom:1px solid var(--line2);font-size:12px}
+/* 参数表：名称/类型/必填 三列定宽，剩下的都给「说明」—— 不定宽的话说明会被挤到
+   最右边、中间空一大段（以前就是这个样子）。 */
+table.p.ptab th:nth-child(1),table.p.ptab td:nth-child(1){width:150px}
+table.p.ptab th:nth-child(2),table.p.ptab td:nth-child(2){width:70px}
+table.p.ptab th:nth-child(3),table.p.ptab td:nth-child(3){width:54px}
 code,.mono{font-family:var(--mono);font-size:12.5px}
-/* 小标题。★ 不要 `letter-spacing` / `text-transform:uppercase` —— 那套是给英文
-   小标签设计的，套在中文上「参数」「例子」「卸载」会被拉成「参 数」「例 子」，很丑。 */
-.sec{margin-top:18px}
-.sec h2{font-size:12px;color:var(--dim);margin:0 0 7px;font-weight:600}
+/* 卡片里"左边说明、右边动作"那一行：按钮靠右，说明不再无限撑开 */
+.row-split{display:flex;gap:12px;align-items:center;justify-content:space-between}
+.row-split .hint{margin-top:0;flex:1 1 auto;min-width:0}
 .row-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 /* ★ 两个详情各有一个参数框：包详情是 `#args`，历史详情是 `#hargs`。
    原来只写了 `#args` ⇒ 历史那边的输入框是**浏览器默认样式**（细边、字被挤），
@@ -1077,29 +1102,28 @@ function renderDetail(){
   if (!who){ box.innerHTML = '<div class="empty">左边选一个包，或者一条历史</div>'; return; }
   if (isHist(who)) return renderDetailHist(who, box);
   const p = cur, params = p.params || [];
-  let html = '<div class="hd">' + iconHTML(p, "bigico") +
+  let html = '<div class="dwrap"><div class="hd">' + iconHTML(p, "bigico") +
       '<div style="min-width:0"><h1>' + esc(p.name) + '</h1>' +
-      '<div class="sub">:' + esc(p.id) + '　v' + esc(p.version || "?") + '　' + esc(p.kind) +
-        '　' + esc(p.layer) + ' 层' +
-        (p.shadowed ? "　（遮住了 " + esc(p.shadowed) + " 层的同名包）" : "") + '</div>' +
+      '<div class="lead">:' + esc(p.id) + ' · v' + esc(p.version || "?") + ' · ' + esc(p.kind) +
+        ' · ' + esc(p.layer) + ' 层' +
+        (p.shadowed ? " · 遮住了 " + esc(p.shadowed) + " 层的同名包" : "") + '</div>' +
       '</div></div>' +
     // ★ 这里**不要再建 #btn-run / #btn-vis**：它们已经钉在选项卡那一行上了。
     //   上次挪位置时把这段留下了 —— 结果是同一对 id 在页面里出现两次，
     //   `$("#btn-run")` 只会命中先出现的那个，详情里这两个永远空着（你看到的"两个空元素"）。
-    '<p style="margin:12px 0 4px">' + esc(p.desc) + '</p><div>' +
+    '<p class="lead" style="margin:14px 0 10px">' + esc(p.desc) + '</p><div>' +
       (p.aliases||[]).map(a => '<span class="chip">:' + esc(a) + '</span>').join("") +
       (p.tags||[]).map(t => '<span class="chip">' + esc(t) + '</span>').join("") +
       (p.ai_expose ? '<span class="chip">AI 可调用 · 风险 ' + esc(p.ai_risk || "?") + '</span>' : "") +
     '</div>';
   if (params.length){
-    html += '<div class="sec"><h2>参数</h2><table class="p">' +
-      '<tr><th style="width:120px">名称</th><th style="width:70px">类型</th>' +
-      '<th style="width:60px">必填</th><th>说明</th></tr>' +
+    html += '<div class="sec"><h2>参数</h2><table class="p ptab"><thead>' +
+      '<tr><th>名称</th><th>类型</th><th>必填</th><th>说明</th></tr></thead><tbody>' +
       params.map(pa => '<tr><td class="mono">' + esc(pa.name) +
         (pa.rest ? ' <span class="chip">rest</span>' : "") + '</td><td class="mono">' +
         esc(pa.type || "string") + '</td><td>' + (pa.required ? "是" : "否") + '</td><td>' +
         esc(pa.desc || "") + (pa.placeholder ? '<div class="sub">例：' + esc(pa.placeholder) + '</div>' : "") +
-        '</td></tr>').join("") + '</table></div>';
+        '</td></tr>').join("") + '</tbody></table></div>';
   }
   if ((p.examples || []).length){
     html += '<div class="sec"><h2>例子（点一下填进参数框）</h2><div>' +
@@ -1113,11 +1137,11 @@ function renderDetail(){
       '<div class="hint">命令预览：<span class="mono" id="preview"></span>' +
       '　·　右上角是「运行 / 停止」</div></div>' +
     // ★ 卸载放在最后单独一块（危险操作不跟"跑一下"混在一起）
-    '<div class="sec"><h2>卸载</h2><div class="row-inline">' +
-      '<span class="hint" style="flex:1;margin-top:0">真删：包本体 + 它的数据（不进回收站）</span>' +
+    '<div class="sec danger"><h2>卸载</h2><div class="row-split">' +
+      '<span class="hint">真删：包本体 + 它的数据（不进回收站）</span>' +
       '<button class="iconbtn warn" id="btn-remove" title="卸载这个包（moss --remove）">' +
         ico("trash-2", "i") + '<span>卸载</span></button>' +
-    '</div></div>';
+    '</div></div></div>';
   box.innerHTML = html;
   const upd = () => {
     $("#preview").textContent = "moss :" + p.id +
@@ -1160,9 +1184,9 @@ function renderDetailHist(it, box){
   if (it.args) rows.push(["参数", it.args, ""]);
   if (when) rows.push(["时间", when, ""]);
   if (it.exit !== null && it.exit !== undefined) rows.push(["上次退出码", String(it.exit), ""]);
-  let html = '<div class="hd">' + histIconHTML(it, "bigico") +
+  let html = '<div class="dwrap"><div class="hd">' + histIconHTML(it, "bigico") +
       '<div style="min-width:0"><h1>' + esc(it.name) + '</h1>' +
-      '<div class="sub mono">' + esc(it.target || "") + '</div>' +
+      '<div class="lead mono">' + esc(it.target || "") + '</div>' +
       '</div></div>';
   if (gone){
     html += '<div class="warnbox">' + ico("alert-triangle", "i") +
@@ -1181,16 +1205,16 @@ function renderDetailHist(it, box){
         ico("folder-open", "i") + '<span>打开所在目录</span></button></div>' +
       '<div class="hint">命令预览：<span class="mono" id="hpreview"></span></div></div>';
   if (rows.length){
-    html += '<div class="sec"><h2>这条记录</h2><table class="p">' +
+    html += '<div class="sec"><h2>这条记录</h2><table class="p"><tbody>' +
       rows.map(r => '<tr><th style="width:88px">' + esc(r[0]) + '</th><td class="mono">' +
         esc(r[1]) + (r[2] ? ' <span class="dim">' + esc(r[2]) + '</span>' : "") +
-        '</td></tr>').join("") + '</table></div>';
+        '</td></tr>').join("") + '</tbody></table></div>';
   }
-  html += '<div class="sec"><h2>删除</h2><div class="row-inline">' +
-      '<span class="hint" style="flex:1;margin-top:0">只删这条<b>记录</b>，那个文件本身不动</span>' +
+  html += '<div class="sec danger"><h2>删除</h2><div class="row-split">' +
+      '<span class="hint">只删这条<b>记录</b>，那个文件本身不动</span>' +
       '<button class="iconbtn warn" id="btn-forget" title="从历史里删掉这条记录">' +
         ico("trash-2", "i") + '<span>删除这条记录</span></button>' +
-    '</div></div>';
+    '</div></div></div>';
   box.innerHTML = html;
 
   const upd = () => {
