@@ -11,6 +11,14 @@
   --hover:#f0f0f4; --sel:#e8f1ff; --out-bg:#14161a; --out-fg:#d7dae0;
   --code-bg:#fbfbfd; --field-focus:rgba(10,132,255,.20);
   --mono: ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,monospace;
+  /* ---- Apple 那套「标签色阶 + 填充色阶」----
+     苹果的层级不是靠边框画的，而是靠**三档标签色**（label / secondary / tertiary）
+     和**四档填充**（fill / secondaryFill / tertiaryFill / quaternaryFill）。
+     只有 `--fg` 是正文，`--dim` 次要，`--dim2` 再退一档（小节标签、脚注）；
+     填充色统一用中性灰的透明度，**不画 1px 边框** —— 满屏描边正是"网页感"的来源。 */
+  --dim2:#8e8e96;
+  --fill:rgba(120,120,128,.10); --fill2:rgba(120,120,128,.18);
+  --group:#fff; --hair:rgba(60,60,67,.10);
   /* 语法配色照抄 exec（GitHub 那套浅/深色） */
   --syn-comment:#6e7781; --syn-keyword:#cf222e; --syn-string:#0a3069;
   --syn-number:#0550ae;  --syn-title:#8250df;   --syn-builtin:#953800;
@@ -20,9 +28,17 @@
   :root{ --bg:#16181d; --panel:#1d2026; --panel2:#22252c; --line:#2c3038; --line2:#262a31;
          --fg:#e8eaed; --dim:#9aa0aa; --hover:#262a31; --sel:#1f2c3d; --out-bg:#0f1114;
          --out-fg:#c9ced6; --code-bg:#1b1e24; --field-focus:rgba(10,132,255,.28);
+         --dim2:#797f89;
+         --fill:rgba(120,120,128,.22); --fill2:rgba(120,120,128,.34);
+         --group:#1d2026; --hair:rgba(255,255,255,.09);
          --syn-comment:#8b949e; --syn-keyword:#ff7b72; --syn-string:#a5d6ff;
          --syn-number:#79c0ff;  --syn-title:#d2a8ff;   --syn-builtin:#ffa657;
          --syn-attr:#79c0ff;    --syn-meta:#8b949e; }
+}
+@media (prefers-reduced-motion: reduce){
+  /* 系统里关了动效就别缩放/位移，但**保留颜色类反馈**（那不影响前庭） */
+  *{animation-duration:.01ms !important;transition-duration:.01ms !important}
+  .iconbtn:active,.tab:active{transform:none !important}
 }
 *{box-sizing:border-box}
 /* ★ 必须有这条兜底：`display:flex` 之类会压过浏览器默认的 `[hidden]{display:none}`，
@@ -33,23 +49,35 @@ body{margin:0;height:100vh;display:flex;flex-direction:column;overflow:hidden;
   font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
   color:var(--fg);background:var(--bg)}
 svg.i{width:16px;height:16px;flex:none;display:block}
+/* 按钮：**填充，不描边**。满屏 1px 描边是"网页后台"的味道；
+   苹果的工具栏按钮是"平时没有底、指上去浮一层灰、按下去缩一下"。 */
 .iconbtn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  padding:6px 8px;min-width:32px;border-radius:8px;border:1px solid var(--line);
-  background:var(--panel2);color:var(--fg);cursor:pointer;font:inherit}
-.iconbtn:hover{background:var(--hover)}
-.iconbtn:disabled{opacity:.4;cursor:default}
-.iconbtn.warn:hover{border-color:#d64545;color:#d64545}
+  padding:6px 9px;min-width:32px;border-radius:8px;border:0;
+  background:var(--fill);color:var(--fg);cursor:pointer;font:inherit;font-size:13px;
+  transition:background .12s ease-out,transform .10s ease-out,color .12s ease-out}
+.iconbtn:hover{background:var(--fill2)}
+.iconbtn:active{transform:scale(.97)}
+.iconbtn:disabled{opacity:.38;cursor:default;transform:none}
+.iconbtn.warn{color:#d64545}
+.iconbtn.warn:hover{background:color-mix(in srgb, #d64545 14%, transparent)}
+/* 「运行」是这一屏的主动作 → 蓝底；跑起来之后变成灰底的「停止」（图标是绿的，
+   颜色仍然只表达"在跑 / 没在跑"，这是你定的）。详情里那个「运行」也走同一套。 */
+.iconbtn.primary{background:var(--accent);color:var(--accent-fg)}
+.iconbtn.primary:hover{background:var(--accent);filter:brightness(1.06)}
 header{display:flex;align-items:center;gap:10px;padding:9px 14px;
-  border-bottom:1px solid var(--line);background:var(--panel);flex:none}
+  border-bottom:1px solid var(--hair);background:var(--panel);flex:none}
 .brand{font-weight:600;display:flex;align-items:center;gap:7px}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--accent)}
-#q{width:230px;padding:7px 11px;border-radius:9px;border:1px solid var(--line);
-  background:var(--panel2);color:var(--fg);outline:none}
-#q:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
-.meta{flex:1;color:var(--dim);font-size:12px;overflow:hidden;
-  text-overflow:ellipsis;white-space:nowrap;text-align:right}
+/* 搜索框也走"填充式"：平时没边，聚焦给一圈柔和 accent */
+#q{width:230px;padding:6px 11px;border-radius:8px;border:0;
+  background:var(--fill);color:var(--fg);outline:none;
+  transition:background .12s ease-out,box-shadow .12s ease-out}
+#q:focus{background:var(--group);box-shadow:0 0 0 3.5px var(--field-focus)}
+#q::placeholder{color:var(--dim2)}
+.meta{flex:1;color:var(--dim2);font-size:11.5px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;text-align:right;letter-spacing:.01em}
 main{flex:1;display:flex;min-height:0}
-aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--panel);
+aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--panel);
   display:flex;flex-direction:column;min-height:0}
 #list{flex:1;overflow:auto;min-height:0}
 #hist{flex:1;overflow:auto;min-height:0}
@@ -86,23 +114,25 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--
 .hint{color:var(--dim);font-size:12px;line-height:1.6;margin-top:8px;word-break:break-all}
 .hint .mono{font-size:11.5px}
 #right{flex:1;display:flex;flex-direction:column;min-width:0}
-#tabs{display:flex;gap:4px;align-items:center;padding:7px 12px;flex:none;
-  border-bottom:1px solid var(--line);background:var(--panel)}
-.tab{padding:5px 13px;border-radius:8px;border:1px solid transparent;background:transparent;
-  color:var(--dim);cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:6px}
-.tab:hover{background:var(--hover)}
-.tab.active{background:var(--panel2);border-color:var(--line);color:var(--fg);font-weight:500}
+#tabs{display:flex;gap:2px;align-items:center;padding:7px 12px;flex:none;
+  border-bottom:1px solid var(--hair);background:var(--panel)}
+/* 选项卡 = 苹果的"分段控件"：选中的那一段是一块**填充**，不是画个框 */
+.tab{padding:5px 12px;border-radius:8px;border:0;background:transparent;
+  color:var(--dim);cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:6px;
+  transition:background .12s ease-out,color .12s ease-out,transform .10s ease-out}
+.tab:hover{background:var(--fill);color:var(--fg)}
+.tab:active{transform:scale(.98)}
+.tab.active{background:var(--fill);color:var(--fg);font-weight:500}
 #tabactions{margin-left:auto;display:flex;gap:6px;align-items:center;flex:none}
-#tabactions .iconbtn{padding:4px 10px}
+#tabactions .iconbtn{padding:4px 11px}
 .pane{flex:1;min-height:0;display:none}
 .pane.on{display:flex;flex-direction:column}
 /* ★ 别写 `#pane-x{display:none}`：ID 选择器优先级高于 `.pane.on`，面板会永远 0×0 */
-#pane-detail{overflow:auto;padding:18px 22px}
 #pane-detail.on{display:block}
 #pane-console.on{display:flex;flex-direction:column}
 #pane-file.on{display:flex;flex-direction:column}
 .outbar{display:flex;gap:6px;align-items:center;padding:6px 12px;flex:none;
-  border-bottom:1px solid var(--line2);background:var(--panel);color:var(--dim);font-size:12px}
+  border-bottom:1px solid var(--hair);background:var(--panel);color:var(--dim);font-size:12px}
 .outbar .iconbtn{padding:4px 6px;min-width:28px}
 #out{flex:1;overflow:auto;margin:0;padding:12px 14px;background:var(--out-bg);
   color:var(--out-fg);font-family:var(--mono);font-size:13px;line-height:1.55;
@@ -245,51 +275,102 @@ table.fb td.dim{color:var(--dim)}
 #ctxmenu .mi.dis:hover{background:transparent}
 #ctxmenu .sep{height:1px;background:var(--line2);margin:4px 6px}
 /* ---- 详情（包 / 历史共用一套骨架）----
-   ★ 两条排版原则：**限宽** + **分块**。
-     之前是"一大片文字从上铺到底、每块都拉满整行"：窗口一宽，参数表铺到 1000px、
-     输入框 620px、"卸载"的说明和按钮之间空出一大片 —— 看着就是你说的「乱糟糟」。
-     现在：内容最多 780px 宽；每个小节是一张**卡片**（底色 + 描边 + 圆角），
-     小节标题缩成卡片里的小标签；表格去掉外圈、只留行分隔线。 */
+   ★ 这一版是按**苹果的设计原则**重做的，不是"多加几个圆角框"：
+   1. **层级靠留白和字重，不靠描边** —— 上一版给每小节画了 1px 边框，
+      满屏线条正是"网页感"。现在整页只在「组与组之间」留白，
+      组内才有一条条**内缩的发丝线**（像 iOS 设置那样不顶到边）。
+   2. **标签色阶三档**：正文 `--fg` / 次要 `--dim` / 再退一档 `--dim2`（小节标签、脚注）。
+      上一版这些全是同一个灰，于是"什么都一样重要" = 什么都看不清。
+   3. **字号阶梯 + 字距**：标题 22px 且**负字距**（字大了字距不收就散）、
+      正文 13.5px 接近 0、小节标签 11.5px 略正 —— 苹果的 tracking 是随字号变的，
+      写死一个值必然有一档是错的。
+   4. **反馈在按下那一瞬间**（`pointer-down` 就缩放），不是松手才动。
+   5. 参数表从"四列表格"改成**一行一个参数**（名字 + 类型后缀，说明在下一行）——
+      表格是"看数据"的形状，这里是"读说明"的形状。
+*/
 #pane-detail{overflow:auto;padding:0}
-/* ★ 限宽 + 居中：右侧面板通常比 820 宽得多，靠左贴边会让内容挤在左边、右边空一大片
-   （那还是"乱"）。居中之后左右留白对称，看着是「有意排版」而不是「没排」。 */
-.dwrap{max-width:820px;margin:0 auto;padding:18px 24px 40px}
-h1{font-size:20px;margin:0 0 4px;line-height:1.3}
-.hd{display:flex;gap:14px;align-items:flex-start;padding-bottom:14px;
-  border-bottom:1px solid var(--line2)}
-.bigico{width:42px;height:42px;flex:none;color:var(--dim)}
-.bigico svg,.bigico img{width:42px;height:42px}
-/* 标题底下那行小字（历史是完整路径；包是版本·类型·层）。**要能折行** ——
-   别套列表那套 `nowrap` + 省略号，长路径会被悄悄截掉。 */
-.lead{color:var(--dim);font-size:12.5px;line-height:1.6;word-break:break-all;margin-top:4px}
-.hd p{margin:12px 0 0;line-height:1.6;word-break:break-word}
-.chip{display:inline-block;padding:2px 9px;border-radius:20px;background:var(--panel2);
-  border:1px solid var(--line);font-size:12px;color:var(--dim);margin:0 6px 6px 0}
-/* ★ chip 里放图标时**必须把它拉回行内**：全局那条 `svg.i{display:block}` 会让
-   图标自己占一行，后面的文字掉到第二行 —— 历史详情里那个「📁 / 地址」就是这么断的
-   （你看到的"图标和后面的地址有不正确的换行"）。 */
-.chip svg.i{display:inline-block;vertical-align:-3px;margin-right:5px}
-.chip.click{cursor:pointer;font-family:var(--mono)}
-.chip.click:hover{border-color:var(--accent);color:var(--accent)}
-/* 小节 = 一张卡片 */
-.sec{background:var(--panel);border:1px solid var(--line);border-radius:12px;
-  padding:12px 14px;margin-top:12px}
-.sec > h2{font-size:12px;color:var(--dim);margin:0 0 9px;font-weight:600}
-.sec.danger{border-color:#e6b8b8}
+.dwrap{max-width:720px;margin:0 auto;padding:22px 28px 48px}
+
+/* ---------- 头部：大标题 + 一行次要信息 ---------- */
+.hd{display:flex;gap:14px;align-items:center}
+h1{font-size:22px;line-height:1.25;margin:0;font-weight:600;letter-spacing:-.02em}
+.bigico{width:40px;height:40px;flex:none;color:var(--dim)}
+.bigico svg,.bigico img{width:40px;height:40px}
+.lead{color:var(--dim);font-size:12.5px;line-height:1.5;margin-top:3px;
+  word-break:break-all;letter-spacing:0}
+.desc{margin:14px 0 0;color:var(--fg);font-size:13.5px;line-height:1.62;
+  word-break:break-word}
+
+/* ---------- 组：标签在外面，内容在一张无边框的圆角面上 ---------- */
+.grp{margin-top:22px}
+.glabel{color:var(--dim2);font-size:11.5px;font-weight:600;letter-spacing:.02em;
+  margin:0 0 7px 3px}
+.gbody{background:var(--group);border-radius:11px;overflow:hidden}
+.grow{padding:11px 14px;font-size:13.5px;line-height:1.55}
+/* 组内的分隔线**内缩**（左边留出 14px，和文字对齐）—— 顶到边的线是"框" */
+.grow + .grow{position:relative}
+.grow + .grow::before{content:"";position:absolute;left:14px;right:0;top:0;height:1px;
+  background:var(--hair)}
+.grp.danger .glabel{color:#c0392b}
+.grp.danger .gbody{background:color-mix(in srgb, #d64545 7%, var(--group))}
+
+/* 组里"标签 : 值"那种一行（别名 / 标签 / 工作目录 …） */
+.kv{display:flex;gap:14px;align-items:baseline}
+.kv .k{flex:none;width:74px;color:var(--dim2);font-size:12px;letter-spacing:.01em}
+.kv .v{min-width:0;flex:1;word-break:break-all}
+.kv .v.dim{color:var(--dim);font-size:12.5px}
+
+/* ---------- 参数：一行一个，不是表格 ---------- */
+.prow .pname{font-family:var(--mono);font-size:13px}
+.prow .ptype{font-family:inherit;color:var(--dim2);font-size:11.5px;margin-left:7px;
+  letter-spacing:.01em}
+.prow .pneed{color:var(--dim2);font-size:11.5px;margin-left:6px}
+.prow .pdesc{color:var(--dim);font-size:12.5px;line-height:1.6;margin-top:3px}
+.prow .pex{color:var(--dim2);font-size:12px;line-height:1.6;margin-top:3px;
+  font-family:var(--mono);word-break:break-all}
+
+/* ---------- 按钮：填充而不是描边；按下就缩 ---------- */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border:0;
+  border-radius:8px;background:var(--fill);color:var(--fg);font:inherit;font-size:13px;
+  cursor:pointer;transition:background .12s ease-out,transform .10s ease-out}
+.btn:hover{background:var(--fill2)}
+.btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.38;cursor:default;transform:none}
+.btn.primary{background:var(--accent);color:var(--accent-fg)}
+.btn.primary:hover{background:var(--accent);filter:brightness(1.06)}
+.btn.tint{color:var(--accent)}
+.btn.tint.warn{color:#d64545}
+.btn.tint.warn:hover{background:color-mix(in srgb, #d64545 12%, transparent)}
+
+/* ---------- 可点的小药丸（例子）：填充式，无描边 ---------- */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{padding:3px 10px;border-radius:7px;background:var(--fill);color:var(--fg);
+  font-size:12px;border:0;cursor:pointer;font-family:var(--mono);
+  transition:background .12s ease-out,transform .10s ease-out}
+.chip:hover{background:var(--fill2)}
+.chip:active{transform:scale(.97)}
+
+/* 输入框：填充式，聚焦给一圈柔和 accent（不是粗描边） */
+#args,#hargs{flex:1;min-width:180px;max-width:420px;padding:7px 11px;border-radius:8px;
+  border:0;background:var(--fill);color:var(--fg);font-family:var(--mono);font-size:12.5px;
+  outline:none;transition:box-shadow .12s ease-out,background .12s ease-out}
+#args:focus,#hargs:focus{background:var(--group);box-shadow:0 0 0 3.5px var(--field-focus)}
+#args::placeholder,#hargs::placeholder{color:var(--dim2)}
+
+.row-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row-split{display:flex;gap:12px;align-items:center;justify-content:space-between}
+.row-split .hint{margin-top:0;flex:1 1 auto;min-width:0}
+.hint{color:var(--dim2);font-size:12px;line-height:1.6;margin-top:8px;word-break:break-all}
+.hint .mono{font-size:11.5px}
+.warnbox{display:flex;gap:8px;align-items:flex-start;margin-top:14px;padding:10px 13px;
+  border-radius:10px;background:color-mix(in srgb, #e0a800 14%, var(--group));
+  color:var(--fg);font-size:12.5px;line-height:1.6}
+.warnbox svg.i{color:#b8860b;margin-top:2px;flex:none}
+code,.mono{font-family:var(--mono);font-size:12.5px}
 table.p{width:100%;border-collapse:collapse;font-size:13px}
 table.p th,table.p td{text-align:left;padding:6px 8px;vertical-align:top}
 table.p tbody tr + tr th,table.p tbody tr + tr td{border-top:1px solid var(--line2)}
 table.p th{color:var(--dim);font-weight:500}
-table.p thead th{border-bottom:1px solid var(--line2);font-size:12px}
-/* 参数表：名称/类型/必填 三列定宽，剩下的都给「说明」—— 不定宽的话说明会被挤到
-   最右边、中间空一大段（以前就是这个样子）。 */
-table.p.ptab th:nth-child(1),table.p.ptab td:nth-child(1){width:150px}
-table.p.ptab th:nth-child(2),table.p.ptab td:nth-child(2){width:70px}
-table.p.ptab th:nth-child(3),table.p.ptab td:nth-child(3){width:54px}
-code,.mono{font-family:var(--mono);font-size:12.5px}
-/* 卡片里"左边说明、右边动作"那一行：按钮靠右，说明不再无限撑开 */
-.row-split{display:flex;gap:12px;align-items:center;justify-content:space-between}
-.row-split .hint{margin-top:0;flex:1 1 auto;min-width:0}
 .row-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 /* ★ 两个详情各有一个参数框：包详情是 `#args`，历史详情是 `#hargs`。
    原来只写了 `#args` ⇒ 历史那边的输入框是**浏览器默认样式**（细边、字被挤），
@@ -685,6 +766,7 @@ function paintActions(p){
     b.title = gone ? "这个文件已经不在了，跑不了"
                    : (running ? "停掉这次调用（连同它的子进程）"
                               : "在它当初的目录里再跑一次（输出进「命令行」）");
+    b.classList.toggle("primary", !running && !gone);   // 主动作 = 蓝底；跑着的时候是灰底
     b.classList.toggle("warn", running);
     v.disabled = true;
     v.innerHTML = ico("eye", "i") + '<span>显示</span>';
@@ -701,6 +783,7 @@ function paintActions(p){
   b.title = !p ? "先在左边选一个包或一条历史"
                : (running ? "停掉它（连同它拉起的子进程）"
                           : "运行这个包，输出进「命令行」");
+  b.classList.toggle("primary", !running && !!p);
   b.classList.toggle("warn", running);
   v.disabled = !p || !st.windows;
   v.innerHTML = ico(st.visible ? "eye-off" : "eye", "i") +
@@ -1102,46 +1185,64 @@ function renderDetail(){
   if (!who){ box.innerHTML = '<div class="empty">左边选一个包，或者一条历史</div>'; return; }
   if (isHist(who)) return renderDetailHist(who, box);
   const p = cur, params = p.params || [];
+  const kv = (k, v, dim) => '<div class="grow kv"><span class="k">' + esc(k) +
+    '</span><span class="v' + (dim ? ' dim' : '') + '">' + v + '</span></div>';
   let html = '<div class="dwrap"><div class="hd">' + iconHTML(p, "bigico") +
       '<div style="min-width:0"><h1>' + esc(p.name) + '</h1>' +
-      '<div class="lead">:' + esc(p.id) + ' · v' + esc(p.version || "?") + ' · ' + esc(p.kind) +
-        ' · ' + esc(p.layer) + ' 层' +
-        (p.shadowed ? " · 遮住了 " + esc(p.shadowed) + " 层的同名包" : "") + '</div>' +
+      '<div class="lead">:' + esc(p.id) + ' · v' + esc(p.version || "?") + ' · ' +
+        esc(p.kind) + ' · ' + esc(p.layer) + ' 层' +
+        (p.shadowed ? ' · 遮住了 ' + esc(p.shadowed) + ' 层的同名包' : '') + '</div>' +
       '</div></div>' +
     // ★ 这里**不要再建 #btn-run / #btn-vis**：它们已经钉在选项卡那一行上了。
     //   上次挪位置时把这段留下了 —— 结果是同一对 id 在页面里出现两次，
     //   `$("#btn-run")` 只会命中先出现的那个，详情里这两个永远空着（你看到的"两个空元素"）。
-    '<p class="lead" style="margin:14px 0 10px">' + esc(p.desc) + '</p><div>' +
-      (p.aliases||[]).map(a => '<span class="chip">:' + esc(a) + '</span>').join("") +
-      (p.tags||[]).map(t => '<span class="chip">' + esc(t) + '</span>').join("") +
-      (p.ai_expose ? '<span class="chip">AI 可调用 · 风险 ' + esc(p.ai_risk || "?") + '</span>' : "") +
-    '</div>';
+    '<p class="desc">' + esc(p.desc) + '</p>';
+
+  // 别名 / 标签 / AI：**用"标签 : 值"的行**（像设置的检查器），不再是一堆药丸 —— 药丸只留给
+  // "点一下就填进去"那种真动作（例子）。
+  const meta = [];
+  if ((p.aliases || []).length)
+    meta.push(kv("别名", (p.aliases || []).map(a => '<span class="mono">:' + esc(a) +
+      '</span>').join('&nbsp; ')));
+  if ((p.tags || []).length) meta.push(kv("标签", esc((p.tags || []).join(' · ')), true));
+  if (p.ai_expose) meta.push(kv("AI", '可调用 · 风险 ' + esc(p.ai_risk || "?"), true));
+  if (meta.length) html += '<div class="grp"><div class="glabel">' + '属性' +
+    '</div><div class="gbody">' + meta.join("") + '</div></div>';
+
   if (params.length){
-    html += '<div class="sec"><h2>参数</h2><table class="p ptab"><thead>' +
-      '<tr><th>名称</th><th>类型</th><th>必填</th><th>说明</th></tr></thead><tbody>' +
-      params.map(pa => '<tr><td class="mono">' + esc(pa.name) +
-        (pa.rest ? ' <span class="chip">rest</span>' : "") + '</td><td class="mono">' +
-        esc(pa.type || "string") + '</td><td>' + (pa.required ? "是" : "否") + '</td><td>' +
-        esc(pa.desc || "") + (pa.placeholder ? '<div class="sub">例：' + esc(pa.placeholder) + '</div>' : "") +
-        '</td></tr>').join("") + '</tbody></table></div>';
+    html += '<div class="grp"><div class="glabel">参数</div><div class="gbody">' +
+      params.map(pa => '<div class="grow prow">' +
+        '<div><span class="pname">' + esc(pa.name) + '</span>' +
+        '<span class="ptype">' + esc(pa.type || "string") + '</span>' +
+        '<span class="pneed">' + (pa.required ? "必填" : "可留空") +
+        (pa.rest ? " · 余下全给它" : "") + '</span></div>' +
+        (pa.desc ? '<div class="pdesc">' + esc(pa.desc) + '</div>' : '') +
+        (pa.placeholder ? '<div class="pex">例：' + esc(pa.placeholder) + '</div>' : '') +
+        '</div>').join("") + '</div></div>';
   }
-  if ((p.examples || []).length){
-    html += '<div class="sec"><h2>例子（点一下填进参数框）</h2><div>' +
-      p.examples.map(e => '<span class="chip click" data-args="' + esc(e) + '">' + esc(e) + '</span>').join("") +
-      '</div></div>';
+  // ★ 过滤掉空的例子：`pkg.json` 里 `ai.examples` 的 `args` 可能是空串
+  //   （md5 这个包就是 `['', '']`），不过滤的话会画出一排**空药丸**、
+  //   整组看着像坏了。界面上不做"空壳"。
+  const exs = (p.examples || []).map(x => String(x || "")).filter(x => x.trim());
+  if (exs.length){
+    html += '<div class="grp"><div class="glabel">例子</div>' +
+      '<div class="gbody"><div class="grow chips">' +
+      exs.map(e => '<button class="chip" data-args="' + esc(e) + '">' + esc(e) +
+        '</button>').join("") + '</div></div></div>';
   }
-  html += '<div class="sec"><h2>跑一下</h2><div class="row-inline">' +
+  html += '<div class="grp"><div class="glabel">跑一下</div><div class="gbody">' +
+      '<div class="grow"><div class="row-inline">' +
       '<input id="args" placeholder="参数（可留空；回车 = 运行）">' +
-      '<button class="iconbtn" id="btn-openui" title="打开这个包自己的界面（后台运行，不等它）">' +
+      '<button class="btn" id="btn-openui" title="打开这个包自己的界面（后台运行，不等它）">' +
         ico("app-window", "i") + '<span>打开界面</span></button></div>' +
       '<div class="hint">命令预览：<span class="mono" id="preview"></span>' +
-      '　·　右上角是「运行 / 停止」</div></div>' +
-    // ★ 卸载放在最后单独一块（危险操作不跟"跑一下"混在一起）
-    '<div class="sec danger"><h2>卸载</h2><div class="row-split">' +
+      '　·　右上角是「运行 / 停止」</div></div></div>' +
+    '<div class="grp danger"><div class="glabel">卸载</div><div class="gbody">' +
+      '<div class="grow row-split">' +
       '<span class="hint">真删：包本体 + 它的数据（不进回收站）</span>' +
-      '<button class="iconbtn warn" id="btn-remove" title="卸载这个包（moss --remove）">' +
+      '<button class="btn tint warn" id="btn-remove" title="卸载这个包（moss --remove）">' +
         ico("trash-2", "i") + '<span>卸载</span></button>' +
-    '</div></div></div>';
+      '</div></div></div></div>';
   box.innerHTML = html;
   const upd = () => {
     $("#preview").textContent = "moss :" + p.id +
@@ -1152,7 +1253,8 @@ function renderDetail(){
     if (e.key === "Enter"){ e.preventDefault(); startRun(p, $("#args").value); }
   });
   upd();
-  box.querySelectorAll(".chip.click").forEach(c => {
+  // 例子：现在是真的 <button class="chip" data-args="…">（以前是 span 加个 .click 类）
+  box.querySelectorAll(".chip[data-args]").forEach(c => {
     c.onclick = () => { $("#args").value = c.dataset.args || ""; upd(); };
   });
   // 那组按钮现在钉在选项卡行上（paintActions 管），这里只挂钩子。
@@ -1178,9 +1280,9 @@ function renderDetail(){
 function renderDetailHist(it, box){
   const when = (it.ts || "").replace("T", " ");
   const gone = it.exists === false;
-  // 只放"真有值"的行；一行都没有，整张表就不出现
+  // 只放"真有值"的行；一行都没有，整组就不出现
   const rows = [];
-  if (it.cwd) rows.push(["工作目录", it.cwd, it.cwd_exists === false ? "（这个目录也不在了）" : ""]);
+  if (it.cwd) rows.push(["工作目录", it.cwd, it.cwd_exists === false ? "这个目录也不在了" : ""]);
   if (it.args) rows.push(["参数", it.args, ""]);
   if (when) rows.push(["时间", when, ""]);
   if (it.exit !== null && it.exit !== undefined) rows.push(["上次退出码", String(it.exit), ""]);
@@ -1192,29 +1294,33 @@ function renderDetailHist(it, box){
     html += '<div class="warnbox">' + ico("alert-triangle", "i") +
       '<span>这个文件已经不在了 —— 跑不了了。记录还留着，想清掉就点下面那个按钮。</span></div>';
   }
-  html += '<div class="sec"><h2>跑一下</h2><div class="row-inline">' +
+  html += '<div class="grp"><div class="glabel">跑一下</div><div class="gbody">' +
+      '<div class="grow"><div class="row-inline">' +
       // ★ 这里用 `#hargs` / `#hpreview`（而不是包详情那对 `#args` / `#preview`）：
       //   两个详情虽然**同一个时刻只会存在一个**（都往 #pane-detail 里写），
       //   但静态检查"整个页面每个 id 只能出现一次"就分不清了 —— 换成不同的 id
       //   那条检查才继续有用。要取输入框请走 `argsInput()`。
       '<input id="hargs" placeholder="参数（留空 = 上次那样；回车 = 运行）" value="' +
         esc(it.args || "") + '"' + (gone ? " disabled" : "") + '>' +
-      '<button class="iconbtn" id="btn-run2"' + (gone ? " disabled" : "") + '>' +
+      '<button class="btn primary" id="btn-run2"' + (gone ? " disabled" : "") + '>' +
         ico("play", "i") + '<span>运行</span></button>' +
-      '<button class="iconbtn" id="btn-opendir" title="用 Windows 资源管理器打开它所在的目录">' +
+      '<button class="btn tint" id="btn-opendir" title="用 Windows 资源管理器打开它所在的目录">' +
         ico("folder-open", "i") + '<span>打开所在目录</span></button></div>' +
-      '<div class="hint">命令预览：<span class="mono" id="hpreview"></span></div></div>';
+      '<div class="hint">命令预览：<span class="mono" id="hpreview"></span></div>' +
+      '</div></div>';
   if (rows.length){
-    html += '<div class="sec"><h2>这条记录</h2><table class="p"><tbody>' +
-      rows.map(r => '<tr><th style="width:88px">' + esc(r[0]) + '</th><td class="mono">' +
-        esc(r[1]) + (r[2] ? ' <span class="dim">' + esc(r[2]) + '</span>' : "") +
-        '</td></tr>').join("") + '</tbody></table></div>';
+    html += '<div class="grp"><div class="glabel">这条记录</div><div class="gbody">' +
+      rows.map(r => '<div class="grow kv"><span class="k">' + esc(r[0]) +
+        '</span><span class="v mono">' + esc(r[1]) +
+        (r[2] ? ' <span class="dim">' + esc(r[2]) + '</span>' : '') +
+        '</span></div>').join("") + '</div></div>';
   }
-  html += '<div class="sec danger"><h2>删除</h2><div class="row-split">' +
+  html += '<div class="grp danger"><div class="glabel">删除</div><div class="gbody">' +
+      '<div class="grow row-split">' +
       '<span class="hint">只删这条<b>记录</b>，那个文件本身不动</span>' +
-      '<button class="iconbtn warn" id="btn-forget" title="从历史里删掉这条记录">' +
+      '<button class="btn tint warn" id="btn-forget" title="从历史里删掉这条记录">' +
         ico("trash-2", "i") + '<span>删除这条记录</span></button>' +
-    '</div></div></div>';
+      '</div></div></div></div>';
   box.innerHTML = html;
 
   const upd = () => {
