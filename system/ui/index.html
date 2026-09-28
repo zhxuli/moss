@@ -52,6 +52,30 @@ main{flex:1;display:flex;min-height:0}
 aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--panel);
   display:flex;flex-direction:column;min-height:0}
 #list{flex:1;overflow:auto;min-height:0}
+#hist{flex:1;overflow:auto;min-height:0}
+/* 左侧顶部那排：插件/历史 切换 + 新建 */
+#sideswitch{display:flex;gap:4px;align-items:center;padding:7px 10px;flex:none;
+  border-bottom:1px solid var(--line2)}
+#sideswitch button{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:5px 10px;border-radius:8px;border:1px solid transparent;background:transparent;
+  color:var(--dim);cursor:pointer;font:inherit;font-size:13px}
+#sideswitch button:hover{background:var(--hover)}
+#sideswitch button.on{background:var(--panel2);border-color:var(--line);color:var(--fg);font-weight:500}
+#sideswitch #btn-newpkg{margin-left:auto;padding:4px 7px;min-width:28px;border-color:var(--line);
+  background:var(--panel2)}
+/* 历史行：图标 + 名字/参数 + 目录 + 时间 */
+.hitem{display:flex;gap:9px;padding:8px 11px;border-bottom:1px solid var(--line2);
+  cursor:pointer;align-items:center}
+.hitem:hover{background:var(--hover)}
+.hitem .hico{width:20px;height:20px;flex:none;display:flex;align-items:center;
+  justify-content:center;color:var(--dim)}
+.hitem .hico svg,.hitem .hico img{width:20px;height:20px}
+.hitem .hico img{object-fit:contain}
+.hitem .hmain{min-width:0;flex:1}
+.hitem .hname{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hitem .hsub{color:var(--dim);font-size:11.5px;font-family:var(--mono);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hitem .hstat{flex:none;display:flex;align-items:center}
 .item{display:flex;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line2);
   cursor:pointer;align-items:center}
 .item:hover{background:var(--hover)}
@@ -251,7 +275,16 @@ code,.mono{font-family:var(--mono);font-size:12.5px}
 </header>
 
 <main>
-  <aside><div id="list"></div></aside>
+  <aside>
+    <!-- 左侧顶部：插件 / 历史 切换（你要求的），右边是"新建包" -->
+    <div id="sideswitch">
+      <button id="sw-pkg" class="on" title="已安装的包"></button>
+      <button id="sw-hist" title="最近跑过的路径调用（点一下重跑）"></button>
+      <button id="btn-newpkg" class="iconbtn" title="新建一个包（moss --new）"></button>
+    </div>
+    <div id="list"></div>
+    <div id="hist" hidden></div>
+  </aside>
   <div id="right">
     <div id="tabs">
       <button class="tab active" data-tab="detail">详情</button>
@@ -398,6 +431,7 @@ const esc = escapeHtml;
      需要退出码时它就在「命令行」那行文字里（"退出码 1"），不拿出来报警。 */
 function paintStates(){
   paintRowStats();
+  paintHistStats();
   if (cur) paintActions(cur);
 }
 
@@ -443,6 +477,8 @@ function consoleBuf(key){
 function consoleTitle(key){
   if (!key) return "moss";
   if (key === "__host__") return "moss 自检";
+  // 历史键 = "hist:" + 目标 + (" " + 参数)，标题只取目标那段文件名
+  if (key.startsWith("hist:")) return "历史 · " + key.slice(5).split(" ")[0].split(/[\\/]/).pop();
   const p = DATA && DATA.packages.find(x => x.id === key);
   return p ? (p.name + "（:" + key + "）") : key;
 }
@@ -510,6 +546,7 @@ async function refreshAllStates(){
     if (r && r.ok) Object.assign(PST, r.states || {});
   }catch(e){}
   paintRowStats();
+  paintHistStats();
   if (cur) paintActions(cur);
 }
 
@@ -668,9 +705,11 @@ function finishRun(id, code, text){
   // 我们自己按的停止不算"故障"（红）—— 是"已停止"（黄）
   paintRowStats();
   if (cur && cur.id === id) renderDetail();
+  paintHistStats();
   // ★ 退出码回来了不等于"它没在跑" —— 有的包 fork 出界面自己就退了。
   //   所以状态以宿主那份为准（600ms 后再问一次）。
   setTimeout(refreshAllStates, 600);
+  if (side === "hist") loadHist().then(renderHist);   // 重跑会往历史里再加一条
 }
 
 /* 收尾那一行怎么措辞。
@@ -715,6 +754,120 @@ function pkgPollStart(){
 }
 
 /* ---------------------------------------------------------------- 包列表 */
+let side = "pkg";               // pkg | hist（左侧顶部那个切换）
+
+function setSide(which){
+  side = which;
+  $("#sw-pkg").classList.toggle("on", which === "pkg");
+  $("#sw-hist").classList.toggle("on", which === "hist");
+  $("#list").hidden = which !== "pkg";
+  $("#hist").hidden = which !== "hist";
+  $("#q").placeholder = which === "pkg" ? "搜索包名 / 说明 / 标签…"
+                                        : "搜索历史（名字 / 参数 / 目录）…";
+  if (which === "hist"){ loadHist(); renderHist(); } else renderList();
+}
+
+/* ---------------------------------------------------------------- 历史（路径调用）
+   数据来自 `user_data/history/*.jsonl`（宿主那侧读好、去过重）。
+   点一下 = **重跑那次调用**（和 CLI 的 `--history` 回车一样）；
+   目标目录里若有 `icon.xxx` 就用它当图标（你要求的）。 */
+let HIST = [];
+
+async function loadHist(){
+  try{
+    const r = await pywebview.api.hist_list(60);
+    HIST = (r && r.ok && r.items) || [];
+  }catch(e){ HIST = []; }
+}
+
+// 键要带参数：同一个文件用不同参数跑过，是**两条**历史，不能共用一份控制台
+function histKey(it){ return "hist:" + it.target + (it.args ? " " + it.args : ""); }
+
+function renderHist(){
+  const box = $("#hist");
+  const f = $("#q").value.trim().toLowerCase();
+  const rows = HIST.filter(it => !f ||
+    [it.name, it.target, it.args, it.cwd].join(" ").toLowerCase().includes(f));
+  if (!rows.length){
+    box.innerHTML = '<div class="empty">' +
+      (HIST.length ? "没有匹配的历史" :
+       "还没有历史。<br>历史只记<b>路径调用</b>（<span class=\"mono\">moss zeen</span> 这种）——<br>包调用不进历史。") +
+      '</div>';
+    return;
+  }
+  box.innerHTML = "";
+  for (const it of rows){
+    const d = document.createElement("div");
+    d.className = "hitem";
+    d.dataset.key = histKey(it);
+    const when = (it.ts || "").replace("T", " ").slice(5, 16);
+    d.innerHTML =
+      '<span class="hico">' + (it.icon_svg ? safeSvg(it.icon_svg)
+                              : (it.icon ? '<img src="' + it.icon + '" alt="">'
+                                         : ico("corner-up-left", "i"))) + '</span>' +
+      '<div class="hmain">' +
+        '<div class="hname">' + esc(it.name) + (it.args ? ' <span class="sub">' + esc(it.args) + '</span>' : "") + '</div>' +
+        '<div class="hsub">' + esc(it.cwd || "") + '　·　' + esc(when) + '</div>' +
+      '</div>' +
+      '<span class="hstat"></span>';
+    d.onclick = () => rerunHist(it);
+    box.appendChild(d);
+  }
+  paintHistStats();
+}
+
+function paintHistStats(){
+  document.querySelectorAll(".hitem").forEach(el => {
+    const key = el.dataset.key;
+    const box = el.querySelector(".hstat");
+    if (!box) return;
+    const running = !!RUNS[key];
+    box.innerHTML = running
+      ? '<button class="ic-run" title="正在跑 —— 点这里停掉它">' + ico("square", "i") + '</button>'
+      : '<button class="idle" title="重跑这次调用">' + ico("play", "i") + '</button>';
+    const b = box.querySelector("button");
+    if (b) b.onclick = (ev) => {
+      ev.stopPropagation();
+      if (running) stopRun(key); else rerunHistByKey(key);
+    };
+  });
+}
+
+function rerunHistByKey(key, args){
+  const it = HIST.find(x => histKey(x) === key);
+  if (it) rerunHist(it, args);
+}
+
+async function rerunHist(it, args){
+  const key = histKey(it);
+  if (RUNS[key]) return;
+  const a = args === undefined ? (it.args || "") : args;
+  const cmd = "moss /" + it.target + (a ? " " + a : "");
+  lastRun = {key: key, args: a, label: cmd};
+  consoleKey = key;
+  setConsole(key, "$ " + cmd, "运行中");
+  const r = await pywebview.api.path_start(it.target, it.cwd || "", a);
+  if (!r.ok){
+    setConsole(key, "$ " + cmd + "\n\n启动失败：" + (r.msg || ""), "启动失败");
+    toast("✗ " + (r.msg || "启动失败"), true);
+    return;
+  }
+  RUNS[key] = {rid: r.run_id, cmd: cmd, timer: null, stopped: false,
+               switched: false, tabAtStart: tab};
+  paintHistStats();
+  pollRun(key);
+}
+
+/* 「再跑一次」按 key 也认（历史那条会走它） */
+function rerunLast(){
+  if (!lastRun) return;
+  if (lastRun.key) return rerunHistByKey(lastRun.key, lastRun.args);
+  const p = DATA.packages.find(x => x.id === lastRun.id);
+  if (!p){ toast("找不到 :" + lastRun.id + " 这个包了", true); return; }
+  if (RUNS[p.id]) return;
+  startRun(p, lastRun.args);
+}
+
 function renderList(){
   const f = $("#q").value.trim().toLowerCase();
   const box = $("#list");
@@ -810,7 +963,13 @@ function renderDetail(){
       '<button class="iconbtn" id="btn-openui" title="打开这个包自己的界面（后台运行，不等它）">' +
         ico("app-window", "i") + '<span>打开界面</span></button></div>' +
       '<div class="sub" style="margin-top:8px">命令预览：<span class="mono" id="preview"></span>' +
-      '　·　右上角是「运行 / 停止」</div></div>';
+      '　·　右上角是「运行 / 停止」</div></div>' +
+    // ★ 卸载放在最后单独一块（危险操作不跟"跑一下"混在一起）
+    '<div class="sec"><h2>卸载</h2><div class="row-inline">' +
+      '<span class="sub" style="flex:1">真删：包本体 + 它的数据（不进回收站）</span>' +
+      '<button class="iconbtn warn" id="btn-remove" title="卸载这个包（moss --remove）">' +
+        ico("trash-2", "i") + '<span>卸载</span></button>' +
+    '</div></div>';
   box.innerHTML = html;
   const upd = () => {
     $("#preview").textContent = "moss :" + p.id +
@@ -831,13 +990,13 @@ function renderDetail(){
   $("#btn-run").onclick = () => clickRun(p);
   $("#btn-vis").onclick = () => toggleVis(p);
   refreshPkgState(p);
-  $("#btn-openui").onclick = async () => {
-    const r = await pywebview.api.open_ui(p.id, $("#args").value);
+  $("#btn-openui").onclick = async () => {    const r = await pywebview.api.open_ui(p.id, $("#args").value);
     // 不切选项卡：带界面的包本来就没有命令行输出（你指出的），停在详情更合理
     paintRowStats();
     setTimeout(() => refreshPkgState(p), 1500);
     setTimeout(() => refreshPkgState(p), 3500);
   };
+  $("#btn-remove").onclick = () => cmdRemovePkg(p);
 }
 
 /* ================================================================ 文件管理
@@ -1504,7 +1663,9 @@ function askText(title, value, cb){
 }
 function askConfirm(title, text, cb){
   $("#m-title").textContent = title;
-  $("#m-text").textContent = text.replace(/\*\*/g, "");
+  // 用 innerHTML：确认框里要换行（`<br>`）。文案是我们自己拼的（包 id / 目录），
+  // 而 Windows 路径里不可能有 `<`，所以这里没有注入面。
+  $("#m-text").innerHTML = text.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
   $("#m-input").hidden = true;
   $("#m-ok").className = "danger";
   $("#modal").classList.add("on");
@@ -1527,6 +1688,8 @@ async function init(){
   $("#meta").textContent =
     DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home;
   renderList(); paintStates();
+  setSide(side);           // 切换条的高亮 / 隐藏状态跟 JS 变量对齐
+  await loadHist();        // 先把历史读回来，点「历史」就是瞬时的
   consoleKey = "__host__";
   paintConsole();
   pkgPollStart();          // 每 2.5 秒把所有包的状态对一次（列表 + 按钮都要）
@@ -1547,13 +1710,20 @@ function paintStaticIcons(){
     if (b) b.innerHTML = ico(tabs[k][0], "i") + '<span>' + tabs[k][1] + '</span>';
   });
   $("#btn-selfcheck").innerHTML = ico("activity", "i");
+  // 左侧顶部：插件 / 历史 切换 + 新建包
+  $("#sw-pkg").innerHTML  = ico("package", "i") + '<span>插件</span>';
+  $("#sw-hist").innerHTML = ico("corner-up-left", "i") + '<span>历史</span>';
+  $("#btn-newpkg").innerHTML = ico("file-plus", "i");
   $("#btn-refresh").innerHTML   = ico("refresh-cw", "i");
   $("#btn-copy").innerHTML      = ico("copy", "i");
   $("#btn-rerun").innerHTML     = ico("rotate-cw", "i");
   $("#btn-clear").innerHTML     = ico("eraser", "i");
 }
-$("#q").addEventListener("input", renderList);
+$("#q").addEventListener("input", () => { if (side === "hist") renderHist(); else renderList(); });
 $("#btn-refresh").onclick = init;
+$("#sw-pkg").onclick = () => setSide("pkg");
+$("#sw-hist").onclick = () => setSide("hist");
+$("#btn-newpkg").onclick = cmdNewPkg;
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
   if (b.dataset.tab === "file") fmSelect(cur ? cur.id : "__all__");
   else setTab(b.dataset.tab);
@@ -1567,13 +1737,48 @@ $("#m-input").addEventListener("keydown", e => {
   if (e.key === "Escape") closeModal();
 });
 $("#modal").addEventListener("click", e => { if (e.target.id === "modal") closeModal(); });
-$("#btn-rerun").onclick = async () => {
-  if (!lastRun) return;
-  const p = DATA.packages.find(x => x.id === lastRun.id);
-  if (!p){ toast("找不到 :" + lastRun.id + " 这个包了", true); return; }
-  if (RUNS[p.id]){ toast(":" + p.id + " 正在跑", true); return; }
-  startRun(p, lastRun.args);
-};
+$("#btn-rerun").onclick = rerunLast;
+
+/* ---------------------------------------------------------------- 新建 / 卸载
+   这两个功能 CLi 早就有（`moss --new` / `moss --remove`），界面这边原来漏了。
+   界面**不重写一遍逻辑**，直接把宿主命令叫起来（和用户手敲是同一条路），
+   输出照样进「命令行」那份缓冲。 */
+async function cmdNewPkg(){
+  askText("新建一个包", "my-first", async (id) => {
+    if (!id) return;
+    consoleKey = "__host__";
+    setConsole("__host__", "$ moss --new " + id, "运行中");
+    const r = await pywebview.api.run_host("--new " + id);
+    setConsole("__host__", "$ moss --new " + id + "\n\n" + (r.out || "(没有输出)") +
+               "\n" + runTail(r.code, r.out, false), "退出码 " + r.code);
+    toast(r.code === 0 ? ("已新建 :" + id + "（user_data/pkgs/）") : "✗ 新建失败，看「命令行」",
+          r.code !== 0);
+    if (r.code === 0){
+      await init();                       // 重新扫包列表，新包就出现了
+      select(id);
+    } else setTab("console");
+  });
+}
+
+async function cmdRemovePkg(p){
+  const st = ico("alert-triangle", "i");
+  askConfirm("卸载这个包",
+    "将**真删**（不进回收站）：<br>· 包本体 " + p.dir + "<br>" +
+    "· 它的数据 user_data/state/" + p.id + "（如果有）<br><br>" +
+    "层：" + p.layer + (p.layer === "system" ? "（出厂件 —— 删了升级时会回来）" : "") +
+    "<br>确定吗？",
+    async () => {
+      consoleKey = "__host__";
+      setConsole("__host__", "$ moss --remove " + p.id + " -y", "运行中");
+      const r = await pywebview.api.run_host("--remove " + p.id + " -y");
+      setConsole("__host__", "$ moss --remove " + p.id + " -y\n\n" + (r.out || "(没有输出)") +
+                 "\n" + runTail(r.code, r.out, false), "退出码 " + r.code);
+      toast(r.code === 0 ? ("已卸载 :" + p.id) : "✗ 卸载失败，看「命令行」", r.code !== 0);
+      setTab("console");                  // 让用户看到到底删了什么
+      if (r.code === 0){ cur = null; await init(); renderDetail(); }
+    });
+}
+
 $("#btn-selfcheck").onclick = async () => {
   consoleKey = "__host__";                // 自检是**宿主自己的**输出，单独一份
   setTab("console");

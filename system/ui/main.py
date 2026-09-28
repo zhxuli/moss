@@ -16,6 +16,7 @@ v0 只做四件事：列包、看一个包的说明与参数、带参数跑并�
 界面本身（`index.html`）以后随时改 —— 改它**不用重新打包 exe**，这正是把它
 放在 exe 外面的理由（`K-10`）。
 """
+import base64
 import ctypes
 import ctypes.wintypes as wt
 import json
@@ -283,6 +284,50 @@ def _top_windows():
 _HELPER_CLASSES = ("TtkMonitorClass",)
 
 
+def _dir_icon(folder, exts):
+    """在一个目录里按顺序找 `icon.<ext>`，找到就返回 (data URI, 内联 svg 文本)。
+
+    和宿主 `core/pkg.py:icon_path` 是同一套前缀顺序（svg → png → webp → jpg/jpeg →
+    ico → gif → bmp）。这里没法 import core（发行版里它编在 exe 里），所以那份顺序
+    由宿主在 payload 里带过来（`icon_exts`），**不各写一份**。
+    """
+    try:
+        folder = Path(folder)
+        if not folder.is_dir():
+            return "", ""
+        for ext in exts:
+            f = folder / ("icon" + ext)
+            if not f.is_file():
+                continue
+            raw = f.read_bytes()
+            if not raw or len(raw) > 200 * 1024:
+                continue
+            if ext.lower() == ".svg":
+                return "", raw.decode("utf-8", "replace")
+            mime = {".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg", ".ico": "image/x-icon", ".gif": "image/gif",
+                    ".bmp": "image/bmp"}.get(ext.lower(), "application/octet-stream")
+            return "data:%s;base64,%s" % (mime, base64.b64encode(raw).decode("ascii")), ""
+    except OSError:
+        pass
+    return "", ""
+
+
+def _run_registered(proc):
+    """把一个刚起的后台进程登记进 RUNS，返回 run_id（`run_start` / `path_start` 共用）。"""
+    rid = uuid.uuid4().hex[:10]
+    with RUNS_LOCK:
+        RUNS[rid] = {"proc": proc, "lines": [], "code": None, "t0": time.time(),
+                     "pid": proc.pid,
+                     "cmd": " ".join(proc.args[1:] if isinstance(proc.args, list) else [])}
+        if len(RUNS) > RUNS_KEEP:
+            for old in sorted(RUNS, key=lambda k: RUNS[k]["t0"])[:-RUNS_KEEP]:
+                if RUNS[old]["code"] is not None:
+                    RUNS.pop(old, None)
+    threading.Thread(target=_pump_output, args=(rid,), daemon=True).start()
+    return rid
+
+
 def _env_pkg_id(pid):
     """问一个进程：你的环境变量里 `MOSS_PKG_ID` 是什么。
 
@@ -493,6 +538,98 @@ class Api:
             return {"ok": False, "msg": "启动失败：%s" % e}
         _remember_proc(pid, proc.pid)          # 同上：留着，好找它的窗口
         return {"ok": True, "msg": "已后台启动：" + " ".join(argv[1:])}
+
+    # ------------------------------------------------ 历史（路径调用）
+    def hist_list(self, n=30):
+        """最近跑过的**路径调用**（`moss zeen` 这种），最新的在前。
+
+        ★ 数据就是 `user_data/history/*.jsonl` —— 界面进程不 import core（发行版里
+          core 编在 exe 里），所以这里直接读那本账，格式就是接口。
+        ★ 去重口径照 `V-17`：键 = kind + （包 id 或目标路径）+ 参数，**不算 cwd**；
+          同一条只留**最新**的（这样 start/after 两条会合成一条，留的是带结果的那条）。
+        ★ 图标按你说的来：**目标所在目录里若有 `icon.xxx` 就用它**（包列表那边
+          宿主的 `pkg.icon_path` 早就在这么做了，这里是同一套前缀顺序）。
+        """
+        rows = []
+        hist_dir = USER_DATA / "history"
+        if hist_dir.is_dir():
+            for f in sorted(hist_dir.glob("*.jsonl"), reverse=True):
+                try:
+                    for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            rows.append(json.loads(line))
+                        except ValueError:
+                            continue
+                except OSError:
+                    continue
+        # 去重：同一条命令只留最新那次
+        best = {}
+        for r in rows:
+            key = (r.get("kind") or "", r.get("id") or r.get("target") or "",
+                   r.get("args") or "")
+            old = best.get(key)
+            if old is None or str(r.get("ts") or "") > str(old.get("ts") or ""):
+                best[key] = r
+        out_rows = sorted(best.values(), key=lambda r: str(r.get("ts") or ""), reverse=True)
+        try:
+            n = max(1, min(200, int(n)))
+        except (TypeError, ValueError):
+            n = 30
+        out_rows = out_rows[:n]
+
+        exts = [str(x) for x in (DATA.get("icon_exts") or
+                                 [".svg", ".png", ".webp", ".jpg", ".jpeg", ".ico", ".gif", ".bmp"])]
+        items = []
+        for r in out_rows:
+            target = str(r.get("target") or "")
+            icon_uri, icon_svg = "", ""
+            if target:
+                icon_uri, icon_svg = _dir_icon(Path(target).parent, exts)
+            items.append({
+                "ts": str(r.get("ts") or ""),
+                "kind": str(r.get("kind") or ""),
+                "id": str(r.get("id") or ""),
+                "target": target,
+                "name": Path(target).name or target,
+                "cwd": str(r.get("cwd") or ""),
+                "args": str(r.get("args") or ""),
+                "exit": r.get("exit"),
+                "icon": icon_uri,
+                "icon_svg": icon_svg,
+            })
+        return {"ok": True, "items": items}
+
+    def path_start(self, target, cwd="", args=""):
+        """重跑一次**路径调用**（历史里点一下就是它）。
+
+        用 `moss /<目标>`（`/` = "别切目录"，照抄 CLI 的语义），并把 cwd 设成
+        当初那次记录的 cwd —— 这样重跑出来的东西和上次是同一回事。
+        跑起来之后 `run_poll` / `run_stop` 照旧能用（它们只认 run_id）。
+        """
+        target = str(target or "").strip()
+        if not target:
+            return {"ok": False, "msg": "这条历史没有目标路径"}
+        argv = HOST + ["/" + target] + _split(args)
+        workdir = cwd if (cwd and Path(cwd).is_dir()) else str(USER_DATA)
+        try:
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, encoding="utf-8", errors="replace",
+                                    bufsize=1, cwd=workdir, creationflags=NO_WINDOW)
+        except OSError as e:
+            return {"ok": False, "msg": "启动失败：%s" % e}
+        rid = uuid.uuid4().hex[:10]
+        with RUNS_LOCK:
+            RUNS[rid] = {"proc": proc, "lines": [], "code": None, "t0": time.time(),
+                         "pid": proc.pid, "cmd": " ".join(argv[1:])}
+            if len(RUNS) > RUNS_KEEP:
+                for old in sorted(RUNS, key=lambda k: RUNS[k]["t0"])[:-RUNS_KEEP]:
+                    if RUNS[old]["code"] is not None:
+                        RUNS.pop(old, None)
+        threading.Thread(target=_pump_output, args=(rid,), daemon=True).start()
+        return {"ok": True, "run_id": rid, "pid": proc.pid}
 
     # ------------------------------------------------ 包自己的界面窗口（显示/隐藏）
     def pkg_states(self, ids):
