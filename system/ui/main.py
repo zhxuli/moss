@@ -19,6 +19,7 @@ v0 只做四件事：列包、看一个包的说明与参数、带参数跑并�
 import json
 import os
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -68,15 +69,17 @@ def _run_capture(argv):
 
 
 # ================================================================ 文件系统
-# 界面里的"文件"页要能浏览 + 编辑。两条底线，先立在这里：
+# 界面里的「文件管理」选项卡要能像资源管理器那样操作。三条底线：
 #
-#   ① **只认两个根**：`system/`（出厂件，**只读**）和 `user_data/`（用户资产，可写）。
-#      对应 `D-01` 三层设计里的"只读出厂件 / 可写用户资产"。出厂件不让写是有理由的：
-#      升级时它会被整体替换（写了白写），而且改坏了整个程序都起不来。
-#   ② **路径必须落在根里面**：`rel` 允许写 `user/pkgs/x/main.py`，但 `../` 逃逸
-#      一律拒绝 —— 界面拿到的路径最终来自页面，不能假设它是善意的。
+#   ① **只认两个根**：`user_data/`（用户资产）和 `system/`（出厂件）。
+#   ② **路径必须落在根里面**：允许 `user/pkgs/x/main.py`，`../` 逃逸一律拒绝 ——
+#      路径最终来自页面，不能假设它是善意的。
+#   ③ **删除不是真删**：挪进 `user_data/trash/<时间戳>/<原路径>`（可恢复）。
 #
-# 删除不是真删：`user_data/trash/<时间戳>/<原路径>`（设计里本来就有 `trash/` 这一层）。
+# ★ `system/` 是**可写**的（2026-09-27 你定的："只读可不行"）。理由也站得住：
+#   这个项目的玩法就是"自己改包"，而改包就得改代码；`system/pkgs/*` 虽然是出厂件，
+#   但现在还没开始分发、改坏了 git 还能救。界面上**只提示不拦截**：
+#   打开 `system/` 里的文件会顶一条"升级时会被整体替换"的提醒。
 MAX_READ = 2 * 1024 * 1024          # 超过 2 MB 不给编辑（读出来看看就够）
 TRASH_DIRNAME = "trash"
 
@@ -85,9 +88,9 @@ USER_DATA = Path(os.environ.get("MOSS_USER_DATA_DIR") or (HOME / "user_data"))
 
 ROOTS = [
     {"key": "user", "label": "user_data", "path": USER_DATA, "writable": True,
-     "why": "你的包 / 配置 / 数据 —— 可以改"},
-    {"key": "system", "label": "system", "path": HOME / "system", "writable": False,
-     "why": "出厂件（随 moss.exe 分发）—— 只读，升级时会被整体替换"},
+     "why": "你的包 / 配置 / 数据"},
+    {"key": "system", "label": "system", "path": HOME / "system", "writable": True,
+     "why": "出厂件（随 moss.exe 分发）—— 能改，但升级时会被整体替换"},
 ]
 
 
@@ -136,17 +139,30 @@ def _trash(path):
     """把东西挪进 `user_data/trash/<时间戳>/<原相对路径>`（不真删）。"""
     import time
     rel = _rel_of(path)
-    if not rel or not rel.startswith("user/"):
-        raise ValueError("只允许删除 user_data 里的东西")
+    if not rel:
+        raise ValueError("这东西不在两个根里面")
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    dest = USER_DATA / TRASH_DIRNAME / stamp / Path(rel[len("user/"):])
+    dest = USER_DATA / TRASH_DIRNAME / stamp / Path(rel.replace("/", os.sep))
     dest.parent.mkdir(parents=True, exist_ok=True)
-    n = 1
-    while dest.exists():
-        dest = dest.with_name(dest.name + "-%d" % n)
-        n += 1
-    path.replace(dest)              # 同盘 → 原子；跨盘它会自己退化成复制
+    dest = _unique(dest)
+    shutil.move(str(path), str(dest))
     return rel, _rel_of(dest)
+
+
+def _unique(path):
+    """同名就按资源管理器的规矩加 (2)(3)：`a.txt` → `a (2).txt`。"""
+    if not path.exists():
+        return path
+    stem, suffix = path.stem, path.suffix
+    for i in range(2, 1000):
+        cand = path.with_name("%s (%d)%s" % (stem, i, suffix))
+        if not cand.exists():
+            return cand
+    raise OSError("同名文件太多了：%s" % path.name)
+
+
+def _bad_name(name):
+    return (not name) or any(c in name for c in '\\/:*?"<>|') or name in (".", "..")
 
 
 class Api:
@@ -243,15 +259,11 @@ class Api:
                 "mtime": int(p.stat().st_mtime)}
 
     def fs_write(self, rel, text):
-        """写回文件（只有 user_data 能写；system/ 一律拒绝）。"""
+        """写回文件。两个根都能写（`system/` 也放开了，见文件头那段说明）。"""
         try:
             root, p = _resolve(rel)
         except ValueError as e:
             return {"ok": False, "msg": str(e)}
-        if not root["writable"]:
-            return {"ok": False,
-                    "msg": "%s 是只读的（出厂件，升级时会整体替换）—— 想改就复制到 user_data 里再改"
-                           % root["label"]}
         if p.is_dir():
             return {"ok": False, "msg": "这是目录，不是文件"}
         try:
@@ -266,7 +278,8 @@ class Api:
         except OSError as e:
             return {"ok": False, "msg": "写不进去：%s" % e}
         return {"ok": True, "msg": "已保存 %s" % rel, "size": p.stat().st_size,
-                "mtime": int(p.stat().st_mtime)}
+                "mtime": int(p.stat().st_mtime),
+                "factory": rel.split("/")[0] == "system"}
 
     def fs_mkdir(self, rel_parent, name):
         return self._fs_create(rel_parent, name, True)
@@ -276,37 +289,34 @@ class Api:
 
     def _fs_create(self, rel_parent, name, as_dir):
         try:
-            root, parent = _resolve(rel_parent)
+            _root, parent = _resolve(rel_parent)
         except ValueError as e:
             return {"ok": False, "msg": str(e)}
-        if not root["writable"]:
-            return {"ok": False, "msg": "%s 是只读的" % root["label"]}
         name = str(name or "").strip()
-        if not name or any(c in name for c in '\\/:*?"<>|'):
+        if _bad_name(name):
             return {"ok": False, "msg": "名字不合法"}
-        target = parent / name
         if not parent.is_dir():
             return {"ok": False, "msg": "父目录不存在：%s" % rel_parent}
+        target = parent / name
         if target.exists():
             return {"ok": False, "msg": "已经有一个同名的了"}
         try:
             if as_dir:
                 target.mkdir()
             else:
-                target.write_text("", encoding="utf-8")
+                with open(target, "w", encoding="utf-8", newline=""):
+                    pass
         except OSError as e:
             return {"ok": False, "msg": "建不了：%s" % e}
         return {"ok": True, "rel": _rel_of(target), "msg": "已创建 %s" % name}
 
     def fs_rename(self, rel, new_name):
         try:
-            root, p = _resolve(rel)
+            _root, p = _resolve(rel)
         except ValueError as e:
             return {"ok": False, "msg": str(e)}
-        if not root["writable"]:
-            return {"ok": False, "msg": "%s 是只读的" % root["label"]}
         new_name = str(new_name or "").strip()
-        if not new_name or any(c in new_name for c in '\\/:*?"<>|'):
+        if _bad_name(new_name):
             return {"ok": False, "msg": "名字不合法"}
         target = p.with_name(new_name)
         if target.exists():
@@ -317,22 +327,93 @@ class Api:
             return {"ok": False, "msg": "改不了名：%s" % e}
         return {"ok": True, "rel": _rel_of(target), "old": rel, "msg": "已改名为 %s" % new_name}
 
-    def fs_delete(self, rel):
-        """删除 = **挪进 user_data/trash/**（可恢复），不真删。"""
+    def fs_delete(self, rels):
+        """删除 = **挪进 user_data/trash/**（可恢复），不真删。收一个或多个。"""
+        if isinstance(rels, str):
+            rels = [rels]
+        done, bad = [], []
+        for rel in (rels or []):
+            try:
+                root, p = _resolve(rel)
+            except ValueError as e:
+                bad.append("%s：%s" % (rel, e))
+                continue
+            if p == Path(root["path"]).resolve():
+                bad.append("%s：根本身不能删" % rel)
+                continue
+            try:
+                _old, new = _trash(p)
+                done.append(new)
+            except (ValueError, OSError) as e:
+                bad.append("%s：%s" % (rel, e))
+        if not done:
+            return {"ok": False, "msg": "；".join(bad) or "什么都没删"}
+        msg = "已挪进回收站（%s）" % "、".join(done[:3])
+        if len(done) > 3:
+            msg += " 等 %d 项" % len(done)
+        if bad:
+            msg += "；有 %d 项没成：%s" % (len(bad), bad[0])
+        return {"ok": True, "msg": msg, "trash": done, "bad": bad}
+
+    def fs_copy(self, rels, dest_rel, cut=False):
+        """复制 / 移动（`cut=True`）若干项到一个目录 —— 资源管理器的 Ctrl+C / Ctrl+X / Ctrl+V。
+
+        同名不覆盖，按资源管理器的规矩起 `名字 (2).ext`。
+        """
+        if isinstance(rels, str):
+            rels = [rels]
         try:
-            root, p = _resolve(rel)
+            _droot, dest = _resolve(dest_rel)
         except ValueError as e:
             return {"ok": False, "msg": str(e)}
-        if not root["writable"]:
-            return {"ok": False, "msg": "%s 是只读的，不给删" % root["label"]}
-        if p == Path(root["path"]).resolve():
-            return {"ok": False, "msg": "根本身不能删"}
+        if not dest.is_dir():
+            return {"ok": False, "msg": "目标不是目录：%s" % dest_rel}
+        made, bad = [], []
+        for rel in (rels or []):
+            try:
+                _sroot, src = _resolve(rel)
+            except ValueError as e:
+                bad.append(str(e))
+                continue
+            if not src.exists():
+                bad.append("%s 不存在" % rel)
+                continue
+            # 别把目录搬进它自己里面（资源管理器也是直接拒绝的）
+            if src.is_dir() and (dest == src or src in dest.parents):
+                bad.append("%s：不能把目录放进它自己里面" % src.name)
+                continue
+            target = _unique(dest / src.name)
+            try:
+                if cut:
+                    shutil.move(str(src), str(target))
+                elif src.is_dir():
+                    shutil.copytree(str(src), str(target))
+                else:
+                    shutil.copy2(str(src), str(target))
+                made.append(_rel_of(target))
+            except (OSError, shutil.Error) as e:
+                bad.append("%s：%s" % (src.name, e))
+        if not made:
+            return {"ok": False, "msg": "；".join(bad) or "什么都没做"}
+        verb = "移动" if cut else "复制"
+        msg = "已%s %d 项" % (verb, len(made))
+        if bad:
+            msg += "；有 %d 项没成：%s" % (len(bad), bad[0])
+        return {"ok": True, "msg": msg, "made": made, "bad": bad}
+
+    def fs_open_default(self, rel):
+        """用系统默认程序打开（二进制文件、图片这些不该塞进编辑器）。"""
         try:
-            old, new = _trash(p)
-        except (ValueError, OSError) as e:
-            return {"ok": False, "msg": "删不掉：%s" % e}
-        return {"ok": True, "msg": "已挪进回收站（%s）—— 后悔了可以从那儿拿回来" % new,
-                "trash": new}
+            _root, p = _resolve(rel)
+        except ValueError as e:
+            return {"ok": False, "msg": str(e)}
+        if not p.exists():
+            return {"ok": False, "msg": "没有这个东西：%s" % rel}
+        try:
+            os.startfile(str(p))        # noqa: S606  Windows 专用
+        except OSError as e:
+            return {"ok": False, "msg": "打不开：%s" % e}
+        return {"ok": True, "msg": "已用默认程序打开 %s" % p.name}
 
     def fs_reveal(self, rel):
         """在资源管理器里选中它。"""
