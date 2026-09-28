@@ -401,6 +401,23 @@ class Api:
             msg += "；有 %d 项没成：%s" % (len(bad), bad[0])
         return {"ok": True, "msg": msg, "made": made, "bad": bad}
 
+    def fs_exists(self, rels):
+        """批量问"这些路径在不在"。
+
+        ★ 用途：文件管理里那对"切到另一层"的按钮（`system/pkgs/md5` ↔
+          `user_data/pkgs/md5`）**只有那一层真有这个包的目录时才显示** ——
+          用户明确要求过："user_data 对应的有这个目录，你才能显示这个切换的按钮，
+          否则不要显示"。所以页面需要在渲染时问一次，而不是猜。
+        """
+        out = {}
+        for rel in (rels or []):
+            try:
+                _root, p = _resolve(rel)
+                out[str(rel)] = p.exists()
+            except ValueError:
+                out[str(rel)] = False
+        return {"ok": True, "has": out}
+
     def fs_open_default(self, rel):
         """用系统默认程序打开（二进制文件、图片这些不该塞进编辑器）。"""
         try:

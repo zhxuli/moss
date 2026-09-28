@@ -143,6 +143,9 @@ aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--
   border-bottom:1px solid var(--line2);background:var(--panel)}
 .fbtools .iconbtn{padding:4px 6px;min-width:28px}
 .fbtools .gap{width:8px}
+.layers{display:flex;gap:4px;align-items:center;flex:none}
+.layers .iconbtn{padding:3px 9px;min-width:0;font-size:12px}
+.layers .iconbtn.on{background:var(--sel);border-color:var(--accent);color:var(--accent)}
 .fbwrap{flex:1;overflow:auto;min-height:0}
 table.fb{width:100%;border-collapse:collapse;font-size:13px;user-select:none}
 table.fb th{position:sticky;top:0;z-index:1;text-align:left;font-weight:500;color:var(--dim);
@@ -618,9 +621,24 @@ function fmState(key){
   if (!key) key = "__all__";
   if (!FM.st[key]){
     FM.st[key] = {rel:null, hist:[], hpos:-1, entries:[], sel:new Set(), clip:null,
-                  sort:{key:"name", dir:1}, tabs:[], active:"__browse__"};
+                  sort:{key:"name", dir:1}, tabs:[], active:"__browse__",
+                  pkgId: key === "__all__" ? null : key,
+                  layers: {user:false, system:false}};
   }
   return FM.st[key];
+}
+/* 这个包在两层里的候选目录（`system/pkgs/<id>` / `user/pkgs/<id>`）。
+   ★ 切换按钮要跳的是**同一个包在另一层的目录**，不是总目录 ——
+     哪一层没有这个目录，那个按钮就不显示（你要求的）。 */
+function fmLayerRels(key){
+  return {user: "user/pkgs/" + key, system: "system/pkgs/" + key};
+}
+async function fmProbeLayers(key){
+  if (!key || key === "__all__") return {user:true, system:true};
+  const cand = fmLayerRels(key);
+  const r = await pywebview.api.fs_exists([cand.user, cand.system]);
+  const has = (r && r.has) || {};
+  return {user: !!has[cand.user], system: !!has[cand.system]};
 }
 function fmDefaultRel(key){
   if (key === "__all__") return "user";
@@ -641,6 +659,7 @@ function fmActiveTab(){
 async function fmSelect(key, keepTab){
   FM.ctx = key;
   const s = fmState(key);
+  s.layers = await fmProbeLayers(key);          // 哪一层有"这个包的目录"
   if (!s.rel) await fmGoto(fmDefaultRel(key), true, true);   // quiet: 不切顶层选项卡
   else fmRender();
   if (!keepTab) setTab("file");
@@ -662,7 +681,13 @@ async function fmGoto(rel, push, quiet){
   fmRender();
 }
 function fmHome(){ fmGoto(fmDefaultRel(FM.ctx)); }        // ★ 一键回到默认
-function fmRefresh(){ if (fmState(FM.ctx).rel) fmGoto(fmState(FM.ctx).rel, false); }
+function fmRefresh(){
+  const s = fmState(FM.ctx);
+  if (!s.rel) return;
+  // 手动刷新时顺便重问一遍"另一层有没有这个包的目录"（比如刚复制过去）
+  fmProbeLayers(FM.ctx).then(layers => { s.layers = layers; });
+  fmGoto(s.rel, false);
+}
 function fmUp(){
   const parts = (fmState(FM.ctx).rel || "").split("/");
   if (parts.length > 1) fmGoto(parts.slice(0, -1).join("/"));
@@ -760,8 +785,7 @@ function browsePageHTML(s){
       '<button class="iconbtn b-up" title="向上一级（Backspace）"></button>' +
       '<button class="iconbtn b-reload" title="刷新（F5）"></button>' +
       '<div class="crumbs"></div>' +
-      '<button class="iconbtn b-root-user" title="切到 user_data">user_data</button>' +
-      '<button class="iconbtn b-root-system" title="切到 system">system</button>' +
+      '<div class="layers"></div>' +
     '</div>' +
     '<div class="fbtools">' +
       '<button class="iconbtn b-newdir" title="新建文件夹"></button>' +
@@ -880,8 +904,34 @@ function bindBrowse(s){
   page.querySelector(".b-fwd").onclick = fmFwd;
   page.querySelector(".b-up").onclick = fmUp;
   page.querySelector(".b-reload").onclick = fmRefresh;
-  page.querySelector(".b-root-user").onclick = () => fmGoto("user");
-  page.querySelector(".b-root-system").onclick = () => fmGoto("system");
+
+  /* 切换按钮：**跳到同一个包在另一层的目录**；那一层没有这个目录就不显示。
+     （`__all__` 上下文没有"这个包"，那时才是切到两个总根。） */
+  const layersBox = page.querySelector(".layers");
+  const hereLayer = (s.rel || "").split("/")[0];
+  let lhtml = "";
+  if (!s.pkgId){
+    lhtml = '<button class="iconbtn' + (hereLayer === "user" ? " on" : "") +
+              '" data-go="user" title="user_data 根目录">user_data</button>' +
+            '<button class="iconbtn' + (hereLayer === "system" ? " on" : "") +
+              '" data-go="system" title="system 根目录">system</button>';
+  } else {
+    const cand = fmLayerRels(s.pkgId);
+    if (s.layers.user)
+      lhtml += '<button class="iconbtn' + (hereLayer === "user" ? " on" : "") +
+        '" data-go="' + esc(cand.user) + '" title="user_data 里这个包的目录（' +
+        esc(cand.user) + '）">user_data</button>';
+    if (s.layers.system)
+      lhtml += '<button class="iconbtn' + (hereLayer === "system" ? " on" : "") +
+        '" data-go="' + esc(cand.system) + '" title="system 里这个包的目录（' +
+        esc(cand.system) + '）">system</button>';
+    if (!s.layers.user && !s.layers.system)
+      lhtml += '<span class="sub" style="align-self:center">这个包只在当前目录里</span>';
+  }
+  layersBox.innerHTML = lhtml;
+  layersBox.querySelectorAll("button").forEach(b => {
+    b.onclick = () => fmGoto(b.dataset.go);
+  });
   page.querySelector(".b-newdir").onclick = () => fmCmd("newdir");
   page.querySelector(".b-newfile").onclick = () => fmCmd("newfile");
   page.querySelector(".b-rename").onclick = () => fmCmd("rename");
