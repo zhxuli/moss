@@ -80,10 +80,15 @@ def mock_data():
         t = str(r.get("target") or "")
         if not t:
             continue
+        cwd = str(r.get("cwd") or "")
         hist.append({"ts": str(r.get("ts") or ""), "kind": str(r.get("kind") or ""),
                      "id": str(r.get("id") or ""), "target": t, "name": Path(t).name or t,
-                     "cwd": str(r.get("cwd") or ""), "args": " ".join(r.get("args") or []),
-                     "exit": r.get("exit"), "icon": "", "icon_svg": ""})
+                     "cwd": cwd, "args": " ".join(r.get("args") or []),
+                     "exit": r.get("exit"), "icon": "", "icon_svg": "",
+                     # 照真后端的算法给：目标没了的历史条目在界面上要画成灰的
+                     "exists": Path(t).is_file(),
+                     "cwd_exists": bool(cwd) and Path(cwd).is_dir(),
+                     "key": "preview"})
 
     fs = {}
     for rel, sub in (("system/pkgs/md5", ROOT / "system/pkgs/md5"),
@@ -115,6 +120,7 @@ MOCK_JS = r"""
   window.pywebview = { api: {
     state: async () => state,
     hist_list: async () => ({ok: true, items: HIST}),
+    hist_forget: async () => ({ok: true, msg: "(预览) 已删掉这条记录"}),
     pkg_states: async (ids) => {                       // 造两个"在跑"的，好看绿色停止图标
       const out = {};
       (ids || []).forEach((id, i) => { out[id] = {running: i === 1 || i === 4,

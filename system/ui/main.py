@@ -333,6 +333,124 @@ def _top_windows():
 _HELPER_CLASSES = ("TtkMonitorClass",)
 
 
+# ================================================================ 历史账（只读 + 墓碑）
+# ★ 这一小段是 `core/history.py` 里 `dedup_key` / `should_record` / 墓碑那三样的
+#   **逐字镜像**。为什么要抄一遍：界面进程不能 import core（发行版里 core 编在 exe 里），
+#   而两边读的是**同一本账** —— 键算法一旦不同，"界面里删掉一条"在 CLI 的
+#   `--history` 里就会又冒出来。**改这里必须同时改 `core/history.py`。**
+HIST_TOMBSTONE = "tombstone"
+
+
+def _hist_read_all():
+    """把那本账整个读出来（新的月份在前，行序保持文件里的顺序）。"""
+    rows = []
+    hist_dir = USER_DATA / "history"
+    if not hist_dir.is_dir():
+        return rows
+    for f in sorted(hist_dir.glob("*.jsonl"), reverse=True):
+        try:
+            for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    continue
+        except OSError:
+            continue
+    return rows
+
+
+def _hist_key(r):
+    """去重键（= `core.history.dedup_key`）。"""
+    return "|".join([
+        str(r.get("kind") or ""),
+        str(r.get("id") or r.get("target") or ""),
+        json.dumps(r.get("params") or {}, sort_keys=True, ensure_ascii=False),
+        json.dumps(r.get("args") or [], ensure_ascii=False),
+    ])
+
+
+def _hist_is_record(r):
+    """这条算不算一条历史（= `core.history.should_record`）。"""
+    return (r.get("kind") or "") not in ("pkg", HIST_TOMBSTONE)
+
+
+def _hist_forgotten(rows):
+    """被墓碑点名的去重键。"""
+    return {str(r.get("forget") or "") for r in rows
+            if (r.get("kind") or "") == HIST_TOMBSTONE and r.get("forget")}
+
+
+# ================================================================ 文本编码
+# ★ 为什么专门做这件事（2026-09-28 你反馈"有的 txt 打不开，说它是二进制"）：
+#   原来的判断只有一句 `b"\x00" in raw[:8192]` —— 而 **UTF-16 文本里每个 ASCII
+#   字符后面都跟着一个 0x00**，于是记事本存成的 UTF-16 txt 全被当成二进制拒了。
+#   GBK（中文 Windows 上老 .txt 的常见编码）倒是不会被判成二进制，但会解成乱码。
+#   现在按 BOM → UTF-16 特征 → UTF-8 → 中文常见编码的顺序猜，并且**把猜到的
+#   编码记下来**：保存时按同一种写回去（否则"改一个字保存"会把整个文件转码）。
+_BOMS = [
+    (b"\xef\xbb\xbf", "utf-8"),
+    (b"\xff\xfe\x00\x00", "utf-32-le"),
+    (b"\x00\x00\xfe\xff", "utf-32-be"),
+    (b"\xff\xfe", "utf-16-le"),
+    (b"\xfe\xff", "utf-16-be"),
+]
+# 猜的顺序：UTF-8 优先（现在的文件几乎都是），再挑中文 Windows 上最常见的几个。
+# `.decode` 失败就换下一个 —— 这些编码的非法序列不同，误判概率很低。
+_TRY = ("utf-8", "gbk", "big5", "shift_jis", "latin-1")
+
+
+def _looks_binary(raw):
+    """真的二进制文件：有 NUL，或者控制字符占了一大片。"""
+    head = raw[:8192]
+    if b"\x00" in head:
+        return True
+    ctrl = sum(1 for b in head if b < 9 or (13 < b < 32))
+    return bool(head) and ctrl / len(head) > 0.10
+
+
+def _decode_text(raw):
+    """bytes → (文本, 编码, BOM 的十六进制串 或 "")。真的二进制返回 (None, None, "")。
+
+    ★ BOM 单独拎出来自己剥（而不是用 `utf-16` / `utf-8-sig` 那种"会自己吃 BOM"的
+      编解码器）：因为**写回去时得把同一个 BOM 原样放回去**，而 `utf-16` 写出去
+      一定是小端 —— 一个 BE 的文件保存一次就变小端了。这里记的是**精确的**
+      `utf-16-le` / `utf-16-be`，加上那个 BOM 串，round-trip 才真的等价。
+    """
+    for bom, enc in _BOMS:
+        if raw.startswith(bom):
+            try:
+                return raw[len(bom):].decode(enc), enc, bom.hex()
+            except (UnicodeDecodeError, LookupError):
+                break
+    # ★ 顺序有讲究：**先试无 BOM 的 UTF-16，再判二进制**。
+    #   反过来的话，UTF-16 里那些 0x00 会先撞上"有 NUL 就是二进制"那条，
+    #   于是"另存为 UTF-16、但不写 BOM"的文本文件永远打不开（实测踩到）。
+    #   判据用**NUL 的比例 + 落点**（不是"每个 ASCII 后面都得是 0"）：中文在
+    #   UTF-16 里两个字节都不是 0，纯按奇数位统计会把"中英混排"的文件漏掉。
+    head = raw[:4096]
+    nulls = [i for i, b in enumerate(head) if b == 0]
+    if len(head) >= 4 and len(nulls) / len(head) > 0.15:
+        odd_n = sum(1 for i in nulls if i % 2)
+        even_n = len(nulls) - odd_n
+        for enc, hit in (("utf-16-le", odd_n), ("utf-16-be", even_n)):
+            if hit / len(nulls) > 0.8:
+                try:
+                    return raw.decode(enc), enc, ""
+                except UnicodeDecodeError:
+                    pass
+    if _looks_binary(raw):
+        return None, None, ""
+    for enc in _TRY:
+        try:
+            return raw.decode(enc), enc, ""
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", "replace"), "utf-8", ""
+
+
 def rerun_argv(target, cwd="", args=""):
     """把一条历史记录翻成"你在终端里会手敲的那条命令"。返回 (argv, cwd)，空目标给 (None, None)。
 
@@ -628,32 +746,22 @@ class Api:
         """最近跑过的**路径调用**（`moss zeen` 这种），最新的在前。
 
         ★ 数据就是 `user_data/history/*.jsonl` —— 界面进程不 import core（发行版里
-          core 编在 exe 里），所以这里直接读那本账，格式就是接口。
-        ★ 去重口径照 `V-17`：键 = kind + （包 id 或目标路径）+ 参数，**不算 cwd**；
-          同一条只留**最新**的（这样 start/after 两条会合成一条，留的是带结果的那条）。
+          core 编在 exe 里），所以这里直接读那本账，**格式就是接口**。
+        ★ 去重/过滤口径**必须和宿主一模一样**（`core/history.py` 的 `dedup_key` /
+          `should_record` / 墓碑）：两边读的是同一本账，键算法一旦不同，
+          界面里"删掉一条"在 CLI 的 `--history` 里就会**又冒出来**。
+          所以下面 `_hist_key` / `_hist_is_record` / `_hist_forgotten` 是那三个函数的
+          **逐字镜像**（改一处必须改两处 —— 这两份代码注定要重复，因为不能 import）。
         ★ 图标按你说的来：**目标所在目录里若有 `icon.xxx` 就用它**（包列表那边
           宿主的 `pkg.icon_path` 早就在这么做了，这里是同一套前缀顺序）。
         """
-        rows = []
-        hist_dir = USER_DATA / "history"
-        if hist_dir.is_dir():
-            for f in sorted(hist_dir.glob("*.jsonl"), reverse=True):
-                try:
-                    for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            rows.append(json.loads(line))
-                        except ValueError:
-                            continue
-                except OSError:
-                    continue
+        rows = _hist_read_all()
+        dead = _hist_forgotten(rows)
+        rows = [r for r in rows if _hist_is_record(r) and _hist_key(r) not in dead]
         # 去重：同一条命令只留最新那次
         best = {}
         for r in rows:
-            key = (r.get("kind") or "", r.get("id") or r.get("target") or "",
-                   r.get("args") or "")
+            key = _hist_key(r)
             old = best.get(key)
             if old is None or str(r.get("ts") or "") > str(old.get("ts") or ""):
                 best[key] = r
@@ -669,6 +777,7 @@ class Api:
         items = []
         for r in out_rows:
             target = str(r.get("target") or "")
+            cwd = str(r.get("cwd") or "")
             icon_uri, icon_svg = "", ""
             if target:
                 icon_uri, icon_svg = _dir_icon(Path(target).parent, exts)
@@ -678,13 +787,42 @@ class Api:
                 "id": str(r.get("id") or ""),
                 "target": target,
                 "name": Path(target).name or target,
-                "cwd": str(r.get("cwd") or ""),
+                "cwd": cwd,
                 "args": str(r.get("args") or ""),
                 "exit": r.get("exit"),
+                # ★ "这东西还在不在"：不在的条目界面画成灰的（你要求的）。
+                #   目标没了 / 当初的目录没了，分开报 —— 一个是"跑不了了"，
+                #   另一个只影响"在哪儿跑"。
+                "exists": bool(target) and Path(target).is_file(),
+                "cwd_exists": bool(cwd) and Path(cwd).is_dir(),
+                "key": _hist_key(r),
                 "icon": icon_uri,
                 "icon_svg": icon_svg,
             })
         return {"ok": True, "items": items}
+
+    def hist_forget(self, key):
+        """把一条历史"删掉" = **追加一条墓碑**（账不回头重写，见 `core/history.py`）。
+
+        为什么不重写那个 jsonl：这本账是追加写的 —— 重写有可能正好盖掉
+        "另一头正在跑的那次调用结束时补的那条"。追加一条墓碑既安全，
+        又让 CLI 和界面两边读的时候一致地看不见它。
+        """
+        key = str(key or "").strip()
+        if not key:
+            return {"ok": False, "msg": "没给要删的那条的键"}
+        import datetime
+        hist_dir = USER_DATA / "history"
+        try:
+            hist_dir.mkdir(parents=True, exist_ok=True)
+            f = hist_dir / (datetime.datetime.now().strftime("%Y-%m") + ".jsonl")
+            entry = {"via": "ui", "kind": "tombstone", "forget": key,
+                     "ts": datetime.datetime.now().isoformat(timespec="seconds")}
+            with open(f, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError as e:
+            return {"ok": False, "msg": "写不进历史账：%s" % e}
+        return {"ok": True, "msg": "已从历史里删掉这条"}
 
     def path_start(self, target, cwd="", args=""):
         """重跑一次**路径调用**（历史条目点「运行」就是它）。
@@ -862,39 +1000,56 @@ class Api:
                     "text": "", "writable": root["writable"],
                     "msg": "文件 %.1f MB，超过 %.1f MB，不给编辑" % (size / 1048576, MAX_READ / 1048576)}
         raw = p.read_bytes()
-        if b"\x00" in raw[:8192]:
+        text, enc, bom_hex = _decode_text(raw)
+        if text is None:
             return {"ok": True, "binary": True, "too_big": False, "size": size,
-                    "text": "", "writable": False, "msg": "二进制文件，不给编辑"}
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            text = raw.decode("utf-8", "replace")
+                    "text": "", "writable": False,
+                    "msg": "二进制文件，不给编辑（要看就用「用默认程序打开」）"}
+        # ★ 把**猜到的编码**告诉界面：一来状态栏能写清楚"这是 UTF-16 / GBK"，
+        #   二来保存时要按同一种 + 同一个 BOM 写回去（否则改一个字就把整个文件转码了）。
+        note = "" if enc == "utf-8" and not bom_hex else \
+            "%s%s" % (enc.upper(), "（带 BOM）" if bom_hex else "")
         return {"ok": True, "binary": False, "too_big": False, "size": size,
                 "text": text, "rel": _rel_page(p), "path": str(p),
-                "writable": root["writable"],
+                "writable": root["writable"], "encoding": enc, "bom": bom_hex,
+                "encoding_note": note,
                 "mtime": int(p.stat().st_mtime)}
 
-    def fs_write(self, rel, text):
-        """写回文件。两个根都能写（`system/` 也放开了，见文件头那段说明）。"""
+    def fs_write(self, rel, text, encoding="utf-8", bom=""):
+        """写回文件。三个根都能写（`system/` 也放开了，见文件头那段说明）。
+
+        ★ `encoding` / `bom` 由 `fs_read` 给出、界面原样带回来 ——
+          **按读进来的编码和 BOM 写回去**。不这么做的话，打开一个 GBK / UTF-16 的
+          txt、改一个字保存，整个文件就被悄悄转成 UTF-8 了（在老程序里就成了乱码）。
+        """
         try:
             root, p = _resolve(rel)
         except ValueError as e:
             return {"ok": False, "msg": str(e)}
         if p.is_dir():
             return {"ok": False, "msg": "这是目录，不是文件"}
+        enc = str(encoding or "utf-8")
+        try:
+            "".encode(enc)
+        except LookupError:
+            return {"ok": False, "msg": "不认识的编码：%s" % enc}
+        try:
+            head = bytes.fromhex(str(bom)) if bom else b""
+        except ValueError:
+            return {"ok": False, "msg": "BOM 写坏了：%r" % (bom,)}
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             tmp = p.with_name(p.name + ".moss-tmp")
-            # ★ newline="" 必须写：文本模式默认会把 \n 翻成 \r\n，于是
-            #   "没改一个字、点一下保存" 也会把整个文件的行尾换掉（实测：写 "print(1)\n"
-            #   读回来是 "print(1)\r\n"）。编辑器要原样进原样出。
-            with open(tmp, "w", encoding="utf-8", newline="") as f:
-                f.write(text)
+            # ★ 用二进制写：文本模式默认会把 \n 翻成 \r\n，于是"没改一个字、点一下保存"
+            #   也会把整个文件的行尾换掉（实测：写 "print(1)\n" 读回来是 "print(1)\r\n"）。
+            #   字节级进出才是真的"原样进原样出"。
+            with open(tmp, "wb") as f:
+                f.write(head + text.encode(enc))
             os.replace(tmp, p)          # 原子替换：写一半断电也不会留半个文件
-        except OSError as e:
+        except (OSError, UnicodeEncodeError) as e:
             return {"ok": False, "msg": "写不进去：%s" % e}
         return {"ok": True, "msg": "已保存 %s" % rel, "size": p.stat().st_size,
-                "mtime": int(p.stat().st_mtime),
+                "mtime": int(p.stat().st_mtime), "encoding": enc,
                 "factory": rel.split("/")[0] == "system"}
 
     def fs_mkdir(self, rel_parent, name):
