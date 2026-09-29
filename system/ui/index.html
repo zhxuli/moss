@@ -272,61 +272,57 @@ table.fb td.dim{color:var(--dim)}
 #ctxmenu .mi.dis{opacity:.4;cursor:default}
 #ctxmenu .mi.dis:hover{background:transparent}
 #ctxmenu .sep{height:1px;background:var(--line2);margin:4px 6px}
-/* ---- 详情（包 / 历史共用一套骨架，按参考稿的视觉语言）----
-   参考稿给的是一套**很克制的浅色语言**，要点照搬：
-   · 头部居中：一个 64px 的圆角图标块（浅灰底、无描边）+ 24px 标题 +
-     等宽的 meta 行 + 居中说明（最宽 540px）—— 视线有明确的中轴；
-   · 每块是一张 12px 圆角的浅灰卡片（#fbfbfd 底 + #f0f0f0 极细描边 + 24px 内边距），
-     **留白比上一版大得多**，块与块之间 20px；
-   · 小节标题 12px / 600 / #86868b / 字距 1px；
-   · "标签 : 值" 的行：标签固定 100px、值加粗，行与行之间 16px + 一条满宽细线；
-   · 控件是**白底 + 1px #d2d2d7 描边**（不是填充块），聚焦才出现蓝色描边 + 一圈极淡的环；
-   · 危险区单独一张淡红卡（#fffcfc 底 / #fee2e2 描边 / 红字 + 淡红按钮）。
-   深色模式按同一套层级关系翻译，不照抄灰值。 */
+/* ---- 详情（包 / 历史共用一套骨架）----
+   视觉语言照参考稿（浅灰小节卡 / 白底细描边控件 / 淡红危险区 / 那套灰阶），
+   但**留白收紧了**：照搬参考稿的 40px 外padding + 24px 内padding + 20px 块间距，
+   一屏就装不下了，得翻页。这一版：
+   · 头部改**左右结构** —— 左：图标在上、名字在下；右：id 那一行在上、介绍在下。
+     比原来"居中三行"矮掉一大截（原来图标/名字/id/介绍各占一行）；
+   · **去掉小节标题**（属性 / 跑一下 / 这条记录 / 卸载）—— 每块都顶着一行标题，
+     合计就是小半屏；而这些块的内容本身已经说明了自己是什么（"别名 / 标签"这些
+     行标签、输入框 + 运行按钮、红色的删除按钮），去掉不影响使用；
+   · 外边距 40 → 24、块内边距 22/24 → 16/20、块间距 20 → 14、属性行距 16 → 11。 */
 #pane-detail{overflow:auto;padding:0}
-/* ★ 参考稿的关键一层：**内容坐在一张白卡上**（白底 + 16px 圆角 + 极弱阴影 + 细描边）。
-   少了它，那个 64px 的图标块（浅灰）会和面板底色撞成一片、
-   看着像没有底 —— 这层白卡就是图标块和浅灰小节能被看出来的对照面。 */
-.dwrap{max-width:760px;margin:24px auto;padding:40px;background:var(--panel);
+/* 内容坐在一张白卡上：浅灰的图标块和浅灰的小节卡都要靠它当对照面 */
+.dwrap{max-width:760px;margin:20px auto;padding:24px 28px;background:var(--panel);
   border:1px solid var(--line);border-radius:16px;
   box-shadow:0 4px 24px rgba(0,0,0,.03)}
 
-/* ---------- 头部：居中 ---------- */
-.dhead{text-align:center;margin-bottom:28px}
-.dicon{display:inline-flex;align-items:center;justify-content:center;width:64px;height:64px;
-  background:var(--tile);border-radius:16px;margin-bottom:16px;color:var(--fg2)}
-.dicon svg,.dicon img{width:30px;height:30px}
-h1.dtitle{font-size:24px;font-weight:600;margin:0 0 8px;letter-spacing:.4px;line-height:1.3}
-.dmeta{font-size:13px;color:var(--dim);font-family:var(--mono);margin-bottom:16px;
+/* ---------- 头部：左右两块 ---------- */
+.dhead{display:flex;gap:18px;align-items:flex-start;margin-bottom:16px}
+.dhead-l{flex:none;display:flex;flex-direction:column;gap:10px;max-width:210px}
+.dhead-r{flex:1;min-width:0;padding-top:2px}
+.dicon{display:flex;align-items:center;justify-content:center;width:48px;height:48px;
+  background:var(--tile);border-radius:12px;color:var(--fg2)}
+.dicon svg,.dicon img{width:24px;height:24px}
+h1.dtitle{font-size:21px;font-weight:600;margin:0;letter-spacing:.2px;line-height:1.25;
+  word-break:break-word}
+.dmeta{font-size:12.5px;color:var(--dim);font-family:var(--mono);line-height:1.5;
   word-break:break-all}
-.ddesc{font-size:14px;color:var(--fg2);line-height:1.6;max-width:540px;margin:0 auto;
+.ddesc{font-size:13.5px;color:var(--fg2);line-height:1.6;margin:6px 0 0;
   word-break:break-word}
 
-/* ---------- 卡片 ---------- */
+/* ---------- 小节卡 ---------- */
 .dsec{background:var(--panel2);border:1px solid var(--line);border-radius:12px;
-  padding:22px 24px;margin-bottom:20px}
+  padding:16px 20px;margin-bottom:14px}
 .dsec:last-child{margin-bottom:0}
-.dsec-t{font-size:12px;font-weight:600;color:var(--dim);letter-spacing:1px;
-  text-transform:uppercase;margin:0 0 18px}
 .dsec.danger{background:color-mix(in srgb, #ef4444 5%, var(--panel2));
   border-color:color-mix(in srgb, #ef4444 22%, var(--line));
   display:flex;justify-content:space-between;align-items:center;gap:16px}
-.dsec.danger .dsec-t{color:#ef4444;margin-bottom:4px}
 .danger-text{font-size:13px;color:var(--dim);line-height:1.6;word-break:break-word}
 
 /* ---------- "标签 : 值" 的行 ---------- */
 .props{display:flex;flex-direction:column}
-.prop{display:flex;align-items:flex-start;gap:16px;padding-bottom:16px;
+.prop{display:flex;align-items:flex-start;gap:16px;padding-bottom:11px;
   border-bottom:1px solid var(--line)}
 .prop:last-child{padding-bottom:0;border-bottom:none}
-.prop + .prop{padding-top:16px}
-.prop-k{width:100px;flex:none;font-size:14px;color:var(--dim);line-height:1.5;
-  padding-top:1px}
-.prop-v{flex:1;min-width:0;font-size:14px;font-weight:500;color:var(--fg);line-height:1.5;
+.prop + .prop{padding-top:11px}
+.prop-k{width:96px;flex:none;font-size:13.5px;color:var(--dim);line-height:1.5;padding-top:1px}
+.prop-v{flex:1;min-width:0;font-size:13.5px;font-weight:500;color:var(--fg);line-height:1.5;
   word-break:break-all}
 .prop-v .soft{font-weight:400;color:var(--dim)}
-.prop-v .pdesc{font-weight:400;color:var(--dim);font-size:13px;line-height:1.6;margin-top:4px}
-.prop-v .pex{font-weight:400;color:var(--dim2);font-size:12.5px;line-height:1.6;margin-top:4px;
+.prop-v .pdesc{font-weight:400;color:var(--dim);font-size:12.5px;line-height:1.6;margin-top:3px}
+.prop-v .pex{font-weight:400;color:var(--dim2);font-size:12px;line-height:1.6;margin-top:3px;
   font-family:var(--mono)}
 .tag{display:inline-block;background:var(--tag);color:var(--fg2);padding:2px 8px;
   border-radius:6px;font-size:12px;margin:0 6px 4px 0}
@@ -339,18 +335,18 @@ h1.dtitle{font-size:24px;font-weight:600;margin:0 0 8px;letter-spacing:.4px;line
 .chip:hover{background:var(--fill2)}
 .chip:active{transform:scale(.97)}
 
-/* ---------- 控件：白底 + 细描边（不是填充块） ---------- */
-.runrow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-#args,#hargs{flex:1;min-width:200px;padding:10px 16px;background:var(--panel);
-  border:1px solid var(--ctl);border-radius:8px;font-size:14px;color:var(--fg);
+/* ---------- 控件：白底 + 细描边 ---------- */
+.runrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#args,#hargs{flex:1;min-width:200px;padding:8px 14px;background:var(--panel);
+  border:1px solid var(--ctl);border-radius:8px;font-size:13.5px;color:var(--fg);
   font-family:var(--mono);outline:none;
   transition:border-color .2s ease,box-shadow .2s ease}
 #args::placeholder,#hargs::placeholder{color:var(--dim2)}
 #args:focus,#hargs:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
 #args:disabled,#hargs:disabled{opacity:.5;cursor:default}
 
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 20px;
-  border-radius:8px;font-size:14px;font-weight:500;font-family:inherit;cursor:pointer;
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 16px;
+  border-radius:8px;font-size:13.5px;font-weight:500;font-family:inherit;cursor:pointer;
   background:var(--panel);border:1px solid var(--ctl);color:var(--fg);
   transition:background .15s ease-out,transform .1s ease-out,border-color .15s ease-out}
 .btn:hover{background:var(--hover)}
@@ -360,18 +356,15 @@ h1.dtitle{font-size:24px;font-weight:600;margin:0 0 8px;letter-spacing:.4px;line
   border-color:color-mix(in srgb, #ef4444 28%, var(--ctl));color:#ef4444}
 .btn.danger:hover{background:color-mix(in srgb, #ef4444 13%, var(--panel))}
 
-.runhint{font-size:12px;color:var(--dim);margin-top:12px;line-height:1.7;word-break:break-all}
+.runhint{font-size:12px;color:var(--dim);margin-top:10px;line-height:1.7;word-break:break-all}
 .runhint .mono{font-family:var(--mono);background:var(--tag);color:var(--fg2);
   padding:2px 6px;border-radius:4px;font-size:11.5px}
-.note-line{font-size:12.5px;color:var(--dim);line-height:1.7;margin-top:8px}
-.note-line .mono{font-family:var(--mono);font-size:12px}
 
 /* ---------- 提示条 ---------- */
-.warnbox{display:flex;gap:10px;align-items:flex-start;text-align:left;margin:0 auto 20px;
-  max-width:540px;padding:12px 16px;border-radius:10px;
-  background:color-mix(in srgb, #f59e0b 10%, var(--panel2));
+.warnbox{display:flex;gap:10px;align-items:flex-start;margin:0 0 14px;padding:10px 14px;
+  border-radius:10px;background:color-mix(in srgb, #f59e0b 10%, var(--panel2));
   border:1px solid color-mix(in srgb, #f59e0b 26%, var(--line));
-  font-size:13px;line-height:1.6;color:var(--fg2)}
+  font-size:12.5px;line-height:1.6;color:var(--fg2)}
 .warnbox svg.i{color:#b45309;margin-top:2px;flex:none}
 code,.mono{font-family:var(--mono);font-size:12.5px}
 .row-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -1204,15 +1197,19 @@ function renderDetail(){
   const prop = (k, v) => '<div class="prop"><div class="prop-k">' + esc(k) +
     '</div><div class="prop-v">' + v + '</div></div>';
   let html = '<div class="dwrap"><div class="dhead">' +
-      '<div class="dicon">' + iconHTML(p, "") + '</div>' +
-      '<h1 class="dtitle">' + esc(p.name) + '</h1>' +
-      '<div class="dmeta">:' + esc(p.id) + ' · v' + esc(p.version || "?") + ' · ' +
-        esc(p.kind) + ' · ' + esc(p.layer) + ' 层' +
-        (p.shadowed ? ' · 遮住了 ' + esc(p.shadowed) + ' 层的同名包' : '') + '</div>' +
-      (p.desc ? '<p class="ddesc">' + esc(p.desc) + '</p>' : '') +
+      '<div class="dhead-l">' +
+        '<div class="dicon">' + iconHTML(p, "") + '</div>' +
+        '<h1 class="dtitle">' + esc(p.name) + '</h1>' +
+      '</div>' +
+      '<div class="dhead-r">' +
+        '<div class="dmeta">:' + esc(p.id) + ' · v' + esc(p.version || "?") + ' · ' +
+          esc(p.kind) + ' · ' + esc(p.layer) + ' 层' +
+          (p.shadowed ? ' · 遮住了 ' + esc(p.shadowed) + ' 层的同名包' : '') + '</div>' +
+        (p.desc ? '<p class="ddesc">' + esc(p.desc) + '</p>' : '') +
+      '</div>' +
     '</div>';
 
-  // 属性：别名 / 标签 / AI。**用"标签 : 值"的行**，不做成一堆药丸 ——
+  // 属性：别名 / 标签 / AI。用"标签 : 值"的行，不做成一堆药丸 ——
   // 药丸只留给"点一下就填进去"那种真动作（例子）。
   const props = [];
   if ((p.aliases || []).length)
@@ -1225,11 +1222,10 @@ function renderDetail(){
     props.push(prop("AI", '可调用 <span class="soft">· 风险 ' +
       esc(p.ai_risk || "?") + '</span>'));
   if (props.length)
-    html += '<section class="dsec"><h2 class="dsec-t">属性</h2><div class="props">' +
-      props.join("") + '</div></section>';
+    html += '<section class="dsec"><div class="props">' + props.join("") + '</div></section>';
 
   if (params.length){
-    html += '<section class="dsec"><h2 class="dsec-t">参数</h2><div class="props">' +
+    html += '<section class="dsec"><div class="props">' +
       params.map(pa => '<div class="prop"><div class="prop-k mono">' + esc(pa.name) +
         '</div><div class="prop-v">' + esc(pa.type || "string") +
         '<span class="soft"> · ' + (pa.required ? "必填" : "可留空") +
@@ -1239,24 +1235,22 @@ function renderDetail(){
         '</div></div>').join("") + '</div></section>';
   }
   // ★ 过滤掉空的例子：`pkg.json` 里 `ai.examples` 的 `args` 可能是空串
-  //   （有的包就是 ['', '']），不过滤会画出一排**空药丸**、整组看着像坏了。
+  //   （有的包就是 ['', '']），不过滤会画出一排**空药丸**、整块看着像坏了。
   const exs = (p.examples || []).map(x => String(x || "")).filter(x => x.trim());
   if (exs.length){
-    html += '<section class="dsec"><h2 class="dsec-t">例子</h2><div class="chips">' +
+    html += '<section class="dsec"><div class="chips">' +
       exs.map(e => '<button class="chip" data-args="' + esc(e) + '">' + esc(e) +
         '</button>').join("") + '</div></section>';
   }
 
-  html += '<section class="dsec"><h2 class="dsec-t">跑一下</h2>' +
-      '<div class="runrow">' +
+  html += '<section class="dsec"><div class="runrow">' +
       '<input id="args" placeholder="参数（可留空；回车 = 运行）">' +
       '<button class="btn" id="btn-openui" title="打开这个包自己的界面（后台运行，不等它）">' +
         ico("app-window", "i") + '<span>打开界面</span></button></div>' +
       '<div class="runhint">命令预览: <span class="mono" id="preview"></span>' +
       ' · 右上角是「运行 / 停止」</div></section>' +
-    '<section class="dsec danger"><div>' +
-      '<h2 class="dsec-t">卸载</h2>' +
-      '<div class="danger-text">永久删除: 包本体 + 它的数据（不进回收站）</div></div>' +
+    '<section class="dsec danger">' +
+      '<div class="danger-text">永久删除: 包本体 + 它的数据（不进回收站）</div>' +
       '<button class="btn danger" id="btn-remove" title="卸载这个包（moss --remove）">' +
         ico("trash-2", "i") + '<span>卸载</span></button></section></div>';
   box.innerHTML = html;
@@ -1305,16 +1299,17 @@ function renderDetailHist(it, box){
   if (it.exit !== null && it.exit !== undefined)
     rows.push(["上次退出码", String(it.exit), ""]);
   let html = '<div class="dwrap"><div class="dhead">' +
-      '<div class="dicon">' + histIconHTML(it, "") + '</div>' +
-      '<h1 class="dtitle">' + esc(it.name) + '</h1>' +
-      '<div class="dmeta">' + esc(it.target || "") + '</div>' +
+      '<div class="dhead-l">' +
+        '<div class="dicon">' + histIconHTML(it, "") + '</div>' +
+        '<h1 class="dtitle">' + esc(it.name) + '</h1>' +
+      '</div>' +
+      '<div class="dhead-r"><div class="dmeta">' + esc(it.target || "") + '</div></div>' +
     '</div>';
   if (gone){
     html += '<div class="warnbox">' + ico("alert-triangle", "i") +
       '<span>这个文件已经不在了，跑不了。记录还留着，想清掉就点下面那个按钮。</span></div>';
   }
-  html += '<section class="dsec"><h2 class="dsec-t">跑一下</h2>' +
-      '<div class="runrow">' +
+  html += '<section class="dsec"><div class="runrow">' +
       // ★ 这里用 `#hargs` / `#hpreview`（而不是包详情那对 `#args` / `#preview`）：
       //   两个详情同一个时刻只会存在一个（都往 #pane-detail 里写），
       //   但静态检查"整个页面每个 id 只能出现一次"就分不清了 —— 换成不同的 id，
@@ -1328,15 +1323,14 @@ function renderDetailHist(it, box){
       '<div class="runhint">命令预览: <span class="mono" id="hpreview"></span></div>' +
       '</section>';
   if (rows.length){
-    html += '<section class="dsec"><h2 class="dsec-t">这条记录</h2><div class="props">' +
+    html += '<section class="dsec"><div class="props">' +
       rows.map(r => '<div class="prop"><div class="prop-k">' + esc(r[0]) +
         '</div><div class="prop-v mono">' + esc(r[1]) +
         (r[2] ? ' <span class="soft">' + esc(r[2]) + '</span>' : '') +
         '</div></div>').join("") + '</div></section>';
   }
-  html += '<section class="dsec danger"><div>' +
-      '<h2 class="dsec-t">删除</h2>' +
-      '<div class="danger-text">只删这条记录，那个文件本身不动</div></div>' +
+  html += '<section class="dsec danger">' +
+      '<div class="danger-text">只删这条记录，那个文件本身不动</div>' +
       '<button class="btn danger" id="btn-forget" title="从历史里删掉这条记录">' +
         ico("trash-2", "i") + '<span>删除这条记录</span></button></section></div>';
   box.innerHTML = html;
