@@ -49,6 +49,7 @@ USAGE = """moss —— 多语言启动器
   moss --spec                  打印「插件契约」：怎么写一个插件（写插件 / AI 调用前请先读）
   moss --new <id>              生成一个能跑的插件骨架到 user_data/pkgs/<id>/
   moss --rename <旧> <新id>    给一个包改名：包目录 / 数据目录 / 清单里的 id 一起改
+                               （新 id 写成它现在的 id，就是"把目录名对齐成 id"）
   moss --resolve <名字>        只看解析结果，不执行（排障用：为什么选中它 / 为什么没找到）
   moss --selfcheck             自检：安装根 / runner 表 / 包 / 自带运行时 / cd 注入
 
@@ -668,6 +669,10 @@ def cmd_rename(name, new_id, table):
     互不相干（`D-27`），手改必然只改一半 —— 目录叫 `a`、id 是 `b`，而界面里有几处
     按 id 拼路径的地方就会认错（进程认不出来、切层按钮不显示）。与其到处兜底，
     不如给一个"改名"的动作，把它俩**一起**改掉。
+
+    ★ 新 id 写成**它现在的 id** 时（`moss --rename my-first first`），这条命令就是
+      `D-27` 方案 C 里那个「把目录名对齐成 id」的动作：只改目录名，别的什么都不动
+      （id 没变 ⇒ 数据目录不用动、清单不用重写）。
     """
     new_id = str(new_id or "").strip().lower()
     if not paths.valid_id(new_id):
@@ -678,32 +683,41 @@ def cmd_rename(name, new_id, table):
         out.print_cyan("[错误] 没有这个包：'%s'。直接敲 `moss` 看有哪些。" % name)
         return 1
     old_id = str(rec["id"])
-    if new_id == old_id:
-        out.print_cyan("[信息] id 本来就是 '%s'，没改。" % old_id)
+    pkg_dir = Path(rec["dir"])
+    same_id = (new_id == old_id)
+    # ★ 改成一个"和现在一样"的 id，不是没用的操作 —— `D-27` 方案 C 里它就是
+    #   「把目录名对齐成 id」那个动作（目录名允许和 id 不一样，这条是现成的统一动作）。
+    if same_id and pkg_dir.name == new_id:
+        out.print_cyan("[信息] 名字本来就是 '%s'，目录名也是它，没改。" % old_id)
         return 0
-    if registry.find_alias(new_id):
+    if not same_id and registry.find_alias(new_id):
         out.print_cyan("[错误] 已经有一个包叫 '%s' 了（换一个名字）。" % new_id)
         return 1
 
-    pkg_dir = Path(rec["dir"])
     layer = rec.get("layer")
     state_old = paths.pkg_state_dir(old_id)
     state_new = paths.pkg_state_dir(new_id)
     dir_new = pkg_dir.parent / new_id
 
     # ---- 先全部检查一遍，能不改就不改（改名最怕改一半）
-    if dir_new.exists():
+    if dir_new.exists() and dir_new != pkg_dir:
         out.print_cyan("[错误] 目标目录已经存在：%s" % dir_new)
         return 1
-    if state_new.exists():
+    if not same_id and state_new.exists():
         out.print_cyan("[错误] 目标数据目录已经存在：%s" % state_new)
         return 1
 
-    out.print_cyan("将要改名：%s → %s（%s）" % (old_id, new_id,
-                 dict((k, c) for k, c, _, _ in _LAYERS).get(layer, layer)))
+    if same_id:
+        out.print_cyan("将要只改目录名：%s → %s（id 不变，还是 '%s'）"
+                       % (pkg_dir.name, new_id, old_id))
+    else:
+        out.print_cyan("将要改名：%s → %s（%s）" % (old_id, new_id,
+                     dict((k, c) for k, c, _, _ in _LAYERS).get(layer, layer)))
     print("  %-10s %s" % ("包目录", pkg_dir))
     print("  %-10s %s" % ("        →", dir_new))
-    if state_old.is_dir():
+    if same_id:
+        print("  %-10s （id 没变，数据目录不用动）" % "数据目录")
+    elif state_old.is_dir():
         print("  %-10s %s" % ("数据目录", state_old))
         print("  %-10s %s" % ("        →", state_new))
     else:
@@ -721,27 +735,32 @@ def cmd_rename(name, new_id, table):
         out.print_cyan("[错误] 包目录改不动：%s" % e)
         out.print_cyan("       可能是它正被占用（包还在跑 / 编辑器开着这个目录里的文件）。")
         return 1
-    # ② 数据目录
-    if state_old.is_dir():
+    # ② 数据目录（id 没变就不用动 —— 数据目录是按 id 算的，`D-05`）
+    if not same_id and state_old.is_dir():
         try:
             state_old.rename(state_new)
             done.append("数据目录")
         except OSError as e:
             out.print_cyan("[警告] 数据目录没改成：%s" % e)
             out.print_cyan("       包目录已经改了，数据还在 %s —— 手动挪过去即可。" % state_old)
-    # ③ 清单里的 id（放最后：它才是"身份"，前两步都成了再落这一笔）
-    try:
-        p = pkg_mod.load(dir_new)
-        if p is None:
-            raise ValueError("新目录里的 pkg.json 读不出来")
-        p["id"] = new_id
-        (dir_new / "pkg.json").write_text(
-            json.dumps(p, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        done.append("清单 id")
-    except Exception as e:                                          # noqa: BLE001
-        out.print_cyan("[警告] 清单没改成：%s" % e)
-        out.print_cyan("       目录已经是 %s，把 pkg.json 里的 id 手动改成 '%s' 即可。"
-                       % (dir_new, new_id))
+    # ③ 清单里的 id（放最后：它才是"身份"，前两步都成了再落这一笔；id 没变就不用写）
+    if not same_id:
+        try:
+            p = pkg_mod.load(dir_new)
+            if p is None:
+                raise ValueError("新目录里的 pkg.json 读不出来")
+            p["id"] = new_id
+            (dir_new / "pkg.json").write_text(
+                json.dumps(p, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            done.append("清单 id")
+        except Exception as e:                                          # noqa: BLE001
+            out.print_cyan("[警告] 清单没改成：%s" % e)
+            out.print_cyan("       目录已经是 %s，把 pkg.json 里的 id 手动改成 '%s' 即可。"
+                           % (dir_new, new_id))
+    if same_id:
+        out.print_cyan("已对齐：目录名 %s → %s（id 一直是 '%s'）"
+                       % (pkg_dir.name, new_id, old_id))
+        return 0
     out.print_cyan("已改名：%s → %s（改了 %s）" % (old_id, new_id, "、".join(done)))
     if layer == "user":
         out.print_cyan("       包调用现在要用 `moss :%s`（旧名字不再认识，除非你把它写进 aliases）。"
@@ -939,6 +958,13 @@ def cmd_selfcheck(table):
             r["id"], r.get("layer") or "?", r["pkg"].get("runner"),
             (e.name if e else ("inline" if pkg_mod.inline_code(r["pkg"]) else "✗ 缺失")),
             (ic.name if ic else "—")))
+    # 目录名与 id 不一致（`D-27` 方案 C）：**不是错**，只是给你看一眼 —— 想统一的话
+    # 有一条现成的动作（把新 id 写成它自己的 id）。一致时不打任何字，免得变成噪音。
+    odd = [(registry.dir_of(r), r["id"]) for r in recs if registry.dir_mismatch(r)]
+    if odd:
+        print("  目录名≠id : %d 个 —— %s"
+              % (len(odd), "；".join("%s（id=%s）" % (d, i) for d, i in odd)))
+        print("              想统一：moss --rename <id> <id>（只改目录名，数据不动）")
     # 图标盘点（`F-29`）：有图标几个、谁没有、谁"声明了却读不到"（后者是真问题）
     have = [r["id"] for r in recs if pkg_mod.icon_path(r["pkg"], Path(r["dir"]))]
     lack = [r["id"] for r in recs if not pkg_mod.icon_path(r["pkg"], Path(r["dir"]))]

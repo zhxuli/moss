@@ -77,6 +77,44 @@ def scan_all():
     return sorted(by_id.values(), key=lambda r: r["id"])
 
 
+def dir_of(rec):
+    """这个包**真实的目录名**（不是 id）。`D-27`：两把钥匙 —— 目录用文件夹名、身份用 id。"""
+    d = rec.get("dir")
+    return getattr(d, "name", None) or (str(d).replace("\\", "/").rstrip("/").split("/")[-1]
+                                        if d else "")
+
+
+def dir_mismatch(rec):
+    """目录名和 id 不一样吗？不一样就把**目录名**返回，一样返回 None。
+
+    `D-27` 方案 C：两者不一致是**合法**的（目录名是文件系统的事、id 是身份），
+    所以这里只用来"提示一句"，不用来判错。真要统一，有条现成的动作：
+    `moss --rename <名字> <它自己的 id>` 会把目录名对齐成 id（`D-28`）。
+    """
+    name = dir_of(rec)
+    return name if name and name != str(rec.get("id") or "") else None
+
+
+def _system_has_id(pid):
+    """system 层里有没有 id 等于 `pid` 的包 —— **按清单里的 id 找，不按目录名**。
+
+    `_probe_by_dirname` 的快路径是拿名字当**目录名**去探，`D-27` 之后目录名可以不等于
+    id，于是"用户层的 `a` 遮住了系统层某个目录叫别的、id 也叫 `a` 的包"这种情况会被漏掉。
+    只在快路径没探到 `<SYSTEM_PKGS>/<id>` 时才走这里读一遍清单（18 个包约 5 ms），
+    而且只在 `--remove` 那条路上发生。
+    """
+    if not paths.SYSTEM_PKGS.is_dir():
+        return False
+    want = str(pid or "").lower()
+    for d in sorted(paths.SYSTEM_PKGS.iterdir()):
+        if not d.is_dir():
+            continue
+        p = pkg_mod.load(d)
+        if p and str(p.get("id") or "").lower() == want:
+            return True
+    return False
+
+
 def _probe_by_dirname(name):
     """**按目录名直接取一个包**，不读其它任何目录的清单。返回 None = 没探到。
 
@@ -136,10 +174,12 @@ def _probe_by_dirname(name):
         rec = {"id": p["id"], "layer": layer, "dir": d, "pkg": p}   # 第 5 步：装成结果
         # 遮蔽信息：快路径只命中一个包，不会像 scan_all() 那样顺手算出 shadowed。
         # 而 `--remove` 要用它打那句「它还遮住了 system 层的同名包 —— 删掉之后
-        # 那个会重新生效」，所以 user 层命中时补一次 is_dir（约 0.05 ms，可忽略）。
-        # 这里用 **id** 而不是 name 去拼路径：name 可能是别名，而 system 层
-        # 那个包的目录名是它自己的 id。
-        if layer == "user" and (paths.SYSTEM_PKGS / p["id"]).is_dir():
+        # 那个会重新生效」，所以 user 层命中时补一次。
+        # ★ 遮蔽是按 **id** 算的，而系统层那个包的目录名**不一定等于它的 id**
+        #   （`D-27`）。所以先按 id 直探一下目录（常见情况，0.05 ms），探不到再
+        #   老实读一遍 system 层的清单 —— 宁可慢这 5 ms，也不能漏报遮蔽。
+        if layer == "user" and ((paths.SYSTEM_PKGS / p["id"]).is_dir()
+                                or _system_has_id(p["id"])):
             rec["shadowed"] = "system"
         return rec                                  # 命中，直接回去（别的清单一个都不读）
     return None                                     # 两层都没探到
