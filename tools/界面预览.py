@@ -62,6 +62,7 @@ BROWSERS = [
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "drop-hot", "drop-dir", "drop-file", "console-input", "embed",
+          "statusbar", "settings",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail"]
 
@@ -106,8 +107,12 @@ def mock_data():
     sys.path.insert(0, str(ROOT))
     from core import history as core_history      # noqa: PLC0415
     from core import ui as core_ui                # noqa: PLC0415
+    from core import config as core_config         # noqa: PLC0415
 
     payload = core_ui.build_payload()
+    # ★ 「设置」面板那份数据**用真的**（宿主怎么给，预览就怎么给）：这样截图里
+    #   看到的分组 / 标签 / 控件类型就是真界面上会看到的，不是这里编的。
+    settings = core_config.settings_payload()
 
     hist = []
     for r in core_history.recent_unique():
@@ -150,7 +155,7 @@ def mock_data():
                             "ext": p.suffix.lower().lstrip(".")})
         fs[rel] = {"ok": True, "rel": rel, "entries": entries, "writable": True,
                    "path": str(sub)}
-    return {"payload": payload, "hist": hist, "fs": fs,
+    return {"payload": payload, "hist": hist, "fs": fs, "settings": settings,
             # 拖文件那个场景要的样本：故意用**带空格**的文件名，顺便验引号
             "dropDir": str(ROOT),
             "dropFile": str(ROOT / "一个 带空格的图片.png"),
@@ -273,6 +278,19 @@ MOCK_JS = r"""
         return {ok: true, code: 0, out: "(预览) 已改名：" + m[1] + " → " + m[2]};
       }
       return {ok: true, code: 0, out: "(预览) 自检输出"};
+    },
+    // ---- 「设置」（`V-60`）那两条：真后端去叫宿主 `--settings` / `--settings-set`，
+    //      预览里直接给真数据、把"改了什么"记下来给场景核对 ----
+    settings: async () => ({ok: true, path: M.settings.path, groups: M.settings.groups,
+                            msg: ""}),
+    settings_save: async (pairs) => {
+      M.saved = pairs;
+      // 照真宿主的样子回一份"改完之后的当前值"，顺便把非法值拦下来（真宿主也拦）
+      const bad = [];
+      if (!pairs["symbols.path_mode"] && pairs["symbols.plugin_mode"] === "")
+        bad.push("「路径调用」和「跑包」不能同时留空 —— 那是假的，只是预览里的对照");
+      return {ok: bad.length === 0, problems: bad,
+              groups: M.settings.groups, msg: ""};
     },
     open_ui: async () => ({ok: true, msg: "(预览) 已打开"}),
     pkg_stop: async () => ({ok: true, msg: "(预览) 已停止"}),
@@ -644,6 +662,58 @@ MOCK_JS = r"""
           "DIAG " + (ok ? "OK" : "FAIL") + " 选项卡=" + (tabShown ? 1 : 0) +
           " 显示了=" + (shown ? 1 : 0) + " 切走不卸载=" + (sameFrame ? 1 : 0);
         document.title = ok ? "READY" : "EMBED-FAIL";
+      }
+      // ★ 底部状态栏（`V-61`）：真跑一个包（走 clickRun 那条路），看最下面那行字
+      //   有没有跟着变 —— 它靠的是 `toast()` 里那一句 `setStatus`，不是场景自己写的。
+      if (h === "statusbar"){
+        const p0 = state.packages.find(x => x.id === "img" && !(x.ui && x.ui.embed))
+                   || state.packages.find(x => !(x.ui && x.ui.embed)) || state.packages[0];
+        select(p0.id);
+        setTab("detail");
+        await sleep(300);
+        const before = (document.querySelector("#status-text") || {}).textContent || "";
+        await clickRun(p0);                       // = 点右上角「运行」
+        await sleep(900);
+        const during = (document.querySelector("#status-text") || {}).textContent || "";
+        // 收尾（假 run_poll 立刻说"跑完了"）
+        await sleep(700);
+        const after = (document.querySelector("#status-text") || {}).textContent || "";
+        const bar = document.querySelector("#statusbar");
+        const gear = document.querySelector("#btn-settings");
+        const ok = !!bar && !!gear && !!gear.querySelector("svg") &&
+                   during.indexOf("moss :" + p0.id) >= 0 && after.indexOf("退出码") >= 0;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 起点=" + JSON.stringify(before.slice(0, 12)) +
+          " 跑时=" + JSON.stringify(during.slice(0, 26)) +
+          " 收尾=" + JSON.stringify(after.slice(0, 30));
+        document.title = ok ? "READY" : "STATUS-FAIL";
+      }
+      // ★ 「设置」面板（`V-60`）：打开 → 改两项（一个符号 + 一个开关）→ 保存 →
+      //   核对**只把改过的那两项**送回了宿主 → 再打开一次留给截图。
+      if (h === "settings"){
+        await openSettings();
+        await sleep(500);
+        const rows = document.querySelectorAll("#set-body .setrow").length;
+        const groups = document.querySelectorAll("#set-body .setgroup").length;
+        const sym = document.querySelector('#set-body [data-key="symbols.no_chdir_mode"]');
+        const chk = document.querySelector('#set-body [data-key="output.pid"]');
+        const symBefore = sym ? sym.value : "";
+        if (sym) sym.value = "@";
+        if (chk) chk.checked = !chk.checked;
+        await saveSettings();
+        await sleep(600);
+        const saved = M.saved || {};
+        const closedAfterSave = !document.querySelector("#settings").classList.contains("on");
+        await openSettings();                     // 再打开：留给截图看个完整的
+        await sleep(400);
+        const opened = document.querySelector("#settings").classList.contains("on");
+        const ok = rows === 16 && groups === 4 && closedAfterSave && opened &&
+                   Object.keys(saved).length === 2 && saved["symbols.no_chdir_mode"] === "@" &&
+                   typeof saved["output.pid"] === "boolean";
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 行=" + rows + " 组=" + groups +
+          " 存了=" + JSON.stringify(saved) + " 存完关了=" + closedAfterSave;
+        document.title = ok ? "READY" : "SETTINGS-FAIL";
       }
       // ★ 命令行那行输入（`V-43`）：包 `input()` 问你话时能答。
       //   真的 stdin 那条链由宿主侧测试证明；这里只验界面这半：
