@@ -189,6 +189,11 @@ def _enable_vt():
 def _choose_output_mode():
     """让用户上下选输出模式。返回 'source'/'source_delete'/'separate'；取消返回 None。
 
+    ★ 现在**没人调它了**（`V-44` ✅ 你定的：命令行不写输出位置就按"覆盖原图"来、
+      不再问 —— 界面里跑起来没有终端，问了只会卡死或报错）。留着这段是因为它本身
+      是对的"要问就问"的实现（真终端用 ↑↓ 选、管子退化成输序号），
+      以后哪个包要问用户，照这个写法抄就行。
+
     ★ **不预选**：光标一开始不在任何一项上，必须先按 ↑↓ 再回车；
       直接回车 = 取消整个操作。这样"随手一个回车就把原图覆盖/删掉"不会发生。
       （用户定的规则。）
@@ -249,9 +254,13 @@ def _choose_output_mode():
 
 
 def _resolve_output(opts, source_dir, cwd):
-    """定输出：显式给了就用；没给就**让用户自己选**，不替他猜。
+    """定输出。返回 (output_dir, save_mode, error)。
 
-    返回 (output_dir, save_mode, error)。取消时 error 是特殊值。
+    `-o <目录>` / `/` 写了就按写的来；**两个都没写 = 写回源目录（覆盖原图）**。
+    ★ 为什么不问（`V-44` ✅，你定的）：命令行 —— 尤其是 moss 界面里跑起来的时候 ——
+      没有终端可以交互，问了要么卡死、要么直接报错退出（以前就是后者）；而界面那边
+      **默认选的就是"覆盖原图"**（你自己的 `config.json` 里 `save_mode` = `source`），
+      命令行跟它保持一致就行，不替你猜别的。
     """
     if opts['output_dir']:
         od = opts['output_dir']
@@ -260,19 +269,7 @@ def _resolve_output(opts, source_dir, cwd):
     if opts['in_place']:
         return source_dir, 'source', None
 
-    # 两个都没写 —— 不设默认值，问。
-    if not sys.stdin.isatty():
-        return None, None, (
-            '没有终端可以交互，必须明确指定输出位置：\n'
-            '        moss :img ... /              写回源目录（覆盖原图）\n'
-            '        moss :img ... -o <目录>      输出到指定目录（原图不动）')
-
-    mode = _choose_output_mode()
-    if mode is None:
-        return None, None, 'CANCELLED'
-    if mode in ('source', 'source_delete'):
-        return source_dir, mode, None
-    return os.path.join(source_dir, 'compressed_output'), 'separate', None
+    return source_dir, 'source', None
 
 
 def run(tokens, cwd=None):

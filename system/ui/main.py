@@ -844,9 +844,16 @@ class Api:
                     workdir = str(cwd)
             except OSError:
                 workdir = None
+        # ★ 告诉包"有人在听"（`V-44` ✅）：界面给了它一根 stdin 管子，命令行下面有输入行，
+        #   所以它 `input()` 是拿得到回答的。为什么必须说一声：包没法从 `isatty()` 看出来
+        #   （管子不是终端，`isatty()` 永远是假），于是像图片工具那样"没终端就拒绝交互"的包
+        #   会直接报错退出。约定写在《插件契约》§4（`MOSS_INTERACTIVE`）。
+        #   **只给这一次运行加**（不动界面自己的环境），别的地方跑起来的包不受影响。
+        run_env = dict(os.environ)
+        run_env["MOSS_INTERACTIVE"] = "1"
         try:
             proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    stdin=subprocess.PIPE,
+                                    stdin=subprocess.PIPE, env=run_env,
                                     text=True, encoding="utf-8", errors="replace",
                                     bufsize=1, creationflags=NO_WINDOW, cwd=workdir)
         except OSError as e:
