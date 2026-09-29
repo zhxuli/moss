@@ -48,6 +48,7 @@ USAGE = """moss —— 多语言启动器
   moss --remove <别名>         卸载一个包：包本体 + 它的数据（永久删除，需确认；-y 跳过）
   moss --spec                  打印「插件契约」：怎么写一个插件（写插件 / AI 调用前请先读）
   moss --new <id>              生成一个能跑的插件骨架到 user_data/pkgs/<id>/
+  moss --rename <旧> <新id>    给一个包改名：包目录 / 数据目录 / 清单里的 id 一起改
   moss --resolve <名字>        只看解析结果，不执行（排障用：为什么选中它 / 为什么没找到）
   moss --selfcheck             自检：安装根 / runner 表 / 包 / 自带运行时 / cd 注入
 
@@ -660,6 +661,94 @@ def cmd_new(pid, kind="task"):
     return 0
 
 
+def cmd_rename(name, new_id, table):
+    """把一个包改名：**包目录 / 数据目录 / 清单里的 id 一起改**（`D-28`）。
+
+    为什么要做成一条命令，而不是"自己在 pkg.json 里改个 id"：包目录名和 id 本来
+    互不相干（`D-27`），手改必然只改一半 —— 目录叫 `a`、id 是 `b`，而界面里有几处
+    按 id 拼路径的地方就会认错（进程认不出来、切层按钮不显示）。与其到处兜底，
+    不如给一个"改名"的动作，把它俩**一起**改掉。
+    """
+    new_id = str(new_id or "").strip().lower()
+    if not paths.valid_id(new_id):
+        out.print_cyan("[错误] 新 id 不合法：'%s'（只允许 %s）" % (new_id, paths.ID_RE.pattern))
+        return 1
+    rec = registry.find_alias(name)
+    if not rec:
+        out.print_cyan("[错误] 没有这个包：'%s'。直接敲 `moss` 看有哪些。" % name)
+        return 1
+    old_id = str(rec["id"])
+    if new_id == old_id:
+        out.print_cyan("[信息] id 本来就是 '%s'，没改。" % old_id)
+        return 0
+    if registry.find_alias(new_id):
+        out.print_cyan("[错误] 已经有一个包叫 '%s' 了（换一个名字）。" % new_id)
+        return 1
+
+    pkg_dir = Path(rec["dir"])
+    layer = rec.get("layer")
+    state_old = paths.pkg_state_dir(old_id)
+    state_new = paths.pkg_state_dir(new_id)
+    dir_new = pkg_dir.parent / new_id
+
+    # ---- 先全部检查一遍，能不改就不改（改名最怕改一半）
+    if dir_new.exists():
+        out.print_cyan("[错误] 目标目录已经存在：%s" % dir_new)
+        return 1
+    if state_new.exists():
+        out.print_cyan("[错误] 目标数据目录已经存在：%s" % state_new)
+        return 1
+
+    out.print_cyan("将要改名：%s → %s（%s）" % (old_id, new_id,
+                 dict((k, c) for k, c, _, _ in _LAYERS).get(layer, layer)))
+    print("  %-10s %s" % ("包目录", pkg_dir))
+    print("  %-10s %s" % ("        →", dir_new))
+    if state_old.is_dir():
+        print("  %-10s %s" % ("数据目录", state_old))
+        print("  %-10s %s" % ("        →", state_new))
+    else:
+        print("  %-10s （还没有数据目录，跳过）" % "数据目录")
+    if layer == "system":
+        out.print_cyan("  注意：这是出厂件，宿主升级时 system/ 会被整体替换 —— "
+                       "改出来的名字到那时会变回去，还会多出一份。")
+
+    done = []
+    # ① 包目录（失败就整体停下：这一步没成，后面两步做了反而更乱）
+    try:
+        pkg_dir.rename(dir_new)
+        done.append("包目录")
+    except OSError as e:
+        out.print_cyan("[错误] 包目录改不动：%s" % e)
+        out.print_cyan("       可能是它正被占用（包还在跑 / 编辑器开着这个目录里的文件）。")
+        return 1
+    # ② 数据目录
+    if state_old.is_dir():
+        try:
+            state_old.rename(state_new)
+            done.append("数据目录")
+        except OSError as e:
+            out.print_cyan("[警告] 数据目录没改成：%s" % e)
+            out.print_cyan("       包目录已经改了，数据还在 %s —— 手动挪过去即可。" % state_old)
+    # ③ 清单里的 id（放最后：它才是"身份"，前两步都成了再落这一笔）
+    try:
+        p = pkg_mod.load(dir_new)
+        if p is None:
+            raise ValueError("新目录里的 pkg.json 读不出来")
+        p["id"] = new_id
+        (dir_new / "pkg.json").write_text(
+            json.dumps(p, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        done.append("清单 id")
+    except Exception as e:                                          # noqa: BLE001
+        out.print_cyan("[警告] 清单没改成：%s" % e)
+        out.print_cyan("       目录已经是 %s，把 pkg.json 里的 id 手动改成 '%s' 即可。"
+                       % (dir_new, new_id))
+    out.print_cyan("已改名：%s → %s（改了 %s）" % (old_id, new_id, "、".join(done)))
+    if layer == "user":
+        out.print_cyan("       包调用现在要用 `moss :%s`（旧名字不再认识，除非你把它写进 aliases）。"
+                       % new_id)
+    return 0
+
+
 def _dir_stats(p):
     """(文件数, 字节数)。"""
     n, size = 0, 0
@@ -1095,6 +1184,12 @@ def main(argv):
         sys.stdout.write(_json.dumps(_ui.build_payload(), ensure_ascii=False))
         sys.stdout.flush()
         return 0
+    if first == "--rename":
+        if len(rest) < 2:
+            out.print_cyan("[错误] --rename 需要两个名字：旧的（id 或别名）和新的 id。")
+            out.print_cyan("       例：moss --rename img pictures")
+            return 1
+        return cmd_rename(rest[0], rest[1], table)
     if first == "--new":
         if not rest:
             out.print_cyan("[错误] --new 需要一个包 id。例：moss --new my-first")

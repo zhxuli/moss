@@ -178,11 +178,6 @@ aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--
    不做删除线、不去色：它不是"已删除"，它是"失效"。 */
 .hitem.dead{opacity:.45}
 .hitem.dead .hname{color:var(--dim)}
-/* 详情里"提醒一句"的横条（目标没了之类） */
-.warnbox{display:flex;gap:8px;align-items:flex-start;margin:12px 0 0;padding:8px 11px;
-  border:1px solid #e0b34d;border-radius:9px;background:rgba(224,179,77,.12);
-  color:var(--fg);font-size:12.5px;line-height:1.6}
-.warnbox svg.i{color:#c8901a;margin-top:2px}
 /* 文件页标题栏里那截"猜到的编码" */
 .encnote{font-family:var(--mono);font-size:11px;color:var(--dim);
   border:1px solid var(--line);border-radius:5px;padding:0 5px;margin-left:6px;flex:none}
@@ -252,6 +247,12 @@ table.fb td.dim{color:var(--dim)}
   position:absolute;inset:0;margin:0;border:0;padding:10px 12px;
   font:13px/1.55 var(--mono);letter-spacing:0;tab-size:4;white-space:pre;
   overflow:auto;overflow-wrap:normal;word-break:normal}
+/* ★ 高亮那层里的 `<code>` 必须**继承编辑器的字体**：全局那条给 code / .mono 的规则
+   命中的是 `code` 元素，而 `.editor > pre` 那条只管到 `pre`、管不到里面的 `code`。
+   于是高亮层 12.5px、输入层（textarea）13px：字宽差 4%、行高差 0.78px ⇒
+   **越往右、越往下越偏**，就是"光标偏移"。父选择器写不了，只能在这里把子元素拉回来。
+   实测（改之前）：pre=13px/20.15  code=12.5px/19.375  ta=13px/20.15。 */
+.editor > pre code{font:inherit;letter-spacing:inherit;tab-size:inherit}
 .editor > pre{pointer-events:none;color:var(--fg);background:transparent}
 .editor > textarea{background:transparent;color:transparent;caret-color:var(--fg);
   resize:none;outline:none;user-select:text}
@@ -386,22 +387,15 @@ h1.dtitle{grid-area:3 / 1 / 4 / 2;align-self:baseline;text-align:center;font-siz
 .runhint .mono{font-family:var(--mono);background:var(--tag);color:var(--fg2);
   padding:2px 6px;border-radius:4px;font-size:11.5px}
 
-/* ---------- 提示条 ---------- */
-.warnbox{display:flex;gap:10px;align-items:flex-start;margin:0 0 14px;padding:10px 14px;
-  border-radius:10px;background:color-mix(in srgb, #f59e0b 10%, var(--panel2));
-  border:1px solid color-mix(in srgb, #f59e0b 26%, var(--line));
-  font-size:12.5px;line-height:1.6;color:var(--fg2)}
-.warnbox svg.i{color:#b45309;margin-top:2px;flex:none}
-code,.mono{font-family:var(--mono);font-size:12.5px}
-.row-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.row-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .row-split{display:flex;gap:12px;align-items:center;justify-content:space-between}
 .row-split .hint{margin-top:0;flex:1 1 auto;min-width:0}
 .hint{color:var(--dim2);font-size:12px;line-height:1.6;margin-top:8px;word-break:break-all}
 .hint .mono{font-size:11.5px}
-.warnbox{display:flex;gap:8px;align-items:flex-start;margin-top:14px;padding:10px 13px;
+/* ---------- 提示条（详情里"提醒一句"那种横条）---------- */
+.warnbox{display:flex;gap:10px;align-items:flex-start;margin:0 0 14px;padding:10px 14px;
   border-radius:10px;background:color-mix(in srgb, #e0a800 14%, var(--group));
-  color:var(--fg);font-size:12.5px;line-height:1.6}
+  border:1px solid color-mix(in srgb, #f59e0b 26%, var(--line));
+  font-size:12.5px;line-height:1.6;color:var(--fg)}
 .warnbox svg.i{color:#b8860b;margin-top:2px;flex:none}
 code,.mono{font-family:var(--mono);font-size:12.5px}
 table.p{width:100%;border-collapse:collapse;font-size:13px}
@@ -1273,6 +1267,13 @@ function renderDetail(){
         ico("app-window", "i") + '<span>打开界面</span></button></div>' +
       '<div class="runhint">命令预览: <span class="mono" id="preview"></span>' +
       ' · 右上角是「运行 / 停止」</div></section>' +
+    // 更名：单独一块（它既不是危险动作，也不属于「跑一下」）
+    '<section class="dsec"><div class="row-split">' +
+      '<span class="hint">改 id：包目录名、数据目录 ' +
+        '<span class="mono">user_data/state/&lt;id&gt;</span>、清单里的 id 一起改</span>' +
+      '<button class="btn" id="btn-rename" title="给这个包改名（moss --rename）">' +
+        ico("pencil", "i") + '<span>更名</span></button>' +
+      '</div></section>' +
     '<section class="dsec danger">' +
       '<div class="danger-text">永久删除: 包本体 + 它的数据（不进回收站）</div>' +
       '<button class="btn danger" id="btn-remove" title="卸载这个包（moss --remove）">' +
@@ -1305,6 +1306,32 @@ function renderDetail(){
     setTimeout(() => refreshPkgState(p), 3500);
   };
   $("#btn-remove").onclick = () => cmdRemovePkg(p);
+  $("#btn-rename").onclick = () => cmdRenamePkg(p);
+}
+
+/* 更名：界面只负责问"改成什么"，改的事交给宿主（`moss --rename`）。
+   为什么不自己改：一次要动**包目录名 / 数据目录 / 清单里的 id** 三样，
+   这套规则只有宿主那侧知道；界面自己拼路径，正是 `D-27` 里那几处毛病的来源。 */
+async function cmdRenamePkg(p){
+  askText("给这个包改名", p.id, async (newId) => {
+    newId = String(newId || "").trim().toLowerCase();
+    if (!newId || newId === p.id) return;
+    consoleKey = "__host__";
+    const cmd = "moss --rename " + p.id + " " + newId;
+    setConsole("__host__", "$ " + cmd, "运行中");
+    const r = await pywebview.api.run_host("--rename " + p.id + " " + newId);
+    setConsole("__host__", "$ " + cmd + "\n\n" + (r.out || "(没有输出)"),
+               r.code === 0 ? "完成" : ("退出码 " + r.code));
+    if (r.code !== 0){
+      toast("✗ 改名失败，看「命令行」里说了什么", true);
+      setTab("console");
+      return;
+    }
+    toast("已改名为 :" + newId);
+    await refreshPkgs();                 // 包表重问一遍（旧 id 没了、新 id 出现）
+    if (DATA.packages.some(x => x.id === newId)) select(newId);
+    else renderDetail();
+  });
 }
 
 /* ---------------------------------------------------------------- 详情：一条历史
