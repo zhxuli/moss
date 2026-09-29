@@ -773,6 +773,45 @@ table.p th{color:var(--dim);font-weight:500}
      → settings → app。 -->
 <script src="vendor/vue.global.prod.js"></script>
 
+<script>
+/* ============================================================================
+   资源加载失败的**早期捕获**（`V-74`）—— 故意写成**内联**、而且排在所有外部脚本之前。
+
+   ★ 为什么非要内联：一旦 `js/*.js` 里有文件没加载上（实测发生过：`core.js` 就没下来），
+     "记录错误"的代码本身也就没跑起来 —— 什么都记不到（鸡生蛋）。这一段不依赖任何外部文件，
+     所以哪怕全挂了，它也能把**哪个 URL 没加载上、当前页面地址是什么**写出来：
+       · 状态栏立刻红字（不用开控制台就能看见）；
+       · `window.__errors`（探针读）；
+       · 桥就绪后写进 `user_data/state/_ui_drop.log`。
+   ============================================================================ */
+(function(){
+  window.__errors = window.__errors || [];
+  var pending = [];
+  function flush(){
+    if (!(window.pywebview && window.pywebview.api && window.pywebview.api.ui_log)) return;
+    while (pending.length){
+      try{ window.pywebview.api.ui_log(pending.shift()); }catch(e){ return; }
+    }
+  }
+  window.addEventListener("pywebviewready", function(){ setTimeout(flush, 50); });
+  window.__tellLoadFail = function(msg){
+    window.__errors.push("[加载失败] " + msg);
+    try{
+      var bar = document.getElementById("status-text");
+      if (bar){ bar.textContent = "⚠ " + msg; bar.className = "bad"; }
+    }catch(e){}
+    pending.push("[加载失败] " + msg);
+    flush();
+  };
+  // 资源（script / link / img）加载失败不会走 window.onerror 的常规路径 —— 用捕获阶段抓
+  window.addEventListener("error", function(e){
+    var t = e.target;
+    if (t && t.tagName && (t.tagName === "SCRIPT" || t.tagName === "LINK" || t.tagName === "IMG")){
+      window.__tellLoadFail(t.tagName + " " + (t.src || t.href) + "   ← 页面 " + location.href);
+    }
+  }, true);
+})();
+</script>
 <!-- ★ 预览工具（tools/界面预览.py）把"假后端"插在下面这个 <script> 之前 ——
      锚点是 `<script>` 换行 + `/* =====`。它必须排在所有 js/ 脚本前面：
      假 pywebview 得先就位，页面初始化时才叫得动。 -->

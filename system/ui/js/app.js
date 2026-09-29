@@ -26,7 +26,8 @@ async function init(){
       + " 历史条目=" + document.querySelectorAll("#hist .hitem").length
       + " 桥=" + (window.pywebview && window.pywebview.api ? "有" : "无")
       + " 页内错误=" + (window.__errors || []).length
-      + " 窗口=" + window.innerWidth + "x" + window.innerHeight);
+      + " 窗口=" + window.innerWidth + "x" + window.innerHeight
+      + " 地址=" + location.href);
   }catch(e){}
   await loadHist();        // 先把历史读回来（loadHist 会顺手按 key 找回选中的那条）
   setSide(side);           // 切换条的高亮 / 隐藏状态跟 JS 变量对齐；顺带画一遍列表
