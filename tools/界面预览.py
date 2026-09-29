@@ -58,7 +58,7 @@ BROWSERS = [
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
 ]
 
-SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open",
+SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail"]
 
@@ -182,7 +182,13 @@ MOCK_JS = r"""
         if (h === "hist-file") setTab("file");
         if (h === "hist-console") setTab("console");
       } else {
-        const p = state.packages.find(x => x.id === "md5") || state.packages[0];
+        // `pkg-odd-dir`：专门挑一个「目录名 != id」的包看那个分支（`D-27` 方案 C）；
+        // 仓库里现成的例子是 user_data/pkgs/my-first（id=first）。没有就退回 md5。
+        const base = x => String(x.dir || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+        const p = (h === "pkg-odd-dir"
+                    ? (state.packages.find(x => base(x) && base(x) !== x.id)
+                       || state.packages.find(x => x.id === "md5"))
+                    : state.packages.find(x => x.id === "md5")) || state.packages[0];
         select(p.id);
         if (h === "pkg-file") setTab("file");
         if (h === "pkg-file-open"){

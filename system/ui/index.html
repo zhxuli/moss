@@ -1261,6 +1261,13 @@ function renderDetail(){
         '</button>').join("") + '</div></section>';
   }
 
+  // ★ 目录名和 id 允许不一样（`D-27` 方案 C）。不一样时**不报错**，只是把这件事
+  //   摆在明面上，并给一个现成的统一动作（宿主那条 `--rename <id> <id>` 只改目录名）。
+  const dirBase = (String(p.dir || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop()) || "";
+  const oddDir = dirBase && dirBase !== p.id;
+  const renameBtn = '<button class="btn" id="btn-rename" title="给这个包改名（moss --rename）">' +
+      ico("pencil", "i") + '<span>更名</span></button>';
+
   html += '<section class="dsec"><div class="runrow">' +
       '<input id="args" placeholder="参数（可留空；回车 = 运行）">' +
       '<button class="btn" id="btn-openui" title="打开这个包自己的界面（后台运行，不等它）">' +
@@ -1269,10 +1276,17 @@ function renderDetail(){
       ' · 右上角是「运行 / 停止」</div></section>' +
     // 更名：单独一块（它既不是危险动作，也不属于「跑一下」）
     '<section class="dsec"><div class="row-split">' +
-      '<span class="hint">改 id：包目录名、数据目录 ' +
-        '<span class="mono">user_data/state/&lt;id&gt;</span>、清单里的 id 一起改</span>' +
-      '<button class="btn" id="btn-rename" title="给这个包改名（moss --rename）">' +
-        ico("pencil", "i") + '<span>更名</span></button>' +
+      (oddDir
+        ? '<span class="hint">目录名 <span class="mono">' + esc(dirBase) +
+          '</span> 和 id <span class="mono">' + esc(p.id) +
+          '</span> 不一样（不碍事）</span>' +
+          '<span class="row-inline">' +
+          '<button class="btn" id="btn-align" title="只把包目录名改成 id —— 数据目录和清单都不动">' +
+            ico("folder-tree", "i") + '<span>对齐目录名</span></button>' +
+          renameBtn + '</span>'
+        : '<span class="hint">改 id：包目录名、数据目录 ' +
+          '<span class="mono">user_data/state/&lt;id&gt;</span>、清单里的 id 一起改</span>' +
+          renameBtn) +
       '</div></section>' +
     '<section class="dsec danger">' +
       '<div class="danger-text">永久删除: 包本体 + 它的数据（不进回收站）</div>' +
@@ -1307,6 +1321,28 @@ function renderDetail(){
   };
   $("#btn-remove").onclick = () => cmdRemovePkg(p);
   $("#btn-rename").onclick = () => cmdRenamePkg(p);
+  if ($("#btn-align")) $("#btn-align").onclick = () => cmdAlignPkgDir(p);
+}
+
+/* 对齐目录名：把包目录名改成它的 id（`D-27` 方案 C 里那个"一键统一"）。
+   走的还是宿主那条 `--rename`，只是新旧 id 都写成它现在的 id —— 于是宿主
+   只改目录名，**id / 数据目录 / 清单一个字都不动**。 */
+async function cmdAlignPkgDir(p){
+  consoleKey = "__host__";
+  const cmd = "moss --rename " + p.id + " " + p.id;
+  setConsole("__host__", "$ " + cmd, "运行中");
+  const r = await pywebview.api.run_host("--rename " + p.id + " " + p.id);
+  setConsole("__host__", "$ " + cmd + "\n\n" + (r.out || "(没有输出)"),
+             r.code === 0 ? "完成" : ("退出码 " + r.code));
+  if (r.code !== 0){
+    toast("✗ 没对齐成，看「命令行」里说了什么", true);
+    setTab("console");
+    return;
+  }
+  toast("包目录名已对齐成 :" + p.id);
+  await refreshPkgs();
+  if (DATA.packages.some(x => x.id === p.id)) select(p.id);
+  else renderDetail();
 }
 
 /* 更名：界面只负责问"改成什么"，改的事交给宿主（`moss --rename`）。
@@ -1460,11 +1496,17 @@ function fmState(key){
   }
   return FM.st[key];
 }
-/* 这个包在两层里的候选目录（`system/pkgs/<id>` / `user/pkgs/<id>`）。
+/* 这个包在两层里的候选目录（`user/pkgs/<目录名>` / `system/pkgs/<目录名>`）。
    ★ 切换按钮要跳的是**同一个包在另一层的目录**，不是总目录 ——
-     哪一层没有这个目录，那个按钮就不显示。 */
+     哪一层没有这个目录，那个按钮就不显示。
+   ★ 用**真实的包目录名**拼，不能用 id 拼（`D-27` 方案 C：目录名和 id 允许不一样）——
+     拿 id 拼出来的目录根本不存在，表现就是"按钮永远不显示"。 */
 function fmLayerRels(key){
-  return {user: "user/pkgs/" + key, system: "system/pkgs/" + key};
+  const p = DATA.packages.find(x => x.id === key);
+  const rel = p ? pkgRel(p) : null;
+  if (!rel) return {user: "user/pkgs/" + key, system: "system/pkgs/" + key};
+  const tail = rel.replace(/^(user|system)/, "");      // "/pkgs/<真实目录名>"
+  return {user: "user" + tail, system: "system" + tail};
 }
 async function fmProbeLayers(key){
   if (!key || key === "__all__") return {user:true, system:true};

@@ -615,10 +615,40 @@ def _pids_by_cmdline():
     return out
 
 
+def _pkg_dir_names(pid):
+    """这个 id 对应的**真实包目录名**（可能不只一个，都回）。
+
+    `D-27` 方案 C：目录名和 id **允许不一样**（目录名是文件系统的事、id 是身份）。
+    而进程命令行里写的是**真实目录**（`…\\pkgs\\my-first\\run.py`），所以"认进程"
+    必须按目录名认 —— 只按 id 认的话，目录名不同的包从终端启动时界面认不出它在跑。
+    """
+    out = []
+    for p in (DATA.get("packages") or []):
+        if str(p.get("id")) == str(pid):
+            d = p.get("dir")
+            if d:
+                name = Path(str(d)).name
+                if name and name not in out:
+                    out.append(name)
+    return out
+
+
+def _pkg_needles(pid):
+    """认进程用的那几段命令行片段：`/pkgs/<id>/` 加 `/pkgs/<真实目录名>/`。
+
+    两个线索都留着：id 那条在"目录名恰好等于 id"（出厂包全是）时最快命中，
+    目录名那条兜住"两者不一样"的情况。多认一个线索不会认错包 —— 命令行里
+    带 `pkgs/<这个名字>/` 的进程，本来就属于这个包。
+    """
+    names = [str(pid)] + _pkg_dir_names(pid)
+    return ["/pkgs/%s/" % n.replace("\\", "/").lower() for n in names if n]
+
+
 def _pkg_pids(pkg, parents=None, cmdlines=None, owner_pkg=None):
     """属于这个包、**还活着**的进程：
        ① 宿主记下的进程树（点过运行 / 打开界面的）
-       ② 命令行里带着 `pkgs/<id>/` 的（从终端开的、后台服务都算）
+       ② 命令行里带着 `pkgs/<id>/` 或 `pkgs/<真实目录名>/` 的
+          （从终端开的、后台服务都算；两者不一样时按目录名认，`D-27`）
        ③ 拥有窗口、且环境里 `MOSS_PKG_ID` 等于它的（包自己 re-exec 之类的情况）
     """
     pkg = str(pkg)
@@ -628,8 +658,8 @@ def _pkg_pids(pkg, parents=None, cmdlines=None, owner_pkg=None):
         pids |= _with_descendants(roots, parents)
     if cmdlines is None:
         cmdlines = _pids_by_cmdline()
-    needle = "/pkgs/%s/" % pkg
-    pids |= {pid for pid, cl in cmdlines.items() if needle in cl}
+    needles = _pkg_needles(pkg)
+    pids |= {pid for pid, cl in cmdlines.items() if any(n in cl for n in needles)}
     if owner_pkg is None:
         owner_pkg = {}
         for w in _top_windows():
