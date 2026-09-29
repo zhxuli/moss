@@ -244,12 +244,51 @@ def _bad_name(name):
 # 怎么知道哪扇窗是它的：**记下为它拉起过的进程根**（`open_ui` / `run_start` 时记），
 # 然后按 PID 树找出这些进程以及它们的子孙，再用 EnumWindows 找属于这些 PID 的顶层窗口。
 # 比"按窗口标题猜"可靠得多（标题会被包自己改，也可能撞名）。
-_pkg_procs = {}          # 包 id -> {为它拉起过的进程根 pid}
+_pkg_procs = {}          # 包 id -> {(pid, 创建时间)} —— 见 _remember_proc 的说明
 _pkg_hidden = {}         # 包 id -> [被藏起来的窗口句柄]（显示时只放这几个）
 
 
 def _remember_proc(pkg, pid):
-    _pkg_procs.setdefault(str(pkg), set()).add(int(pid))
+    """记下"这个 pid 是为它拉起的"。★ 连**创建时间**一起记（`V-45` ✅）。
+
+    为什么非记时间不可：进程一退出，pid 会被系统**回收**给别的进程；只按 pid 认人，
+    过一会儿那个号就指向一个跟这个包毫无关系的进程 —— 实测（拿一个活进程的 pid
+    冒充"当初记下的那个"）：`pkg_state('img')` 报 `running: True`，还带出 4 个
+    "属于它的进程"和 3 个窗口，于是界面上**跑完了按钮还是「停止」**、永远不变回来。
+    带上创建时间就认得出"这已经不是当初那个进程"。
+    """
+    ct = None
+    try:
+        import psutil
+        ct = float(psutil.Process(int(pid)).create_time())
+    except Exception:                                                # noqa: BLE001
+        ct = None                       # 读不出来就退回"只看 pid"（老行为，聊胜于无）
+    _pkg_procs.setdefault(str(pkg), set()).add((int(pid), ct))
+
+
+def _live_roots(roots):
+    """记下的那些根里，**现在还真是当初那个进程**的。
+
+    判据是创建时间对得上（同一个进程每次读都一样；pid 被回收后换了进程，时间不同）。
+    进程已经没了 / 读不出来 → 不算 —— `pkg_state` 就该老老实实说"没在跑"。
+    """
+    out = set()
+    for item in roots:
+        try:
+            pid, ct = item
+        except (TypeError, ValueError):      # 万一表里是裸 pid（老代码 / 手工塞的）
+            out.add(int(item))
+            continue
+        if ct is None:
+            out.add(int(pid))
+            continue
+        try:
+            import psutil
+            if abs(float(psutil.Process(int(pid)).create_time()) - ct) < 0.01:
+                out.add(int(pid))
+        except Exception:                                                # noqa: BLE001
+            pass
+    return out
 
 
 class _PROCESSENTRY32W(ctypes.Structure):
@@ -663,6 +702,46 @@ def _pkg_needles(pid):
     return ["/pkgs/%s/" % n.replace("\\", "/").lower() for n in names if n]
 
 
+#: 认"这是某个包在跑"时，允许当"执行者"的解释器（小写、不带 .exe）。
+#: ★ 为什么要挨个点名（`V-46` ✅）：光看"命令行里出现 `/pkgs/<目录>/`"太宽了 ——
+#:   实测同时躺着好几个**完全无关**的进程都带着那条路径：
+#:     · PowerToys 的 Monaco 预览器（命令行里是 `…\system\pkgs\img\pkg.json` ——
+#:       你在资源管理器里选中过那个文件）
+#:     · DSH 的 node 包装器、以及**我自己那条探测命令**（命令行里含有它的**文本**，
+#:       文本里提到了那个路径）
+#:   结果是界面**永远**认为 img 在跑、按钮永远是「停止」，怎么等都不变回来。
+#:   编辑器、杀毒、索引器、随手一条提到路径的命令都会这样。所以判据改成：
+#:   "命令行里带着那个目录" **而且** 看起来真的在**执行**它。
+_RUNNER_EXES = {
+    "python", "pythonw", "py", "python3", "go", "node", "deno", "bun", "java", "javaw",
+    "ruby", "perl", "php", "lua", "rscript", "dotnet", "cmd", "powershell", "pwsh",
+    "wscript", "cscript", "sh", "bash", "mshta", "moss",
+}
+
+
+def _pkg_run_match(cl, needle):
+    """这一条命令行能算成"这个包在跑"吗？（`cl` 已经小写、反斜杠换成斜杠）
+
+    判据两条，满足一条就算：
+      ① 开头的可执行文件是**认识的解释器**（python / cmd / pwsh / node…）——
+         命令行里又有这个包的目录 ⇒ 基本就是 `python …/pkgs/x/main.py` 这种；
+      ② 开头的可执行文件**自己就在这个包目录里**（包自带的 exe，`unwx` 那种）。
+    两条都不满足的（预览器、编辑器、杀毒…）只当它是"提到"了这个路径，不算它跑。
+    """
+    if needle not in cl:
+        return False
+    # ★ 两头都要剥引号：Windows 上带空格的路径会被引号括起来
+    #   （`"c:/program files/python/python.exe" "…/pkgs/img/main.py"`），
+    #   只剥开头的话拿到的名字是 `python.exe"`，谁都认不出来（实测踩到）。
+    head = cl.strip().split(" ", 1)[0].strip('"')
+    name = head.rsplit("/", 1)[-1]
+    if name.endswith(".exe"):
+        name = name[:-4]
+    if name in _RUNNER_EXES:
+        return True
+    return needle in head            # 可执行文件自己就在包目录里（包自带的 exe）
+
+
 def _pkg_pids(pkg, parents=None, cmdlines=None, owner_pkg=None):
     """属于这个包、**还活着**的进程：
        ① 宿主记下的进程树（点过运行 / 打开界面的）
@@ -672,13 +751,14 @@ def _pkg_pids(pkg, parents=None, cmdlines=None, owner_pkg=None):
     """
     pkg = str(pkg)
     pids = set()
-    roots = _pkg_procs.get(pkg) or set()
+    roots = _live_roots(_pkg_procs.get(pkg) or set())
     if roots:
         pids |= _with_descendants(roots, parents)
     if cmdlines is None:
         cmdlines = _pids_by_cmdline()
     needles = _pkg_needles(pkg)
-    pids |= {pid for pid, cl in cmdlines.items() if any(n in cl for n in needles)}
+    pids |= {pid for pid, cl in cmdlines.items()
+             if any(_pkg_run_match(cl, n) for n in needles)}
     if owner_pkg is None:
         owner_pkg = {}
         for w in _top_windows():
