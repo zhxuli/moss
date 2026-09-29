@@ -38,10 +38,12 @@ function onVueError(err, vm, info){
 
 /* 建 Vue app 一律走这个 —— 省得哪一处忘了挂 errorHandler（忘了就又是"静悄悄死掉"）。
    返回值与 `Vue.createApp(x).mount(y)` 一样（根组件实例），调用点别的都不用改。
+   `globals`：往 `app.config.globalProperties` 上摊一份（文件管理那套模板助手要用）。
    自测这条路的场景：预览里的 `err-path`（用**这个函数**建一个会在 computed 里抛错的组件）。 */
-function mountVue(comp, target){
+function mountVue(comp, target, globals){
   const app = Vue.createApp(comp);
   app.config.errorHandler = onVueError;
+  if (globals) Object.assign(app.config.globalProperties, globals);
   return app.mount(target);
 }
 

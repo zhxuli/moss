@@ -52,8 +52,8 @@ function embedShow(pid){
   if (wrap) wrap.querySelectorAll("iframe").forEach(f => {
     f.style.display = (f.dataset.pid === pid) ? "block" : "none";
   });
-  const empty = $("#embed-empty");
-  if (empty) empty.style.display = Object.keys(EMB.alive).length ? "none" : "block";
+  // ★ `#embed-empty` 那句「还没跑」现在由组件按"有几帧活着"自己显隐（`v-show`，`V-84`）——
+  //   这里不再直接写它的 display：那是组件的 DOM，写了也会被下一次重画盖掉。
   // 只让**露出来那一帧**收到 visible=true
   Object.keys(EMB.alive).forEach(id => pushEmbedEvent(id, "visible", {visible: id === pid}));
 }
@@ -140,7 +140,8 @@ window.addEventListener("message", async (ev) => {
     paintEmbedTab();
   }
 });
-/* 「界面」选项卡该不该出现 + 顶上那行小字 */
+/* 「界面」选项卡该不该出现 —— 那颗按钮在**选项卡那一行**（不在这一页里，`V-84`），
+   所以这部分仍然命令式；页里的标题 / 状态字由组件自己算（这里只举牌喊它重画）。 */
 function paintEmbedTab(){
   const tabBtn = document.querySelector('.tab[data-tab="embed"]');
   const ok = embedSupported(cur);
@@ -152,17 +153,65 @@ function paintEmbedTab(){
     }
   }
   if (!ok && tab === "embed") setTab("detail");
-  if (ok){
-    if ($("#embed-title")) $("#embed-title").textContent = cur.ui.title || cur.name || "界面";
-    if ($("#embed-info")){
-      $("#embed-info").textContent = embedRunning(cur.id)
-        ? ("后端 :" + cur.id + " 在内嵌运行 · 切走也不会停" +
-           (Object.keys(EMB.alive).length > 1
-             ? ("（另外还有 " + (Object.keys(EMB.alive).length - 1) + " 个也在跑）") : ""))
-        : "还没跑 —— 点右上角「运行」就起";
-    }
-  }
+  EMBR.rev++;
 }
+
+/* ---------------------------------------------------------------- 「界面」那一页（Vue 组件，`V-84`）
+   薄组件：顶上一小条（标题 / 状态字 / 重载·独立窗口两颗按钮）+ 下面那块 `#embed-wrap`。
+   ★ iframe **不进模板**：一帧 = 一个包自己的后端进程，切走只是藏起来（`V-48` 那条要求），
+     所以帧还是"谁需要谁往里 append"（`embedFrameFor`）。模板里 `#embed-wrap` 的子节点
+     是**稳定**的（只有一个 `#embed-empty`，而且用 `v-show` 不是 `v-if`）——
+     这样 Vue 重画时只动它自己那一个节点，不会去碰我们塞进去的那些帧。
+   ★ 顺手补上两颗按钮的图标：它们原来**没画**（`V-48` 起就是两个空按钮，谁也看不出来
+     是干什么的），现在跟别处一样走 `v-html='ico(...)'`。 */
+const EMBR = Vue.reactive({rev: 0});
+
+const MossEmbed = {
+  name: "moss-embed",
+  data(){ return { R: EMBR }; },
+  computed: {
+    p(){ this.R.rev; return embedSupported(cur) ? cur : null; },
+    title(){ this.R.rev; const p = this.p; return p ? (p.ui.title || p.name || "界面") : "界面"; },
+    aliveN(){ this.R.rev; return Object.keys(EMB.alive).length; },
+    info(){
+      this.R.rev;
+      const p = this.p;
+      if (!p) return "";
+      if (!embedRunning(p.id)) return "还没跑 —— 点右上角「运行」就起";
+      const n = this.aliveN;
+      return "后端 :" + p.id + " 在内嵌运行 · 切走也不会停" +
+             (n > 1 ? ("（另外还有 " + (n - 1) + " 个也在跑）") : "");
+    },
+  },
+  methods: {
+    // 重载这一页（只重载**当前这个包**那一帧）
+    reload(){
+      const rec = cur && EMB.alive[cur.id];
+      if (rec && rec.frame) rec.frame.src = rec.frame.src;
+    },
+    // 在独立窗口里打开它（和这个选项卡并存）
+    openWindow(){
+      if (!cur) return;
+      pywebview.api.open_ui(cur.id, argsInput() ? argsInput().value : "").then(r => {
+        if (r && r.msg) toast(r.msg, !r.ok);
+      });
+    },
+  },
+  template: `
+    <div id="embed-bar">
+      <span id="embed-title">{{ title }}</span>
+      <span id="embed-info" class="dim">{{ info }}</span>
+      <span style="flex:1"></span>
+      <button id="btn-embed-reload" class="iconbtn" title="重新加载这一页"
+              v-html='ico("refresh-cw", "i")' @click="reload()"></button>
+      <button id="btn-embed-window" class="iconbtn"
+              title="在独立窗口里打开它（和这个选项卡并存）"
+              v-html='ico("app-window", "i")' @click="openWindow()"></button>
+    </div>
+    <div id="embed-wrap">
+      <div id="embed-empty" class="empty" v-show="!aliveN">还没跑 —— 点右上角「运行」就在这一页里开起来</div>
+    </div>`,
+};
 /* 后端那些"不是消息"的输出（宿主横幅、包自己的 print）→ 捞进命令行面板 */
 async function embedPollConsole(){
   const ids = Object.keys(EMB.alive);
@@ -317,3 +366,8 @@ async function stopRun(id){
   run.stopped = true;                    // 让 finishRun 别把它记成"故障"
   setTimeout(refreshAllStates, 400);
 }
+
+/* ---------------------------------------------------------------- 挂载（放最后）
+   ★ 同 `console.js`：必须等本文件里那些 `const`（`EMB` / `EMBR`）都声明完再挂 ——
+     `mountVue()` 当场渲染，模板里的 `aliveN` 要读 `EMB.alive`。 */
+mountVue(MossEmbed, "#pane-embed", {ico: ico});

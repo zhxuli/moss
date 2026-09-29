@@ -689,48 +689,22 @@ table.p th{color:var(--dim);font-weight:500}
 
     <section class="pane on" id="pane-detail"><div class="empty">左边选一个包</div></section>
 
-    <section class="pane" id="pane-console">
-      <div class="outbar">
-        <span id="outinfo">还没跑过</span>
-        <span style="flex:1"></span>
-        <button id="btn-copy" class="iconbtn" title="复制全部输出"></button>
-        <button id="btn-rerun" class="iconbtn" title="再跑一次刚才那条命令"></button>
-        <button id="btn-clear" class="iconbtn" title="清空输出"></button>
-      </div>
-      <pre id="out">就绪。选一个包，填参数，点「运行」。</pre>
-      <!-- 给正在跑的那个进程喂一行输入（`V-43` ✅）。
-           有些包会**问你一句**（「输出到哪？1/2/3」`input()`），以前命令行只能看、不能答，
-           它们就只能一直卡在那儿。回车 = 发一行给它的 stdin。 -->
-      <div id="inbar">
-        <span class="ps1">›</span>
-        <input id="stdin" placeholder="先跑一个包，才能给它输入…" autocomplete="off"
-               spellcheck="false" disabled>
-        <button id="btn-send" class="btn" disabled>发送</button>
-      </div>
-    </section>
+    <!-- 命令行那一页（`V-83` 起是 **Vue 组件**：`js/console.js` 的 `MossConsole`）。
+         输出区 / 输入行 / 顶上那三颗按钮（复制·重跑·清空）的标记都在组件的模板里，
+         这里只留挂载点 —— 和 `#list` / `#hist` / `#pane-detail` / `#pane-file` 一样。 -->
+    <section class="pane" id="pane-console"></section>
 
     <section class="pane" id="pane-file">
       <div id="fm-bar"></div>
       <div class="fmwrap" id="fm-body"></div>
     </section>
 
-    <!-- 第四个选项卡：包自己的界面（`V-48` ✅）
-         ★ 只在"当前这个包声明了可内嵌界面"时出现（`pkg.json` 的 `ui.embed`）。
-         ★ 里面那一帧**切走不卸载** —— 你切到别的包/别的页，它还在跑（你要的就是这条）。
-           所以这里只有一个 iframe，谁需要谁往里塞。 -->
-    <section class="pane" id="pane-embed">
-      <div id="embed-bar">
-        <span id="embed-title">界面</span>
-        <span id="embed-info" class="dim"></span>
-        <span style="flex:1"></span>
-        <button id="btn-embed-reload" class="iconbtn" title="重新加载这一页"></button>
-        <button id="btn-embed-window" class="iconbtn"
-                title="在独立窗口里打开它（和这个选项卡并存）"></button>
-      </div>
-      <div id="embed-wrap">
-        <div id="embed-empty" class="empty">还没跑 —— 点右上角「运行」就在这一页里开起来</div>
-      </div>
-    </section>
+    <!-- 第四个选项卡：包自己的界面（`V-48` ✅；`V-84` 起这一页也是 **Vue 组件**：
+         `js/embed.js` 的 `MossEmbed`）—— 顶上那一小条 + 下面那块 `#embed-wrap` 的标记
+         都在组件模板里，这里只留挂载点。
+         ★ iframe 不进模板：一帧 = 一个包自己的后端进程，**切走不卸载**（你要的那条），
+           所以帧仍然是"谁需要谁 append 进 `#embed-wrap`"。 -->
+    <section class="pane" id="pane-embed"></section>
 
     <!-- 拖进来的"接收区"（`V-35` / `V-39`）：只在拖动中、而且当前这个包收得下的时候出现。
          里面按 `pkg.json` 的 `drop` 声明画投放框（今天一个包最多一个"运行"框）。 -->

@@ -72,34 +72,32 @@ function dragEnd(){
   paintDropZone(false);
 }
 /* 左上角那条提示：拖动中只显示收得下它的包 —— 免得你对着一个不收的包干瞪眼 */
+/* ★ `V-85` 起这两块（`#dragbar` 提示 + `#dropzone` 投放框）的内容由 **Vue 组件**画：
+   状态还是这份 `DRAG`，只是"变了就喊一声"（`DRAGR.rev`），外面照旧调这两个同名门面。
+   ★ 为什么 `#dragbar` 的显隐还留在这儿一行命令式：`hidden` 是**这个元素自己的**属性，
+     组件是挂在他**里面**的（管不到外面那个壳）。 */
+const DRAGR = Vue.reactive({rev: 0, kind: null});
+
 function paintDragBar(){
   const bar = $("#dragbar");
-  if (!bar) return;
-  if (!DRAG.on){ bar.hidden = true; return; }
-  const n = DATA.packages.filter(p => dropAccepts(p, DRAG.kind)).length;
-  bar.hidden = false;
-  bar.innerHTML = ico("copy", "i") +
-    '<span>拖进来的是<b>' + dropKindName(DRAG.kind) + '</b>：只列出收得下它的 <b>' + n +
-    '</b> 个包' + (n ? " —— 划过哪个就选哪个" : "（一个都没有）") + '</span>';
+  if (bar) bar.hidden = !DRAG.on;
+  DRAGR.rev++;
 }
 
 /* ---- 投放框（`V-39`）：只在"当前这个包收得下"的时候出现 ---- */
 function paintDropZone(over, isDir, kind){
-  const zone = $("#dropzone"), pane = $("#pane-detail"), btn = $("#btn-run");
   const p = cur;
   const k = (kind !== undefined && kind !== null) ? kind : (isDir ? "dir" : DRAG.kind);
+  DRAGR.kind = k;
   const cmds = DRAG.on && p ? dropCommandsFor(p, k === "dir") : [];
   const want = !!(DRAG.on && cmds.length);
+  DRAGR.rev++;                                  // 框里的内容（`.dz-box` 那几个）由组件画
+  // ★ 下面这几处 class 挂在**别的元素**上（`#dropzone` 自己 / 详情页 / 右上角那颗「运行」）——
+  //   它们不是组件的根，维持命令式，和改造前逐行一致。
+  const zone = $("#dropzone"), pane = $("#pane-detail"), btn = $("#btn-run");
   if (zone){
     zone.classList.toggle("on", want);
     zone.classList.toggle("over", !!(want && over));
-    if (want){
-      zone.innerHTML = cmds.map((c, i) =>
-        '<div class="dz-box' + (i === DRAG.cmd ? " on" : "") + '" data-cmd="' + i + '">' +
-          '<div class="dz-big">松手 = ' + esc(c.label) + '</div>' +
-          '<div class="dz-sub">' + esc(dropZoneWhy(p, c.rule, k)) + '</div>' +
-        '</div>').join("");
-    }
   }
   if (pane) pane.classList.toggle("hot", want);
   if (btn) btn.classList.toggle("hot", want);       // 右上角那个「运行」跟着亮
@@ -111,6 +109,44 @@ function dropZoneWhy(p, rule, kind){
   return ":" + p.id + " —— 把" + which + what +
          (rule.base ? "（只给文件名）" : "") + (rule.quote ? "（加引号）" : "");
 }
+
+/* 拖拽那两块的组件（`V-85`）—— 一个画左边那条提示，一个画详情页上的投放框。
+   两块共用一份举牌信号：它们的数据都来自 `DRAG` / `cur`（普通变量，不是响应式的）。 */
+const MossDragBar = {
+  name: "moss-dragbar",
+  data(){ return { R: DRAGR }; },
+  computed: {
+    html(){
+      this.R.rev;
+      if (!DRAG.on) return "";
+      const n = DATA ? DATA.packages.filter(p => dropAccepts(p, DRAG.kind)).length : 0;
+      return ico("copy", "i") +
+        '<span>拖进来的是<b>' + dropKindName(DRAG.kind) + '</b>：只列出收得下它的 <b>' + n +
+        '</b> 个包' + (n ? " —— 划过哪个就选哪个" : "（一个都没有）") + '</span>';
+    },
+  },
+  // `display:contents`：这层壳不参与布局（`#dragbar` 是 flex，多一层会改变量）
+  template: '<div style="display:contents" v-html="html"></div>',
+};
+
+const MossDropZone = {
+  name: "moss-dropzone",
+  data(){ return { R: DRAGR }; },
+  computed: {
+    cmd(){ this.R.rev; return +DRAG.cmd || 0; },
+    boxes(){
+      this.R.rev;
+      const p = cur, k = this.R.kind;
+      const cmds = (DRAG.on && p) ? dropCommandsFor(p, k === "dir") : [];
+      return cmds.map(c => ({label: c.label, why: dropZoneWhy(p, c.rule, k)}));
+    },
+  },
+  template: `
+    <div v-for="(c, i) in boxes" :key="i" class="dz-box" :class="{on: i === cmd}" :data-cmd="i">
+      <div class="dz-big">松手 = {{ c.label }}</div>
+      <div class="dz-sub">{{ c.why }}</div>
+    </div>`,
+};
 
 /* ---- 页面这一侧的拖动事件（真实路径不在这里，见文件头的说明）---- */
 function bindDropZone(){
@@ -161,6 +197,11 @@ function bindDropZone(){
     if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     const box = e.target && e.target.closest ? e.target.closest(".dz-box") : null;
     if (box){ const i = +box.dataset.cmd || 0; if (i !== DRAG.cmd){ DRAG.cmd = i; paintDropZone(true); } }
+    // ★ 记一笔（`V-85` 查明的，**没改**）：`#dropzone` 是 `#pane-detail` 的**兄弟**（`V-42`），
+    //   框里的事件根本不经过这个 pane ⇒ 这一段里的 `paintDropZone(true)` 实际到不了，
+    //   CSS 里那条 `#dropzone.over .dz-box{transform:scale(1.02)…}` 也就一直没亮过。
+    //   想让它亮，得单独给 `#dropzone` 挂 dragover（还得防连发重画）—— 那是**改行为**，
+    //   不混在这一轮"纯搬运"里，等哪轮专门做。
     pane.classList.add("dover");
   });
   pane.addEventListener("dragleave", e => {
@@ -233,3 +274,8 @@ window.__mossDrop = function(items){
 function uiLog(text){
   try{ pywebview.api.ui_log(String(text || "")); }catch(e){}
 }
+
+/* ---------------------------------------------------------------- 挂载（放最后）
+   ★ 同前面几块：等 `DRAG` / `DRAGR` 这些 `const` 都声明完再挂（`mountVue()` 当场渲染）。 */
+mountVue(MossDragBar, "#dragbar", {ico: ico});
+mountVue(MossDropZone, "#dropzone");

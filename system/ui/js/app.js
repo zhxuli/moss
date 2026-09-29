@@ -65,9 +65,9 @@ function paintStaticIcons(){
   //   （`js/settings.js` 的模板里 `v-html="icon('x')"`）—— 面板已经不是这块 DOM 了。
   $("#m-x").innerHTML = ico("x", "i");
   $("#btn-refresh").innerHTML   = ico("refresh-cw", "i");
-  $("#btn-copy").innerHTML      = ico("copy", "i");
-  $("#btn-rerun").innerHTML     = ico("rotate-cw", "i");
-  $("#btn-clear").innerHTML     = ico("eraser", "i");
+  // ★ `V-83`：命令行那一页现在是 **Vue 组件**（`js/console.js` 的 `MossConsole`）——
+  //   复制 / 重跑 / 清空 三颗按钮的图标和点击都由组件自己的模板管，这里**不再插手**
+  //   （插了也会被下一次重画盖掉，等于绕开 Vue 去改它管的东西 —— `V-67` 那个教训）。
 }
 $("#q").addEventListener("input", () => { if (side === "hist") renderHist(); else renderList(); });
 $("#btn-refresh").onclick = init;
@@ -82,23 +82,15 @@ document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
   }
   else setTab(b.dataset.tab);
 });
-// 第四个选项卡顶上的两颗按钮（`V-48`）：重载这一页 / 在独立窗口里开
-$("#btn-embed-reload").onclick = () => {
-  const rec = cur && EMB.alive[cur.id];                 // 只重载**当前这个包**那一帧
-  if (rec && rec.frame) rec.frame.src = rec.frame.src;
-};
-$("#btn-embed-window").onclick = () => {
-  if (!cur) return;
-  pywebview.api.open_ui(cur.id, argsInput() ? argsInput().value : "").then(r => {
-    if (r && r.msg) toast(r.msg, !r.ok);
-  });
-};
+// ★ `V-84`：第四个选项卡顶上那两颗按钮（重载 / 在独立窗口里开）现在归 `MossEmbed` 组件
+//   （`js/embed.js` 的模板里绑），这里不再插手。
 
-$("#btn-copy").onclick = copyOut;$("#btn-clear").onclick = () => setConsole(consoleKey, "", "还没跑过");
-/* 状态栏那颗齿轮（`V-60`）：打开「设置」= 另一种改 config.toml 的方式 */
+/* ★ `V-83`：命令行那一页（`#pane-console`）整个交给 `MossConsole` 组件了 —— 复制 / 重跑 /
+   清空 / 发送 这几个处理器和 `#stdin` 的回车，都在它的模板里绑（`js/console.js`）。
+   这里只留**不属于那一页**的东西（状态栏齿轮、确认框、设置面板、刷新…）。 */
+$("#btn-settings").onclick = openSettings;
 /* 设置面板（`V-67` 起是 Vue 组件）：外面只留"打开"这一个入口 ——
    × / 取消 / 保存 / 点面板外面关闭，都由组件自己的模板绑（`js/settings.js`）。 */
-$("#btn-settings").onclick = openSettings;
 $("#m-cancel").onclick = closeModal;
 $("#m-x").onclick = closeModal;   // `V-63`：确认框的 × = 取消
 $("#m-ok").onclick = () => { const cb = modalCb; closeModal(); if (cb) cb(); };
@@ -107,12 +99,6 @@ $("#m-input").addEventListener("keydown", e => {
   if (e.key === "Escape") closeModal();
 });
 $("#modal").addEventListener("click", e => { if (e.target.id === "modal") closeModal(); });
-$("#btn-rerun").onclick = rerunLast;
-// 命令行那行输入（`V-43`）：回车 = 发一行给正在跑的那个进程
-$("#btn-send").onclick = sendStdin;
-$("#stdin").addEventListener("keydown", e => {
-  if (e.key === "Enter"){ e.preventDefault(); sendStdin(); }
-});
 
 /* ---------------------------------------------------------------- 新建 / 卸载
    这两个功能 CLi 早就有（`moss --new` / `moss --remove`），界面这边原来漏了。

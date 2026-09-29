@@ -28,30 +28,93 @@ function consoleTitle(key){
   const p = DATA && DATA.packages.find(x => x.id === key);
   return p ? (p.name + "（:" + key + "）") : key;
 }
+/* ---------------------------------------------------------------- 命令行这一页（`Vue` 组件，`V-83`）
+   薄组件：结构 / 类名 / id 一个**都不动**，只是把"按 id 找元素改属性"换成"状态一变、模板
+   自己更新"。外面照旧调 `paintConsole()` / `paintInbar()`（同名门面，只举牌）。
+   ★ 为什么这两个是门面而不是把 `CONSOLE` 改成响应式：`CONSOLE` / `consoleKey` / `RUNS`
+     都是别的文件也在写的普通变量（`embed.js` 起跑、收尾时都改），改成响应式要动一圈；
+     原来的代码本来就在"变了"的地方显式喊一声，保留函数名最省事、行为也一字不变。
+   ★ 行尾那颗状态图标（`paintRowStats`）和右上角那对「运行 / 停止」（`paintActions`）**不在这里**
+     —— 它们画的是**别的组件**的 DOM（左侧列表行、选项卡那一行），维持命令式（`V-79` 起就这样）。 */
+const CONSOLER = Vue.reactive({rev: 0, flash: ""});
 function paintConsole(){
-  const key = consoleKey || "__host__";
-  const b = consoleBuf(key);
-  const el = $("#out");
-  el.textContent = b.text;
-  el.scrollTop = el.scrollHeight;
-  $("#outinfo").textContent = consoleTitle(key) + " · " + (b.info || "");
-  paintInbar(key);
+  // 门面：原来的调用点（`setTab` / `setConsole` / `init` …）照旧调它
+  CONSOLER.flash = "";                   // 上一次"已复制 N 个字符"这类临时话，重画就抹掉
+  CONSOLER.rev++;
 }
-/* 输入行：只在"当前这一份命令行真的有个在跑的进程"时可用（`V-43`）。
-   没在跑 / 跑完了 → 禁用 + 换一句占位话，省得你以为发了没反应。 */
-function paintInbar(key){
-  const inp = $("#stdin"), btn = $("#btn-send"), bar = $("#inbar");
-  if (!inp || !bar) return;
-  const run = RUNS[key || ""];
-  const live = !!run;
-  inp.disabled = !live;
-  if (btn) btn.disabled = !live;
-  bar.classList.toggle("off", !live);
-  const ph = live ? "包在等你的回答就敲在这里，回车发送（比如 1 / 2 / 3）"
-                  : (key === "__host__" ? "宿主自己的输出没有输入这回事"
-                                        : "这个包现在没在跑 —— 先在「详情」里点运行");
-  if (inp.placeholder !== ph) inp.placeholder = ph;
+function paintInbar(){
+  // 门面：`startRun` / `finishRun` 里那两处"输入行该能用了 / 该禁用了"
+  CONSOLER.rev++;
 }
+function consolePaneKey(){ return consoleKey || "__host__"; }
+/* 输入行那句占位话（`V-43`）：没在跑 / 跑完了 → 换一句，省得你以为发了没反应。 */
+function consoleInbarPlaceholder(key){
+  if (RUNS[key]) return "包在等你的回答就敲在这里，回车发送（比如 1 / 2 / 3）";
+  return key === "__host__" ? "宿主自己的输出没有输入这回事"
+                            : "这个包现在没在跑 —— 先在「详情」里点运行";
+}
+
+const MossConsole = {
+  name: "moss-console",
+  data(){ return { R: CONSOLER }; },
+  computed: {
+    key(){ this.R.rev; return consolePaneKey(); },
+    buf(){ this.R.rev; return consoleBuf(this.key); },
+    // ★ `V-83` 踩到的坑：**这里必须也读一下 `this.R.rev`**。`buf` 每次重算返回的都是
+    //   **同一个对象**（`CONSOLE[key]` 那一条，普通对象、不是响应式的）—— 只依赖
+    //   `this.buf` 的话，Vue 看到"依赖没变"就**不重算**，输出区会一直停在旧文字上
+    //   （实测：`#out` 空着、而同一份缓冲的 `info` 却是新的）。规矩：凡是从"非响应式
+    //   状态"里取值的计算属性，都要显式登记 `R.rev` 这个举牌信号。
+    text(){ this.R.rev; return this.buf.text || ""; },
+    // 顶栏那行字：平时是「谁的 · 什么状态」，刚复制过就显示复制结果（和以前一样）
+    line(){
+      this.R.rev;
+      if (this.R.flash) return this.R.flash;
+      return consoleTitle(this.key) + " · " + (this.buf.info || "");
+    },
+    live(){ this.R.rev; return !!RUNS[this.key]; },
+    ph(){ this.R.rev; return consoleInbarPlaceholder(this.key); },
+  },
+  mounted(){ this.autoscroll(); },
+  updated(){ this.autoscroll(); },
+  methods: {
+    /* 自动滚到底：**只在"看的这份内容真的变了"时滚** —— 以前是每次 `paintConsole()`
+       都滚；现在重画的由头更多（复制那句话、跑完的状态），不判一下会把你正在翻的输出拽走。 */
+    autoscroll(){
+      const el = this.$refs.out;
+      if (!el) return;
+      const sig = this.key + "\u0000" + this.text.length + "\u0000" + (this.R.flash ? 1 : 0);
+      if (sig === this._sig) return;
+      this._sig = sig;
+      el.scrollTop = el.scrollHeight;
+    },
+    clearOut(){ setConsole(this.key, "", "还没跑过"); },
+    copyOut(){ copyOut(); },
+    rerun(){ rerunLast(); },
+    send(){ sendStdin(); },
+  },
+  // ★ `<pre>` 那一行**必须写在同一行**：换个行，模板里的空白就会进到输出里（`pre` 不折叠空白）。
+  template: `
+    <div class="outbar">
+      <span id="outinfo">{{ line }}</span>
+      <span style="flex:1"></span>
+      <button id="btn-copy" class="iconbtn" title="复制全部输出" v-html='ico("copy", "i")' @click="copyOut()"></button>
+      <button id="btn-rerun" class="iconbtn" title="再跑一次刚才那条命令" v-html='ico("rotate-cw", "i")' @click="rerun()"></button>
+      <button id="btn-clear" class="iconbtn" title="清空输出" v-html='ico("eraser", "i")' @click="clearOut()"></button>
+    </div>
+    <pre id="out" ref="out">{{ text }}</pre>
+    <div id="inbar" :class="{off: !live}">
+      <span class="ps1">›</span>
+      <input id="stdin" :placeholder="ph" autocomplete="off" spellcheck="false"
+             :disabled="!live" @keydown.enter.prevent="send()">
+      <button id="btn-send" class="btn" :disabled="!live" @click="send()">发送</button>
+    </div>`,
+};
+/* ★ 挂载点放在**文件末尾**（`V-83`）：`mountVue()` 会立刻做第一次渲染，而模板里要用
+   `RUNS`（`live` / 占位话）—— 那个 `const` 在下面才声明，在这儿挂就是
+   `Cannot access 'RUNS' before initialization`（`V-79` 踩过同一个坑，这次是预览那道
+   "页内错误非空即判失败"的闸**当场**抓出来的）。 */
+
 /* 发一行给正在跑的那个进程的 stdin。先把这一行**回显**到输出里（像终端那样），
    不然"我到底发出去没有"看不出来。 */
 async function sendStdin(){
@@ -74,8 +137,11 @@ function setConsole(key, text, info){
   if ((consoleKey || "__host__") === (key || "__host__")) paintConsole();
 }
 function out(text, info){ setConsole(consoleKey || "__host__", text, info); }
+/* 复制全部输出。★ 复制完那句反馈**交给组件去显示**（`V-83`）：以前是直接
+   `$("#outinfo").textContent = …` 写进 DOM —— 现在那是组件的 DOM，下一次重画就被盖掉，
+   而且等于绕开 Vue 去改它管的东西。走 `CONSOLER.flash` 这条路，行为一样、不打架。 */
 async function copyOut(){
-  const text = $("#out").textContent;
+  const text = $("#out") ? $("#out").textContent : "";
   let ok = false;
   try { await navigator.clipboard.writeText(text); ok = true; } catch(e){ ok = false; }
   if (!ok){
@@ -87,8 +153,9 @@ async function copyOut(){
       document.body.removeChild(ta);
     }catch(e){ ok = false; }
   }
-  $("#outinfo").textContent = ok ? ("已复制 " + text.length + " 个字符")
-                                 : "复制失败（可以手动选中后 Ctrl+C）";
+  CONSOLER.flash = ok ? ("已复制 " + text.length + " 个字符")
+                      : "复制失败（可以手动选中后 Ctrl+C）";
+  CONSOLER.rev++;
 }
 
 /* ---------------------------------------------------------------- 运行 / 停止
@@ -221,3 +288,9 @@ function paintActions(p){
                   : (st.visible ? "隐藏它的窗口（不关掉，随时能再显示出来）"
                                 : "把它的窗口显示出来并叫到前面"));
 }
+
+/* ---------------------------------------------------------------- 挂载（放最后）
+   ★ 必须在 `RUNS` / `PST` / `consoleKey` 这些 `const`/`let` **声明之后**：`mountVue()`
+     当场就会渲染一次，模板里的 `live` / 占位话要读 `RUNS` —— 早一步就是
+     `Cannot access 'RUNS' before initialization`（`V-79` 踩过同一个坑）。 */
+mountVue(MossConsole, "#pane-console", {ico: ico});

@@ -549,6 +549,9 @@ const MossList = {
       return DRAG.on ? all.filter(p => dropAccepts(p, DRAG.kind)) : all;
     },
     emptyHTML(){
+      // ★ 同 `V-83` 那个坑：`DRAG` 是普通对象（非响应式）—— 不登记 `R.rev` 的话，
+      //   开始拖动（列表被筛空）时这句提示不会更新。
+      this.R.rev;
       return DRAG.on ? ("没有包收「" + dropKindName(DRAG.kind) + "」") : "没有匹配的包";
     },
   },
@@ -585,6 +588,7 @@ const MossHist = {
         [it.name, it.target, it.args, it.cwd].join(" ").toLowerCase().includes(f));
     },
     emptyHTML(){
+      this.R.rev;              // 同上：`HIST` 也是普通数组，得靠举牌信号才会重算
       return HIST.length ? "没有匹配的历史"
         : ('还没有历史。<br>历史只记<b>路径调用</b>（<span class="mono">moss zeen</span> 这种）——'
            + '<br>包调用不进历史。');
