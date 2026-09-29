@@ -886,6 +886,10 @@ function paintActions(p){
      - `base`  = 只给文件名，不给完整路径（配合 `cwd` 用）
      **没写 `drop` 的包 = 完全不收拖入**（比如快捷翻译）—— 拖动时它连列表都不出现。 */
 const DRAG = {on: false, kind: null, depth: 0, cmd: 0, hits: 0};
+/* 上一次**拖进来**塞进参数框的那一段（"包 id + 那一段原文"）。
+   为什么要记：拖进来的那一段是追加在末尾的，连着拖两次就会叠成一串 —— 实测叠起来之后
+   md5 收到两条路径，于是判成字符串、算了个错的 MD5。下一次拖入时先把这一段摘掉。 */
+const DROP_ARGS = {id: null, piece: ""};
 
 /* 拖进来的到底是文件还是文件夹：Chromium 的 `webkitGetAsEntry()` 在拖动过程中就能看。
    认不出来（有些来源不给）→ null = "不知道"，那就按"两种都收的包"筛，别把人挡住。 */
@@ -989,6 +993,25 @@ function bindDropZone(){
     if (!DRAG.on) dragBegin(e);
     e.preventDefault();
   });
+  // ★ 这一行是"在详情页松手却被浏览器打开文件"的解药（`V-42` ✅）：
+  //   HTML 的规矩是 —— **只有 `dragover` 被 preventDefault，drop 事件才会发**；
+  //   不 preventDefault 的话浏览器就执行它自己的默认动作（把那个文件/文件夹**打开**）。
+  //   为什么以前只挂在具体元素上不够：投放框 `#dropzone` 是 `#pane-detail` 的**兄弟**
+  //   （不是子节点），鼠标落在框上时，drag 事件根本不经过 `#pane-detail` —— 于是那条
+  //   preventDefault 从来没执行过。挂在 `document` 上就没有这个死角（拖动一定会冒泡到它）。
+  document.addEventListener("dragover", e => {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+  // 松手之后把界面收拾干净（不管落在哪儿）。真正的路径由宿主从另一条路送进
+  // `window.__mossDrop`，这里只负责"别留着一堆高亮"。
+  document.addEventListener("drop", e => {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    uiLog("page drop: files=" + ((e.dataTransfer.files || []).length));
+    setTimeout(() => { if (DRAG.on) dragEnd(); }, 1200);   // 给宿主那条路一点时间
+  });
   // ★ 列表那一列：划过哪个包就选中它（省得你再回去点一下）。
   //   拖动过程中鼠标事件是不发的，只有 drag 事件 —— 所以用 dragover。
   const list = $("#list");
@@ -1004,9 +1027,9 @@ function bindDropZone(){
     }
   });
   pane.addEventListener("dragover", e => {
-    if (!DRAG.on || !dragHasFiles(e)) return;
-    e.preventDefault();                 // ★ 不 preventDefault 就没有 drop 事件
-    e.dataTransfer.dropEffect = "copy";
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();                 // 这一条是"好看"用的；真正管用的是 document 那条
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     const box = e.target && e.target.closest ? e.target.closest(".dz-box") : null;
     if (box){ const i = +box.dataset.cmd || 0; if (i !== DRAG.cmd){ DRAG.cmd = i; paintDropZone(true); } }
     pane.classList.add("dover");
@@ -1021,7 +1044,6 @@ function bindDropZone(){
     if (!dragHasFiles(e)) return;
     e.preventDefault();                 // 真实路径由宿主送过来，这里只收拾界面
     pane.classList.remove("dover");
-    uiLog("page drop: files=" + ((e.dataTransfer.files || []).length));
     // ★ 先别拆投放框：宿主的路径是另一条路送来的（几毫秒后到 `__mossDrop`）
   });
   // 拖出窗口 / 按 Esc 也要收干净，不然那块高亮会一直挂着
@@ -1049,17 +1071,30 @@ window.__mossDrop = function(items){
     return;
   }
   const cmd = cmds[Math.min(cmdIdx || 0, cmds.length - 1)].rule;
-  let args = (argsInput() ? argsInput().value : "").trim();
+  // 参数串 = "你自己打的那些" + "这次拖进来的那一段"。上一次**拖进来的**那一段先摘掉，
+  // 免得连着拖两次叠成一串（实测过：叠起来之后 md5 收到两条路径，判成字符串算了）。
+  const box = argsInput();
+  let base = box ? box.value : "";
+  if (DROP_ARGS.id && base.endsWith(DROP_ARGS.piece))
+    base = base.slice(0, base.length - DROP_ARGS.piece.length);
+  base = base.trim();
   let cwd = "";
   if (cmd.cwd) cwd = it.isDir ? it.path : it.dir;      // 拖的是文件 → 用它所在的文件夹
+  let piece = "";
   if (cmd.param){
     let v = cmd.base ? (it.name || "") : it.path;
-    if (cmd.quote || /\s/.test(v)) v = '"' + v + '"';  // 有空白必须加引号，不然被拆词
-    args = (args + " " + v).trim();                    // ★ 强制追加到末尾
+    // ★ 一律加引号（除非声明里明写 `"quote": false`）：Windows 路径里全是反斜杠，
+    //   而参数串到宿主那边要过一次 `shlex` —— 不加引号的 `C:\a\b.ico` 会被吃成
+    //   `C:ab.ico`（实测），包就只能当字符串算了（`V-41`）。
+    if (cmd.quote !== false) v = '"' + v + '"';
+    piece = v;
   }
-  const box = argsInput();
+  const args = (base + (piece ? " " + piece : "")).trim();
+  if (piece) DROP_ARGS.id = p.id, DROP_ARGS.piece = piece;
+  else DROP_ARGS.id = null;
   if (box){ box.value = args; box.dispatchEvent(new Event("input")); }
-  toast((cwd ? "以 " + cwd + " 为当前目录" : "按当前参数") + "运行 :" + p.id);
+  toast((cwd ? "以 " + cwd + " 为当前目录" : "按当前参数") +
+        (piece ? (cmd.base ? "、只把文件名交给它" : "") : "") + "运行 :" + p.id);
   startRun(p, args, cwd);
 };
 

@@ -73,7 +73,9 @@
       "param": true
     },
     "file": {
-      "param": true
+      "cwd": true,
+      "param": true,
+      "base": true
     }
   }
 }
