@@ -34,6 +34,8 @@
     hist             切到「历史」，选中第一条，停在「详情」
     hist-file        同上，切到「文件管理」（看 `abs/` 那个第三根）
     hist-console     同上，切到「命令行」
+    edit-manifest    打开 md5 的 pkg.json → 改名 → 保存（看左边列表有没有跟着变）
+    edit-manifest-detail  同上，最后停在「详情」
 
 ★ 它**不替代**人肉点一遍：假 API 只喂了够渲染的数据，真正的运行/停止/写文件
   还是要在真界面里试。
@@ -57,7 +59,8 @@ BROWSERS = [
 ]
 
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open",
-          "hist", "hist-console", "hist-file"]
+          "hist", "hist-console", "hist-file",
+          "edit-manifest", "edit-manifest-detail"]
 
 
 def browser():
@@ -144,7 +147,20 @@ MOCK_JS = r"""
     fs_read: async (rel) => ({ok: true, text: "import hashlib\n\n\ndef run():\n"
                               + "    print('预览')\n", binary: false, too_big: false,
                               rel: rel, path: rel, writable: true}),
-    fs_write: async () => ({ok: true, msg: "(预览) 已保存"}),
+    // ★ 写 pkg.json 时真的改掉那份假 payload（模拟宿主重新扫盘）——
+    //   这样才能验证"存了清单之后界面会重新解析"这条路。
+    fs_write: async (rel, text) => {
+      if (/(^|\/)pkg\.json$/i.test(rel || "")){
+        try{
+          const j = JSON.parse(text);
+          const pid = String(rel).split("/").slice(-2)[0];
+          const p = state.packages.find(x => x.id === pid);
+          if (p){ if (j.name) p.name = j.name; if (j.desc) p.desc = j.desc; }
+          document.title = "WROTE";
+        }catch(e){ document.title = "BADJSON " + e.message; }
+      }
+      return {ok: true, msg: "(预览) 已保存"};
+    },
     fs_mkdir: async () => ({ok: true, msg: "(预览) 已创建"}),
     fs_touch: async () => ({ok: true, msg: "(预览) 已创建"}),
     fs_rename: async () => ({ok: true, msg: "(预览) 已改名"}),
@@ -175,6 +191,22 @@ MOCK_JS = r"""
           await fmOpenPage("system/pkgs/md5/run.py");
         }
         if (h === "pkg-console") setTab("console");
+        if (h === "edit-manifest" || h === "edit-manifest-detail"){
+          // 打开清单 → 改名 → 保存：左边列表应该跟着变
+          setTab("file");
+          await sleep(350);
+          await fmOpenPage("system/pkgs/md5/pkg.json");
+          await sleep(250);
+          const t = fmActiveTab();
+          if (!t){ document.title = "NO-TAB"; return; }
+          let j = {};
+          try{ j = JSON.parse(t.text); }catch(e){}
+          j.name = "已改名的 MD5";
+          t.text = JSON.stringify(j, null, 2);
+          fmSave(t);
+          await sleep(600);
+          if (h === "edit-manifest-detail") setTab("detail");   // 看详情那边跟不跟着变
+        }
       }
     } catch(e){ document.title = "SCENARIO-ERR " + e.message; return; }
     await sleep(350);
