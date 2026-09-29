@@ -502,115 +502,151 @@ table.p th{color:var(--dim);font-weight:500}
 #statusbar .iconbtn:hover{background:var(--hover);color:var(--fg)}
 #statusbar .iconbtn svg{width:14px;height:14px}
 
-/* ---------------------------------------------------------------- 「设置」面板（`V-60` ✅ / `V-63` ✅）
+/* ---------------------------------------------------------------- 「设置」面板（`V-60` ✅ / `V-63` ✅ / `V-66`）
    内容全部来自宿主（`moss --settings` / `--settings-check`），界面不自己列设置项、
    也不自己实现校验规则 —— 就不会出现"面板里有、文件里没有""两处规则不一致"这种事。
 
-   ★ 三段式：**头（标题 + ×）/ 身（唯一滚动的地方）/ 脚（状态 + 按钮）**。
-   ★ 圆角只给最外层那个 `.card`，并且它是 `overflow:hidden`，**滚动交给里面的
-     `.set-body`** —— 这是 `V-63` 的根因：原来 `overflow:auto` 就写在带 `border-radius`
-     的元素上，WebView2 的经典滚动条（17px、四四方方）压在右边，看起来就是
-     "只有左边有圆角"。 */
+   ★ 结构（`V-63` + `V-66`）：
+       .card       圆角 + overflow:hidden（**自己不滚**，滚动条压不到圆角）
+       ├ .set-head 标题 + 配置文件 + ×
+       ├ .set-main flex
+       │   ├ .set-nav  左侧分类（点一下切一组，一次只看一组 —— 不再是一长条）
+       │   └ .set-body 右侧内容（**唯一滚动层**，没有圆角）
+       └ .set-foot 状态 + 取消 / 保存
+   ★ 说明放进 `?` 图标的 hover 提示里（不是整格 hover）：面板上只有标签和控件。 */
 #settings{position:fixed;inset:0;background:rgba(0,0,0,.38);display:none;
   align-items:center;justify-content:center;z-index:85}
 #settings.on{display:flex}
-.card.wide{width:min(680px,92vw);max-width:none;padding:0;border-radius:14px;
-  display:flex;flex-direction:column;max-height:86vh;overflow:hidden}
+.card.wide{width:min(760px,94vw);height:min(560px,86vh);max-width:none;padding:0;
+  border-radius:14px;display:flex;flex-direction:column;overflow:hidden}
 .set-head{display:flex;align-items:center;gap:10px;padding:14px 14px 12px 18px;
   border-bottom:1px solid var(--hair);flex:none}
 .set-head h3{margin:0;font-size:15px;flex:none}
 .set-sub{flex:1;min-width:0;color:var(--dim);font-size:11.5px;font-family:var(--mono);
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
 .set-x{width:26px;height:26px;flex:none;border:0;border-radius:8px;background:transparent;
   color:var(--dim);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
   padding:0;transition:background .15s ease-out,color .15s ease-out}
 .set-x:hover{background:var(--hover);color:var(--fg)}
 .set-x svg{width:15px;height:15px}
-.set-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:14px 18px 4px}
-.set-foot{display:flex;align-items:center;gap:10px;padding:11px 14px 11px 18px;
+.set-main{flex:1;min-height:0;display:flex}
+
+/* 左侧分类 */
+.set-nav{width:152px;flex:none;background:var(--panel2);border-right:1px solid var(--hair);
+  padding:8px;display:flex;flex-direction:column;gap:2px}
+.set-navitem{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
+  font:inherit;font-size:12.5px;color:var(--fg2);background:transparent;border:0;
+  cursor:pointer;text-align:left;transition:background .15s ease-out,color .15s ease-out}
+.set-navitem:hover{background:var(--hover)}
+.set-navitem.on{background:var(--sel);color:var(--accent);font-weight:600}
+.set-navitem svg{width:14px;height:14px;flex:none;opacity:.75}
+.set-navitem.on svg{opacity:1}
+.set-navitem .set-dot{width:6px;height:6px;border-radius:50%;background:#d64545;margin-left:auto;
+  flex:none;display:none}
+.set-navitem.has-bad .set-dot{display:block}
+.set-navitem.has-warn .set-dot{background:#e0a02a;display:block}
+.set-navspacer{flex:1}
+
+/* 右侧内容：一次只显示一组 */
+.set-body{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;padding:16px 20px 10px}
+.set-pane{display:none}
+.set-pane.on{display:block}
+.set-ptitle{font-size:13.5px;font-weight:600;margin:0}
+.set-pdesc{font-size:12px;color:var(--dim);line-height:1.65;margin:4px 0 14px}
+/* 开关类：一行一个（本来就该一行一个 —— 左边名字、右边开关） */
+.set-list{display:flex;flex-direction:column}
+.set-item{display:flex;align-items:center;gap:10px;padding:9px 2px;
+  border-top:1px solid var(--hair)}
+.set-item:first-child{border-top:0}
+.set-item:hover{background:var(--panel2)}
+/* 输入类：两列 */
+.set-fields{display:grid;grid-template-columns:1fr 1fr;gap:14px 16px}
+.set-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.set-lbl{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--fg2);
+  min-width:0;cursor:default}
+.set-lbl span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-item .set-lbl{flex:1}
+.set-info{width:14px;height:14px;flex:none;color:var(--dim2);opacity:.55;
+  display:inline-flex;align-items:center;justify-content:center;cursor:help;
+  transition:opacity .15s,color .15s}
+.set-lbl:hover .set-info,.set-info:hover{opacity:1;color:var(--accent)}
+.set-info svg{width:13px;height:13px}
+.set-prob{display:none;font-size:11.5px;line-height:1.55;margin-top:2px}
+.set-item.bad,.set-field.bad{background:rgba(214,69,69,.07);border-radius:8px}
+.set-item.bad .set-lbl span,.set-field.bad .set-lbl span{color:#d64545}
+.set-item.bad .set-prob,.set-field.bad .set-prob{display:block;color:#d64545}
+.set-item.warn,.set-field.warn{background:rgba(255,159,10,.08);border-radius:8px}
+.set-item.warn .set-prob,.set-field.warn .set-prob{display:block;color:#a86400}
+.set-field.bad,.set-field.warn{padding:6px 8px;margin:-6px -8px}
+.set-item.bad,.set-item.warn{padding-left:8px;padding-right:8px}
+
+/* ★ 控件（`V-63` 的教训：这几条**必须带 `#settings ` 前缀** —— 全局那条
+   `.card input{width:100%}`（确认框用的）是"一个类 + 一个元素"，优先级高过单类选择器） */
+#settings .inp{width:100%;height:32px;padding:0 11px;border-radius:8px;
+  border:1px solid var(--ctl-in);background:var(--panel2);color:var(--fg);
+  font-family:var(--mono);font-size:12.5px;outline:none;
+  transition:border-color .12s,box-shadow .12s}
+#settings .inp::placeholder{color:var(--ph);font-family:inherit}
+#settings .inp:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+/* 开关 */
+.sw{width:38px;height:22px;border-radius:99px;border:1px solid var(--ctl);background:var(--panel2);
+  position:relative;cursor:pointer;flex:none;padding:0;transition:background .16s,border-color .16s}
+.sw::after{content:"";position:absolute;top:1px;left:1px;width:18px;height:18px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);
+  transition:transform .16s cubic-bezier(.4,0,.2,1)}
+.sw[aria-checked="true"]{background:var(--accent);border-color:var(--accent)}
+.sw[aria-checked="true"]::after{transform:translateX(16px)}
+.sw:focus-visible{outline:none;box-shadow:0 0 0 3px var(--field-focus)}
+/* 步进器 */
+#settings .step{display:inline-flex;align-items:center;border:1px solid var(--ctl-in);
+  border-radius:8px;overflow:hidden;background:var(--panel2);height:32px;flex:none}
+#settings .step button{width:30px;height:100%;border:0;background:transparent;color:var(--fg2);
+  cursor:pointer;font-size:15px;line-height:1;padding:0;transition:background .12s,color .12s}
+#settings .step button:hover:not(:disabled){background:var(--hover);color:var(--fg)}
+#settings .step button:disabled{opacity:.3;cursor:default}
+#settings .step .num{width:44px;height:100%;text-align:center;font-family:var(--mono);
+  font-size:13px;border:0;border-left:1px solid var(--hair);border-right:1px solid var(--hair);
+  background:transparent;color:var(--fg);outline:none}
+/* 冲突/提醒时控件也变色 */
+.set-item.bad .sw,.set-field.bad .inp,.set-field.bad .step{border-color:#d64545;
+  box-shadow:0 0 0 3px rgba(214,69,69,.14)}
+.set-item.warn .sw,.set-field.warn .inp,.set-field.warn .step{border-color:#e0a02a;
+  box-shadow:0 0 0 3px rgba(224,160,42,.16)}
+/* 快捷命令那页底下的预览行（照那个稿子：一行把四条命令都摆出来） */
+.set-live{margin-top:16px;padding:10px 12px;border-radius:10px;background:var(--tile);
+  font-family:var(--mono);font-size:12px;color:var(--fg2);line-height:1.8;word-break:break-all}
+.set-live b{color:var(--fg);font-weight:600}
+.set-live.bad{background:rgba(214,69,69,.08);color:#d64545}
+
+/* 脚：状态 + 按钮 */
+.set-foot{display:flex;align-items:center;gap:10px;padding:12px 14px 12px 18px;
   border-top:1px solid var(--hair);flex:none;background:var(--panel2)}
 .set-state{font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap;flex:1;min-width:0}
 .set-state.moved{color:var(--accent)}
 .set-state.bad{color:#d64545}
-.set-foot .btn-quiet{padding:6px 12px;border-radius:8px;border:1px solid transparent;
-  background:transparent;color:var(--dim);cursor:pointer;font:inherit;font-size:13px}
-.set-foot .btn-quiet:hover{background:var(--hover);color:var(--fg)}
-.set-foot .btn{padding:6px 14px;border-radius:8px;border:1px solid var(--ctl);
+.set-foot .btn{padding:7px 15px;border-radius:8px;border:1px solid var(--ctl);
   background:var(--panel);color:var(--fg);cursor:pointer;font:inherit;font-size:13px}
 .set-foot .btn:hover{background:var(--hover)}
 .set-foot .btn.primary{background:var(--accent);border-color:var(--accent);
   color:var(--accent-fg)}
 .set-foot .btn.primary:hover{filter:brightness(1.06)}
 .set-foot .btn:disabled{opacity:.45;cursor:default;filter:none}
+.set-foot .btn-quiet{padding:7px 12px;border-radius:8px;border:1px solid transparent;
+  background:transparent;color:var(--dim);cursor:pointer;font:inherit;font-size:13px}
+.set-foot .btn-quiet:hover{background:var(--hover);color:var(--fg)}
 
-/* 分组：详情页那种"一块一块"的观感 —— 图标 + 标题 + 一句说明，下面一张卡片装若干行 */
-.set-group{margin:0 0 16px}
-.set-group:last-child{margin-bottom:2px}
-.set-ghead{display:flex;gap:9px;align-items:flex-start;margin:0 0 8px}
-.set-gico{width:26px;height:26px;border-radius:8px;background:var(--tile);color:var(--fg2);
-  display:inline-flex;align-items:center;justify-content:center;flex:none;margin-top:1px}
-.set-gico svg{width:14px;height:14px}
-.set-gtitle{font-size:13.5px;font-weight:600;line-height:1.3}
-.set-gblurb{display:block;font-size:11.5px;color:var(--dim);line-height:1.6;margin-top:2px}
-.set-rows{border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--panel)}
-.set-row{display:flex;align-items:center;gap:14px;padding:9px 12px;
-  border-top:1px solid var(--hair);transition:background .15s ease-out}
-.set-row:first-child{border-top:0}
-.set-main{flex:1;min-width:0}
-.set-label{font-size:13px;line-height:1.35}
-.set-hint{font-size:11.5px;color:var(--dim);line-height:1.55;margin-top:2px}
-.set-now{font-size:11.5px;color:var(--dim2);line-height:1.55;margin-top:3px;
-  font-family:var(--mono)}
-.set-why{font-size:11.5px;line-height:1.55;margin-top:4px;display:none}
-.set-row.bad{background:rgba(214,69,69,.07)}
-.set-row.bad .set-label{color:#d64545}
-.set-row.bad .set-why{display:block;color:#d64545}
-.set-row.warn{background:rgba(255,159,10,.08)}
-.set-row.warn .set-why{display:block;color:#a86400}
-.set-ctl{flex:none;display:flex;align-items:center;gap:6px}
-
-/* 控件一：前缀符号（一个字符的小框，等宽、居中） */
-.syminp{width:54px;height:30px;text-align:center;font-family:var(--mono);font-size:15px;
-  border-radius:8px;border:1px solid var(--ctl-in);background:var(--panel2);color:var(--fg);
-  outline:none;transition:border-color .12s,box-shadow .12s}
-.syminp::placeholder{font-size:10.5px;color:var(--ph);letter-spacing:.5px}
-.syminp:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
-/* 控件二：文本 */
-.txtinp{width:190px;height:30px;padding:0 10px;border-radius:8px;border:1px solid var(--ctl-in);
-  background:var(--panel2);color:var(--fg);font-size:12.5px;outline:none;
-  transition:border-color .12s,box-shadow .12s}
-.txtinp::placeholder{color:var(--ph)}
-.txtinp:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
-/* 控件三：开关（36×20 的轨道 + 16 的圆点，苹果那一套） */
-.sw{width:36px;height:20px;border-radius:99px;border:1px solid var(--ctl);background:var(--panel2);
-  position:relative;cursor:pointer;flex:none;padding:0;transition:background .16s,border-color .16s}
-.sw::after{content:"";position:absolute;top:1px;left:1px;width:16px;height:16px;border-radius:50%;
-  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);
-  transition:transform .16s cubic-bezier(.4,0,.2,1)}
-.sw[aria-checked="true"]{background:var(--accent);border-color:var(--accent)}
-.sw[aria-checked="true"]::after{transform:translateX(16px)}
-.sw:focus-visible{outline:none;box-shadow:0 0 0 3px var(--field-focus)}
-/* 控件四：步进器 */
-.step{display:inline-flex;align-items:center;border:1px solid var(--ctl-in);border-radius:8px;
-  overflow:hidden;background:var(--panel2);height:30px}
-.step button{width:27px;height:100%;border:0;background:transparent;color:var(--fg2);
-  cursor:pointer;font-size:15px;line-height:1;padding:0;
-  transition:background .12s,color .12s}
-.step button:hover:not(:disabled){background:var(--hover);color:var(--fg)}
-.step button:disabled{opacity:.3;cursor:default}
-.step .num{width:36px;height:100%;text-align:center;font-family:var(--mono);font-size:13px;
-  border:0;border-left:1px solid var(--hair);border-right:1px solid var(--hair);
-  background:transparent;color:var(--fg);outline:none}
-/* 冲突/提醒：那一行的控件也飘红（光文字变红不够显眼） */
-.set-row.bad .syminp,.set-row.bad .txtinp,.set-row.bad .num,.set-row.bad .step{
-  border-color:#d64545;box-shadow:0 0 0 3px rgba(214,69,69,.14)}
-.set-row.warn .syminp,.set-row.warn .txtinp,.set-row.warn .num,.set-row.warn .step{
-  border-color:#e0a02a;box-shadow:0 0 0 3px rgba(224,160,42,.16)}
-/* 「现在这样」那一行（符号组）：活预览 */
-.set-live{margin:9px 0 0;padding:9px 12px;border-radius:10px;background:var(--tile);
-  font-size:12px;color:var(--fg2);line-height:1.75;font-family:var(--mono)}
-.set-live.bad{background:rgba(214,69,69,.08);color:#d64545}
+/* hover 提示（`V-66`：从 `?` 图标 / 标签触发）。挂 body 上 + fixed 定位 —— 
+   放滚动层里会被裁掉。 */
+#tip{position:fixed;z-index:95;max-width:320px;padding:9px 12px;border-radius:10px;
+  background:var(--panel);border:1px solid var(--line);
+  box-shadow:0 12px 34px rgba(0,0,0,.26);font-size:12px;line-height:1.65;color:var(--fg2);
+  pointer-events:none}
+#tip b{display:block;font-size:12.5px;color:var(--fg);margin-bottom:3px}
+#tip .tip-now{font-family:var(--mono);font-size:11.5px;color:var(--dim2);margin-top:5px}
+#tip .tip-prob{margin-top:5px}
+#tip .tip-prob.bad{color:#d64545}
+#tip .tip-prob.warn{color:#a86400}
 </style>
 </head>
 <body>
@@ -719,6 +755,10 @@ table.p th{color:var(--dim);font-weight:500}
   </div>
 </div></div>
 <div id="toasts"></div>
+<!-- hover 提示（`V-66`）：标签旁边那个 `?` 一悬停，说明 / 「现在是什么样」/ 红黄原因就摊在
+     这张卡里。挂在 body 上 + fixed 定位 —— 放进滚动层里会被裁掉。
+     （★ 它原来是 `V-65` 那一版加的，回退时跟着没了；这次重做面板**又需要它**，所以补回来。） -->
+<div id="tip" hidden></div>
 
 <!-- 「设置」面板（`V-60` ✅）：齿轮点开的就是它。里面每一行都由宿主给
      （`moss --settings`：分组 / 标签 / 类型 / 当前值 / 说明）—— 界面只负责画控件。
@@ -730,8 +770,12 @@ table.p th{color:var(--dim);font-weight:500}
     <span class="set-sub" id="set-path"></span>
     <button class="set-x" id="set-close" title="关闭（Esc）" aria-label="关闭"></button>
   </div>
-  <!-- 身：整个面板**只有这里滚** —— 圆角那层是 overflow:hidden，滚动条压不到圆角 -->
-  <div class="set-body" id="set-body"></div>
+  <!-- 身（`V-66`）：左边一列分类，右边只显示当前这一组；**只有右边那层滚**，
+       圆角那层是 overflow:hidden（`V-63`：滚动条压不到圆角） -->
+  <div class="set-main">
+    <div class="set-nav" id="set-nav"></div>
+    <div class="set-body" id="set-body"></div>
+  </div>
   <!-- 脚：状态 + 按钮（不跟着滚，永远是看得见的那一条） -->
   <div class="set-foot">
     <span class="set-state" id="set-state"></span>
@@ -3144,37 +3188,42 @@ function toast(text, bad){
   setTimeout(() => el.remove(), 2400);
 }
 
-/* ---------------------------------------------------------------- 「设置」面板（`V-60` ✅ / `V-63` ✅）
-   齿轮点开 → 问宿主当前设置 → 按类型画控件 → **每改一下就问宿主一次「这样行不行」**
-   → 有冲突：那一行标红 + 控件飘红 + 「保存」禁用 + 脚上写清楚为什么；
-   只是提醒（warn）的不拦保存，用黄的说一句。
+/* ---------------------------------------------------------------- 「设置」面板（`V-60` ✅ / `V-63` ✅ / `V-66` ✅）
+   齿轮点开 → 问宿主当前设置 → 左边一列分类、右边只显示**当前这一组** → 每改一下就问宿主
+   一次「这样行不行」→ 有冲突：那一项标红 + 控件变色 + 导航上点一个红点 + 保存禁用。
 
+   ★ `V-66`（照那个稿子的骨架，但用我们自己的令牌、不引任何 CDN）：
+     · **左侧分类 + 右侧内容** —— 一次只看一组，面板不再是一长条；
+     · 说明挂在小 `?` 图标上（hover 才出来），面板上只留标签和控件；
+     · 快捷命令那页底下一条**预览行**，四条命令摆在一起；
+     · 哪个分类里有红/黄，左边那个分类上点一个小圆点（不然切走了看不见）。
    ★ 界面这里**不认识任何设置项，也不自己实现校验规则**：分组 / 图标 / 标签 / 说明 /
-     控件类型 / 当前值 / 「现在这样」/ 冲突原因，全是宿主算好给的
-     （`moss --settings` 与 `moss --settings-check`）。规则只有 `core/config.py` 那一份 ——
-     两边各写一遍的话，早晚会不一致，而那种 bug 最难看出来。 */
-let SET = null;          // {path, groups, values, orig, problems, notes, live, timer, seq, lastMsg}
+     控件类型 / 当前值 / 「现在这样」/ 冲突原因，全是宿主算好给的。 */
+let SET = null;   // {path, groups, items, values, orig, problems, notes, live, active, timer, seq, lastMsg}
 
 async function openSettings(){
   const r = await pywebview.api.settings();
   if (!r || !r.ok){ toast("✗ 读设置失败：" + ((r && r.msg) || ""), true); return; }
-  SET = {path: r.path || "", groups: r.groups || [], values: {}, orig: {},
-         problems: [], notes: {}, live: "", timer: null, seq: 0, lastMsg: ""};
+  SET = {path: r.path || "", groups: r.groups || [], items: {}, values: {}, orig: {},
+         problems: [], notes: {}, live: "", active: "", timer: null, seq: 0, lastMsg: ""};
   (SET.groups || []).forEach(g => (g.items || []).forEach(it => {
+    SET.items[it.key] = it;
     SET.values[it.key] = it.value;
     SET.orig[it.key] = it.value;
   }));
+  SET.active = (SET.groups[0] || {}).name || "";
   renderSettings();
   $("#settings").classList.add("on");
   $("#set-save").disabled = true;
   setFoot("set-state", "正在读取当前配置…", "");
-  if (r.msg) toast(r.msg);                 // 宿主顺带说的话（首次运行建了配置文件之类）
-  scheduleCheck(0);                        // 立刻问一次：把「现在这样」和提醒填上
+  if (r.msg) toast(r.msg);
+  scheduleCheck(0);
 }
 
 function closeSettings(){
   if (SET && SET.timer) clearTimeout(SET.timer);
-  if (SET) SET.seq++;                      // 关掉之后飞回来的检查结果一律作废
+  if (SET) SET.seq++;
+  hideTip();
   $("#settings").classList.remove("on");
 }
 
@@ -3185,71 +3234,113 @@ function setFoot(id, text, cls){
   el.textContent = text;
 }
 
-function renderSettings(){
-  const box = $("#set-body");
-  box.innerHTML = "";
-  $("#set-path").textContent = SET.path || "";
-  $("#set-path").title = SET.path || "";
-  SET.groups.forEach(g => box.appendChild(groupNode(g)));
-  $("#set-body").scrollTop = 0;
+/* 头部只留文件名尾巴（整条路径太长，没必要一直占地方） */
+function shortPath(p){
+  const s = String(p || "").replace(/\\/g, "/");
+  const parts = s.split("/").filter(Boolean);
+  return parts.length <= 2 ? s : "…/" + parts.slice(-2).join("/");
 }
 
-/* 一组 = 图标 + 名字 + 一句说明，下面一张卡片装若干行（详情页那种"一块一块"的观感） */
-function groupNode(g){
-  const sec = document.createElement("section");
-  sec.className = "set-group";
-  const head = document.createElement("div");
-  head.className = "set-ghead";
-  const tile = document.createElement("span");
-  tile.className = "set-gico";
-  tile.innerHTML = ico(g.icon || "settings", "i");
-  const ttl = document.createElement("div");
-  const h = document.createElement("div");
-  h.className = "set-gtitle"; h.textContent = g.name || "";
-  const bl = document.createElement("span");
-  bl.className = "set-gblurb"; bl.textContent = g.blurb || "";
-  ttl.appendChild(h); ttl.appendChild(bl);
-  head.appendChild(tile); head.appendChild(ttl);
-  sec.appendChild(head);
+/* 分组用宿主给的 name 当 id（名字就是分组身份，别再加一套 id） */
+function groupId(g){ return String(g.name || ""); }
 
-  const rows = document.createElement("div");
-  rows.className = "set-rows";
-  (g.items || []).forEach(it => rows.appendChild(rowNode(it)));
-  sec.appendChild(rows);
+function renderSettings(){
+  const nav = $("#set-nav"), body = $("#set-body");
+  nav.innerHTML = ""; body.innerHTML = "";
+  const p = $("#set-path");
+  p.textContent = shortPath(SET.path); p.title = SET.path || "";
+  SET.groups.forEach(g => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "set-navitem";
+    b.dataset.group = groupId(g);
+    b.innerHTML = ico(g.icon || "settings", "i") + "<span>" + (g.name || "") + "</span>" +
+                  '<span class="set-dot"></span>';
+    b.onclick = () => setActive(groupId(g));
+    nav.appendChild(b);
+    body.appendChild(paneNode(g));
+  });
+  setActive(SET.active || groupId(SET.groups[0] || {}));
+}
 
-  if (g.live){                       // 「现在这样」：宿主算的活预览（符号那一组才有）
+function setActive(gid){
+  if (!SET) return;
+  SET.active = gid;
+  document.querySelectorAll("#set-nav .set-navitem").forEach(b =>
+    b.classList.toggle("on", b.dataset.group === gid));
+  document.querySelectorAll("#set-body .set-pane").forEach(p =>
+    p.classList.toggle("on", p.dataset.group === gid));
+  hideTip();
+}
+
+/* 一组 = 一个 pane：小标题 + 一句说明 + 若干项。
+   ★ 布局按**每一项的类型**分两桶（`V-66`）：开关走"名字在左、开关在右"的行；
+     输入类（符号 / 文本 / 步进）走"标签在上、控件在下"的两列网格。
+     —— 一开始是按"整组"决定，结果符号那组被当成行：输入框 `width:100%` 一挤，
+        标签直接缩成 0 宽度（截图里只剩四个光框、没有字）。 */
+function paneNode(g){
+  const pane = document.createElement("div");
+  pane.className = "set-pane";
+  pane.dataset.group = groupId(g);
+  const h = document.createElement("h3");
+  h.className = "set-ptitle"; h.textContent = g.name || "";
+  pane.appendChild(h);
+  if (g.blurb){
+    const d = document.createElement("p");
+    d.className = "set-pdesc"; d.textContent = g.blurb;
+    pane.appendChild(d);
+  }
+  const fields = (g.items || []).filter(it => it.type !== "bool");
+  const rows = (g.items || []).filter(it => it.type === "bool");
+  if (fields.length){
+    const box = document.createElement("div");
+    box.className = "set-fields";
+    fields.forEach(it => box.appendChild(itemNode(it, true)));
+    pane.appendChild(box);
+  }
+  if (rows.length){
+    const box = document.createElement("div");
+    box.className = "set-list";
+    if (fields.length) box.style.marginTop = "16px";
+    rows.forEach(it => box.appendChild(itemNode(it, false)));
+    pane.appendChild(box);
+  }
+  if (g.live){                    // 快捷命令那页：底下一条预览行（宿主算的那句话）
     const live = document.createElement("div");
     live.className = "set-live"; live.id = "set-live";
-    live.textContent = SET.live || "";
-    sec.appendChild(live);
+    pane.appendChild(live);
   }
-  return sec;
+  return pane;
 }
 
-function rowNode(it){
-  const row = document.createElement("div");
-  row.className = "set-row";
-  row.dataset.key = it.key;
-  const main = document.createElement("div");
-  main.className = "set-main";
+function itemNode(it, isFields){
+  const box = document.createElement("div");
+  box.className = isFields ? "set-field" : "set-item";
+  box.dataset.key = it.key;
+  // 标签 + `?`（说明在 hover 里）
   const lab = document.createElement("div");
-  lab.className = "set-label"; lab.textContent = it.label || it.key;
-  const hint = document.createElement("div");
-  hint.className = "set-hint"; hint.textContent = it.hint || "";
-  const now = document.createElement("div");
-  now.className = "set-now"; now.dataset.role = "now";
-  const why = document.createElement("div");
-  why.className = "set-why"; why.dataset.role = "why";
-  main.appendChild(lab); main.appendChild(hint); main.appendChild(now); main.appendChild(why);
-  row.appendChild(main);
-  const ctl = document.createElement("div");
-  ctl.className = "set-ctl";
-  ctl.appendChild(controlNode(it));
-  row.appendChild(ctl);
-  return row;
+  lab.className = "set-lbl";
+  const sp = document.createElement("span");
+  sp.textContent = it.label || it.key;
+  lab.appendChild(sp);
+  if (it.hint){
+    const q = document.createElement("span");
+    q.className = "set-info";
+    q.dataset.tipKey = it.key;
+    q.innerHTML = ico("info", "i");
+    lab.appendChild(q);
+  }
+  const prob = document.createElement("div");
+  prob.className = "set-prob"; prob.dataset.role = "prob";
+  const ctl = controlNode(it);
+  if (isFields){                  // 输入类：标签在上、控件在下（整行宽）
+    box.appendChild(lab); box.appendChild(ctl); box.appendChild(prob);
+  } else {                        // 开关类：标签在左、控件在右
+    box.appendChild(lab); box.appendChild(ctl); box.appendChild(prob);
+  }
+  return box;
 }
 
-/* 四种控件：开关 / 步进器 / 符号小框 / 文本框。类型由宿主给（`type`）。 */
 function controlNode(it){
   const v = SET.values[it.key];
   if (it.type === "bool"){
@@ -3279,12 +3370,10 @@ function controlNode(it){
     const set = nv => {
       nv = Math.max(1, Math.min(20, nv || 1));
       num.value = String(nv);
-      minus.disabled = nv <= 1;
-      plus.disabled = nv >= 20;
+      minus.disabled = nv <= 1; plus.disabled = nv >= 20;
       setValue(it.key, nv);
     };
-    minus.disabled = Number(v) <= 1;
-    plus.disabled = Number(v) >= 20;
+    minus.disabled = Number(v) <= 1; plus.disabled = Number(v) >= 20;
     minus.onclick = () => set(parseInt(num.value, 10) - 1);
     plus.onclick = () => set(parseInt(num.value, 10) + 1);
     num.onchange = () => set(parseInt(num.value, 10));
@@ -3293,13 +3382,16 @@ function controlNode(it){
   }
   const inp = document.createElement("input");
   inp.type = "text"; inp.dataset.key = it.key;
-  inp.className = it.type === "symbol" ? "syminp" : "txtinp";
+  inp.className = "inp";
   inp.value = v == null ? "" : v;
   inp.spellcheck = false; inp.autocomplete = "off";
-  if (it.type === "symbol"){ inp.maxLength = 4; inp.placeholder = "空"; }
-  else inp.placeholder = "空 = 不打印";
+  inp.placeholder = it.type === "symbol" ? "空" : "留空 = 不打印";
   inp.oninput = () => setValue(it.key, inp.value);
   return inp;
+}
+
+function boxOf(key){
+  return document.querySelector('#set-body [data-key="' + key + '"]');
 }
 
 function setValue(key, v){
@@ -3307,7 +3399,6 @@ function setValue(key, v){
   scheduleCheck();          // 防抖后问宿主一次（规则在那边）
 }
 
-/* 每改一下就问一次宿主「这样行不行」（防抖 250ms）。 */
 function scheduleCheck(delay){
   if (!SET) return;
   if (SET.timer) clearTimeout(SET.timer);
@@ -3319,12 +3410,13 @@ async function runCheck(){
   SET.timer = null;
   const seq = ++SET.seq;
   const r = await pywebview.api.settings_check(SET.values);
-  if (!SET || seq !== SET.seq) return;          // 慢的那次回来了也别盖掉新的
+  if (!SET || seq !== SET.seq) return;
   SET.problems = (r && r.problems) || [];
   SET.notes = (r && r.notes) || {};
   SET.live = (r && r.live) || "";
   SET.lastMsg = (r && r.msg) || "";
   paintCheck();
+  if (!tipHidden() && TIPKEY) showTip(TIPKEY);
 }
 
 function changedKeys(){
@@ -3335,52 +3427,126 @@ function changedKeys(){
   return out;
 }
 
-/* 把检查结果画到界面上：行标红/标黄 + 「现在这样」+ 脚上的状态 + 保存按钮的可用性 */
+/* 哪一组里有红/黄 —— 要在左边分类上点一个点（不然切走了看不见） */
+function groupOf(key){
+  for (let i = 0; i < SET.groups.length; i++){
+    const g = SET.groups[i];
+    if ((g.items || []).some(it => it.key === key)) return groupId(g);
+  }
+  return "";
+}
+
 function paintCheck(){
-  document.querySelectorAll("#set-body .set-row").forEach(row => {
-    row.classList.remove("bad", "warn");
-    const why = row.querySelector('[data-role="why"]');
-    if (why) why.textContent = "";
-    const now = row.querySelector('[data-role="now"]');
-    if (now) now.textContent = SET.notes[row.dataset.key] || "";
+  document.querySelectorAll("#set-body [data-key]").forEach(box => {
+    if (!box.classList.contains("set-item") && !box.classList.contains("set-field")) return;
+    box.classList.remove("bad", "warn");
+    const prob = box.querySelector('[data-role="prob"]');
+    if (prob) prob.textContent = "";
   });
+  const badGroups = {};
   let errs = 0;
   (SET.problems || []).forEach(p => {
     if (p.level !== "warn") errs++;
-    // ★ 一条冲突可能牵涉好几行（`also`）：两行一起红 —— 只红一行会让人以为
-    //   改那一行就行（"两个前缀不能同时留空"就是典型）。
     const keys = [p.key].concat(p.also || []);
     keys.forEach((k, idx) => {
-      const row = document.querySelector('#set-body .set-row[data-key="' + k + '"]');
-      if (row) row.classList.add(p.level === "warn" ? "warn" : "bad");
-      const why = row ? row.querySelector('[data-role="why"]') : null;
-      if (why){
-        // 原因只写在**主**那一行上；被牵连的行只标色，免得同一句话说两遍
-        why.textContent = (why.textContent ? why.textContent + " " : "") +
-                          (idx ? "" : (p.level === "warn" ? "提醒：" : "") + p.why);
+      const box = boxOf(k);
+      if (box){
+        box.classList.add(p.level === "warn" ? "warn" : "bad");
+        const prob = box.querySelector('[data-role="prob"]');
+        if (prob){
+          prob.textContent = (prob.textContent ? prob.textContent + " " : "") +
+                             (idx ? "" : (p.level === "warn" ? "提醒：" : "") + p.why);
+        }
       }
+      const gid = groupOf(k);
+      if (gid) badGroups[gid] = (badGroups[gid] === "bad" || p.level !== "warn") ? "bad" : "warn";
     });
+  });
+  document.querySelectorAll("#set-nav .set-navitem").forEach(b => {
+    const st = badGroups[b.dataset.group];
+    b.classList.toggle("has-bad", st === "bad");
+    b.classList.toggle("has-warn", st === "warn");
+    b.title = st === "bad" ? "这一组里有冲突" : (st === "warn" ? "这一组里有提醒" : "");
   });
   const live = document.querySelector("#set-live");
   if (live){
-    live.textContent = SET.live || "";
+    live.innerHTML = "";
+    const b = document.createElement("b");
+    b.textContent = "预览：";
+    live.appendChild(b);
+    live.appendChild(document.createTextNode(" " + (SET.live || "")));
     live.classList.toggle("bad", /^⚠/.test(SET.live || ""));
   }
   const changed = changedKeys();
   const save = $("#set-save");
   if (errs){
-    setFoot("set-state", "✗ " + errs + " 处冲突 —— 上面标红的地方改好才能保存", "bad");
+    setFoot("set-state", "✗ " + errs + " 处冲突 —— 把标红的地方改好才能保存", "bad");
     save.disabled = true;
   } else if (changed.length){
     setFoot("set-state", "改了 " + changed.length + " 项 · 保存后下一次启动 moss 生效"
             + (SET.lastMsg ? "（" + SET.lastMsg + "）" : ""), "moved");
     save.disabled = false;
   } else {
-    setFoot("set-state", "还没有改动 —— 现在显示的就是配置文件里的值"
-            + (SET.lastMsg ? "（" + SET.lastMsg + "）" : ""));
+    setFoot("set-state", "还没有改动" + (SET.lastMsg ? "（" + SET.lastMsg + "）" : ""));
     save.disabled = true;
   }
 }
+
+/* ---------------------------------------------------------------- hover 提示（`V-66`）
+   只从那个 `?` 图标触发（整格 hover 太吵）；里面放完整说明 + 「现在是什么样」+ 红黄原因。 */
+let TIPKEY = null;
+
+function tipHidden(){ const t = $("#tip"); return !t || t.hidden; }
+
+function showTip(key){
+  const t = $("#tip");
+  if (!t || !key || !SET) return;
+  const it = SET.items[key];
+  if (!it) return;
+  const anchor = document.querySelector('#set-body .set-info[data-tip-key="' + key + '"]')
+              || boxOf(key);
+  if (!anchor) return;
+  TIPKEY = key;
+  t.innerHTML = "";
+  const h = document.createElement("b");
+  h.textContent = it.label || key;
+  t.appendChild(h);
+  if (it.hint){
+    const d = document.createElement("div");
+    d.textContent = it.hint;
+    t.appendChild(d);
+  }
+  if (SET.notes[key]){
+    const d = document.createElement("div");
+    d.className = "tip-now"; d.textContent = SET.notes[key];
+    t.appendChild(d);
+  }
+  (SET.problems || []).forEach(p => {
+    if (p.key !== key && (p.also || []).indexOf(key) < 0) return;
+    const d = document.createElement("div");
+    d.className = "tip-prob " + (p.level === "warn" ? "warn" : "bad");
+    d.textContent = (p.level === "warn" ? "提醒：" : "") + p.why;
+    t.appendChild(d);
+  });
+  t.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  const w = t.offsetWidth, hh = t.offsetHeight;
+  let x = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+  let y = r.bottom + 8;
+  if (y + hh > window.innerHeight - 8) y = Math.max(8, r.top - hh - 8);
+  t.style.left = x + "px";
+  t.style.top = y + "px";
+}
+
+function hideTip(){ TIPKEY = null; const t = $("#tip"); if (t) t.hidden = true; }
+
+$("#set-body").addEventListener("mouseover", e => {
+  const q = e.target.closest ? e.target.closest(".set-info") : null;
+  if (q && q.dataset.tipKey){ showTip(q.dataset.tipKey); return; }
+  hideTip();
+});
+$("#set-body").addEventListener("mouseleave", hideTip);
+$("#set-body").addEventListener("scroll", hideTip);
 
 async function saveSettings(){
   const pairs = {};
@@ -3391,12 +3557,11 @@ async function saveSettings(){
   const r = await pywebview.api.settings_save(pairs);
   const list = (r && r.problems) || [];
   if (!r || !r.ok || list.some(p => p.level !== "warn")){
-    // ★ 没存成：留在面板里，把原因摊开（画法和实时检查同一套 —— 行标红 + 脚上一句话）
     SET.problems = list.length ? list
-      : [{key: "", why: (r && r.msg) || "宿主没说为什么", level: "error"}];
+      : [{key: "", why: (r && r.msg) || "宿主没说为什么", level: "error", also: []}];
     paintCheck();
     if (!list.length) setFoot("set-state", "✗ " + ((r && r.msg) || "保存失败"), "bad");
-    toast("没保存 —— 看面板里标红的地方", true);
+    toast("没保存 —— 看标红的地方", true);
     return;
   }
   Object.keys(pairs).forEach(k => { SET.orig[k] = SET.values[k]; });
