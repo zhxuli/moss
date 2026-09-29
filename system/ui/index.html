@@ -1328,6 +1328,7 @@ function renderDetail(){
    走的还是宿主那条 `--rename`，只是新旧 id 都写成它现在的 id —— 于是宿主
    只改目录名，**id / 数据目录 / 清单一个字都不动**。 */
 async function cmdAlignPkgDir(p){
+  const oldRel = pkgRel(p);              // 改名前后 id 不变，只有目录名变
   consoleKey = "__host__";
   const cmd = "moss --rename " + p.id + " " + p.id;
   setConsole("__host__", "$ " + cmd, "运行中");
@@ -1340,8 +1341,12 @@ async function cmdAlignPkgDir(p){
     return;
   }
   toast("包目录名已对齐成 :" + p.id);
-  await refreshPkgs();
-  if (DATA.packages.some(x => x.id === p.id)) select(p.id);
+  // ★ 目录名换了（id 没换）—— 文件管理缓存里那条路径**还是旧目录**，
+  //   不搬的话双击一个文件去编辑，宿主会说「不是文件」。这条正是这个 bug 的现场。
+  await refreshPkgs(p.id);
+  const np = DATA.packages.find(x => x.id === p.id);
+  fmReRoot(oldRel, np ? pkgRel(np) : null);
+  if (np) select(p.id);
   else renderDetail();
 }
 
@@ -1352,6 +1357,7 @@ async function cmdRenamePkg(p){
   askText("给这个包改名", p.id, async (newId) => {
     newId = String(newId || "").trim().toLowerCase();
     if (!newId || newId === p.id) return;
+    const oldRel = pkgRel(p);            // 改名前它那个目录（文件管理缓存里记的就是它）
     consoleKey = "__host__";
     const cmd = "moss --rename " + p.id + " " + newId;
     setConsole("__host__", "$ " + cmd, "运行中");
@@ -1364,8 +1370,12 @@ async function cmdRenamePkg(p){
       return;
     }
     toast("已改名为 :" + newId);
-    await refreshPkgs();                 // 包表重问一遍（旧 id 没了、新 id 出现）
-    if (DATA.packages.some(x => x.id === newId)) select(newId);
+    // ★ 目录整个换了地方，文件管理里缓存的路径（当前目录 / 历史 / 打开的文件）
+    //   必须跟着搬 —— 否则双击一个文件去编辑，宿主会说「不是文件」。
+    await refreshPkgs(newId);            // 包表重问一遍（旧 id 没了、新 id 出现）
+    const np = DATA.packages.find(x => x.id === newId);
+    fmReRoot(oldRel, np ? pkgRel(np) : null);
+    if (np) select(newId);
     else renderDetail();
   });
 }
@@ -1535,6 +1545,35 @@ function fmLabel(key){
   return p ? (p.name + "（:" + p.id + "）") : key;
 }
 function isDirty(t){ return t && !t.binary && t.text !== t.original; }
+
+/* 包改名 / 对齐目录名之后：文件管理里缓存下来的路径**全都过期了** ——
+   当前所在目录 `s.rel`、前进后退历史 `s.hist`、打开着的文件子选项卡 `t.rel`，
+   记的都是**旧目录**。不处理的话（你实测到的）：改名后回到文件管理，列的还是旧
+   目录那份清单，**双击一个文件去编辑，宿主会说「不是文件」**（`fs_read` 拿着一
+   条已经不存在的路径去查，`is_file()` 为假）。
+   为什么用"换前缀"而不是"把这个上下文整个清掉"：清掉会把用户正开着的文件**凭空
+   关掉**（可能还有没保存的改动）；换前缀则让那些文件跟着一起搬到新目录。
+   换完给上下文打一个 `stale`，下次切过去时真的重新列一遍目录。 */
+function fmReRoot(oldRel, newRel){
+  if (!oldRel || !newRel || oldRel === newRel) return false;
+  let any = false;
+  Object.keys(FM.st).forEach(k => {
+    let touched = false;
+    const fix = r => {
+      if (typeof r === "string" && (r === oldRel || r.startsWith(oldRel + "/"))){
+        touched = true;
+        return newRel + r.slice(oldRel.length);
+      }
+      return r;
+    };
+    const s = FM.st[k];
+    s.rel = fix(s.rel);
+    s.hist = (s.hist || []).map(fix);
+    (s.tabs || []).forEach(t => { t.rel = fix(t.rel); });
+    if (touched){ s.stale = true; any = true; }
+  });
+  return any;
+}
 function fmActiveTab(){
   const s = fmState(FM.ctx);
   return s.tabs.find(t => t.rel === s.active) || null;
@@ -1544,9 +1583,17 @@ async function fmSelect(key, keepTab){
   FM.ctx = key;
   const s = fmState(key);
   s.layers = await fmProbeLayers(key);          // 哪一层有"这个包的目录"
+  // ★ 这个函数是**异步**的，而 `fmGoto` 认的是全局的 `FM.ctx`。连着点两个包时，
+  //   前一个还卡在 `await` 上、后一个已经把 `FM.ctx` 换掉了 —— 前一个接着调
+  //   `fmGoto`，就会把**它那个包的目录**写进**后一个包**的上下文里（实测：
+  //   点 md5 再点别的包，那个包的"文件管理"历史里第一条是 `system/pkgs/md5`，
+  //   接着打开的文件也全指向错的目录）。所以每次 `await` 回来先对一下暗号：
+  //   用户已经换人了，这次结果就作废。
+  if (FM.ctx !== key) return;
   if (!s.rel){
     const def = fmDefaultRel(key);
     const ok = await fmGoto(def, true, true);   // quiet: 不切顶层选项卡
+    if (FM.ctx !== key) return;
     // ★ 历史那条记的目录可能早就删了/挪了 —— 退到**目标文件自己所在的目录**
     //   （和宿主 `path_start` 里那条退路同一个道理）。
     if (!ok && isHistKey(key)){
@@ -1554,6 +1601,11 @@ async function fmSelect(key, keepTab){
       const alt = it && it.target ? dirRel(it.target.replace(/[\\/][^\\/]*$/, "")) : null;
       if (alt && alt !== def) await fmGoto(alt, true, true);
     }
+  } else if (s.stale){
+    // 路径前缀被 `fmReRoot` 换过（包改名 / 对齐目录名）—— 得真的**重新列一遍**，
+    // 否则界面上摆的还是旧目录那份清单，双击进去宿主会说「不是文件」。
+    s.stale = false;
+    await fmGoto(s.rel, false, true);
   } else fmRender();
   if (!keepTab) setTab("file");
 }
@@ -1668,16 +1720,19 @@ function fmSave(t){
 function isPkgManifest(rel){
   return /(^|\/)pkg\.json$/i.test(String(rel || ""));
 }
-async function refreshPkgs(){
+async function refreshPkgs(preferId){
   let fresh;
   try{ fresh = await pywebview.api.state(); }catch(e){ return; }
   if (!fresh || !fresh.packages) return;
   DATA = fresh;
   renderList(); paintStates();
-  // `DATA` 换了新对象，`cur` 得指向新的那一份，否则详情里读到的还是旧字段
+  // `DATA` 换了新对象，`cur` 得指向新的那一份，否则详情里读到的还是旧字段。
+  // `preferId` 是"刚改完名"给的提示：旧 id 当然找不到了，但那不是"包没了"，
+  // 别拿它去吓人（改名那条路会把 `cur` 直接指到新 id 上）。
   if (cur){
     const id = cur.id;
-    cur = DATA.packages.find(p => p.id === id) || null;
+    cur = DATA.packages.find(p => p.id === (preferId || id)) ||
+          DATA.packages.find(p => p.id === id) || null;
     if (cur) renderDetail();
     else {                       // 清单被删/改到认不出来了：这个包已经不在了
       cur = null; renderDetail();

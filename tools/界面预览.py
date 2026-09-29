@@ -59,6 +59,7 @@ BROWSERS = [
 ]
 
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
+          "pkg-renamed-file", "pkg-align-file",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail"]
 
@@ -94,9 +95,18 @@ def mock_data():
                      "key": "preview"})
 
     fs = {}
-    for rel, sub in (("system/pkgs/md5", ROOT / "system/pkgs/md5"),
-                     ("user", ROOT / "user_data"),
-                     ("abs/D:/python/wwwroot/ZeEn", Path(r"D:\python\wwwroot\ZeEn"))):
+    samples = [("system/pkgs/md5", ROOT / "system/pkgs/md5"),
+               ("user", ROOT / "user_data"),
+               ("abs/D:/python/wwwroot/ZeEn", Path(r"D:\python\wwwroot\ZeEn"))]
+    # ★ 用户层每个包的目录也当样本（改名 / 对齐目录名那两个场景要在里面找文件）。
+    #   从 payload 里现取 —— 目录名和 id 可能不一样（`D-27`），照 id 硬拼会拼错。
+    for _p in (payload.get("packages") or []):
+        if _p.get("layer") != "user" or not _p.get("dir"):
+            continue
+        _d = Path(_p["dir"])
+        if _d.is_dir():
+            samples.append(("user/pkgs/" + _d.name, _d))
+    for rel, sub in samples:
         if not sub.is_dir():
             continue
         entries = []
@@ -137,16 +147,70 @@ MOCK_JS = r"""
     run_stop: async () => ({ok: true, msg: "(预览) 已停止"}),
     path_start: async () => ({ok: true, run_id: "r1", pid: 1,
       cmd: "moss /main.py", cwd: "D:\\python\\wwwroot\\ZeEn"}),
-    run_host: async () => ({ok: true, code: 0, out: "(预览) 自检输出"}),
+    run_host: async (text) => {
+      // ★ `--rename <旧> <新id>`：假宿主**真的**把包改名 —— id / dir 都改，
+      //   假文件系统里那个目录也一起搬。这样才能验"改名之后文件管理还认不认路"。
+      const m = /^\s*--rename\s+(\S+)\s+(\S+)\s*$/.exec(String(text || ""));
+      if (m){
+        const p = state.packages.find(x => x.id === m[1]);
+        if (!p) return {ok: true, code: 1, out: "[错误] 没有这个包：" + m[1]};
+        const slash = s => String(s).replace(/\\/g, "/");
+        const oldDir = slash(p.dir).replace(/\/+$/, "");
+        const newDir = oldDir.replace(/[^/]+$/, m[2]);
+        const relOf = d => {
+          const u = slash(state.user_data).replace(/\/+$/, "");
+          const sy = slash(state.home).replace(/\/+$/, "") + "/system";
+          if (d === u || d.startsWith(u + "/")) return "user" + d.slice(u.length);
+          if (d === sy || d.startsWith(sy + "/")) return "system" + d.slice(sy.length);
+          return null;
+        };
+        const from = relOf(oldDir), to = relOf(newDir);
+        p.id = m[2];
+        p.dir = p.dir.replace(/[^\\/]+$/, m[2]);
+        if (from && to && from !== to){
+          Object.keys(FS).forEach(k => {
+            if (k === from || k.startsWith(from + "/")){
+              const nk = to + k.slice(from.length);
+              const v = FS[k];
+              v.rel = nk;
+              (v.entries || []).forEach(e => { e.rel = to + e.rel.slice(from.length); });
+              FS[nk] = v; delete FS[k];
+            }
+          });
+        }
+        document.title = "RENAMED";
+        return {ok: true, code: 0, out: "(预览) 已改名：" + m[1] + " → " + m[2]};
+      }
+      return {ok: true, code: 0, out: "(预览) 自检输出"};
+    },
     open_ui: async () => ({ok: true, msg: "(预览) 已打开"}),
     pkg_stop: async () => ({ok: true, msg: "(预览) 已停止"}),
     pkg_hide: async () => ({ok: true, msg: "(预览) 已隐藏"}),
     pkg_show: async () => ({ok: true, msg: "(预览) 已显示"}),
-    fs_list: async (rel) => FS[rel] || {ok: true, rel: rel, entries: [], writable: true,
-                                        path: rel},
-    fs_read: async (rel) => ({ok: true, text: "import hashlib\n\n\ndef run():\n"
+    fs_list: async (rel) => {
+      (M.ls = M.ls || []).push(String(rel));              // 记一笔：谁在什么时候列了哪儿
+      // ★ 必须回一份**深拷贝**：真宿主是跨进程的 JSON，界面拿到的永远是全新对象。
+      //   直接把这里的对象递出去，界面和"假文件系统"就共享了同一份 entries ——
+      //   以后假文件系统里改一个 `rel`，界面上那份也**悄悄跟着变**，于是
+      //   "改名后路径没跟着搬"这种毛病在预览里永远看不出来（踩过）。
+      const hit = FS[rel];
+      return hit ? JSON.parse(JSON.stringify(hit))
+                 : {ok: true, rel: rel, entries: [], writable: true, path: rel};
+    },
+    // ★ 这里**照着真宿主的行为来**：路径不存在就是「不是文件」。
+    //   以前这个假 API 对任何路径都回一份内容，于是"改名后双击旧路径"这种毛病
+    //   在预览里永远看不出来（producer 说没事、真机上说不是文件）。
+    fs_read: async (rel) => {
+      const parent = String(rel || "").split("/").slice(0, -1).join("/");
+      if (!FS[parent]){
+        M.readFail = rel;
+        return {ok: false, msg: "不是文件：" + rel};
+      }
+      M.readOk = rel;
+      return {ok: true, text: "import hashlib\n\n\ndef run():\n"
                               + "    print('预览')\n", binary: false, too_big: false,
-                              rel: rel, path: rel, writable: true}),
+              rel: rel, path: rel, writable: true};
+    },
     // ★ 写 pkg.json 时真的改掉那份假 payload（模拟宿主重新扫盘）——
     //   这样才能验证"存了清单之后界面会重新解析"这条路。
     fs_write: async (rel, text) => {
@@ -214,9 +278,78 @@ MOCK_JS = r"""
           if (h === "edit-manifest-detail") setTab("detail");   // 看详情那边跟不跟着变
         }
       }
+      // ★ 改名之后文件管理还认不认路：先站进这个包的目录，走一遍真改名，
+      //   再回文件管理双击一个文件 —— 路径没跟着搬的话宿主会说「不是文件」。
+      if (h === "pkg-renamed-file" || h === "pkg-align-file"){
+        const baseOf = x => String(x.dir || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+        let p0;
+        if (h === "pkg-align-file"){
+          // 仓库里那个真例子（my-first / id=first）已经被对齐过了 —— 预览里**现造一个**
+          // 「目录名 != id」的包，否则这条分支没得试。（只改这份临时副本里的假 payload。）
+          p0 = state.packages.find(x => baseOf(x) && baseOf(x) !== x.id) || null;
+          if (!p0){
+            p0 = {id: "oddir", name: "预览：目录名不一致", desc: "目录名 odd-dirname，id 是 oddir",
+                  kind: "task", layer: "user", version: "0.1.0", params: [], aliases: [],
+                  tags: [], docs: {}, ai_expose: false, icon: "", icon_svg: "",
+                  dir: state.user_data + "\\pkgs\\odd-dirname"};
+            state.packages.push(p0);
+            FS["user/pkgs/odd-dirname"] = {ok: true, rel: "user/pkgs/odd-dirname",
+              writable: true, path: p0.dir, entries: [
+                {name: "pkg.json", rel: "user/pkgs/odd-dirname/pkg.json", dir: false,
+                 size: 928, mtime: 0, ext: "json"},
+                {name: "run.py", rel: "user/pkgs/odd-dirname/run.py", dir: false,
+                 size: 1118, mtime: 0, ext: "py"}]};
+          }
+        } else {
+          p0 = state.packages.find(x => x.id === "first") || state.packages[0];
+        }
+        select(p0.id);
+        setTab("file");
+        await sleep(400);
+        const want = h === "pkg-align-file" ? p0.id : "first2";
+        if (h === "pkg-align-file"){
+          cmdAlignPkgDir(p0);                       // 对齐目录名：不弹模态，直接跑
+        } else {
+          cmdRenamePkg(p0);                         // 改名：弹模态，替用户填好再点确定
+          await sleep(150);
+          const inp = document.querySelector("#m-input");
+          if (inp){ inp.value = want; document.querySelector("#m-ok").click(); }
+        }
+        await sleep(1200);
+        setTab("file");
+        await sleep(500);
+        const key = h === "pkg-align-file" ? p0.id : want;
+        const s = FM.st[key];
+        const rels = ((s && s.entries) || []).map(e => e.rel);
+        const target = rels.find(r => /pkg\.json$/.test(r)) || rels[0];
+        if (target) await fmOpenPage(target);
+        await sleep(300);
+        const t = fmActiveTab();
+        const ok = !!(t && t.rel === target) && !M.readFail;
+        const relOld = /odd-dirname/.test(String((s && s.rel) || ""));
+        const entOld = rels.some(r => /odd-dirname/.test(String(r)));
+        const short = x => String(x).replace("user/pkgs/", "").replace("system/pkgs/", "sys/");
+        const diag = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\nrel      = " + ((s && s.rel) || "-") +
+          "\nentries  = " + JSON.stringify(rels) +
+          "\nhist     = " + JSON.stringify((s && s.hist) || []) +
+          "\ntarget   = " + (target || "-") +
+          "\ntab      = " + ((t && t.rel) || "-") +
+          "\nreadFail = " + (M.readFail || "无") +
+          "\nstale    = " + (s && s.stale ? "1" : "0") +
+          "\nfs_list  = " + (M.ls || []).map(short).join(" > ");
+        // 顶栏那点宽度只能放一句短的；完整那份写进下面的大白区（截图看得清）
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " rO=" + (relOld ? 1 : 0) + " eO=" + (entOld ? 1 : 0) +
+          " n=" + rels.length + " rf=" + (M.readFail ? 1 : 0);
+        document.querySelector("#fm-body").innerHTML =
+          '<pre style="padding:18px 22px;font-size:13px;line-height:1.7;white-space:pre-wrap">' +
+          diag.replace(/&/g, "&amp;").replace(/</g, "&lt;") + '</pre>';
+        document.title = ok ? "READY" : "STALE-PATH";
+      }
     } catch(e){ document.title = "SCENARIO-ERR " + e.message; return; }
     await sleep(350);
-    document.title = "READY";
+    if (document.title !== "STALE-PATH") document.title = "READY";
   }
   window.addEventListener("load", () => {
     setTimeout(() => window.dispatchEvent(new Event("pywebviewready")), 10);
