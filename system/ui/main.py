@@ -26,6 +26,7 @@ import http.server
 import shlex
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -1953,4 +1954,11 @@ def _arm_file_drop():
 
 
 if __name__ == "__main__":
-    webview.start(_arm_file_drop)
+    # `--debug`（`V-70`）：开发/排查模式 —— pywebview 会**自动打开 devtools**，
+    # 随时按 F12 / 右键「检查」看控制台；页面里的 JS 报错也照样会写到状态栏（红字）。
+    # 用法：`moss ui --debug`（宿主会把参数原样转给这个脚本，改这里**不用重打包 exe**）。
+    DEBUG = any(a in ("--debug", "--dev", "-d") for a in sys.argv[1:])
+    if DEBUG:
+        print("[moss] 开发模式：devtools 已开（F12 / 右键「检查」）。"
+              "页面里的报错也会写到界面右下角状态栏。", flush=True)
+    webview.start(_arm_file_drop, debug=DEBUG)
