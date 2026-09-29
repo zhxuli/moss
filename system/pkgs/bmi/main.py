@@ -152,7 +152,20 @@ def run_window():
     import webview                                            # noqa: PLC0415
 
     class Api:
-        def now(self):
+        """独立窗口这边的后端。
+
+        ★ 每个方法都**必须**收得下那一个参数：pywebview 的 JS 桥是把 JS 那边的实参
+          原样传进来的（界面里 `moss.call('now', {})` 就会调成 `now({})`）——
+          少写一个参数就是 `TypeError: now() takes 1 positional argument but 2 were given`
+          （实测踩到：控制台里那行 [pywebview] Traceback）。
+        """
+
+        def __init__(self):
+            self._stop = False
+            self._subs = set()
+            self.window = None
+
+        def now(self, params=None):
             return now_payload()
 
         def bmi(self, params=None):
@@ -162,8 +175,40 @@ def run_window():
             return {'pid': os.getpid(), 'python': sys.version.split()[0],
                     'cwd': os.getcwd(), 'embedded': False}
 
-    window = webview.create_window(TITLE, url=UI, js_api=Api(),
+        def subscribe(self, params=None):
+            """界面说"我要实时时间" —— 独立窗口这边**由后端主动推**
+            （跟内嵌模式一个效果：调页面里的 `window.moss.__emit`）。"""
+            ev = str((params or {}).get('event') or 'time')
+            self._subs.add(ev)
+            if ev == 'time' and not getattr(self, '_ticking', False):
+                self._ticking = True
+                threading.Thread(target=self._tick, daemon=True).start()
+            return {'subscribed': sorted(self._subs)}
+
+        def unsubscribe(self, params=None):
+            self._subs.discard(str((params or {}).get('event') or 'time'))
+            return {'subscribed': sorted(self._subs)}
+
+        def _tick(self):
+            while not self._stop:
+                time.sleep(1.0)
+                if 'time' not in self._subs or not self.window:
+                    continue
+                try:
+                    self.window.evaluate_js('window.moss && window.moss.__emit("time", %s)'
+                                            % json.dumps(now_payload(), ensure_ascii=False))
+                except Exception:                                    # noqa: BLE001
+                    pass
+
+        def stop(self, params=None):
+            self._stop = True
+            return {'ok': True}
+
+    api = Api()
+    window = webview.create_window(TITLE, url=UI, js_api=api,
                                    width=980, height=720, min_size=(720, 560))
+    api.window = window
+    window.events.closing += lambda: setattr(api, '_stop', True)
     webview.start()
     return 0
 
