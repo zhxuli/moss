@@ -920,6 +920,26 @@ class _EmbedHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a):                                          # noqa: A003
         pass                        # 别往控制台喷访问日志（一屏都是它）
 
+    def send_response(self, code, message=None):
+        """把每个请求 + 状态码记一行（`V-74`）。
+
+        ★ 为什么要留这个：界面一旦空白，第一件事就是问"请求到底有没有到我的服务"。
+          到了（200/403/404）= 服务没事，问题在页面；压根没到 = 请求被别人截走了
+          （代理之类）。日志写在 `user_data/state/_ui_http.log`，只留最近这些，别长成山。
+        """
+        try:
+            line = "%s  %s  %s\n" % (time.strftime("%H:%M:%S"), code, self.path)
+            path = USER_DATA / "state" / "_ui_http.log"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.is_file() and path.stat().st_size > 64 * 1024:
+                keep = path.read_text(encoding="utf-8", errors="replace")[-16 * 1024:]
+                path.write_text(keep, encoding="utf-8")
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(line)
+        except Exception:                                            # noqa: BLE001
+            pass
+        super().send_response(code, message)
+
     def _token_ok(self):
         tk = _EMBED_SRV["token"]
         return bool(tk) and self.path.startswith("/" + tk + "/")
@@ -1870,6 +1890,13 @@ class Api:
     def quit(self):
         window.destroy()
         return {"ok": True}
+
+
+# ★ 别让 WebView2 走系统代理（`V-73`）：界面这一页只跟 127.0.0.1 说话（壳 + 内嵌的包界面），
+#   而系统代理（`ProxyServer=127.0.0.1:7897`）会把本机请求也截走 —— 实测现场就是
+#   「同一个源、前几个 js `ERR_CONNECTION_REFUSED`、后几个却加载成功」，看着像服务死了，
+#   其实是代理时通时不通。用 WebView2 官方认的环境变量把它关掉（`setdefault`：外面想覆盖还能覆盖）。
+os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--no-proxy-server")
 
 
 def _note(text):
