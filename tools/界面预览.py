@@ -680,12 +680,20 @@ MOCK_JS = r"""
         const after = (document.querySelector("#status-text") || {}).textContent || "";
         const bar = document.querySelector("#statusbar");
         const gear = document.querySelector("#btn-settings");
-        const ok = !!bar && !!gear && !!gear.querySelector("svg") &&
+        // ★ 那条"不要边框"（`V-62`）：齿轮必须是**光图标** —— 描边 0、
+        //   底色透明（`.iconbtn` 默认是白底 + 1px 描边，钉在状态栏上像个方块）。
+        const gs = gear ? getComputedStyle(gear) : {};
+        const gearBorder = gear ? gs.borderTopWidth : "?";
+        const gearBg = gear ? gs.backgroundColor : "?";
+        const bare = (gearBorder === "0px") &&
+                     (gearBg === "rgba(0, 0, 0, 0)" || gearBg === "transparent");
+        const ok = !!bar && !!gear && !!gear.querySelector("svg") && bare &&
                    during.indexOf("moss :" + p0.id) >= 0 && after.indexOf("退出码") >= 0;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 起点=" + JSON.stringify(before.slice(0, 12)) +
           " 跑时=" + JSON.stringify(during.slice(0, 26)) +
-          " 收尾=" + JSON.stringify(after.slice(0, 30));
+          " 收尾=" + JSON.stringify(after.slice(0, 30)) +
+          " 齿轮边框=" + gearBorder + " 底色=" + gearBg;
         document.title = ok ? "READY" : "STATUS-FAIL";
       }
       // ★ 「设置」面板（`V-60`）：打开 → 改两项（一个符号 + 一个开关）→ 保存 →

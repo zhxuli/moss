@@ -494,7 +494,12 @@ table.p th{color:var(--dim);font-weight:500}
 #status-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #status-text.bad{color:#d64545}
 #statusbar .sp{flex:1}
-#statusbar .iconbtn{width:22px;height:22px}
+/* ★ 你说「不要边框」：状态栏里那颗齿轮**只留图标本身** —— 去掉描边和底色。
+   `.iconbtn` 那套「白底 + 1px 描边」是工具栏的语言，钉在状态栏上像个贴上去的方块。
+   悬停 / 按下还是给反馈（一层淡底 + 缩一点），不然会让人怀疑它到底能不能点。 */
+#statusbar .iconbtn{width:22px;height:22px;padding:0;min-width:0;border:0;
+  background:transparent;color:var(--dim)}
+#statusbar .iconbtn:hover{background:var(--hover);color:var(--fg)}
 #statusbar .iconbtn svg{width:14px;height:14px}
 
 /* ---------------------------------------------------------------- 「设置」面板（`V-60` ✅）
