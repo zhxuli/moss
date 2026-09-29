@@ -1206,10 +1206,14 @@ function uiLog(text){
 const EMB = {alive: {}, tick: null};
 
 function embedSupported(p){ return !!(p && p.ui && p.ui.embed); }
-function embedUrl(ui){
-  // 声明给的是绝对路径 → 变成 file:// URL（路径里可能有空格/中文，转义一下）
-  const s = String(ui.embed).replace(/\\/g, "/");
-  return "file:///" + s.split("/").map(encodeURIComponent).join("/").replace(/^%2F/, "");
+/* 包界面该从哪个地址加载 —— **问宿主**（`V-55` ✅）。
+   ★ 这里原来是拼 `file://`，结果在 WebView2 里**根本不导航**（帧是空的、连 `load` 都不触发；
+     同一个页面在普通 Edge 里却正常）。宿主改成给一个 `http://127.0.0.1:<随机端口>/<随机 token>/…`
+     的地址之后 WebView2 就正常了 —— 顺带把 `file://` 那两个限制（fetch / localStorage）也解了。 */
+async function embedUrl(p){
+  const r = await pywebview.api.embed_url(p.id);
+  if (!r || !r.ok){ toast("✗ 界面加载不了：" + ((r && r.msg) || ""), true); return null; }
+  return r.url;
 }
 function embedPidOfWin(win){
   const ids = Object.keys(EMB.alive);
@@ -1219,15 +1223,17 @@ function embedPidOfWin(win){
   }
   return null;
 }
-function embedFrameFor(p){
-  let rec = EMB.alive[p.id];
-  if (rec && rec.frame) return rec.frame;
+async function embedFrameFor(p){
+  const rec0 = EMB.alive[p.id];
+  if (rec0 && rec0.frame) return rec0.frame;
+  const url = await embedUrl(p);
+  if (!url) return null;
   const f = document.createElement("iframe");
   f.dataset.pid = p.id;
-  f.src = embedUrl(p.ui);
+  f.src = url;
   f.style.cssText = "width:100%;height:100%;border:0;display:none;background:#fff";
   document.querySelector("#embed-wrap").appendChild(f);
-  EMB.alive[p.id] = {frame: f, ready: false};
+  EMB.alive[p.id] = {frame: f, ready: false, url: url};
   return f;
 }
 function embedShow(pid){
@@ -1248,7 +1254,8 @@ async function embedOpen(p, opts){
   if (!rec){                                   // 没起过：起后端 + 建帧
     const r = await pywebview.api.embed_start(p.id);
     if (!r || !r.ok){ toast("✗ 起不来：" + ((r && r.msg) || ""), true); return; }
-    embedFrameFor(p);
+    const f = await embedFrameFor(p);
+    if (!f){ await pywebview.api.embed_stop(p.id); return; }   // 界面拿不到地址：别留个空进程
     embedTick(true);
   }
   embedShow(p.id);
