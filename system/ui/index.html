@@ -7,17 +7,19 @@
 <style>
 :root{
   /* 配色按参考稿（苹果官网那套灰阶）：正文 #1d1d1f / 次级 #515154 / 说明 #86868b /
-     更淡 #a1a1a6；线 #f0f0f0（卡片描边）与 #d2d2d7（控件描边）分开；
-     强调色用 #0071e3（官网蓝）。 */
+     更淡 #a1a1a6。强调色 #0071e3。 */
   --bg:#f5f5f7; --panel:#fff; --panel2:#fbfbfd; --line:#f0f0f0; --line2:#e8e8ed;
-  --ctl:#d2d2d7;
+  /* ★ 控件描边分两档：按钮用 --ctl（细一点够看），**输入框用 --ctl-in（更深）**。
+     参考稿那支 #d2d2d7 在好屏上是"精致"，在差屏上就是"看不出这儿能打字" ——
+     输入框的描边是它唯一的可交互暗示，必须够深（对着白底约 3:1）。 */
+  --ctl:#c6c6cc; --ctl-in:#9a9aa2;
   --fg:#1d1d1f; --fg2:#515154; --dim:#86868b; --dim2:#a1a1a6;
+  --ph:#8e8e96;                       /* 输入框占位文字，比 --dim2 再实一点 */
   --tile:#f5f5f7; --tag:#e8e8ed;
   --accent:#0071e3; --accent-fg:#fff;
   --hover:#f5f5f7; --sel:#e8f1ff; --out-bg:#14161a; --out-fg:#d7dae0;
-  --code-bg:#fbfbfd; --field-focus:rgba(0,113,227,.12);
+  --code-bg:#fbfbfd; --field-focus:rgba(0,113,227,.14);
   --mono: ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,monospace;
-  /* 老名字保留：别处还在用（填充色阶那一套） */
   --fill:rgba(120,120,128,.10); --fill2:rgba(120,120,128,.18);
   --group:#fff; --hair:rgba(60,60,67,.10);
   /* 语法配色照抄 exec（GitHub 那套浅/深色） */
@@ -25,20 +27,28 @@
   --syn-number:#0550ae;  --syn-title:#8250df;   --syn-builtin:#953800;
   --syn-attr:#0550ae;    --syn-meta:#6e7781;
 }
+/* 深色：**跟随系统**（界面上的深浅切换不做 —— 见 `U-26` ❌） */
 @media (prefers-color-scheme: dark){
-  /* 参考稿只有浅色；深色按同一套层级关系翻译过来（不要照抄灰值） */
   :root{ --bg:#151517; --panel:#1c1c1e; --panel2:#232326; --line:#2c2c30; --line2:#2c2c30;
-         --ctl:#3a3a3f;
+         --ctl:#4a4a52; --ctl-in:#6e6e78;
          --fg:#f5f5f7; --fg2:#d1d1d6; --dim:#a1a1a6; --dim2:#7c7c82;
+         --ph:#8e8e96;
          --tile:#2a2a2e; --tag:#3a3a3f;
          --accent:#0a84ff; --accent-fg:#fff;
          --hover:#2a2a2e; --sel:#1f2c3d; --out-bg:#0f1114;
-         --out-fg:#c9ced6; --code-bg:#1b1e24; --field-focus:rgba(10,132,255,.28);
+         --out-fg:#c9ced6; --code-bg:#1b1e24; --field-focus:rgba(10,132,255,.30);
          --fill:rgba(120,120,128,.22); --fill2:rgba(120,120,128,.34);
          --group:#1c1c1e; --hair:rgba(255,255,255,.09);
          --syn-comment:#8b949e; --syn-keyword:#ff7b72; --syn-string:#a5d6ff;
          --syn-number:#79c0ff;  --syn-title:#d2a8ff;   --syn-builtin:#ffa657;
          --syn-attr:#79c0ff;    --syn-meta:#8b949e; }
+}
+@media (prefers-reduced-motion: reduce){
+  /* 系统里关了动效就别缩放/位移，但**保留颜色类反馈**（那不影响前庭）。
+     ★ 这条在第 82 版换配色令牌时被脚本连着删掉过一次（替换范围切多了），第 85 版补回来 ——
+     **整块替换 CSS 时，结束锚点要用后面那个真实存在的规则**。 */
+  *{animation-duration:.01ms !important;transition-duration:.01ms !important}
+  .iconbtn:active,.tab:active,.btn:active,.chip:active{transform:none !important}
 }
 *{box-sizing:border-box}
 /* ★ 必须有这条兜底：`display:flex` 之类会压过浏览器默认的 `[hidden]{display:none}`，
@@ -67,11 +77,11 @@ header{display:flex;align-items:center;gap:10px;padding:9px 14px;
 .brand{font-weight:600;display:flex;align-items:center;gap:7px}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--accent)}
 /* 搜索框也走"填充式"：平时没边，聚焦给一圈柔和 accent */
-#q{width:230px;padding:6px 11px;border-radius:8px;border:0;
-  background:var(--fill);color:var(--fg);outline:none;
-  transition:background .12s ease-out,box-shadow .12s ease-out}
-#q:focus{background:var(--group);box-shadow:0 0 0 3.5px var(--field-focus)}
-#q::placeholder{color:var(--dim2)}
+#q{width:230px;padding:6px 11px;border-radius:8px;
+  border:1px solid var(--ctl-in);background:var(--panel);color:var(--fg);outline:none;
+  transition:border-color .2s ease,box-shadow .2s ease}
+#q:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+#q::placeholder{color:var(--ph)}
 .meta{flex:1;color:var(--dim2);font-size:11.5px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;text-align:right;letter-spacing:.01em}
 main{flex:1;display:flex;min-height:0}
@@ -203,7 +213,7 @@ aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--
    滚动条本身不用显示（能拖/能滚就行）。 */
 .crumbs{flex:1;display:flex;align-items:center;gap:2px;min-width:0;overflow-x:auto;
   overflow-y:hidden;scrollbar-width:none;
-  padding:3px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);
+  padding:3px 8px;border:1px solid var(--ctl);border-radius:8px;background:var(--panel);
   font-size:12.5px;white-space:nowrap}
 .crumbs::-webkit-scrollbar{height:0}
 .crumbs span.seg{padding:1px 5px;border-radius:5px;cursor:pointer}
@@ -338,10 +348,10 @@ h1.dtitle{font-size:21px;font-weight:600;margin:0;letter-spacing:.2px;line-heigh
 /* ---------- 控件：白底 + 细描边 ---------- */
 .runrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 #args,#hargs{flex:1;min-width:200px;padding:8px 14px;background:var(--panel);
-  border:1px solid var(--ctl);border-radius:8px;font-size:13.5px;color:var(--fg);
+  border:1px solid var(--ctl-in);border-radius:8px;font-size:13.5px;color:var(--fg);
   font-family:var(--mono);outline:none;
   transition:border-color .2s ease,box-shadow .2s ease}
-#args::placeholder,#hargs::placeholder{color:var(--dim2)}
+#args::placeholder,#hargs::placeholder{color:var(--ph)}
 #args:focus,#hargs:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
 #args:disabled,#hargs:disabled{opacity:.5;cursor:default}
 
