@@ -502,34 +502,115 @@ table.p th{color:var(--dim);font-weight:500}
 #statusbar .iconbtn:hover{background:var(--hover);color:var(--fg)}
 #statusbar .iconbtn svg{width:14px;height:14px}
 
-/* ---------------------------------------------------------------- 「设置」面板（`V-60` ✅）
-   内容全部来自宿主（`moss --settings`），界面不自己列设置项 —— 也就不会出现
-   "面板里有、文件里没有"这种两处真相。 */
-#settings{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;
+/* ---------------------------------------------------------------- 「设置」面板（`V-60` ✅ / `V-63` ✅）
+   内容全部来自宿主（`moss --settings` / `--settings-check`），界面不自己列设置项、
+   也不自己实现校验规则 —— 就不会出现"面板里有、文件里没有""两处规则不一致"这种事。
+
+   ★ 三段式：**头（标题 + ×）/ 身（唯一滚动的地方）/ 脚（状态 + 按钮）**。
+   ★ 圆角只给最外层那个 `.card`，并且它是 `overflow:hidden`，**滚动交给里面的
+     `.set-body`** —— 这是 `V-63` 的根因：原来 `overflow:auto` 就写在带 `border-radius`
+     的元素上，WebView2 的经典滚动条（17px、四四方方）压在右边，看起来就是
+     "只有左边有圆角"。 */
+#settings{position:fixed;inset:0;background:rgba(0,0,0,.38);display:none;
   align-items:center;justify-content:center;z-index:85}
 #settings.on{display:flex}
-.card.wide{min-width:min(620px,92vw);max-width:660px;max-height:84vh;overflow:auto}
-#set-path{font-family:var(--mono);font-size:12px}
-.setgroup{margin:0 0 14px}
-.setgroup h4{margin:0 0 2px;font-size:13px;color:var(--fg)}
-.sethint{margin:0 0 6px;font-size:12px;color:var(--dim);line-height:1.6}
-.setrow{display:flex;align-items:center;gap:10px;padding:6px 0;
-  border-top:1px solid var(--hair)}
-.setrow:first-of-type{border-top:0}
-.setname{flex:1;font-size:13px;line-height:1.45}
-.setnow{font-size:11.5px;color:var(--dim2)}
-.setrow input[type=text],.setrow input[type=number]{width:190px;padding:5px 9px;
-  border-radius:7px;border:1px solid var(--ctl-in);background:var(--panel2);
-  color:var(--fg);font-family:var(--mono);font-size:12.5px;outline:none;flex:none}
-.setrow input[type=number]{width:80px}
-.setrow input[type=text]:focus,.setrow input[type=number]:focus{
-  border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
-.setrow input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);flex:none}
-#set-problems{margin:10px 0 0;padding:9px 11px;border-radius:9px;font-size:12.5px;
-  line-height:1.7;background:rgba(214,69,69,.10);border:1px solid rgba(214,69,69,.35);
-  color:#d64545}
-#settings .btns{align-items:center}
-#settings .btns .sp{flex:1}
+.card.wide{width:min(680px,92vw);max-width:none;padding:0;border-radius:14px;
+  display:flex;flex-direction:column;max-height:86vh;overflow:hidden}
+.set-head{display:flex;align-items:center;gap:10px;padding:14px 14px 12px 18px;
+  border-bottom:1px solid var(--hair);flex:none}
+.set-head h3{margin:0;font-size:15px;flex:none}
+.set-sub{flex:1;min-width:0;color:var(--dim);font-size:11.5px;font-family:var(--mono);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.set-x{width:26px;height:26px;flex:none;border:0;border-radius:8px;background:transparent;
+  color:var(--dim);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+  padding:0;transition:background .15s ease-out,color .15s ease-out}
+.set-x:hover{background:var(--hover);color:var(--fg)}
+.set-x svg{width:15px;height:15px}
+.set-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:14px 18px 4px}
+.set-foot{display:flex;align-items:center;gap:10px;padding:11px 14px 11px 18px;
+  border-top:1px solid var(--hair);flex:none;background:var(--panel2)}
+.set-state{font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;flex:1;min-width:0}
+.set-state.moved{color:var(--accent)}
+.set-state.bad{color:#d64545}
+.set-foot .btn-quiet{padding:6px 12px;border-radius:8px;border:1px solid transparent;
+  background:transparent;color:var(--dim);cursor:pointer;font:inherit;font-size:13px}
+.set-foot .btn-quiet:hover{background:var(--hover);color:var(--fg)}
+.set-foot .btn{padding:6px 14px;border-radius:8px;border:1px solid var(--ctl);
+  background:var(--panel);color:var(--fg);cursor:pointer;font:inherit;font-size:13px}
+.set-foot .btn:hover{background:var(--hover)}
+.set-foot .btn.primary{background:var(--accent);border-color:var(--accent);
+  color:var(--accent-fg)}
+.set-foot .btn.primary:hover{filter:brightness(1.06)}
+.set-foot .btn:disabled{opacity:.45;cursor:default;filter:none}
+
+/* 分组：详情页那种"一块一块"的观感 —— 图标 + 标题 + 一句说明，下面一张卡片装若干行 */
+.set-group{margin:0 0 16px}
+.set-group:last-child{margin-bottom:2px}
+.set-ghead{display:flex;gap:9px;align-items:flex-start;margin:0 0 8px}
+.set-gico{width:26px;height:26px;border-radius:8px;background:var(--tile);color:var(--fg2);
+  display:inline-flex;align-items:center;justify-content:center;flex:none;margin-top:1px}
+.set-gico svg{width:14px;height:14px}
+.set-gtitle{font-size:13.5px;font-weight:600;line-height:1.3}
+.set-gblurb{display:block;font-size:11.5px;color:var(--dim);line-height:1.6;margin-top:2px}
+.set-rows{border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--panel)}
+.set-row{display:flex;align-items:center;gap:14px;padding:9px 12px;
+  border-top:1px solid var(--hair);transition:background .15s ease-out}
+.set-row:first-child{border-top:0}
+.set-main{flex:1;min-width:0}
+.set-label{font-size:13px;line-height:1.35}
+.set-hint{font-size:11.5px;color:var(--dim);line-height:1.55;margin-top:2px}
+.set-now{font-size:11.5px;color:var(--dim2);line-height:1.55;margin-top:3px;
+  font-family:var(--mono)}
+.set-why{font-size:11.5px;line-height:1.55;margin-top:4px;display:none}
+.set-row.bad{background:rgba(214,69,69,.07)}
+.set-row.bad .set-label{color:#d64545}
+.set-row.bad .set-why{display:block;color:#d64545}
+.set-row.warn{background:rgba(255,159,10,.08)}
+.set-row.warn .set-why{display:block;color:#a86400}
+.set-ctl{flex:none;display:flex;align-items:center;gap:6px}
+
+/* 控件一：前缀符号（一个字符的小框，等宽、居中） */
+.syminp{width:54px;height:30px;text-align:center;font-family:var(--mono);font-size:15px;
+  border-radius:8px;border:1px solid var(--ctl-in);background:var(--panel2);color:var(--fg);
+  outline:none;transition:border-color .12s,box-shadow .12s}
+.syminp::placeholder{font-size:10.5px;color:var(--ph);letter-spacing:.5px}
+.syminp:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+/* 控件二：文本 */
+.txtinp{width:190px;height:30px;padding:0 10px;border-radius:8px;border:1px solid var(--ctl-in);
+  background:var(--panel2);color:var(--fg);font-size:12.5px;outline:none;
+  transition:border-color .12s,box-shadow .12s}
+.txtinp::placeholder{color:var(--ph)}
+.txtinp:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+/* 控件三：开关（36×20 的轨道 + 16 的圆点，苹果那一套） */
+.sw{width:36px;height:20px;border-radius:99px;border:1px solid var(--ctl);background:var(--panel2);
+  position:relative;cursor:pointer;flex:none;padding:0;transition:background .16s,border-color .16s}
+.sw::after{content:"";position:absolute;top:1px;left:1px;width:16px;height:16px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);
+  transition:transform .16s cubic-bezier(.4,0,.2,1)}
+.sw[aria-checked="true"]{background:var(--accent);border-color:var(--accent)}
+.sw[aria-checked="true"]::after{transform:translateX(16px)}
+.sw:focus-visible{outline:none;box-shadow:0 0 0 3px var(--field-focus)}
+/* 控件四：步进器 */
+.step{display:inline-flex;align-items:center;border:1px solid var(--ctl-in);border-radius:8px;
+  overflow:hidden;background:var(--panel2);height:30px}
+.step button{width:27px;height:100%;border:0;background:transparent;color:var(--fg2);
+  cursor:pointer;font-size:15px;line-height:1;padding:0;
+  transition:background .12s,color .12s}
+.step button:hover:not(:disabled){background:var(--hover);color:var(--fg)}
+.step button:disabled{opacity:.3;cursor:default}
+.step .num{width:36px;height:100%;text-align:center;font-family:var(--mono);font-size:13px;
+  border:0;border-left:1px solid var(--hair);border-right:1px solid var(--hair);
+  background:transparent;color:var(--fg);outline:none}
+/* 冲突/提醒：那一行的控件也飘红（光文字变红不够显眼） */
+.set-row.bad .syminp,.set-row.bad .txtinp,.set-row.bad .num,.set-row.bad .step{
+  border-color:#d64545;box-shadow:0 0 0 3px rgba(214,69,69,.14)}
+.set-row.warn .syminp,.set-row.warn .txtinp,.set-row.warn .num,.set-row.warn .step{
+  border-color:#e0a02a;box-shadow:0 0 0 3px rgba(224,160,42,.16)}
+/* 「现在这样」那一行（符号组）：活预览 */
+.set-live{margin:9px 0 0;padding:9px 12px;border-radius:10px;background:var(--tile);
+  font-size:12px;color:var(--fg2);line-height:1.75;font-family:var(--mono)}
+.set-live.bad{background:rgba(214,69,69,.08);color:#d64545}
 </style>
 </head>
 <body>
@@ -628,7 +709,8 @@ table.p th{color:var(--dim);font-weight:500}
 
 <div id="ctxmenu" hidden></div>
 <div id="modal"><div class="card">
-  <h3 id="m-title">标题</h3>
+  <div class="set-head"><h3 id="m-title">标题</h3><span style="flex:1"></span>
+    <button class="set-x" id="m-x" title="关闭（Esc）" aria-label="关闭"></button></div>
   <p id="m-text"></p>
   <input id="m-input" autocomplete="off" spellcheck="false">
   <div class="btns">
@@ -642,16 +724,19 @@ table.p th{color:var(--dim);font-weight:500}
      （`moss --settings`：分组 / 标签 / 类型 / 当前值 / 说明）—— 界面只负责画控件。
      ★ 它改的就是 `user_data/config.toml`，不新增第二处设置存放地。 -->
 <div id="settings"><div class="card wide">
-  <h3>设置</h3>
-  <p id="set-path"></p>
-  <div id="set-body"></div>
-  <div id="set-problems" hidden></div>
-  <p class="setnote">改完下一次启动 moss 生效（这个界面用的是启动时读到的值）。
-    配置文件里的注释和排版不会被动。</p>
-  <div class="btns">
-    <span class="sp"></span>
-    <button id="set-cancel">取消</button>
-    <button id="set-save" class="primary">保存</button>
+  <!-- 头：标题 + 配置文件路径 + 关闭（`V-63`：一般模态框右上角都有这个 ×） -->
+  <div class="set-head">
+    <h3>设置</h3>
+    <span class="set-sub" id="set-path"></span>
+    <button class="set-x" id="set-close" title="关闭（Esc）" aria-label="关闭"></button>
+  </div>
+  <!-- 身：整个面板**只有这里滚** —— 圆角那层是 overflow:hidden，滚动条压不到圆角 -->
+  <div class="set-body" id="set-body"></div>
+  <!-- 脚：状态 + 按钮（不跟着滚，永远是看得见的那一条） -->
+  <div class="set-foot">
+    <span class="set-state" id="set-state"></span>
+    <button id="set-cancel" class="btn-quiet">取消</button>
+    <button id="set-save" class="btn primary" disabled>保存</button>
   </div>
 </div></div>
 
@@ -3059,114 +3144,263 @@ function toast(text, bad){
   setTimeout(() => el.remove(), 2400);
 }
 
-/* ---------------------------------------------------------------- 「设置」面板（`V-60` ✅）
-   齿轮点开 → 问宿主当前设置 → 画控件 → 保存时只把**改过的那几项**送回去。
-   ★ 界面这里不认识任何设置项：分组名、标签、控件类型、说明、当前值全是宿主给的
-     （`core/config.py` 的 `SETTINGS_GROUPS`）。以后宿主加一个配置项，这里一行都不用改。 */
-let SET = null;                 // {path, groups, orig}
+/* ---------------------------------------------------------------- 「设置」面板（`V-60` ✅ / `V-63` ✅）
+   齿轮点开 → 问宿主当前设置 → 按类型画控件 → **每改一下就问宿主一次「这样行不行」**
+   → 有冲突：那一行标红 + 控件飘红 + 「保存」禁用 + 脚上写清楚为什么；
+   只是提醒（warn）的不拦保存，用黄的说一句。
+
+   ★ 界面这里**不认识任何设置项，也不自己实现校验规则**：分组 / 图标 / 标签 / 说明 /
+     控件类型 / 当前值 / 「现在这样」/ 冲突原因，全是宿主算好给的
+     （`moss --settings` 与 `moss --settings-check`）。规则只有 `core/config.py` 那一份 ——
+     两边各写一遍的话，早晚会不一致，而那种 bug 最难看出来。 */
+let SET = null;          // {path, groups, values, orig, problems, notes, live, timer, seq, lastMsg}
 
 async function openSettings(){
   const r = await pywebview.api.settings();
   if (!r || !r.ok){ toast("✗ 读设置失败：" + ((r && r.msg) || ""), true); return; }
-  SET = {path: r.path || "", groups: r.groups || [], orig: {}};
+  SET = {path: r.path || "", groups: r.groups || [], values: {}, orig: {},
+         problems: [], notes: {}, live: "", timer: null, seq: 0, lastMsg: ""};
+  (SET.groups || []).forEach(g => (g.items || []).forEach(it => {
+    SET.values[it.key] = it.value;
+    SET.orig[it.key] = it.value;
+  }));
   renderSettings();
-  const probs = $("#set-problems");
-  probs.hidden = true; probs.textContent = "";
   $("#settings").classList.add("on");
-  // 宿主顺带说的话（首次运行帮你建了配置文件 / 配置里哪一行写坏了）别吞掉
-  if (r.msg) toast(r.msg);
+  $("#set-save").disabled = true;
+  setFoot("set-state", "正在读取当前配置…", "");
+  if (r.msg) toast(r.msg);                 // 宿主顺带说的话（首次运行建了配置文件之类）
+  scheduleCheck(0);                        // 立刻问一次：把「现在这样」和提醒填上
 }
-function closeSettings(){ $("#settings").classList.remove("on"); }
+
+function closeSettings(){
+  if (SET && SET.timer) clearTimeout(SET.timer);
+  if (SET) SET.seq++;                      // 关掉之后飞回来的检查结果一律作废
+  $("#settings").classList.remove("on");
+}
+
+function setFoot(id, text, cls){
+  const el = $("#" + id);
+  if (!el) return;
+  el.className = (id === "set-state" ? "set-state" : "") + (cls ? " " + cls : "");
+  el.textContent = text;
+}
 
 function renderSettings(){
   const box = $("#set-body");
   box.innerHTML = "";
-  $("#set-path").textContent = SET.path ? ("配置文件：" + SET.path) : "";
-  SET.groups.forEach(g => {
-    const sec = document.createElement("div");
-    sec.className = "setgroup";
-    const h = document.createElement("h4");
-    h.textContent = g.name;
-    sec.appendChild(h);
-    if (g.hint){
-      const p = document.createElement("p");
-      p.className = "sethint"; p.textContent = g.hint;
-      sec.appendChild(p);
-    }
-    (g.items || []).forEach(it => {
-      SET.orig[it.key] = it.value;
-      const row = document.createElement("div");
-      row.className = "setrow";
-      const name = document.createElement("div");
-      name.className = "setname";
-      name.textContent = it.label;
-      if (it.hint){
-        const tip = document.createElement("div");
-        tip.className = "setnow"; tip.textContent = it.hint;
-        name.appendChild(tip);
-      }
-      let inp;
-      if (it.type === "bool"){
-        inp = document.createElement("input");
-        inp.type = "checkbox"; inp.checked = !!it.value;
-      } else if (it.type === "int"){
-        inp = document.createElement("input");
-        inp.type = "number"; inp.min = "1"; inp.max = "20"; inp.value = it.value;
-      } else {
-        inp = document.createElement("input");
-        inp.type = "text"; inp.value = (it.value == null ? "" : it.value);
-        if (it.type === "symbol"){ inp.maxLength = 4; inp.style.width = "90px"; }
-        inp.spellcheck = false; inp.autocomplete = "off";
-      }
-      inp.dataset.key = it.key;
-      inp.dataset.type = it.type;
-      row.appendChild(name); row.appendChild(inp);
-      sec.appendChild(row);
-    });
-    box.appendChild(sec);
-  });
+  $("#set-path").textContent = SET.path || "";
+  $("#set-path").title = SET.path || "";
+  SET.groups.forEach(g => box.appendChild(groupNode(g)));
+  $("#set-body").scrollTop = 0;
 }
 
-/* 只收集**和打开时不一样**的那几项（没动过的键一个字节都不写回去）。 */
-function collectSettings(){
-  const pairs = {};
-  document.querySelectorAll("#set-body [data-key]").forEach(el => {
-    const k = el.dataset.key, t = el.dataset.type;
-    let v;
-    if (t === "bool") v = !!el.checked;
-    else if (t === "int"){
-      v = parseInt(el.value, 10);
-      if (!isFinite(v)) v = SET.orig[k];
-    } else v = el.value.trim();
-    if (String(v) !== String(SET.orig[k])) pairs[k] = v;
+/* 一组 = 图标 + 名字 + 一句说明，下面一张卡片装若干行（详情页那种"一块一块"的观感） */
+function groupNode(g){
+  const sec = document.createElement("section");
+  sec.className = "set-group";
+  const head = document.createElement("div");
+  head.className = "set-ghead";
+  const tile = document.createElement("span");
+  tile.className = "set-gico";
+  tile.innerHTML = ico(g.icon || "settings", "i");
+  const ttl = document.createElement("div");
+  const h = document.createElement("div");
+  h.className = "set-gtitle"; h.textContent = g.name || "";
+  const bl = document.createElement("span");
+  bl.className = "set-gblurb"; bl.textContent = g.blurb || "";
+  ttl.appendChild(h); ttl.appendChild(bl);
+  head.appendChild(tile); head.appendChild(ttl);
+  sec.appendChild(head);
+
+  const rows = document.createElement("div");
+  rows.className = "set-rows";
+  (g.items || []).forEach(it => rows.appendChild(rowNode(it)));
+  sec.appendChild(rows);
+
+  if (g.live){                       // 「现在这样」：宿主算的活预览（符号那一组才有）
+    const live = document.createElement("div");
+    live.className = "set-live"; live.id = "set-live";
+    live.textContent = SET.live || "";
+    sec.appendChild(live);
+  }
+  return sec;
+}
+
+function rowNode(it){
+  const row = document.createElement("div");
+  row.className = "set-row";
+  row.dataset.key = it.key;
+  const main = document.createElement("div");
+  main.className = "set-main";
+  const lab = document.createElement("div");
+  lab.className = "set-label"; lab.textContent = it.label || it.key;
+  const hint = document.createElement("div");
+  hint.className = "set-hint"; hint.textContent = it.hint || "";
+  const now = document.createElement("div");
+  now.className = "set-now"; now.dataset.role = "now";
+  const why = document.createElement("div");
+  why.className = "set-why"; why.dataset.role = "why";
+  main.appendChild(lab); main.appendChild(hint); main.appendChild(now); main.appendChild(why);
+  row.appendChild(main);
+  const ctl = document.createElement("div");
+  ctl.className = "set-ctl";
+  ctl.appendChild(controlNode(it));
+  row.appendChild(ctl);
+  return row;
+}
+
+/* 四种控件：开关 / 步进器 / 符号小框 / 文本框。类型由宿主给（`type`）。 */
+function controlNode(it){
+  const v = SET.values[it.key];
+  if (it.type === "bool"){
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "sw"; b.dataset.key = it.key;
+    b.setAttribute("role", "switch");
+    b.setAttribute("aria-checked", v ? "true" : "false");
+    b.title = v ? "开 —— 点一下关掉" : "关 —— 点一下打开";
+    b.onclick = () => {
+      const nv = !(SET.values[it.key] === true);
+      b.setAttribute("aria-checked", nv ? "true" : "false");
+      b.title = nv ? "开 —— 点一下关掉" : "关 —— 点一下打开";
+      setValue(it.key, nv);
+    };
+    return b;
+  }
+  if (it.type === "int"){
+    const box = document.createElement("div");
+    box.className = "step";
+    const minus = document.createElement("button");
+    minus.type = "button"; minus.textContent = "−"; minus.title = "减一";
+    const num = document.createElement("input");
+    num.className = "num"; num.dataset.key = it.key;
+    num.value = String(v); num.inputMode = "numeric";
+    const plus = document.createElement("button");
+    plus.type = "button"; plus.textContent = "+"; plus.title = "加一";
+    const set = nv => {
+      nv = Math.max(1, Math.min(20, nv || 1));
+      num.value = String(nv);
+      minus.disabled = nv <= 1;
+      plus.disabled = nv >= 20;
+      setValue(it.key, nv);
+    };
+    minus.disabled = Number(v) <= 1;
+    plus.disabled = Number(v) >= 20;
+    minus.onclick = () => set(parseInt(num.value, 10) - 1);
+    plus.onclick = () => set(parseInt(num.value, 10) + 1);
+    num.onchange = () => set(parseInt(num.value, 10));
+    box.appendChild(minus); box.appendChild(num); box.appendChild(plus);
+    return box;
+  }
+  const inp = document.createElement("input");
+  inp.type = "text"; inp.dataset.key = it.key;
+  inp.className = it.type === "symbol" ? "syminp" : "txtinp";
+  inp.value = v == null ? "" : v;
+  inp.spellcheck = false; inp.autocomplete = "off";
+  if (it.type === "symbol"){ inp.maxLength = 4; inp.placeholder = "空"; }
+  else inp.placeholder = "空 = 不打印";
+  inp.oninput = () => setValue(it.key, inp.value);
+  return inp;
+}
+
+function setValue(key, v){
+  SET.values[key] = v;
+  scheduleCheck();          // 防抖后问宿主一次（规则在那边）
+}
+
+/* 每改一下就问一次宿主「这样行不行」（防抖 250ms）。 */
+function scheduleCheck(delay){
+  if (!SET) return;
+  if (SET.timer) clearTimeout(SET.timer);
+  SET.timer = setTimeout(runCheck, delay == null ? 250 : delay);
+}
+
+async function runCheck(){
+  if (!SET) return;
+  SET.timer = null;
+  const seq = ++SET.seq;
+  const r = await pywebview.api.settings_check(SET.values);
+  if (!SET || seq !== SET.seq) return;          // 慢的那次回来了也别盖掉新的
+  SET.problems = (r && r.problems) || [];
+  SET.notes = (r && r.notes) || {};
+  SET.live = (r && r.live) || "";
+  SET.lastMsg = (r && r.msg) || "";
+  paintCheck();
+}
+
+function changedKeys(){
+  const out = [];
+  Object.keys(SET.values).forEach(k => {
+    if (String(SET.values[k]) !== String(SET.orig[k])) out.push(k);
   });
-  return pairs;
+  return out;
+}
+
+/* 把检查结果画到界面上：行标红/标黄 + 「现在这样」+ 脚上的状态 + 保存按钮的可用性 */
+function paintCheck(){
+  document.querySelectorAll("#set-body .set-row").forEach(row => {
+    row.classList.remove("bad", "warn");
+    const why = row.querySelector('[data-role="why"]');
+    if (why) why.textContent = "";
+    const now = row.querySelector('[data-role="now"]');
+    if (now) now.textContent = SET.notes[row.dataset.key] || "";
+  });
+  let errs = 0;
+  (SET.problems || []).forEach(p => {
+    if (p.level !== "warn") errs++;
+    // ★ 一条冲突可能牵涉好几行（`also`）：两行一起红 —— 只红一行会让人以为
+    //   改那一行就行（"两个前缀不能同时留空"就是典型）。
+    const keys = [p.key].concat(p.also || []);
+    keys.forEach((k, idx) => {
+      const row = document.querySelector('#set-body .set-row[data-key="' + k + '"]');
+      if (row) row.classList.add(p.level === "warn" ? "warn" : "bad");
+      const why = row ? row.querySelector('[data-role="why"]') : null;
+      if (why){
+        // 原因只写在**主**那一行上；被牵连的行只标色，免得同一句话说两遍
+        why.textContent = (why.textContent ? why.textContent + " " : "") +
+                          (idx ? "" : (p.level === "warn" ? "提醒：" : "") + p.why);
+      }
+    });
+  });
+  const live = document.querySelector("#set-live");
+  if (live){
+    live.textContent = SET.live || "";
+    live.classList.toggle("bad", /^⚠/.test(SET.live || ""));
+  }
+  const changed = changedKeys();
+  const save = $("#set-save");
+  if (errs){
+    setFoot("set-state", "✗ " + errs + " 处冲突 —— 上面标红的地方改好才能保存", "bad");
+    save.disabled = true;
+  } else if (changed.length){
+    setFoot("set-state", "改了 " + changed.length + " 项 · 保存后下一次启动 moss 生效"
+            + (SET.lastMsg ? "（" + SET.lastMsg + "）" : ""), "moved");
+    save.disabled = false;
+  } else {
+    setFoot("set-state", "还没有改动 —— 现在显示的就是配置文件里的值"
+            + (SET.lastMsg ? "（" + SET.lastMsg + "）" : ""));
+    save.disabled = true;
+  }
 }
 
 async function saveSettings(){
-  const pairs = collectSettings();
-  const probs = $("#set-problems");
-  if (!Object.keys(pairs).length){
-    toast("没有改动");
-    closeSettings();
-    return;
-  }
+  const pairs = {};
+  changedKeys().forEach(k => { pairs[k] = SET.values[k]; });
+  if (!Object.keys(pairs).length){ toast("没有改动"); closeSettings(); return; }
+  $("#set-save").disabled = true;
+  setFoot("set-state", "正在保存…");
   const r = await pywebview.api.settings_save(pairs);
-  const list = ((r && r.problems) || []).slice();
-  if (!r || !r.ok || list.length){
-    // ★ 没保存成 / 宿主不让这么存：**留在面板里**，把原因摊开写清楚
-    if (!list.length) list.push((r && r.msg) || "宿主没说为什么");
-    probs.hidden = false;
-    probs.innerHTML = "";
-    list.forEach(t => {
-      const d = document.createElement("div");
-      d.textContent = "· " + t;
-      probs.appendChild(d);
-    });
-    toast(r && r.ok ? "改了一部分 —— 看面板里的话" : "没保存 —— 看面板里的话", true);
+  const list = (r && r.problems) || [];
+  if (!r || !r.ok || list.some(p => p.level !== "warn")){
+    // ★ 没存成：留在面板里，把原因摊开（画法和实时检查同一套 —— 行标红 + 脚上一句话）
+    SET.problems = list.length ? list
+      : [{key: "", why: (r && r.msg) || "宿主没说为什么", level: "error"}];
+    paintCheck();
+    if (!list.length) setFoot("set-state", "✗ " + ((r && r.msg) || "保存失败"), "bad");
+    toast("没保存 —— 看面板里标红的地方", true);
     return;
   }
-  toast("已保存到 config.toml（下次启动 moss 生效）");
+  Object.keys(pairs).forEach(k => { SET.orig[k] = SET.values[k]; });
+  toast("已保存到 config.toml（下一次启动 moss 生效）");
   closeSettings();
 }
 
@@ -3207,6 +3441,9 @@ function paintStaticIcons(){
   $("#sw-hist").innerHTML = ico("history", "i") + '<span>历史</span>';
   $("#btn-newpkg").innerHTML = ico("file-plus", "i");
   $("#btn-settings").innerHTML = ico("settings", "i");   // 状态栏那颗齿轮（`V-61`）
+  // 两个模态框右上角那颗 ×（`V-63`）：设置面板和确认框都要有
+  $("#set-close").innerHTML = ico("x", "i");
+  $("#m-x").innerHTML = ico("x", "i");
   $("#btn-refresh").innerHTML   = ico("refresh-cw", "i");
   $("#btn-copy").innerHTML      = ico("copy", "i");
   $("#btn-rerun").innerHTML     = ico("rotate-cw", "i");
@@ -3241,9 +3478,11 @@ $("#btn-copy").onclick = copyOut;$("#btn-clear").onclick = () => setConsole(cons
 /* 状态栏那颗齿轮（`V-60`）：打开「设置」= 另一种改 config.toml 的方式 */
 $("#btn-settings").onclick = openSettings;
 $("#set-cancel").onclick = closeSettings;
+$("#set-close").onclick = closeSettings;          // `V-63`：模态框右上角那颗 ×
 $("#set-save").onclick = saveSettings;
 $("#settings").addEventListener("click", e => { if (e.target.id === "settings") closeSettings(); });
 $("#m-cancel").onclick = closeModal;
+$("#m-x").onclick = closeModal;   // `V-63`：确认框的 × = 取消
 $("#m-ok").onclick = () => { const cb = modalCb; closeModal(); if (cb) cb(); };
 $("#m-input").addEventListener("keydown", e => {
   if (e.key === "Enter"){ e.preventDefault(); $("#m-ok").click(); }
