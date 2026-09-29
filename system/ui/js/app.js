@@ -142,4 +142,34 @@ $("#btn-selfcheck").onclick = async () => {
 };
 
 paintStaticIcons();
-window.addEventListener("pywebviewready", init);
+
+/* ---------------------------------------------------------------- 启动（`V-68` 修过一次）
+   ★ 这里原来只有一句 `window.addEventListener("pywebviewready", init)`。
+     界面拆成多个外部脚本之后（`V-67`），`js/app.js` 是**最后**才执行到的，
+     而 pywebview 的 `pywebviewready` 有可能在它之前就发过了 —— 事件只发一次，
+     错过就永远等不到：`init()` 从不运行 ⇒ 左侧列表/历史/详情全空，而且**什么都不报**
+     （没抛异常，只是没干活）。一个内联大脚本没有这个竞态，拆开之后就有了。
+
+   ⇒ 两手准备：
+       ① 听事件（正常情况走这条）；
+       ② **轮询**桥在不在（`window.pywebview.api.state` 出现就算到了），谁先到算谁；
+      `boot()` 自己幂等，重复调只会跑一次。`init()` 外面包一层 try/catch，
+      出事就写到状态栏和 `window.__errors`（配合 `js/core.js` 里的错误上报）。 */
+let _booted = false;
+async function boot(){
+  if (_booted) return;
+  _booted = true;
+  try{
+    await init();
+  }catch(e){
+    reportError("界面初始化失败", (e && e.message) || String(e), (e && e.stack) || "");
+  }
+}
+
+window.addEventListener("pywebviewready", boot);
+
+(function waitBridge(n){
+  if (window.pywebview && window.pywebview.api && window.pywebview.api.state){ boot(); return; }
+  if (n > 120) return;                 // 最多等 6 秒，别无限轮
+  setTimeout(() => waitBridge(n + 1), 50);
+})(0);
