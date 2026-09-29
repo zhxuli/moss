@@ -222,6 +222,15 @@ MOCK_JS = r"""
                               M.embed = null; return {ok: true, msg: "(预览) 已停"}; },
     embed_state: async () => ({ok: true, running: !!M.embed}),
     embed_take: async () => ({ok: true, text: ""}),
+    // 真后端给的是 http://127.0.0.1:<随机端口>/<token>/…（V-55：WebView2 里不能
+    // iframe 一个 file:// 页面）。预览跑在 Edge 上、file:// 能显示，所以这里直接给
+    // 文件地址 —— 界面那侧流程一样，只是引擎限制不同（那点由 WebView2 探针管）。
+    embed_url: async (pid) => {
+      const p = state.packages.find(x => x.id === pid) || {};
+      const path = ((p.ui || {}).embed || "").replace(/\\/g, "/");
+      return path ? {ok: true, url: "file:///" + encodeURI(path)}
+                  : {ok: false, msg: "(预览) 这个包没有界面文件"};
+    },
     // 给正在跑的进程喂一行（`V-43`）：真后端写进它的 stdin，这里记下来
     run_input: async (rid, line) => {
       (M.inputs = M.inputs || []).push({rid: rid, line: line});

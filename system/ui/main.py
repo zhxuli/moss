@@ -22,6 +22,7 @@ import ctypes.wintypes as wt
 import json
 import os
 import re
+import http.server
 import shlex
 import shutil
 import subprocess
@@ -251,6 +252,15 @@ _pkg_hidden = {}         # 包 id -> [被藏起来的窗口句柄]（显示时�
 #:   的那套。**切走选项卡不会碰它**（这就是你要的"切走还在后台跑"）。
 EMBED = {}
 EMBED_LOCK = threading.Lock()
+
+#: 给包界面用的**本地 HTTP 服务**（`V-55` ✅）：`{httpd, port, token}`。
+#: ★ 为什么要这么绕一圈：**WebView2 里不能 iframe 一个 `file://` 页面**
+#:   （实测：父页也是 file:// 也一样 —— 帧建出来了、却压根不导航，一片空白；
+#:    同样的页面在普通 Edge 里能显示，所以这个坑只在 WebView2 上踩得到）。
+#:   官方给本地内容的做法就是"开个本地服务"（VS Code 的 webview 也是这么干的）。
+#:   顺带把 `file://` 那两个限制（fetch / localStorage）也解决了。
+#:   安全：只绑 127.0.0.1、只读（GET/HEAD）、每次启动一个随机 token 要求带在路径里。
+_EMBED_SRV = {"httpd": None, "port": 0, "token": ""}
 
 
 def _remember_proc(pkg, pid):
@@ -825,6 +835,63 @@ def _kill_tree(pid):
                        creationflags=NO_WINDOW)
     except Exception:
         pass
+
+
+def _embed_server():
+    """把那个给包界面用的本地 HTTP 服务起起来（第一次用到才起）。返回 (port, token)。"""
+    with EMBED_LOCK:
+        if _EMBED_SRV["httpd"] is not None:
+            return _EMBED_SRV["port"], _EMBED_SRV["token"]
+        token = uuid.uuid4().hex
+        try:
+            httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _EmbedHandler)
+        except OSError as e:
+            return 0, "起不来：%s" % e
+        _EMBED_SRV.update({"httpd": httpd, "port": httpd.server_address[1], "token": token})
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        return _EMBED_SRV["port"], token
+
+
+class _EmbedHandler(http.server.SimpleHTTPRequestHandler):
+    """只读地把安装根下面的文件发给包界面（`V-55`）。
+
+    ★ 三道口子必须一起关上，不然这就是个"本机任意文件读取"：
+      ① 只绑 `127.0.0.1`（外面连不上）；
+      ② 路径里必须带**本次会话的随机 token**（别的程序猜不到）；
+      ③ 只实现 GET/HEAD（不能写），且 `translate_path` 由父类做 `..` 归一化。
+    """
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, directory=str(HOME), **kw)
+
+    def log_message(self, *a):                                          # noqa: A003
+        pass                        # 别往控制台喷访问日志（一屏都是它）
+
+    def _token_ok(self):
+        tk = _EMBED_SRV["token"]
+        return bool(tk) and self.path.startswith("/" + tk + "/")
+
+    def do_GET(self):                                                    # noqa: N802
+        if not self._token_ok():
+            self.send_error(403, "bad token")
+            return
+        super().do_GET()
+
+    def do_HEAD(self):                                                   # noqa: N802
+        if not self._token_ok():
+            self.send_error(403, "bad token")
+            return
+        super().do_HEAD()
+
+    def translate_path(self, path):
+        tk = _EMBED_SRV["token"]
+        if tk and path.startswith("/" + tk + "/"):
+            path = path[len(tk) + 1:]        # 去掉 token 那一段，剩下的才是真路径
+        return super().translate_path(path)
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")     # 改了界面文件刷新就见效
+        super().end_headers()
 
 
 def _pump_embed(pid, proc):
@@ -1571,6 +1638,36 @@ class Api:
     #   好处：协议归包和契约管，宿主不用为每个方法改代码。
     # ★ 只把 `{` 开头的行当消息转走 —— 宿主的横幅是 `[执行]/[目录]/[PID]` 这种
     #   **数组样子**的行，包的普通输出（print）也可能有；那些进命令行面板，不当消息。
+    def embed_url(self, pid):
+        """这个包的界面该从哪个地址加载（`V-55` ✅）。
+
+        ★ 为什么不是 `file://`：**WebView2 里 iframe 一个 `file://` 页面是不导航的**
+          （实测：帧建出来是空的、连 `load` 都不触发；同一个页面在普通 Edge 里却正常）。
+          所以这里给一个**本地 http** 地址，页面和它的 css/js 都从这里拿。
+        """
+        pid = str(pid)
+        rec = None
+        for p in (DATA.get("packages") or []):
+            if str(p.get("id")) == pid:
+                rec = p
+                break
+        ui = (rec or {}).get("ui") or {}
+        path = str(ui.get("embed") or "")
+        if not path or not Path(path).is_file():
+            return {"ok": False, "msg": "这个包没有可用的界面文件"}
+        port, token = _embed_server()
+        if not port:
+            return {"ok": False, "msg": token or "本地服务起不来"}
+        try:
+            rel = os.path.relpath(path, str(HOME)).replace("\\", "/")
+        except ValueError:                       # 不在同一个盘上（理论上到不了这）
+            return {"ok": False, "msg": "界面文件不在安装根里面"}
+        if rel.startswith("../"):
+            return {"ok": False, "msg": "界面文件不在安装根里面"}
+        return {"ok": True,
+                "url": "http://127.0.0.1:%d/%s/%s" % (port, token, rel),
+                "port": port}
+
     def embed_start(self, pid, cwd=""):
         """给这个包起一个"内嵌界面"的后端进程（`MOSS_UI_EMBED=1`）。已经起着就复用。"""
         pid = str(pid)
