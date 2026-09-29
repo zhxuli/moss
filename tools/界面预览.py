@@ -63,7 +63,8 @@ BROWSERS = [
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "drop-hot", "drop-dir", "drop-file", "console-input", "embed",
-          "statusbar", "settings", "settings-bad", "settings-warn",
+          "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
+          "settings-bad", "settings-warn", "settings-tip",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail"]
 
@@ -773,32 +774,38 @@ MOCK_JS = r"""
           " 齿轮边框=" + gearBorder + " 底色=" + gearBg;
         document.title = ok ? "READY" : "STATUS-FAIL";
       }
-      // ★ 「设置」面板（`V-60` / `V-63`）：打开 → 改一项（没冲突）→ 保存能点 → 存了 →
-      //   核对**只把改过的那项**送回了宿主 → 再打开一次留给截图。
+      // ★ 「设置」面板（`V-60` / `V-63` / `V-66`）：左边分类、右边只显示当前那一组。
+      //   打开 → 看结构（分类 4 个、输入是两列带标签的格子）→ 切到"执行提示"看开关 →
+      //   改一项 → 保存该能点 → 存了 → 再打开留给截图。
       if (h === "settings"){
         await openSettings();
-        await sleep(700);                        // 等第一次"检查"回来（宿主那一圈）
-        const rows = document.querySelectorAll("#set-body .set-row").length;
-        const groups = document.querySelectorAll("#set-body .set-group").length;
+        await sleep(700);
+        const navs = document.querySelectorAll("#set-nav .set-navitem").length;
+        const panes = document.querySelectorAll("#set-body .set-pane").length;
+        const activePane = (document.querySelector("#set-body .set-pane.on") || {}).dataset || {};
+        const inputs = document.querySelectorAll("#set-body .set-pane.on .inp").length;
+        const labels = document.querySelectorAll("#set-body .set-pane.on .set-lbl").length;
+        const infos = document.querySelectorAll("#set-body .set-pane.on .set-info").length;
+        const liveBox = !!document.querySelector("#set-live");
         const hasX = !!document.querySelector("#set-close svg");
-        const kinds = {
-          sw: document.querySelectorAll("#set-body .sw").length,
-          sym: document.querySelectorAll("#set-body .syminp").length,
-          txt: document.querySelectorAll("#set-body .txtinp").length,
-          step: document.querySelectorAll("#set-body .step").length};
-        const liveText = (document.querySelector("#set-live") || {}).textContent || "";
-        const depthNote = (document.querySelector(
-          '#set-body .set-row[data-key="search.max_parent_depth"] [data-role="now"]') || {})
-          .textContent || "";
         const save0 = document.querySelector("#set-save");
-        const disabledAtStart = save0.disabled;   // 还没改：保存该是灰的
-        // ★ 选控件要选到**输入框**那一层：行（`.set-row`）自己也有 `data-key`
+        const disabledAtStart = save0.disabled;
+        // 切到"执行提示"看一眼开关（顺便验分类能切）
+        const nav2 = document.querySelectorAll("#set-nav .set-navitem")[1];
+        if (nav2) nav2.click();
+        await sleep(250);
+        const pane2 = (document.querySelector("#set-body .set-pane.on") || {}).dataset || {};
+        const switches = document.querySelectorAll("#set-body .set-pane.on .sw").length;
+        const back = document.querySelectorAll("#set-nav .set-navitem")[0];
+        if (back) back.click();
+        await sleep(200);
+        // 改一项：符号框（这一格是"标签在上、控件在下"的两列网格）
         const sym = document.querySelector(
-          '#set-body .set-row[data-key="symbols.no_chdir_mode"] .syminp');
+          '#set-body .set-pane.on .set-field[data-key="symbols.no_chdir_mode"] .inp');
         if (sym){ sym.value = "@"; sym.dispatchEvent(new Event("input", {bubbles: true})); }
-        await sleep(700);                         // 等检查回来（该放行保存）
+        await sleep(700);
         const stateMoved = (document.querySelector("#set-state") || {}).textContent || "";
-        const enabledAfter = !save0.disabled;
+        const enabledAfter = !document.querySelector("#set-save").disabled;
         await saveSettings();
         await sleep(500);
         const saved = M.saved || {};
@@ -806,70 +813,121 @@ MOCK_JS = r"""
         await openSettings();                     // 再打开：留给截图看个完整的
         await sleep(700);
         const opened = document.querySelector("#settings").classList.contains("on");
-        const ok = rows === 16 && groups === 4 && hasX && kinds.sw === 8 && kinds.sym === 4 &&
-                   kinds.txt === 3 && kinds.step === 1 && disabledAtStart && enabledAfter &&
-                   /改了 1 项/.test(stateMoved) && /裸名/.test(liveText) &&
-                   /一共 4 个目录/.test(depthNote) && closedAfterSave && opened &&
+        const ok = navs === 4 && panes === 4 && activePane.group === "快捷命令" &&
+                   pane2.group === "执行提示" && switches === 7 && inputs === 4 &&
+                   labels === 4 && infos === 4 && liveBox && hasX && disabledAtStart &&
+                   enabledAfter && /改了 1 项/.test(stateMoved) && closedAfterSave && opened &&
                    Object.keys(saved).length === 1 && saved["symbols.no_chdir_mode"] === "@";
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 行=" + rows + " 组=" + groups + " ×=" + (hasX ? 1 : 0) +
-          " 控件=" + JSON.stringify(kinds) + " 存了=" + JSON.stringify(saved) +
-          " 保存钮 起/改=" + (disabledAtStart ? "灰" : "亮") + "/" + (enabledAfter ? "亮" : "灰");
-        document.title = ok ? "READY" : "SETTINGS-FAIL";
+          "DIAG " + (ok ? "OK" : "FAIL") + " 分类=" + navs + " 面板=" + panes +
+          " 首屏=" + activePane.group + " 次屏=" + pane2.group + " 开关=" + switches +
+          " 输入=" + inputs + " 标签=" + labels + " ?=" + infos + " 预览行=" + (liveBox ? 1 : 0) +
+          " ×=" + (hasX ? 1 : 0) + " 存了=" + JSON.stringify(saved);
+        document.title = ok ? "READY" : ("SETTINGS-FAIL 分类=" + navs + " 面板=" + panes +
+          " 首屏=" + activePane.group + " 次屏=" + pane2.group + " 开关=" + switches +
+          " 输入=" + inputs + " 标签=" + labels + " ?=" + infos + " 预览=" + liveBox +
+          " ×=" + hasX + " 起灰=" + disabledAtStart + " 改亮=" + enabledAfter +
+          " 挪=" + /改了 1 项/.test(stateMoved) + " 关=" + closedAfterSave + " 开=" + opened +
+          " 存=" + Object.keys(saved).length + " 值=" + saved["symbols.no_chdir_mode"]);
       }
-      // ★ 冲突那一路（`V-63`）：把「跑包」的前缀清空 ⇒ 和「路径调用」同时留空。
-      //   期望：那一行飘红、控件也红、脚上写着为什么、**保存按钮禁用**；截图留在这个状态。
+      // 三个分类各留一张图（`V-66`：一次只看一组，得分别看一眼长什么样）
+      if (h === "settings-exec" || h === "settings-format" || h === "settings-adv"){
+        const want = {"settings-exec": "执行提示", "settings-format": "输出格式",
+                      "settings-adv": "高级设置"}[h];
+        await openSettings();
+        await sleep(600);
+        setActive(want);
+        await sleep(500);
+        const pane = document.querySelector("#set-body .set-pane.on");
+        const on = !!pane && pane.dataset.group === want;
+        const n = pane ? pane.querySelectorAll(".set-item, .set-field").length : 0;
+        const ok = on && n > 0;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 分组=" + (pane ? pane.dataset.group : "-") +
+          " 项数=" + n;
+        document.title = ok ? "READY" : ("PANE-FAIL " + (pane ? pane.dataset.group : "-"));
+      }
+      // ★ 冲突那一路（`V-63` / `V-66`）：把「跑包」的前缀清空 ⇒ 和「路径调用」同时留空。
+      //   期望：那两项飘红 + 导航上"快捷命令"点一个小红点 + 脚上一句话 + **保存禁用**。
       if (h === "settings-bad"){
         await openSettings();
         await sleep(700);
         const inp = document.querySelector(
-          '#set-body .set-row[data-key="symbols.plugin_mode"] .syminp');
+          '#set-body .set-pane.on .set-field[data-key="symbols.plugin_mode"] .inp');
         if (inp){ inp.value = ""; inp.dispatchEvent(new Event("input", {bubbles: true})); }
-        await sleep(800);                         // 等检查回来
-        // ★ 一条冲突牵涉两行（主行 + `also`）：**两行都要红**，原因写在主行上。
-        //   所以这里按"红了几行 + 有没有那句原因"判，别只盯某一行（换一边改就换一行报）。
+        await sleep(800);
         let redCount = 0, reason = "";
-        document.querySelectorAll("#set-body .set-row").forEach(r => {
-          if (r.classList.contains("bad")) redCount++;
-          const w = r.querySelector('[data-role="why"]');
-          if (w && w.textContent) reason += " " + w.textContent;
-        });
-        const redRaw = redCount === 2;
+        document.querySelectorAll("#set-body .set-pane.on .set-item, #set-body .set-pane.on .set-field")
+          .forEach(b => {
+            if (b.classList.contains("bad")) redCount++;
+            const w = b.querySelector('[data-role="prob"]');
+            if (w && w.textContent) reason += " " + w.textContent;
+          });
+        const dot = document.querySelector("#set-nav .set-navitem.has-bad");
         const live = document.querySelector("#set-live");
         const liveBad = !!live && live.classList.contains("bad");
         const st = (document.querySelector("#set-state") || {}).textContent || "";
         const disabled = document.querySelector("#set-save").disabled;
-        const ok = redRaw && /不能同时留空/.test(reason) && liveBad && /冲突/.test(st) && disabled;
+        const ok = redCount === 2 && /不能同时留空/.test(reason) && !!dot && liveBad &&
+                   /冲突/.test(st) && disabled;
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 红了几行=" + redCount +
-          " 活预览红=" + (liveBad ? 1 : 0) + " 保存禁用=" + (disabled ? 1 : 0) +
-          " 脚上写着=" + JSON.stringify(st.slice(0, 34));
-        document.title = ok ? "READY" : "SETTINGS-BAD-FAIL";
+          "DIAG " + (ok ? "OK" : "FAIL") + " 红了几项=" + redCount +
+          " 导航红点=" + (dot ? 1 : 0) + " 预览红=" + (liveBad ? 1 : 0) +
+          " 保存禁用=" + (disabled ? 1 : 0) + " 脚上=" + JSON.stringify(st.slice(0, 30));
+        document.title = ok ? "READY" : ("SETTINGS-BAD-FAIL 红=" + redCount +
+          " 点=" + (dot ? 1 : 0) + " 预览红=" + liveBad + " 禁=" + disabled +
+          " 脚=" + JSON.stringify(st.slice(0, 24)));
       }
-      // ★ 提醒那一路（`V-63`）：只提醒、**不拦保存**（黄的不是红的）。顺手把面板
-      //   滚到底，截图里能看到「找文件」「Ctrl+C」两组 + 那句"一共几个目录"。
+      // ★ 提醒那一路（`V-63`）：只提醒、**不拦保存**（黄的不是红的）。
       if (h === "settings-warn"){
         await openSettings();
-        await sleep(700);
-        const num = document.querySelector(
-          '#set-body .set-row[data-key="search.max_parent_depth"] .num');
+        await sleep(600);
+        setActive("高级设置");
+        await sleep(300);
+        const num = document.querySelector("#set-body .set-pane.on .step .num");
         if (num){ num.value = "8"; num.dispatchEvent(new Event("change", {bubbles: true})); }
         await sleep(800);
-        const row = document.querySelector(
-          '#set-body .set-row[data-key="search.max_parent_depth"]');
-        const yellow = !!row && row.classList.contains("warn");
-        const why = row ? (row.querySelector('[data-role="why"]') || {}).textContent || "" : "";
-        const note = row ? (row.querySelector('[data-role="now"]') || {}).textContent || "" : "";
+        const item = num ? num.closest(".set-field") : null;
+        const yellow = !!item && item.classList.contains("warn");
+        const why = item ? (item.querySelector('[data-role="prob"]') || {}).textContent || "" : "";
+        const dot = document.querySelector("#set-nav .set-navitem.has-warn");
         const st = (document.querySelector("#set-state") || {}).textContent || "";
         const canSave = !document.querySelector("#set-save").disabled;
-        const liveUses = !!document.querySelector("#set-live");
-        document.querySelector("#set-body").scrollTop = 99999;   // 给截图看下半截
-        const ok = yellow && /提醒/.test(why) && /一共 9 个目录/.test(note) &&
-                   canSave && /改了 1 项/.test(st) && liveUses;
+        const ok = yellow && /提醒/.test(why) && !!dot && canSave && /改了 1 项/.test(st);
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 黄=" + (yellow ? 1 : 0) +
-          " 能存=" + (canSave ? 1 : 0) + " 现在=" + JSON.stringify(note.slice(0, 30));
-        document.title = ok ? "READY" : "SETTINGS-WARN-FAIL";
+          " 导航黄点=" + (dot ? 1 : 0) + " 能存=" + (canSave ? 1 : 0) +
+          " ｜" + JSON.stringify(why.slice(0, 30));
+        document.title = ok ? "READY" : ("SETTINGS-WARN-FAIL 黄=" + yellow +
+          " 点=" + !!dot + " 能存=" + canSave + " 脚=" + JSON.stringify(st.slice(0, 20)));
+      }
+      // ★ 说明挂在 `?` 上（`V-66`）：把鼠标放到"向上查找层数"那个 `?` 上，看提示弹不弹。
+      if (h === "settings-tip"){
+        await openSettings();
+        await sleep(600);
+        setActive("高级设置");
+        await sleep(300);
+        const key = "search.max_parent_depth";
+        const q = document.querySelector(
+          '#set-body .set-pane.on .set-info[data-tip-key="' + key + '"]');
+        if (q) q.dispatchEvent(new MouseEvent("mouseover", {bubbles: true}));
+        await sleep(300);
+        const tip = document.querySelector("#tip");
+        const byHover = !!tip && !tip.hidden;
+        // ★ 兜底：再**直接调一次** showTip —— 这样能分清"是 hover 那条路没通"还是
+        //   "提示本身画不出来"（上一版这个场景就是这么定位的）
+        if (!byHover){ try { showTip(key); } catch(e){ M.tipErr = String(e && e.message || e); } }
+        await sleep(250);
+        const shown = !!tip && !tip.hidden;
+        const txt = shown ? (tip.textContent || "") : "";
+        const ok = shown && /最多看几个目录/.test(txt) && /一共 4 个目录/.test(txt) && !!q;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 提示=" + (shown ? 1 : 0) +
+          " hover=" + (byHover ? 1 : 0) + " 直接调=" + (shown && !byHover ? 1 : 0) +
+          " ?=" + (q ? 1 : 0) + " 错=" + (M.tipErr || "无") + " ｜" +
+          JSON.stringify(txt.replace(/\s+/g, " ").slice(0, 50));
+        document.title = ok ? "READY" : ("TIP-FAIL 显示=" + shown + " hover=" + byHover +
+          " ?=" + !!q + " 错=" + (M.tipErr || "无"));
       }
       // ★ 命令行那行输入（`V-43`）：包 `input()` 问你话时能答。
       //   真的 stdin 那条链由宿主侧测试证明；这里只验界面这半：
