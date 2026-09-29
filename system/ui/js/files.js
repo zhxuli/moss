@@ -1,48 +1,12 @@
-/* moss 界面 · files.js —— 文件管理（资源管理器 + 编辑器）
-   ============================================================================
-   `V-69`：这一块原来是一大段"拼字符串 + 手工绑事件"的命令式 DOM 代码
-   （899 行，`V-67` 拆模块时原样搬进来的）。现在**画界面那部分**换成了 Vue 3 组件，
-   逻辑（fs API 调用 / 排序 / 脏标记 / 保存 / 改名与对齐那笔事务）照旧留在这儿。
-
-   怎么切的（照 `js/settings.js` 那个样板的规矩，经典脚本 + 全局组件 + 文件末尾房门面）：
-     · `MossFileManager`  父：子选项卡条（`#fm-bar`）+ 页面容器（`#fm-body`）
-     · `MossFileBrowse`   子：目录浏览那一页（导航 / 工具栏 / 表格 / 状态行）
-     · `MossFilePage`     子：打开一个文件 = 一页（编辑器 + 保存 / 放弃 / 关闭）
-   状态只有一份：全局的 `FM`（现在是 `Vue.reactive`），组件读它、逻辑改它。
-   原来靠 `fmRender()` 手工重画，现在状态一变 Vue 自己重画；`fmRender()` 还在
-   （外面那些调用点一行都没动），职责变成"保证挂载 + 兜底强制重画"。
-
-   ★ 三条必须记住的（都是这里踩过的）：
-     1. `FM` **必须在 Vue 之后建**（要用 `Vue.reactive`）—— `index.html` 里
-        `vendor/vue.global.prod.js` 的 `<script>` 排在所有 `js/*.js` **前面**。
-     2. `fmState(key)` 返回的**就是**那个响应式对象（Vue 会缓存代理），逻辑里
-        缓存了再用、照样能触发重画；但别复制一份裸对象出来改了再塞回去 ——
-        那份界面不认（和假后端 `fs_list` 必须回深拷贝是同一个道理）。
-     3. 高亮是"覆盖层"：`hlInto()` 直接写 `<pre><code>` 的 innerHTML，**不归 Vue 管**
-        （`.editor` 的 DOM 结构一个字都不能动）。所以它只在组件 mounted、
-        输入防抖、以及 `$nextTick` 里被调用。
-
-   ★ 类名 / DOM 结构（`.fbtools` / `table.fb` / `.editor` / `.b-save` …）**照旧**，
-     预览场景靠这些选择器断言。
-   三把钥匙（包目录名 / 清单里的 id / 数据目录）那套对账逻辑没动，
-   见下面 `afterManifestSaved`。 */
-
-/* ================================================================ 上下文与状态
+/* moss 界面 · files.js —— 从 index.html 拆出来的（`V-67`），内容与拆分前一致。 */
+/* ================================================================ 文件管理
    上下文按"当前对象"分，三种 key：
      · `<包 id>`   —— 这个包自己的一套
      · `hist:…`    —— **一条历史**（历史条目同样有文件管理），根是它当初的目录
      · `__all__`   —— 没选任何东西时的"全部文件"
    每个上下文记自己的当前目录、历史、选中、剪贴板、排序，以及**打开的文件子选项卡**。
    切到别的对象 = 换一套上下文，互不干扰；切回来还在原处。 */
-const FM = Vue.reactive({
-  ctx: null, st: {},
-  /* ★ 包表（`DATA`）和历史（`HIST`）都是别的模块里的普通 `let`，**不是响应式的**。
-     换包表之后，那些"从包表里算出来"的界面（子选项卡上那个包名、两层切换按钮
-     要跳的目录）不会自己重算 —— 所以在这儿放一个响应式版本号：`refreshPkgs()`
-     换掉 `DATA` 时 +1，组件里 `void FM.rev` 读它一下，依赖就登记上了。
-     （不改这一下：改名之后子选项卡上还写着旧名字，切换按钮还指着已经不存在的目录。） */
-  rev: 0,
-});
+const FM = { ctx: null, st: {} };
 const HIST_PREFIX = "hist:";
 
 function isHistKey(key){ return String(key || "").startsWith(HIST_PREFIX); }
@@ -205,10 +169,7 @@ function fmRefresh(){
   fmGoto(s.rel, false);
 }
 /* 能不能再往上：两个根走到顶就没了；`abs/` 那边走到**盘根**（`abs/D:/`）就到顶 ——
-   再往上会得到 `abs` 那个光秃秃的前缀，宿主会拒（它不是绝对路径）。
-   ★ 注意：工具栏那颗 ⬆ 的 disabled 用的是**另一条**判据（`segs.length <= 1`），
-     见 `MossFileBrowse` 的 `atTop` —— 那是原来 `bindBrowse` 里后写的一行覆盖了
-     这一条的结果，`V-69` 只搬结构、不顺手改行为，所以照旧。 */
+   再往上会得到 `abs` 那个光秃秃的前缀，宿主会拒（它不是绝对路径）。 */
 function fmAtTop(rel){
   const r = String(rel || "");
   if (!r.includes("/")) return true;                    // user / system
@@ -247,11 +208,9 @@ async function fmOpenPage(rel){
   s.active = rel;
   setTab("file");
   fmRender();
-  // ★ 打开就把光标放进编辑器，直接能打字。原来是在 `pageOf(rel)` 那个 DOM 上
-  //   同步 focus；现在界面由 Vue 画，得等这一帧渲染完（`$nextTick` 之后 textarea 才在）。
-  //   注意：**每次** fmOpenPage 都 focus（原来也是 —— 那个 focus 在 `if (!t)` 外面，
-  //   再双击一个已经开着的文件也会把光标放回去）。
-  fmFocusActiveSoon();
+  const page = pageOf(rel);
+  const ta = page && page.querySelector("textarea");
+  if (ta && !t.binary) ta.focus();          // 打开就把光标放进编辑器，直接能打字
 }
 function fmClosePage(rel){
   const s = fmState(FM.ctx);
@@ -270,9 +229,7 @@ function fmSave(t){
   pywebview.api.fs_write(t.rel, t.text, t.encoding || "utf-8", t.bom || "").then(r => {
     toast(r.ok ? ("已保存 " + t.rel + (r.factory ? "（出厂件）" : "")) : ("✗ " + r.msg), !r.ok);
     if (!r.ok) return;
-    // `t.original` 一改，两处黄点（子选项卡上那颗 / 编辑器标题栏那颗）和保存按钮的
-    // 灰不灰，Vue 自己就跟着重算了 —— 原来这里要手工 `fmPaintBar()` / `fmPaintDirty()`。
-    t.original = t.text; fmPaintBar();
+    t.original = t.text; fmPaintBar(); fmPaintDirty(t);
     // 存的是**包清单** ⇒ 界面手里那份包数据已经过期了，重新解析一遍
     if (isPkgManifest(t.rel)) refreshPkgs(null, true).then(() => afterManifestSaved(t.rel, t.text));
   });
@@ -294,7 +251,6 @@ async function refreshPkgs(preferId, quiet){
   try{ fresh = await pywebview.api.state(); }catch(e){ return; }
   if (!fresh || !fresh.packages) return;
   DATA = fresh;
-  FM.rev++;                      // ★ 包表换了一份：让那些"从包表算出来"的界面重算（见 FM.rev）
   renderList(); paintStates();
   // `DATA` 换了新对象，`cur` 得指向新的那一份，否则详情里读到的还是旧字段。
   // `preferId` 是"刚改完名"给的提示：旧 id 当然找不到了，但那不是"包没了"，
@@ -404,8 +360,120 @@ async function unifyPkgDir(p, dirRel, moveData, layer){
   else renderDetail();
 }
 
-/* ================================================================ 排序 + 高亮（逻辑）
-   这两件事留在组件外面：排序是纯函数（谁要用谁调），高亮是"覆盖层"（见文件头第 3 条）。 */
+/* ---- 渲染：子选项卡条 + 各页 ---- */
+function fmRender(){
+  const s = fmState(FM.ctx);
+  const bar = $("#fm-bar");
+  bar.innerHTML =
+    '<button class="fmtab' + (s.active === "__browse__" ? " on" : "") + '" data-fm="__browse__" ' +
+      'title="目录浏览（这一页不能关）">' + ico("folder", "i") +
+      '<span class="fname">' + esc(fmLabel(FM.ctx)) + '</span></button>' +
+    s.tabs.map(t =>
+      '<button class="fmtab' + (s.active === t.rel ? " on" : "") + '" data-fm="' + esc(t.rel) + '" ' +
+        'title="' + esc(t.rel) + '">' + fileIconHTML({name:t.name, ext:(t.name.split(".").pop()||"").toLowerCase()}) +
+        '<span class="fname">' + esc(t.name) + '</span>' +
+        (isDirty(t) ? '<span class="fdot" title="有未保存的改动"></span>' : "") +
+        '<span class="x" data-close="' + esc(t.rel) + '" title="关闭">×</span></button>').join("");
+
+  bar.querySelectorAll(".fmtab").forEach(b => {
+    b.onclick = (ev) => {
+      if (ev.target.dataset.close !== undefined) return;
+      s.active = b.dataset.fm;
+      fmRender();
+    };
+  });
+  bar.querySelectorAll(".x").forEach(x => {
+    x.onclick = (ev) => { ev.stopPropagation(); fmClosePage(x.dataset.close); };
+  });
+
+  const body = $("#fm-body");
+  body.innerHTML = browsePageHTML(s) + s.tabs.map(filePageHTML).join("");
+  body.querySelectorAll(".fmpage").forEach(p =>
+    p.classList.toggle("on", p.dataset.page === s.active));
+  bindBrowse(s);
+  s.tabs.forEach(t => bindFilePage(t));
+}
+
+function browsePageHTML(s){
+  const rows = fmSorted(s);
+  const arrow = k => s.sort.key === k
+    ? '<span class="arrow">' + (s.sort.dir === 1 ? "▲" : "▼") + '</span>' : '';
+  let html = '<div class="fmpage" data-page="__browse__">' +
+    '<div class="fbnav">' +
+      // ★「回到默认目录」放在这一排的**最左边** —— 它是个"导航"动作，和 ⬅ ➡ ⬆ ⟳ 同类，
+      //   放子选项卡那一行的最右边（上一版）既不合群、也容易被当成"关掉什么"。
+      '<button class="iconbtn b-home" title="回到默认目录（这个包的目录）"></button>' +
+      '<button class="iconbtn b-back" title="后退"></button>' +
+      '<button class="iconbtn b-fwd" title="前进"></button>' +
+      '<button class="iconbtn b-up" title="向上一级（Backspace）"></button>' +
+      '<button class="iconbtn b-reload" title="刷新（F5）"></button>' +
+      '<div class="crumbs"></div>' +
+      '<div class="layers"></div>' +
+    '</div>' +
+    '<div class="fbtools">' +
+      '<button class="iconbtn b-newdir" title="新建文件夹"></button>' +
+      '<button class="iconbtn b-newfile" title="新建文件"></button>' +
+      '<button class="iconbtn b-rename" title="重命名（F2）"></button>' +
+      '<button class="iconbtn warn b-del" title="删除（Delete）→ 挪进回收站"></button>' +
+      '<span class="gap"></span>' +
+      '<button class="iconbtn b-copy" title="复制（Ctrl+C）"></button>' +
+      '<button class="iconbtn b-cut" title="剪切（Ctrl+X）"></button>' +
+      '<button class="iconbtn b-paste" title="粘贴（Ctrl+V）"></button>' +
+      '<span class="gap"></span>' +
+      '<button class="iconbtn b-default" title="用默认程序打开选中的东西"></button>' +
+      '<button class="iconbtn b-opendir" title="用 Windows 资源管理器打开这个文件夹"></button>' +
+    '</div>' +
+    '<div class="fbwrap"><table class="fb"><thead><tr>' +
+      '<th data-sort="name">名称' + arrow("name") + '</th>' +
+      '<th data-sort="mtime" style="width:150px">修改日期' + arrow("mtime") + '</th>' +
+      '<th data-sort="type" style="width:110px">类型' + arrow("type") + '</th>' +
+      '<th data-sort="size" style="width:100px">大小' + arrow("size") + '</th>' +
+    '</tr></thead><tbody>';
+  if (!rows.length){
+    html += '<tr><td colspan="4" class="dim" style="padding:22px;text-align:center">' +
+            '这个文件夹是空的</td></tr>';
+  }
+  for (const e of rows){
+    html += '<tr class="row' + (s.sel.has(e.rel) ? " sel" : "") + '" data-rel="' + esc(e.rel) +
+      '" data-dir="' + (e.dir ? 1 : 0) + '">' +
+      '<td class="nmcell">' + fileIconHTML(e, false) + '<span>' + esc(e.name) + '</span></td>' +
+      '<td class="dim">' + fmtTime(e.mtime) + '</td>' +
+      '<td class="dim">' + typeLabel(e) + '</td>' +
+      '<td class="num">' + (e.dir ? "" : humanSize(e.size)) + '</td></tr>';
+  }
+  html += '</tbody></table></div><div class="fbstatus"><span class="info">—</span>' +
+          '<span class="clipinfo"></span></div></div>';
+  return html;
+}
+
+function filePageHTML(t){
+  const meta = extOf({name: t.name, ext: (t.name.split(".").pop() || "").toLowerCase()});
+  let note = "";
+  if (t.binary) note = ico("binary", "i") + " 二进制文件，编辑不了；要看就用「默认程序打开」";
+  else if (t.note) note = ico("alert-triangle", "i") + " " + t.note;
+  else if (t.factory) note = ico("alert-triangle", "i") +
+      " 这是出厂件（system/）—— 能改，但将来升级时会被整体替换";
+  return '<div class="fmpage" data-page="' + esc(t.rel) + '">' +
+    '<div class="outbar">' +
+      '<span style="color:' + meta.c + ';display:flex">' + ico(meta.i, "i") + '</span>' +
+      '<span class="mono">' + esc(t.rel) + '</span>' +
+      // 猜到的编码写出来：不然遇到乱码不知道是"文件本来就这样"还是"猜错了"
+      (t.encodingNote ? '<span class="encnote">' + esc(t.encodingNote) + '</span>' : "") +
+      '<span class="dirtydot"' + (isDirty(t) ? "" : " hidden") + ' title="有未保存的改动"></span>' +
+      '<span style="flex:1"></span>' +
+      '<button class="iconbtn b-save" title="保存（Ctrl+S）"' + (isDirty(t) ? "" : " disabled") + '></button>' +
+      '<button class="iconbtn b-revert" title="放弃改动，重新读一遍"></button>' +
+      '<button class="iconbtn b-default" title="用系统默认程序打开"></button>' +
+      '<button class="iconbtn b-reveal" title="在资源管理器里显示"></button>' +
+      '<button class="iconbtn b-close" title="关闭这个选项卡"></button>' +
+    '</div>' +
+    (note ? '<div class="note">' + note + '</div>' : '') +
+    '<div class="editor"><pre aria-hidden="true"><code class="hljs"></code></pre>' +
+      '<textarea spellcheck="false" wrap="off"' + (t.binary ? " readonly" : "") + '></textarea></div>' +
+  '</div>';
+}
+
+/* ---- 浏览页的事件 ---- */
 function fmSorted(s){
   const {key, dir} = s.sort;
   return s.entries.slice().sort((a, b) => {
@@ -418,6 +486,153 @@ function fmSorted(s){
     return x < y ? -1 * dir : (x > y ? 1 * dir : 0);
   });
 }
+function fmPaintInfo(s, page){
+  const rows = fmSorted(s), n = s.sel.size;
+  const bytes = rows.filter(e => s.sel.has(e.rel) && !e.dir).reduce((a, e) => a + (e.size || 0), 0);
+  page.querySelector(".info").textContent = rows.length + " 项" +
+    (n ? " · 选中 " + n + " 项" + (bytes ? "（" + humanSize(bytes) + "）" : "") : "") +
+    " · " + (s.path || s.rel);
+  page.querySelector(".clipinfo").textContent = s.clip
+    ? ("剪贴板：" + s.clip.rels.length + " 项" + (s.clip.cut ? "（剪切）" : "（复制）")) : "";
+  const dis = (sel, need) => { const b = page.querySelector(sel); if (b) b.disabled = !need; };
+  dis(".b-rename", n === 1); dis(".b-del", n > 0); dis(".b-copy", n > 0); dis(".b-cut", n > 0);
+  dis(".b-default", n > 0); dis(".b-reveal", n > 0); dis(".b-paste", !!s.clip);
+}
+
+function bindBrowse(s){
+  const page = $('#fm-body .fmpage[data-page="__browse__"]');
+  if (!page) return;
+  const rows = fmSorted(s);
+  const setIcon = (sel, name) => { const b = page.querySelector(sel); if (b) b.innerHTML = ico(name, "i"); };
+  setIcon(".b-back", "corner-up-left"); setIcon(".b-fwd", "corner-up-right");
+  setIcon(".b-home", "home");
+  setIcon(".b-up", "arrow-up"); setIcon(".b-reload", "refresh-cw");
+  setIcon(".b-newdir", "folder-plus"); setIcon(".b-newfile", "file-plus");
+  setIcon(".b-rename", "pencil"); setIcon(".b-del", "trash-2");
+  setIcon(".b-copy", "copy"); setIcon(".b-cut", "scissors"); setIcon(".b-paste", "clipboard-paste");
+  setIcon(".b-default", "external-link"); setIcon(".b-opendir", "folder-open");
+
+  // 面包屑。★ `abs/` 那个上下文里第一段是相对写法，**不是**能点进去的目录
+  //   （`abs` 本身不是路径），所以它只当个标签："此电脑"。
+  const segs = (s.rel || "").split("/");
+  let acc = "", crumb = "";
+  const firstLabel = seg => seg === "user" ? "user_data"
+                          : (seg === "system" ? "system"
+                          : (seg === "abs" ? "此电脑" : seg));
+  segs.forEach((seg, i) => {
+    acc = i === 0 ? seg : acc + "/" + seg;
+    const label = i === 0 ? firstLabel(seg) : seg;
+    if (i) crumb += '<span class="sep">›</span>';
+    const last = (i === segs.length - 1);
+    const dead = (i === 0 && seg === "abs");        // "此电脑"点了没用，做成纯标签
+    crumb += (last || dead)
+      ? '<span class="here">' + esc(label) + '</span>'
+      : '<span class="seg" data-rel="' + esc(acc) + '">' + esc(label) + '</span>';
+  });
+  page.querySelector(".crumbs").innerHTML = crumb;
+  page.querySelectorAll(".crumbs .seg").forEach(el => { el.onclick = () => fmGoto(el.dataset.rel); });
+
+  page.querySelector(".b-home").onclick = fmHome;
+  page.querySelector(".b-home").title = isHistKey(FM.ctx)
+    ? "回到这条调用当初的目录" : "回到默认目录（这个包的目录）";
+  page.querySelector(".b-back").onclick = fmBack;
+  page.querySelector(".b-fwd").onclick = fmFwd;
+  page.querySelector(".b-up").onclick = fmUp;
+  page.querySelector(".b-up").disabled = fmAtTop(s.rel);
+  page.querySelector(".b-reload").onclick = fmRefresh;
+
+  /* 切换按钮：**跳到同一个包在另一层的目录**；那一层没有这个目录就不显示。
+     （`__all__` 上下文没有"这个包"，那时才是切到两个总根；
+       历史上下文是"磁盘上一个具体目录"，没有层可切，只标一下它在哪。） */
+  const layersBox = page.querySelector(".layers");
+  const hereLayer = (s.rel || "").split("/")[0];
+  let lhtml = "";
+  if (s.histCtx){
+    lhtml = '<span class="hint" style="align-self:center;margin-top:0;white-space:nowrap">历史调用所在的目录' +
+            (hereLayer === "abs" ? '（在 user_data / system 之外）' : "") + '</span>';
+  } else if (!s.pkg){
+    lhtml = '<button class="iconbtn' + (hereLayer === "user" ? " on" : "") +
+              '" data-go="user" title="user_data 根目录">user_data</button>' +
+            '<button class="iconbtn' + (hereLayer === "system" ? " on" : "") +
+              '" data-go="system" title="system 根目录">system</button>';
+  } else {
+    const cand = fmLayerRels(s.pkg);
+    if (s.layers.user)
+      lhtml += '<button class="iconbtn' + (hereLayer === "user" ? " on" : "") +
+        '" data-go="' + esc(cand.user) + '" title="user_data 里这个包的目录（' +
+        esc(cand.user) + '）">user_data</button>';
+    if (s.layers.system)
+      lhtml += '<button class="iconbtn' + (hereLayer === "system" ? " on" : "") +
+        '" data-go="' + esc(cand.system) + '" title="system 里这个包的目录（' +
+        esc(cand.system) + '）">system</button>';
+    if (!s.layers.user && !s.layers.system)
+      lhtml += '<span class="hint" style="align-self:center;margin-top:0;white-space:nowrap">这个包只在当前目录里</span>';
+  }
+  layersBox.innerHTML = lhtml;
+  layersBox.querySelectorAll("button").forEach(b => {
+    b.onclick = () => fmGoto(b.dataset.go);
+  });
+  page.querySelector(".b-newdir").onclick = () => fmCmd("newdir");
+  page.querySelector(".b-newfile").onclick = () => fmCmd("newfile");
+  page.querySelector(".b-rename").onclick = () => fmCmd("rename");
+  page.querySelector(".b-del").onclick = () => fmCmd("del");
+  page.querySelector(".b-copy").onclick = () => fmCmd("copy");
+  page.querySelector(".b-cut").onclick = () => fmCmd("cut");
+  page.querySelector(".b-paste").onclick = () => fmCmd("paste");
+  page.querySelector(".b-default").onclick = () => fmCmd("default");
+  page.querySelector(".b-opendir").onclick = () => fmCmd("opendir");
+
+  page.querySelectorAll("th[data-sort]").forEach(th => {
+    th.onclick = () => {
+      const k = th.dataset.sort;
+      s.sort = {key: k, dir: (s.sort.key === k ? -s.sort.dir : 1)};
+      fmRender();
+    };
+  });
+  page.querySelectorAll("tr.row").forEach((tr, idx) => {
+    const rel = tr.dataset.rel;
+    tr.onclick = (ev) => {
+      if (ev.ctrlKey || ev.metaKey){
+        s.sel.has(rel) ? s.sel.delete(rel) : s.sel.add(rel);
+        s.lastIdx = idx;
+      } else if (ev.shiftKey && s.lastIdx >= 0){
+        const a = Math.min(s.lastIdx, idx), b = Math.max(s.lastIdx, idx);
+        s.sel.clear();
+        for (let i = a; i <= b; i++) s.sel.add(rows[i].rel);
+      } else {
+        s.sel.clear(); s.sel.add(rel); s.lastIdx = idx;
+      }
+      page.querySelectorAll("tr.row").forEach(r2 =>
+        r2.classList.toggle("sel", s.sel.has(r2.dataset.rel)));
+      fmPaintInfo(s, page);
+    };
+    tr.ondblclick = () => (tr.dataset.dir === "1" ? fmGoto(rel) : fmOpenPage(rel));
+    tr.oncontextmenu = (ev) => {
+      ev.preventDefault();
+      if (!s.sel.has(rel)){
+        s.sel.clear(); s.sel.add(rel); s.lastIdx = idx;
+        page.querySelectorAll("tr.row").forEach(r2 =>
+          r2.classList.toggle("sel", s.sel.has(r2.dataset.rel)));
+        fmPaintInfo(s, page);
+      }
+      showCtx(ev.clientX, ev.clientY, rel);
+    };
+  });
+  page.querySelector(".fbwrap").oncontextmenu = (ev) => {
+    if (ev.target.closest("tr.row")) return;
+    ev.preventDefault();
+    s.sel.clear();
+    page.querySelectorAll("tr.row").forEach(r2 => r2.classList.remove("sel"));
+    fmPaintInfo(s, page);
+    showCtx(ev.clientX, ev.clientY, null);
+  };
+  page.querySelector(".b-back").disabled = s.hpos <= 0;
+  page.querySelector(".b-fwd").disabled = s.hpos >= s.hist.length - 1;
+  page.querySelector(".b-up").disabled = segs.length <= 1;
+  fmPaintInfo(s, page);
+}
+
+/* ---- 文件页（子选项卡）的事件 ---- */
 function hlInto(t, code){
   const text = t.text || "";
   if (text.length > 300000){ code.textContent = text + "\n"; return; }
@@ -429,391 +644,88 @@ function hlInto(t, code){
   }
   code.textContent = text + "\n";
 }
-
-/* ================================================================ 界面（Vue 3 组件）
-   三个组件，一个状态：父组件管子选项卡条和页面容器，两个子组件各画一页。
-   `active` 而不是 `on` 当 prop 名 —— `on` 在 Vue 里是事件前缀那一族，别去蹭。
-
-   ★ 模板里那些 `v-html='ico("save", "i")'` 为什么用单引号包属性：里面的 JS 用双引号，
-     正好让 `tools/界面检查`（静态检查脚本）那条"ico() 的图标名都在 lucide 表里"
-     继续能扫到（它按 `ico("名字"` 匹配）。
-   ★ 图标用 `v-html` 直接写在按钮上（和原来 `b.innerHTML = ico(...)` 生成的 DOM 一模一样）；
-     子选项卡条那颗图标外面多包了一层 `<span>`（一个按钮里既有图标又有文字，
-     `v-html` 只能在元素上），`.fmtab` / `svg.i` 那两条 CSS 不受影响。 */
-
-const MossFilePage = {
-  name: "moss-file-page",
-  props: {
-    t: {type: Object, required: true},
-    active: {type: Boolean, default: false},
-  },
-  template: `
-<div class="fmpage" :class="{on: active}" :data-page="t.rel">
-  <div class="outbar">
-    <span :style="'color:' + meta.c + ';display:flex'" v-html='ico(meta.i, "i")'></span>
-    <span class="mono">{{ t.rel }}</span>
-    <!-- 猜到的编码写出来：不然遇到乱码不知道是"文件本来就这样"还是"猜错了" -->
-    <span v-if="t.encodingNote" class="encnote">{{ t.encodingNote }}</span>
-    <span class="dirtydot" :hidden="!dirty" title="有未保存的改动"></span>
-    <span style="flex:1"></span>
-    <button class="iconbtn b-save" title="保存（Ctrl+S）" :disabled="!dirty"
-            v-html='ico("save", "i")' @click="save"></button>
-    <button class="iconbtn b-revert" title="放弃改动，重新读一遍"
-            v-html='ico("undo-2", "i")' @click="revert"></button>
-    <button class="iconbtn b-default" title="用系统默认程序打开"
-            v-html='ico("external-link", "i")' @click="openDefault"></button>
-    <button class="iconbtn b-reveal" title="在资源管理器里显示"
-            v-html='ico("folder-open", "i")' @click="reveal"></button>
-    <button class="iconbtn b-close" title="关闭这个选项卡"
-            v-html='ico("x", "i")' @click="close"></button>
-  </div>
-  <div class="note" v-if="note" v-html="note"></div>
-  <div class="editor">
-    <pre aria-hidden="true" ref="pre"><code class="hljs" ref="code"></code></pre>
-    <textarea spellcheck="false" wrap="off" ref="ta" :readonly="!!t.binary"
-              :value="t.text" @input="onInput" @scroll="onScroll"
-              @keydown="onKeydown"></textarea>
-  </div>
-</div>`,
-  data(){
-    return {_hlTimer: null};       // 输入停下 120ms 再高亮（原来那套防抖，一个字没改）
-  },
-  computed: {
-    // 后缀 → 图标 / 颜色 / 语言（`core.js` 的 `EXT` / `NO_EXT`，只有一份）
-    meta(){ return extOf({name: this.t.name, ext: (this.t.name.split(".").pop() || "").toLowerCase()}); },
-    dirty(){ return isDirty(this.t); },
-    note(){
-      if (this.t.binary) return ico("binary", "i") + " 二进制文件，编辑不了；要看就用「默认程序打开」";
-      if (this.t.note) return ico("alert-triangle", "i") + " " + this.t.note;
-      if (this.t.factory) return ico("alert-triangle", "i") +
-          " 这是出厂件（system/）—— 能改，但将来升级时会被整体替换";
-      return "";
-    },
-  },
-  mounted(){
-    // 组件刚挂上时 `t.text` 还没进过 textarea 的高亮层，画一遍
-    hlInto(this.t, this.$refs.code);
-    // 双击一个**已经开着**的文件也会走到这儿吗？不会 —— 那种情况组件早就挂着了，
-    // 光标由 `fmFocusActiveSoon()` 负责（和原来的行为一致）。
-  },
-  beforeUnmount(){ clearTimeout(this._hlTimer); },
-  methods: {
-    /* ---- 编辑器：输入 / 滚动 / 快捷键 ---- */
-    onInput(ev){
-      this.t.text = ev.target.value;
-      clearTimeout(this._hlTimer);
-      this._hlTimer = setTimeout(() => {
-        if (this.$refs.code) hlInto(this.t, this.$refs.code);
-      }, 120);
-    },
-    onScroll(){
-      // 高亮层和输入层是**两张叠在一起的层**，滚动得手动同步（原来也这样）
-      const pre = this.$refs.pre, ta = this.$refs.ta;
-      pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft;
-    },
-    onKeydown(ev){
-      const ta = this.$refs.ta;
-      if (ev.key === "Tab"){
-        ev.preventDefault();
-        const p = ta.selectionStart;
-        ta.value = ta.value.slice(0, p) + "    " + ta.value.slice(ta.selectionEnd);
-        ta.selectionStart = ta.selectionEnd = p + 4;
-        this.t.text = ta.value; hlInto(this.t, this.$refs.code);
-      }
-      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s"){
-        ev.preventDefault(); fmSave(this.t);
-      }
-    },
-    /* ---- 标题栏那三颗 + 关闭 ---- */
-    save(){ fmSave(this.t); },
-    revert(){
-      const t = this.t;
-      askConfirm("放弃改动", "“" + t.name + "” 重新从磁盘读一遍，没保存的改动会丢。确定吗？", async () => {
-        const r = await pywebview.api.fs_read(t.rel);
-        if (!r.ok){ toast("✗ " + r.msg, true); return; }
-        t.text = r.text || ""; t.original = r.text || "";
-        // textarea 的 value 由 `:value="t.text"` 在下一帧补上；高亮层得自己补
-        this.$nextTick(() => { if (this.$refs.code) hlInto(t, this.$refs.code); });
-      });
-    },
-    openDefault(){
-      pywebview.api.fs_open_default(this.t.rel).then(r => toast(r.msg, !r.ok));
-    },
-    reveal(){
-      pywebview.api.fs_reveal(this.t.rel).then(r => toast(r.msg, !r.ok));
-    },
-    close(){ fmClosePage(this.t.rel); },
-  },
-};
-
-const MossFileBrowse = {
-  name: "moss-file-browse",
-  props: {
-    s: {type: Object, required: true},
-    active: {type: Boolean, default: false},
-  },
-  template: `
-<div class="fmpage" :class="{on: active}" data-page="__browse__">
-  <div class="fbnav">
-    <!-- ★「回到默认目录」放在这一排的**最左边** —— 它是个"导航"动作，和 ⬅ ➡ ⬆ ⟳ 同类 -->
-    <button class="iconbtn b-home" :title="homeTitle" v-html='ico("home", "i")'
-            @click="fmHome()"></button>
-    <button class="iconbtn b-back" title="后退" :disabled="s.hpos <= 0"
-            v-html='ico("corner-up-left", "i")' @click="fmBack()"></button>
-    <button class="iconbtn b-fwd" title="前进" :disabled="s.hpos >= s.hist.length - 1"
-            v-html='ico("corner-up-right", "i")' @click="fmFwd()"></button>
-    <button class="iconbtn b-up" title="向上一级（Backspace）" :disabled="atTop"
-            v-html='ico("arrow-up", "i")' @click="fmUp()"></button>
-    <button class="iconbtn b-reload" title="刷新（F5）" v-html='ico("refresh-cw", "i")'
-            @click="fmRefresh()"></button>
-    <!-- 面包屑。★ abs/ 那个上下文里第一段是相对写法，**不是**能点进去的目录
-         （abs 本身不是路径），所以它只当个标签："此电脑"。 -->
-    <div class="crumbs"><template v-for="(c, i) in crumbs" :key="i"
-      ><span v-if="i" class="sep">›</span
-      ><span v-if="c.here" class="here">{{ c.label }}</span
-      ><span v-else class="seg" :data-rel="c.rel" @click="fmGoto(c.rel)">{{ c.label }}</span
-    ></template></div>
-    <div class="layers">
-      <span v-if="s.histCtx" class="hint"
-            style="align-self:center;margin-top:0;white-space:nowrap"
-            >历史调用所在的目录{{ hereLayer === "abs" ? "（在 user_data / system 之外）" : "" }}</span>
-      <template v-else-if="!s.pkg">
-        <button class="iconbtn" :class="{on: hereLayer === 'user'}" data-go="user"
-                title="user_data 根目录" @click="fmGoto('user')">user_data</button>
-        <button class="iconbtn" :class="{on: hereLayer === 'system'}" data-go="system"
-                title="system 根目录" @click="fmGoto('system')">system</button>
-      </template>
-      <template v-else>
-        <button v-if="s.layers.user" class="iconbtn" :class="{on: hereLayer === 'user'}"
-                :data-go="cand.user"
-                :title="'user_data 里这个包的目录（' + cand.user + '）'"
-                @click="fmGoto(cand.user)">user_data</button>
-        <button v-if="s.layers.system" class="iconbtn" :class="{on: hereLayer === 'system'}"
-                :data-go="cand.system"
-                :title="'system 里这个包的目录（' + cand.system + '）'"
-                @click="fmGoto(cand.system)">system</button>
-        <span v-if="!s.layers.user && !s.layers.system" class="hint"
-              style="align-self:center;margin-top:0;white-space:nowrap">这个包只在当前目录里</span>
-      </template>
-    </div>
-  </div>
-
-  <div class="fbtools">
-    <button class="iconbtn b-newdir" title="新建文件夹" v-html='ico("folder-plus", "i")'
-            @click="fmCmd('newdir')"></button>
-    <button class="iconbtn b-newfile" title="新建文件" v-html='ico("file-plus", "i")'
-            @click="fmCmd('newfile')"></button>
-    <button class="iconbtn b-rename" title="重命名（F2）" :disabled="selN !== 1"
-            v-html='ico("pencil", "i")' @click="fmCmd('rename')"></button>
-    <button class="iconbtn warn b-del" title="删除（Delete）→ 挪进回收站" :disabled="!selN"
-            v-html='ico("trash-2", "i")' @click="fmCmd('del')"></button>
-    <span class="gap"></span>
-    <button class="iconbtn b-copy" title="复制（Ctrl+C）" :disabled="!selN"
-            v-html='ico("copy", "i")' @click="fmCmd('copy')"></button>
-    <button class="iconbtn b-cut" title="剪切（Ctrl+X）" :disabled="!selN"
-            v-html='ico("scissors", "i")' @click="fmCmd('cut')"></button>
-    <button class="iconbtn b-paste" title="粘贴（Ctrl+V）" :disabled="!s.clip"
-            v-html='ico("clipboard-paste", "i")' @click="fmCmd('paste')"></button>
-    <span class="gap"></span>
-    <button class="iconbtn b-default" title="用默认程序打开选中的东西" :disabled="!selN"
-            v-html='ico("external-link", "i")' @click="fmCmd('default')"></button>
-    <button class="iconbtn b-opendir" title="用 Windows 资源管理器打开这个文件夹"
-            v-html='ico("folder-open", "i")' @click="fmCmd('opendir')"></button>
-  </div>
-
-  <div class="fbwrap" @contextmenu="wrapCtx">
-    <table class="fb"><thead><tr>
-      <th data-sort="name" @click="sortBy('name')">名称<span v-if="s.sort.key === 'name'"
-          class="arrow">{{ s.sort.dir === 1 ? "▲" : "▼" }}</span></th>
-      <th data-sort="mtime" style="width:150px" @click="sortBy('mtime')">修改日期<span
-          v-if="s.sort.key === 'mtime'" class="arrow">{{ s.sort.dir === 1 ? "▲" : "▼" }}</span></th>
-      <th data-sort="type" style="width:110px" @click="sortBy('type')">类型<span
-          v-if="s.sort.key === 'type'" class="arrow">{{ s.sort.dir === 1 ? "▲" : "▼" }}</span></th>
-      <th data-sort="size" style="width:100px" @click="sortBy('size')">大小<span
-          v-if="s.sort.key === 'size'" class="arrow">{{ s.sort.dir === 1 ? "▲" : "▼" }}</span></th>
-    </tr></thead><tbody>
-      <tr v-if="!rows.length"><td colspan="4" class="dim"
-          style="padding:22px;text-align:center">这个文件夹是空的</td></tr>
-      <tr v-for="(e, idx) in rows" :key="e.rel" class="row" :class="{sel: s.sel.has(e.rel)}"
-          :data-rel="e.rel" :data-dir="e.dir ? 1 : 0"
-          @click="rowClick(e, idx, $event)" @dblclick="rowDbl(e)"
-          @contextmenu="rowCtx(e, idx, $event)">
-        <td class="nmcell" v-html="fileIconHTML(e, false) + '<span>' + esc(e.name) + '</span>'"></td>
-        <td class="dim">{{ fmtTime(e.mtime) }}</td>
-        <td class="dim">{{ typeLabel(e) }}</td>
-        <td class="num">{{ e.dir ? "" : humanSize(e.size) }}</td>
-      </tr>
-    </tbody></table>
-  </div>
-
-  <div class="fbstatus"><span class="info">{{ infoText }}</span
-    ><span class="clipinfo">{{ clipText }}</span></div>
-</div>`,
-  computed: {
-    // ★ `DATA`（包表）不是响应式的：读一下版本号登记依赖。目录名被"对齐目录名"改过
-    //   之后，这两颗切换按钮要跳的目录也得跟着换（否则跳进一个不存在的目录）。
-    pkgsRev(){ return FM.rev; },
-    segs(){ return (this.s.rel || "").split("/"); },
-    crumbs(){
-      // 面包屑：逐段累加出 rel。第一段显示成人话（user → user_data…），
-      // 而且**最后一段**（当前目录）和 `abs` 那一段是纯标签，不能点。
-      let acc = "";
-      return this.segs.map((seg, i) => {
-        acc = i === 0 ? seg : acc + "/" + seg;
-        const label = i === 0
-          ? (seg === "user" ? "user_data" : (seg === "system" ? "system"
-             : (seg === "abs" ? "此电脑" : seg)))
-          : seg;
-        return {label: label, rel: acc, here: (i === this.segs.length - 1) || (i === 0 && seg === "abs")};
-      });
-    },
-    rows(){ return fmSorted(this.s); },
-    hereLayer(){ return (this.s.rel || "").split("/")[0]; },
-    homeTitle(){
-      return isHistKey(FM.ctx) ? "回到这条调用当初的目录" : "回到默认目录（这个包的目录）";
-    },
-    // ★ 这一条和 `fmAtTop()` **不是**同一个判据：原来 `bindBrowse` 里先按 `fmAtTop(s.rel)`
-    //   设过一次 disabled，紧接着（`V-67` 那份代码的第 631 行）又用 `segs.length <= 1`
-    //   覆盖了它。后写的算数，所以这里照**结果**写。`V-69` 只搬结构，不顺手改行为。
-    atTop(){ return this.segs.length <= 1; },
-    selN(){ return this.s.sel.size; },
-    cand(){
-      void this.pkgsRev;                    // 见 `pkgsRev` 的注释
-      return this.s.pkg ? fmLayerRels(this.s.pkg) : {user: "", system: ""};
-    },
-    infoText(){
-      const s = this.s, rows = this.rows, n = s.sel.size;
-      const bytes = rows.filter(e => s.sel.has(e.rel) && !e.dir)
-                        .reduce((a, e) => a + (e.size || 0), 0);
-      return rows.length + " 项" +
-        (n ? " · 选中 " + n + " 项" + (bytes ? "（" + humanSize(bytes) + "）" : "") : "") +
-        " · " + (s.path || s.rel);
-    },
-    clipText(){
-      const c = this.s.clip;
-      return c ? ("剪贴板：" + c.rels.length + " 项" + (c.cut ? "（剪切）" : "（复制）")) : "";
-    },
-  },
-  methods: {
-    /* ---- 表头排序 ---- */
-    sortBy(k){
-      const s = this.s;
-      s.sort = {key: k, dir: (s.sort.key === k ? -s.sort.dir : 1)};
-    },
-    /* ---- 选中：普通点击 / Ctrl 点 / Shift 点（和原来逐字一致）---- */
-    rowClick(e, idx, ev){
-      const s = this.s, rows = this.rows;
-      if (ev.ctrlKey || ev.metaKey){
-        s.sel.has(e.rel) ? s.sel.delete(e.rel) : s.sel.add(e.rel);
-        s.lastIdx = idx;
-      } else if (ev.shiftKey && s.lastIdx >= 0){
-        const a = Math.min(s.lastIdx, idx), b = Math.max(s.lastIdx, idx);
-        s.sel.clear();
-        for (let i = a; i <= b; i++) s.sel.add(rows[i].rel);
-      } else {
-        s.sel.clear(); s.sel.add(e.rel); s.lastIdx = idx;
-      }
-    },
-    rowDbl(e){ e.dir ? fmGoto(e.rel) : fmOpenPage(e.rel); },
-    /* 右键：点在**没选中**的那一行上，先把选中换成它（和资源管理器一样）。 */
-    rowCtx(e, idx, ev){
-      ev.preventDefault();
-      const s = this.s;
-      if (!s.sel.has(e.rel)){
-        s.sel.clear(); s.sel.add(e.rel); s.lastIdx = idx;
-      }
-      showCtx(ev.clientX, ev.clientY, e.rel);
-    },
-    /* 空白处的右键：清空选中，菜单是"新建 / 粘贴 / 刷新"那一套 */
-    wrapCtx(ev){
-      if (ev.target.closest("tr.row")) return;
-      ev.preventDefault();
-      this.s.sel.clear();
-      showCtx(ev.clientX, ev.clientY, null);
-    },
-  },
-};
-
-const MossFileManager = {
-  name: "moss-file-manager",
-  components: {MossFileBrowse: MossFileBrowse, MossFilePage: MossFilePage},
-  template: `
-<div id="fm-bar">
-  <button class="fmtab" :class="{on: s.active === '__browse__'}" data-fm="__browse__"
-          title="目录浏览（这一页不能关）" @click="s.active = '__browse__'">
-    <span v-html='ico("folder", "i")'></span><span class="fname">{{ tabLabel }}</span>
-  </button>
-  <button v-for="t in s.tabs" :key="t.rel" class="fmtab" :class="{on: s.active === t.rel}"
-          :data-fm="t.rel" :title="t.rel" @click="s.active = t.rel">
-    <span :style="'color:' + tabIcon(t).c + ';display:flex'" v-html='ico(tabIcon(t).i, "i")'></span>
-    <span class="fname">{{ t.name }}</span>
-    <span v-if="isDirty(t)" class="fdot" title="有未保存的改动"></span>
-    <span class="x" :data-close="t.rel" title="关闭" @click.stop="fmClosePage(t.rel)">×</span>
-  </button>
-</div>
-<div class="fmwrap" id="fm-body">
-  <moss-file-browse :s="s" :active="s.active === '__browse__'"></moss-file-browse>
-  <moss-file-page v-for="t in s.tabs" :key="t.rel" :t="t"
-                  :active="s.active === t.rel"></moss-file-page>
-</div>`,
-  computed: {
-    s(){ return FM.st[FM.ctx || "__all__"] || fmState(FM.ctx); },
-    tabLabel(){
-      void FM.rev;              // 包表换了要重算（见 `FM.rev` 的注释）
-      return fmLabel(FM.ctx);
-    },
-  },
-  methods: {
-    tabIcon(t){
-      return extOf({name: t.name, ext: (t.name.split(".").pop() || "").toLowerCase()});
-    },
-  },
-};
-
-/* 模板里要用的那些全局函数（`ico` / `esc` / `fmGoto` …）。
-   ★ 为什么显式登记：Vue 的运行时编译器是 `with(this)` 那套，模板里的标识符本来
-     也能落到全局作用域去 —— 但那是"能跑就行"的隐式行为；登记一遍，谁都看得见
-     这个函数是从哪来的（也免得以后换构建模式就悄悄失效）。 */
-const FM_TEMPLATE_HELPERS = {
-  ico: ico, esc: esc, isDirty: isDirty,
-  fileIconHTML: fileIconHTML, fmtTime: fmtTime, typeLabel: typeLabel, humanSize: humanSize,
-  fmGoto: fmGoto, fmHome: fmHome, fmBack: fmBack, fmFwd: fmFwd, fmUp: fmUp,
-  fmRefresh: fmRefresh, fmCmd: fmCmd, fmClosePage: fmClosePage,
-};
-
-/* ---- 挂载 + 外面认的那两个"重画"门面 ----
-   `fmRender()` / `fmPaintBar()` 原来真的是把 DOM 重画一遍；现在界面是响应式的，
-   它俩只剩两件事：① 第一次调用把组件挂到 `#pane-file` 上；
-   ② 兜底 `$forceUpdate()`（包表/历史不是响应式，`refreshPkgs()` 这类地方
-   照旧喊一声"重画"，跟拆分之前的分工一样）。
-   ★ 挂载点是 `#pane-file`：模板的根是**两个**兄弟节点（`#fm-bar` + `#fm-body`），
-     Vue 3 允许（fragment 根），挂上去之后 index.html 里那两个占位 div 会被换掉。 */
-let _fmApp = null;
-
-function fmApp(){
-  if (!_fmApp){
-    const host = document.getElementById("pane-file");
-    if (!host) return null;
-    const app = Vue.createApp(MossFileManager);
-    Object.assign(app.config.globalProperties, FM_TEMPLATE_HELPERS);
-    _fmApp = app.mount(host);
-  }
-  return _fmApp;
+function pageOf(rel){
+  // ★ 不用 `[data-page="…"]` 选择器去找：文件名里可能有引号/反斜杠，
+  //   拼进选择器会炸（也不安全）。直接遍历比对 dataset。
+  const pages = document.querySelectorAll("#fm-body .fmpage");
+  for (const p of pages) if (p.dataset.page === rel) return p;
+  return null;
 }
-function fmRender(){ const a = fmApp(); if (a) a.$forceUpdate(); }
-function fmPaintBar(){ const a = fmApp(); if (a) a.$forceUpdate(); }
+function fmPaintDirty(t){
+  const page = pageOf(t.rel);
+  if (page){
+    const dot = page.querySelector(".dirtydot");
+    if (dot) dot.hidden = !isDirty(t);
+    const save = page.querySelector(".b-save");
+    if (save) save.disabled = !isDirty(t);
+  }
+  fmPaintBar();
+}
+function fmPaintBar(){
+  const s = fmState(FM.ctx);
+  const bar = $("#fm-bar");
+  bar.querySelectorAll(".fmtab").forEach(b => {
+    const rel = b.dataset.fm;
+    if (rel === "__browse__") return;
+    const t = s.tabs.find(x => x.rel === rel);
+    const has = b.querySelector(".fdot");
+    if (t && isDirty(t) && !has){
+      const sp = document.createElement("span");
+      sp.className = "fdot"; sp.title = "有未保存的改动";
+      b.insertBefore(sp, b.querySelector(".x"));
+    } else if ((!t || !isDirty(t)) && has){
+      has.remove();
+    }
+  });
+}
+function bindFilePage(t){
+  const page = pageOf(t.rel);
+  if (!page) return;
+  const ta = page.querySelector("textarea"), code = page.querySelector("code");
+  ta.value = t.text || "";
+  hlInto(t, code);
+  const setIcon = (sel, name) => { const b = page.querySelector(sel); if (b) b.innerHTML = ico(name, "i"); };
+  setIcon(".b-save", "save"); setIcon(".b-revert", "undo-2");
+  setIcon(".b-default", "external-link"); setIcon(".b-reveal", "folder-open");
+  setIcon(".b-close", "x");
 
-/* 把光标放进当前那一页的编辑器里（`fmOpenPage` 打开文件时用）。
-   ★ 原来是在 `pageOf(rel).querySelector("textarea")` 上同步 focus；现在 DOM 由 Vue
-     在下一帧画出来，所以走 `$nextTick`。判据照旧：二进制那页（textarea readonly）不抢焦点。 */
-function fmFocusActiveSoon(){
-  const go = () => {
-    const page = document.querySelector("#fm-body .fmpage.on");
-    const ta = page && page.querySelector("textarea");
-    if (ta && !ta.readOnly) ta.focus();
+  let timer = null;
+  ta.addEventListener("input", () => {
+    t.text = ta.value;
+    clearTimeout(timer);
+    timer = setTimeout(() => hlInto(t, code), 120);
+    fmPaintDirty(t);
+  });
+  ta.addEventListener("scroll", () => {
+    const pre = code.parentElement;
+    pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft;
+  });
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Tab"){
+      e.preventDefault();
+      const p = ta.selectionStart;
+      ta.value = ta.value.slice(0, p) + "    " + ta.value.slice(ta.selectionEnd);
+      ta.selectionStart = ta.selectionEnd = p + 4;
+      t.text = ta.value; hlInto(t, code); fmPaintDirty(t);
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s"){ e.preventDefault(); fmSave(t); }
+  });
+  page.querySelector(".b-save").onclick = () => fmSave(t);
+  page.querySelector(".b-revert").onclick = () => {
+    askConfirm("放弃改动", "“" + t.name + "” 重新从磁盘读一遍，没保存的改动会丢。确定吗？", async () => {
+      const r = await pywebview.api.fs_read(t.rel);
+      if (!r.ok){ toast("✗ " + r.msg, true); return; }
+      t.text = r.text || ""; t.original = r.text || "";
+      ta.value = t.text; hlInto(t, code); fmPaintDirty(t);
+    });
   };
-  const a = fmApp();
-  if (a) a.$nextTick(go); else go();
+  page.querySelector(".b-default").onclick = async () => {
+    const r = await pywebview.api.fs_open_default(t.rel); toast(r.msg, !r.ok);
+  };
+  page.querySelector(".b-reveal").onclick = async () => {
+    const r = await pywebview.api.fs_reveal(t.rel); toast(r.msg, !r.ok);
+  };
+  page.querySelector(".b-close").onclick = () => fmClosePage(t.rel);
 }
 
 /* ---- 文件操作（浏览页的按钮 / 右键菜单 / 键盘）---- */
