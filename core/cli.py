@@ -1085,6 +1085,16 @@ def main(argv):
         return cmd_remove(args[0], table, assume_yes=yes)
     if first == "--spec":
         return cmd_spec()
+    if first == "--ui-payload":
+        # 界面用的那份数据（JSON），**只有 JSON、没有横幅** —— 界面拿它刷新包列表。
+        # 为什么要有：宿主在启动时把 payload 写成一个文件交给界面，那份文件是**快照**；
+        # 新建 / 卸载一个包之后界面再读它还是旧的（列表里看不到新包，详情也拿不到目录）。
+        # 所以界面需要一条"重新问一遍"的路 —— 这条就是。不给用户用，USAGE 里也不列。
+        import json as _json
+        from . import ui as _ui
+        sys.stdout.write(_json.dumps(_ui.build_payload(), ensure_ascii=False))
+        sys.stdout.flush()
+        return 0
     if first == "--new":
         if not rest:
             out.print_cyan("[错误] --new 需要一个包 id。例：moss --new my-first")
