@@ -63,7 +63,7 @@ BROWSERS = [
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "drop-hot", "drop-dir", "drop-file", "console-input", "embed",
-          "statusbar", "settings", "settings-bad", "settings-warn",
+          "statusbar", "settings", "settings-bad", "settings-warn", "settings-tip",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail"]
 
@@ -778,7 +778,7 @@ MOCK_JS = r"""
       if (h === "settings"){
         await openSettings();
         await sleep(700);                        // 等第一次"检查"回来（宿主那一圈）
-        const rows = document.querySelectorAll("#set-body .set-row").length;
+        const rows = document.querySelectorAll("#set-body .set-cell").length;
         const groups = document.querySelectorAll("#set-body .set-group").length;
         const hasX = !!document.querySelector("#set-close svg");
         const kinds = {
@@ -786,15 +786,30 @@ MOCK_JS = r"""
           sym: document.querySelectorAll("#set-body .syminp").length,
           txt: document.querySelectorAll("#set-body .txtinp").length,
           step: document.querySelectorAll("#set-body .step").length};
-        const liveText = (document.querySelector("#set-live") || {}).textContent || "";
-        const depthNote = (document.querySelector(
-          '#set-body .set-row[data-key="search.max_parent_depth"] [data-role="now"]') || {})
-          .textContent || "";
+        const liveText = (document.querySelector("#set-bare") || {}).textContent || "";
+        // 「现在是什么样」现在只在 hover 提示里（`V-65`）：把鼠标放上去再读
+        const dcell = document.querySelector(
+          '#set-body .set-cell[data-key="search.max_parent_depth"]');
+        if (dcell) dcell.dispatchEvent(new MouseEvent("mouseover", {bubbles: true}));
+        await sleep(250);
+        const depthNote = ((document.querySelector("#tip") || {}).textContent || "");
+        hideTip();
         const save0 = document.querySelector("#set-save");
         const disabledAtStart = save0.disabled;   // 还没改：保存该是灰的
-        // ★ 选控件要选到**输入框**那一层：行（`.set-row`）自己也有 `data-key`
+        // ★ 选控件要选到**输入框**那一层：格子（`.set-cell`）自己也有 `data-key`
         const sym = document.querySelector(
-          '#set-body .set-row[data-key="symbols.no_chdir_mode"] .syminp');
+          '#set-body .set-cell[data-key="symbols.no_chdir_mode"] .syminp');
+        // 顺手把第一格的**实际排版**量出来（`V-65`：短标签 + 小控件 + 一行好几个，
+        // 光看截图不好判断"标签是不是被挤没了"，把宽度写进 DIAG 一眼就知道）
+        const c0 = document.querySelector('#set-body .set-cell[data-key="symbols.path_mode"]');
+        const i0 = c0 ? c0.querySelector(".syminp") : null;
+        const l0 = c0 ? c0.querySelector(".set-lbl") : null;
+        const layout = c0 ? ("cell=" + Math.round(c0.getBoundingClientRect().width) +
+          " inp=" + (i0 ? getComputedStyle(i0).width : "-") +
+          " lbl=" + (l0 ? Math.round(l0.getBoundingClientRect().width) : "-") +
+          " cols=" + getComputedStyle(c0.parentElement).gridTemplateColumns +
+          " 文字=" + JSON.stringify(l0 ? l0.textContent : "")) : "（没有那一格）";
+        const layout0 = layout;      // 改之前那一眼的排版（断言用）
         if (sym){ sym.value = "@"; sym.dispatchEvent(new Event("input", {bubbles: true})); }
         await sleep(700);                         // 等检查回来（该放行保存）
         const stateMoved = (document.querySelector("#set-state") || {}).textContent || "";
@@ -806,16 +821,24 @@ MOCK_JS = r"""
         await openSettings();                     // 再打开：留给截图看个完整的
         await sleep(700);
         const opened = document.querySelector("#settings").classList.contains("on");
-        const ok = rows === 16 && groups === 4 && hasX && kinds.sw === 8 && kinds.sym === 4 &&
+        const ok = rows === 16 && groups === 3 && hasX && kinds.sw === 8 && kinds.sym === 4 &&
                    kinds.txt === 3 && kinds.step === 1 && disabledAtStart && enabledAfter &&
                    /改了 1 项/.test(stateMoved) && /裸名/.test(liveText) &&
+                   /inp=44px/.test(layout0) &&
                    /一共 4 个目录/.test(depthNote) && closedAfterSave && opened &&
                    Object.keys(saved).length === 1 && saved["symbols.no_chdir_mode"] === "@";
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 行=" + rows + " 组=" + groups + " ×=" + (hasX ? 1 : 0) +
+          "DIAG " + (ok ? "OK" : "FAIL") + " 格=" + rows + " 组=" + groups + " ×=" + (hasX ? 1 : 0) +
           " 控件=" + JSON.stringify(kinds) + " 存了=" + JSON.stringify(saved) +
-          " 保存钮 起/改=" + (disabledAtStart ? "灰" : "亮") + "/" + (enabledAfter ? "亮" : "灰");
-        document.title = ok ? "READY" : "SETTINGS-FAIL";
+          " 保存钮 起/改=" + (disabledAtStart ? "灰" : "亮") + "/" + (enabledAfter ? "亮" : "灰") +
+          " ｜排版 " + layout;
+        document.title = ok ? "READY" : ("SETTINGS-FAIL 格=" + rows + " 组=" + groups +
+          " ×=" + (hasX ? 1 : 0) + " sw=" + kinds.sw + " sym=" + kinds.sym + " txt=" + kinds.txt +
+          " step=" + kinds.step + " 起灰=" + disabledAtStart + " 改亮=" + enabledAfter +
+          " 挪=" + /改了 1 项/.test(stateMoved) + " 徽=" + /裸名/.test(liveText) +
+          " 排=" + /inp=44px/.test(layout0) + " 深=" + /一共 4 个目录/.test(depthNote) +
+          " 关=" + closedAfterSave + " 开=" + opened +
+          " 存=" + Object.keys(saved).length + " 值=" + saved["symbols.no_chdir_mode"]);
       }
       // ★ 冲突那一路（`V-63`）：把「跑包」的前缀清空 ⇒ 和「路径调用」同时留空。
       //   期望：那一行飘红、控件也红、脚上写着为什么、**保存按钮禁用**；截图留在这个状态。
@@ -823,26 +846,26 @@ MOCK_JS = r"""
         await openSettings();
         await sleep(700);
         const inp = document.querySelector(
-          '#set-body .set-row[data-key="symbols.plugin_mode"] .syminp');
+          '#set-body .set-cell[data-key="symbols.plugin_mode"] .syminp');
         if (inp){ inp.value = ""; inp.dispatchEvent(new Event("input", {bubbles: true})); }
         await sleep(800);                         // 等检查回来
         // ★ 一条冲突牵涉两行（主行 + `also`）：**两行都要红**，原因写在主行上。
         //   所以这里按"红了几行 + 有没有那句原因"判，别只盯某一行（换一边改就换一行报）。
         let redCount = 0, reason = "";
-        document.querySelectorAll("#set-body .set-row").forEach(r => {
-          if (r.classList.contains("bad")) redCount++;
-          const w = r.querySelector('[data-role="why"]');
+        document.querySelectorAll("#set-body .set-cell").forEach(c => {
+          if (c.classList.contains("bad")) redCount++;
+          const w = c.querySelector('[data-role="prob"]');
           if (w && w.textContent) reason += " " + w.textContent;
         });
         const redRaw = redCount === 2;
-        const live = document.querySelector("#set-live");
-        const liveBad = !!live && live.classList.contains("bad");
+        const badge = document.querySelector("#set-bare");
+        const liveBad = !!badge && badge.classList.contains("bad");
         const st = (document.querySelector("#set-state") || {}).textContent || "";
         const disabled = document.querySelector("#set-save").disabled;
         const ok = redRaw && /不能同时留空/.test(reason) && liveBad && /冲突/.test(st) && disabled;
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 红了几行=" + redCount +
-          " 活预览红=" + (liveBad ? 1 : 0) + " 保存禁用=" + (disabled ? 1 : 0) +
+          "DIAG " + (ok ? "OK" : "FAIL") + " 红了几格=" + redCount +
+          " 徽标红=" + (liveBad ? 1 : 0) + " 保存禁用=" + (disabled ? 1 : 0) +
           " 脚上写着=" + JSON.stringify(st.slice(0, 34));
         document.title = ok ? "READY" : "SETTINGS-BAD-FAIL";
       }
@@ -852,17 +875,21 @@ MOCK_JS = r"""
         await openSettings();
         await sleep(700);
         const num = document.querySelector(
-          '#set-body .set-row[data-key="search.max_parent_depth"] .num');
+          '#set-body .set-cell[data-key="search.max_parent_depth"] .num');
         if (num){ num.value = "8"; num.dispatchEvent(new Event("change", {bubbles: true})); }
         await sleep(800);
         const row = document.querySelector(
-          '#set-body .set-row[data-key="search.max_parent_depth"]');
+          '#set-body .set-cell[data-key="search.max_parent_depth"]');
         const yellow = !!row && row.classList.contains("warn");
-        const why = row ? (row.querySelector('[data-role="why"]') || {}).textContent || "" : "";
-        const note = row ? (row.querySelector('[data-role="now"]') || {}).textContent || "" : "";
+        const why = row ? (row.querySelector('[data-role="prob"]') || {}).textContent || "" : "";
+        // 「现在这样」现在只在 hover 提示里：把鼠标放上去再读
+        if (row) row.dispatchEvent(new MouseEvent("mouseover", {bubbles: true}));
+        await sleep(250);
+        const note = ((document.querySelector("#tip") || {}).textContent || "");
         const st = (document.querySelector("#set-state") || {}).textContent || "";
         const canSave = !document.querySelector("#set-save").disabled;
-        const liveUses = !!document.querySelector("#set-live");
+        const liveUses = !!document.querySelector("#set-bare");
+        hideTip();
         document.querySelector("#set-body").scrollTop = 99999;   // 给截图看下半截
         const ok = yellow && /提醒/.test(why) && /一共 9 个目录/.test(note) &&
                    canSave && /改了 1 项/.test(st) && liveUses;
@@ -870,6 +897,24 @@ MOCK_JS = r"""
           "DIAG " + (ok ? "OK" : "FAIL") + " 黄=" + (yellow ? 1 : 0) +
           " 能存=" + (canSave ? 1 : 0) + " 现在=" + JSON.stringify(note.slice(0, 30));
         document.title = ok ? "READY" : "SETTINGS-WARN-FAIL";
+      }
+      // ★ hover 提示（`V-65`）：面板上只留短标签，长说明 / 「现在是什么样」都在提示卡里。
+      //   这里把鼠标"放"到"向上找几层"那一格上，验它真的弹出来、内容也对。
+      if (h === "settings-tip"){
+        await openSettings();
+        await sleep(700);
+        const cell = document.querySelector(
+          '#set-body .set-cell[data-key="search.max_parent_depth"]');
+        if (cell) cell.dispatchEvent(new MouseEvent("mouseover", {bubbles: true}));
+        await sleep(300);
+        const tip = document.querySelector("#tip");
+        const shown = !!tip && !tip.hidden;
+        const txt = shown ? (tip.textContent || "") : "";
+        const ok = shown && /最多看几个目录/.test(txt) && /一共 4 个目录/.test(txt) && !!cell;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 提示=" + (shown ? 1 : 0) +
+          " ｜" + JSON.stringify(txt.replace(/\s+/g, " ").slice(0, 60));
+        document.title = ok ? "READY" : "TIP-FAIL";
       }
       // ★ 命令行那行输入（`V-43`）：包 `input()` 问你话时能答。
       //   真的 stdin 那条链由宿主侧测试证明；这里只验界面这半：
