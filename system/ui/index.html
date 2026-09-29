@@ -97,8 +97,10 @@ aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--
   color:var(--dim);cursor:pointer;font:inherit;font-size:13px}
 #sideswitch button:hover{background:var(--hover)}
 #sideswitch button.on{background:var(--panel2);border-color:var(--line);color:var(--fg);font-weight:500}
-#sideswitch #btn-newpkg{margin-left:auto;padding:4px 7px;min-width:28px;border-color:var(--line);
-  background:var(--panel2)}
+/* 右边那个「新建包」：靠 margin-left:auto 顶到最右。**不再自己改底色和描边** ——
+   它就是个普通按钮，和别处同一套长相（原来这里写死了 --panel2/--line，
+   是"填充块"时代的残留，和现在的白底细描边不一致）。 */
+#sideswitch #btn-newpkg{margin-left:auto;padding:4px 7px;min-width:28px}
 /* 历史行：**和包列表长得一样** —— 同一套内边距 / 图标尺寸 / hover / 选中态。
    只有第二行不同：包显示"说明"，历史显示"目录 · 时间"。 */
 .hitem,.item{display:flex;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line2);
@@ -979,6 +981,7 @@ function setSide(which){
   $("#sw-hist").classList.toggle("on", which === "hist");
   $("#list").hidden = which !== "pkg";
   $("#hist").hidden = which !== "hist";
+  $("#btn-newpkg").hidden = which !== "pkg";   // 新建的是**包**，历史这边不该有这个按钮
   $("#q").placeholder = which === "pkg" ? "搜索包名 / 说明 / 标签…"
                                         : "搜索历史（名字 / 参数 / 目录）…";
   if (which === "hist") loadHist().then(renderHist); else renderList();
@@ -1385,7 +1388,10 @@ function renderDetailHist(it, box){
      认不认墓碑 —— 终端里的 `moss --history` 跑的是**编在 exe 里的** `core/history.py`，
      旧 exe 不认识，于是"界面里删了、终端里还在"。所以删除做成真删。 */
 async function cmdForgetHist(it){
-  const r = await pywebview.api.hist_forget(histKey(it));
+  // ★ 要传**记录自己的去重键**（`it.key`，后端按 `kind|目标|params|args` 匹配），
+  //   不能传 `histKey(it)` —— 那是界面这边"控制台缓冲区"的键（`hist:<目标> <args>`），
+  //   两边格式不同，传错了后端就一条也匹配不到，只会回"已经没有这条了"。
+  const r = await pywebview.api.hist_forget(it.key || "");
   toast(r.ok ? ("已删掉这条记录：" + it.name) : ("✗ " + (r.msg || "删不掉")), !r.ok);
   if (!r.ok) return;
   if (curH && histKey(curH) === histKey(it)) curH = null;

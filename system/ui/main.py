@@ -722,7 +722,35 @@ class Api:
     """给页面用的接口。每个方法都是一个前端可 await 的调用。"""
 
     def state(self):
+        """界面要的那份数据：**每次调用都回宿主重新问一遍**。
+
+        ★ 为什么不能直接返回启动时那份：宿主启动时把 payload 写成**一个文件**交给界面
+          （`U-16` 的数据流是单向的），那份文件是**快照**。于是"新建一个包 / 卸载一个包"
+          之后列表里看不到新包 —— 界面再来读还是旧的那份，详情里连目录都拿不到。
+          现在改成回宿主跑一次 `--ui-payload`（宿主那边就是把 `build_payload()` 原样输出），
+          包列表 / 图标 / 目录全是新的；宿主不可用时退回启动时那份，界面不会因此打不开。
+        """
+        fresh = self._host_payload()
+        if fresh:
+            DATA.clear()
+            DATA.update(fresh)
         return DATA
+
+    def _host_payload(self):
+        """回宿主问一次 payload。失败返回 None（调用方退回旧的）。"""
+        if not HOST:
+            return None
+        try:
+            r = _run_capture(HOST + ["--ui-payload"])
+        except OSError:
+            return None
+        if r.get("code") != 0 or not (r.get("out") or "").strip():
+            return None
+        try:
+            data = json.loads(r["out"])
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) and "packages" in data else None
 
     def run(self, pid, args_text=""):
         """带参数跑一个包并等它跑完（老的阻塞式；界面现在走 run_start 那一套）。"""
@@ -871,7 +899,7 @@ class Api:
                 removed += hit
                 touched.append(f.name)
         if not removed:
-            return {"ok": False, "msg": "账里已经没有这条了"}
+            return {"ok": False, "msg": "这条记录已经不在了（可能刚删过一次）"}
         return {"ok": True, "msg": "已删掉这条记录（%d 行，%s）" % (removed, "、".join(touched))}
 
     def path_start(self, target, cwd="", args=""):
