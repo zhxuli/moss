@@ -18,7 +18,7 @@
   --tile:#f5f5f7; --tag:#e8e8ed;
   --accent:#0071e3; --accent-fg:#fff;
   --hover:#f5f5f7; --sel:#e8f1ff; --out-bg:#14161a; --out-fg:#d7dae0;
-  --code-bg:#fbfbfd; --field-focus:rgba(0,113,227,.14);
+  --code-bg:#fbfbfd; --field-focus:rgba(0,113,227,.14); --drop-bg:rgba(255,255,255,.94);
   --mono: ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,monospace;
   --fill:rgba(120,120,128,.10); --fill2:rgba(120,120,128,.18);
   --group:#fff; --hair:rgba(60,60,67,.10);
@@ -37,6 +37,7 @@
          --accent:#0a84ff; --accent-fg:#fff;
          --hover:#2a2a2e; --sel:#1f2c3d; --out-bg:#0f1114;
          --out-fg:#c9ced6; --code-bg:#1b1e24; --field-focus:rgba(10,132,255,.30);
+  --drop-bg:rgba(28,28,30,.94);
          --fill:rgba(120,120,128,.22); --fill2:rgba(120,120,128,.34);
          --group:#1c1c1e; --hair:rgba(255,255,255,.09);
          --syn-comment:#8b949e; --syn-keyword:#ff7b72; --syn-string:#a5d6ff;
@@ -123,7 +124,7 @@ aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--
    拿来包一整句提示会把后半句悄悄吃掉（实测：命令行预览那句一窄就被截断）。 */
 .hint{color:var(--dim);font-size:12px;line-height:1.6;margin-top:8px;word-break:break-all}
 .hint .mono{font-size:11.5px}
-#right{flex:1;display:flex;flex-direction:column;min-width:0}
+#right{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
 #tabs{display:flex;gap:2px;align-items:center;padding:7px 12px;flex:none;
   border-bottom:1px solid var(--hair);background:var(--panel)}
 /* 选项卡 = 苹果的"分段控件"：选中的那一段是一块**填充**，不是画个框 */
@@ -137,6 +138,23 @@ aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--
 #tabactions .iconbtn{padding:4px 11px}
 .pane{flex:1;min-height:0;display:none}
 .pane.on{display:flex;flex-direction:column}
+/* ---- 拖进来的接收区（`V-35`）----
+   拖到详情报上：区域描蓝边 + 这块浮层 + 右上角「运行」按钮点亮（就是你说的
+   「接收按钮和区域是高亮的」）。浮层 `pointer-events:none`：它盖着整块，
+   要是能接事件，dragenter/dragleave 会被它自己反复触发，高亮就会闪。 */
+#dropzone{position:absolute;left:14px;right:14px;top:48px;bottom:14px;z-index:70;
+  display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  border:2px dashed var(--accent);border-radius:16px;background:var(--drop-bg);
+  color:var(--accent);pointer-events:none;text-align:center;padding:20px;
+  box-shadow:0 4px 24px rgba(0,0,0,.06)}
+#dropzone.on{display:flex}
+#dropzone .dz-icon{color:var(--accent);opacity:.9;line-height:0}
+#dropzone .dz-icon svg{width:40px;height:40px}
+#dropzone .dz-big{font-size:17px;font-weight:600}
+#dropzone .dz-sub{font-size:12.5px;color:var(--fg2);max-width:34em;line-height:1.6}
+#pane-detail.hot{box-shadow:inset 0 0 0 2px var(--accent)}
+#btn-run.hot{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--field-focus)}
 /* ★ 别写 `#pane-x{display:none}`：ID 选择器优先级高于 `.pane.on`，面板会永远 0×0 */
 #pane-detail.on{display:block}
 #pane-console.on{display:flex;flex-direction:column}
@@ -486,6 +504,15 @@ table.p th{color:var(--dim);font-weight:500}
       <div id="fm-bar"></div>
       <div class="fmwrap" id="fm-body"></div>
     </section>
+
+    <!-- 拖进来的"接收区"（`V-35`）：只在拖到详情报上时出现。
+         ★ `pointer-events:none` 是关键 —— 它盖在页面上，要是能接事件，
+           拖动的 enter/leave 会被它自己反复触发，高亮就会一闪一闪。 -->
+    <div id="dropzone">
+      <div class="dz-icon" id="dz-icon"></div>
+      <div class="dz-big">松手 = 以它为当前目录运行</div>
+      <div class="dz-sub" id="dz-sub"></div>
+    </div>
   </div>
 </main>
 
@@ -524,6 +551,11 @@ let curH = null;
 function isHist(o){ return !!o && !o.id && !!o.target; }   // 包有 id，历史有 target
 function selObj(){ return curH || cur; }
 let lastRun = null;
+/* 上一次输入框里写的参数，**按包各记一份**。
+   ★ 为什么要记：详情页在"一次运行结束"时会重画（`finishRun` → `renderDetail`），
+     重画会把输入框整个换掉 —— 于是你刚填的参数（或者刚拖进来的那个路径）
+     在跑完的一瞬间就消失了，看着像没生效。记一份、重画时放回去。 */
+const ARGS = {};
 /* 包 id 的规矩（宿主 `core/paths.py` 的 `ID_RE`，`F-26`）：它是身份，还要当目录名用
    （`state/<id>`），所以只允许小写字母开头 + 小写字母/数字/下划线/连字符，最长 32。
    界面这边也存一份：保存清单时能**当场**说清楚哪儿不合法，不用等宿主把包丢掉。 */
@@ -830,6 +862,90 @@ function paintActions(p){
                                 : "把它的窗口显示出来并叫到前面"));
 }
 
+/* ---------------------------------------------------------------- 拖文件进来（`V-35`）
+   你拖着 Explorer 里的一个文件 / 文件夹丢到详情报上 ⇒ 意思只有一个：**以它为当前
+   目录，跑这个包**（目前就这一个意图，全局通用）。
+   ★ 路径**不是页面拿到的**：Chromium 不给页面 `File.path`（安全），页面只看得到文件名。
+     真实路径由宿主（`system/ui/main.py` 的 `_on_files_dropped`）从 WebView2 的
+     `AdditionalObjects` 里取出来，再调下面这个 `window.__mossDrop(items)` 交给我们。
+     所以：**高亮 / 问"拖到哪儿"归页面管，路径归宿主给**。 */
+let dropDepth = 0;                       // 拖动进出会一对一对地来，用计数免得闪
+
+function dropTargetPkg(){
+  // 只有"选中了一个包、而且正在看详情"的时候才收 —— 选的是历史条目时，
+  // "跑这个包"这句话没有主语。
+  return ($("#pane-detail") && $("#pane-detail").classList.contains("on")) ? cur : null;
+}
+function dropHot(on){
+  const p = dropTargetPkg();
+  const zone = $("#dropzone"), pane = $("#pane-detail"), btn = $("#btn-run");
+  const want = !!(on && p);
+  if (zone){
+    zone.classList.toggle("on", want);
+    if (want && $("#dz-sub")){
+      $("#dz-sub").textContent = "把这个包当作 :" + p.id + " 跑起来，" +
+        "工作目录就是它所在的目录（拖进来的是文件时，用它所在的那个文件夹）";
+      const ic = $("#dz-icon");
+      if (ic && !ic.innerHTML) ic.innerHTML = ico("folder-open", "i");
+    }
+  }
+  if (pane) pane.classList.toggle("hot", want);
+  if (btn) btn.classList.toggle("hot", want);       // 右上角那个「运行」跟着亮
+}
+function clearDropHot(){ dropDepth = 0; dropHot(false); }
+
+function bindDropZone(){
+  const pane = $("#pane-detail");
+  if (!pane) return;
+  const hasFiles = e => !!(e.dataTransfer &&
+    (e.dataTransfer.types || []).indexOf("Files") >= 0);
+  pane.addEventListener("dragenter", e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dropDepth++;
+    dropHot(true);
+  });
+  pane.addEventListener("dragover", e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();                  // ★ 不 preventDefault 就不会有 drop 事件
+    e.dataTransfer.dropEffect = "copy";
+  });
+  pane.addEventListener("dragleave", e => {
+    if (!hasFiles(e)) return;
+    dropDepth = Math.max(0, dropDepth - 1);
+    if (dropDepth === 0 && !e.relatedTarget) dropHot(false);
+    else if (dropDepth === 0) dropHot(false);
+  });
+  pane.addEventListener("drop", e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();                  // 路径由宿主送过来，这里只负责收拾高亮
+    clearDropHot();
+  });
+  // 拖出窗口（拖到别处去了）也要收干净，不然那块高亮会一直挂着
+  window.addEventListener("dragend", clearDropHot);
+  window.addEventListener("blur", clearDropHot);
+  document.addEventListener("dragleave", e => { if (!e.relatedTarget) clearDropHot(); });
+}
+
+/* 宿主把真实路径送过来（drag & drop 的落地口）。items: [{path, isDir, dir}, …] */
+window.__mossDrop = function(items){
+  clearDropHot();
+  if (!items || !items.length) return;
+  const p = dropTargetPkg();
+  if (!p){ toast("拖进来是要「用某个包跑它」—— 先在左边选一个包", true); return; }
+  const it = items[0];
+  if (items.length > 1)
+    toast("拖进来 " + items.length + " 个，先用第一个：" + it.path.split(/[\\/]/).pop());
+  // 参数框里放这个路径（带空白就加引号 —— 宿主那边是按**一个字符串**拆的，`CL-02`）
+  const box = argsInput();
+  if (box){
+    box.value = /\s/.test(it.path) ? '"' + it.path + '"' : it.path;
+    box.dispatchEvent(new Event("input"));       // 让"命令预览"跟着更新
+  }
+  toast("以 " + (it.dir || "（默认）") + " 为当前目录运行 :" + p.id);
+  startRun(p, box ? box.value : "", it.dir);
+};
+
 async function clickRun(p){
   /* 历史条目：跑 / 停都按 `histKey` 走（那才是它的命令行缓冲区键）。 */
   if (isHist(p)){
@@ -854,13 +970,13 @@ async function clickRun(p){
    （两套详情互斥，同一时刻只会存在一个，所以这里谁在就用谁）。 */
 function argsInput(){ return $("#args") || $("#hargs"); }
 
-async function startRun(p, args){
+async function startRun(p, args, cwd){
   if (RUNS[p.id]) return;                // ★ 只拦"同一个包重复起"，不再拦别的包
   const cmd = "moss :" + p.id + ((args || "").trim() ? " " + args.trim() : "");
   lastRun = {id: p.id, args: args, label: cmd};
   consoleKey = p.id;                     // 输出落进"这个包自己的"那份
   setConsole(p.id, "$ " + cmd, "运行中");
-  const r = await pywebview.api.run_start(p.id, args || "");
+  const r = await pywebview.api.run_start(p.id, args || "", cwd || "");
   if (!r.ok){
     setConsole(p.id, "$ " + cmd + "\n\n启动失败：" + (r.msg || ""), "启动失败");
     toast("✗ " + (r.msg || "启动失败"), true);
@@ -1275,7 +1391,8 @@ function renderDetail(){
       ico("pencil", "i") + '<span>更名</span></button>';
 
   html += '<section class="dsec"><div class="runrow">' +
-      '<input id="args" placeholder="参数（可留空；回车 = 运行）">' +
+      '<input id="args" placeholder="参数（可留空；回车 = 运行）" value="' +
+        esc(ARGS[p.id] || "") + '">' +
       '<button class="btn" id="btn-openui" title="打开这个包自己的界面（后台运行，不等它）">' +
         ico("app-window", "i") + '<span>打开界面</span></button></div>' +
       '<div class="runhint">命令预览: <span class="mono" id="preview"></span>' +
@@ -1302,6 +1419,7 @@ function renderDetail(){
   const upd = () => {
     $("#preview").textContent = "moss :" + p.id +
       ($("#args").value.trim() ? " " + $("#args").value.trim() : "");
+    ARGS[p.id] = $("#args").value;              // 记住它，重画之后要放回去
   };
   $("#args").addEventListener("input", upd);
   $("#args").addEventListener("keydown", (e) => {
@@ -2426,6 +2544,7 @@ async function init(){
   const r = await pywebview.api.fs_list("user");
   if (r.ok){ s.rel = r.rel; s.entries = r.entries || []; s.hist = [s.rel]; s.hpos = 0; }
   fmRender();
+  bindDropZone();          // 拖文件进来（`V-35`）：高亮 + 收宿主送来的真实路径
 }
 function paintStaticIcons(){
   // 注意：这里**没有"退出"按钮** —— 标题栏本来就有 ×，重复一个是多余的

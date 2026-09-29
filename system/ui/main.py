@@ -825,13 +825,29 @@ class Api:
         """带参数跑一个包并等它跑完（老的阻塞式；界面现在走 run_start 那一套）。"""
         return _run_capture(HOST + [":" + str(pid)] + _split(args_text))
 
-    def run_start(self, pid, args_text=""):
-        """起一个后台运行，立刻返回 run_id（输出靠 `run_poll` 拿）。"""
+    def run_start(self, pid, args_text="", cwd=None):
+        """起一个后台运行，立刻返回 run_id（输出靠 `run_poll` 拿）。
+
+        `cwd`：**这次运行的工作目录**（拖文件进来那条路会传 —— 你拖着某个文件夹
+        到详情页，意思就是"以它为当前目录跑这个包"）。不传就跟以前一样，继承界面
+        自己的 cwd。宿主那边 `engine` 是拿 `os.getcwd()` 当包的工作目录的（`pkg.json`
+        里没写 `env.cwd` 时），所以这里给它换掉就等于给包换了工作目录。
+
+        ★ 目录不存在就**当没传**：路径可能是刚被删掉的、或者拖的是个断了的网络盘，
+          那种情况下宁可退回默认目录，也不要让进程根本起不来。
+        """
         argv = HOST + [":" + str(pid)] + _split(args_text)
+        workdir = None
+        if cwd:
+            try:
+                if Path(str(cwd)).is_dir():
+                    workdir = str(cwd)
+            except OSError:
+                workdir = None
         try:
             proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, encoding="utf-8", errors="replace",
-                                    bufsize=1, creationflags=NO_WINDOW)
+                                    bufsize=1, creationflags=NO_WINDOW, cwd=workdir)
         except OSError as e:
             return {"ok": False, "msg": "启动失败：%s" % e}
         _remember_proc(pid, proc.pid)          # 记下来，之后才找得到它的界面窗口
@@ -1391,5 +1407,56 @@ window = webview.create_window(
     text_select=True,
 )
 
+# ================================================================ 拖文件进来（`V-35`）
+# 你拖着 Explorer 里的一个文件 / 文件夹，丢到详情报上 ⇒ 意思就是「以它为当前目录，
+# 跑这个包」。**为什么非要有 Python 这一手**：Chromium **不把 `File.path` 交给页面**
+# （安全设计），页面那边只能拿到文件名。pywebview 走的是 WebView2 的 `AdditionalObjects`：
+# 拖进来的那一瞬间宿主拿得到**真实路径**，再塞进 DOM 事件的
+# `dataTransfer.files[i].pywebviewFullPath` 里。
+# ★ 但这条路**只有在 Python 这边挂过 drop 监听时才会开** —— pywebview 里有个
+#   `_dnd_state['num_listeners']`，是 0 的时候它把 WebView2 送来的文件直接丢掉
+#   （`edgechromium.on_script_notify`）。所以：**路径由这边收，收完交给页面去跑**
+#   （页面才知道现在选的是哪个包、参数框在哪儿、按钮怎么点亮）。
+def _on_files_dropped(event):
+    """页面详情报上的 drop。把真实路径交给页面，剩下的（选包 / 填参数 / 跑）归页面管。"""
+    try:
+        files = (event.get("dataTransfer") or {}).get("files") or []
+    except Exception:                                                # noqa: BLE001
+        files = []
+    items = []
+    for f in files:
+        try:
+            p = f.get("pywebviewFullPath")
+        except Exception:                                            # noqa: BLE001
+            p = None
+        if not p:
+            continue
+        try:
+            is_dir = os.path.isdir(p)
+        except OSError:
+            is_dir = False
+        items.append({"path": str(p), "isDir": bool(is_dir),
+                      "dir": str(p) if is_dir else os.path.dirname(str(p))})
+    if not items:
+        return
+    try:
+        window.evaluate_js("window.__mossDrop(%s)"
+                           % json.dumps(items, ensure_ascii=False))
+    except Exception:                                                # noqa: BLE001
+        pass
+
+
+def _arm_file_drop():
+    """页面加载完之后，在详情报上挂 drop 监听（`webview.start` 里跑，在别的线程）。"""
+    try:
+        window.events.loaded.wait(20)
+        el = window.dom.get_element("#pane-detail")
+        if el is None:
+            return
+        el.events.drop += _on_files_dropped
+    except Exception:                                                # noqa: BLE001
+        pass          # 拖拽是锦上添花，挂不上也不能让界面起不来
+
+
 if __name__ == "__main__":
-    webview.start()
+    webview.start(_arm_file_drop)

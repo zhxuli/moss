@@ -61,6 +61,7 @@ BROWSERS = [
 
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
+          "drop-hot", "drop-run",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail"]
 
@@ -149,7 +150,10 @@ def mock_data():
                             "ext": p.suffix.lower().lstrip(".")})
         fs[rel] = {"ok": True, "rel": rel, "entries": entries, "writable": True,
                    "path": str(sub)}
-    return {"payload": payload, "hist": hist, "fs": fs}
+    return {"payload": payload, "hist": hist, "fs": fs,
+            # 拖文件那个场景要的样本：故意用**带空格**的文件名，顺便验引号
+            "dropDir": str(ROOT),
+            "dropFile": str(ROOT / "一个 带空格的图片.png")}
 
 
 MOCK_JS = r"""
@@ -170,7 +174,10 @@ MOCK_JS = r"""
       return {ok: true, states: out};
     },
     pkg_state: async () => ({ok: true, running: false, windows: 0, visible: false}),
-    run_start: async () => ({ok: true, run_id: "r1", pid: 1}),
+    run_start: async (pid, args, cwd) => {
+      (M.runs = M.runs || []).push({pid: pid, args: args, cwd: cwd});
+      return {ok: true, run_id: "r1", pid: 1};
+    },
     run_poll: async () => ({ok: true, running: false, code: 0,
       out: "[执行] md5\n[目录] " + state.home + "\n\n900150983cd24fb0d6963f7d28e17f72\n"}),
     run_stop: async () => ({ok: true, msg: "(预览) 已停止"}),
@@ -542,6 +549,84 @@ MOCK_JS = r"""
            "\n目录还在吗 = " + !!FS["user/pkgs/" + oldDir] + "  （包目录没动，是对的）")
             .replace(/&/g, "&amp;").replace(/</g, "&lt;") + '</pre>';
         document.title = ok ? "READY" : "BAD-ID-FAIL";
+      }
+      if (h === "drop-hot"){
+        // 只看"拖上来时"长什么样（不松手）：接收区 + 运行按钮都要亮
+        const usable = p => { try{ return !!FS[pkgRel(p)]; }catch(e){ return false; } };
+        const p0 = state.packages.find(x => x.layer === "user" && usable(x)) ||
+                   state.packages.find(usable) || null;
+        if (!p0){ document.title = "NO-USABLE-PKG"; return; }
+        select(p0.id);
+        setTab("detail");
+        await sleep(400);
+        const e = new Event("dragenter", {bubbles: true});
+        e.dataTransfer = {types: ["Files"], dropEffect: ""};
+        document.querySelector("#pane-detail").dispatchEvent(e);
+        await sleep(200);
+        document.title = "READY";
+      }
+      // ★ 拖文件进来（`V-35`）：拖动时区域/按钮高亮；松手后＝以它为当前目录跑这个包。
+      //   真实的 OS 拖动没法自动化（得人拿鼠标拖），所以这里拆成两半测：
+      //   拖动那半用**合成事件**（带 types:["Files"]），松手那半直接调那个落地口
+      //   `window.__mossDrop(...)`（真机上由宿主从 WebView2 取到真实路径后调用它）。
+      if (h === "drop-run"){
+        const usable = p => { try{ return !!FS[pkgRel(p)]; }catch(e){ return false; } };
+        const p0 = state.packages.find(x => x.layer === "user" && usable(x)) ||
+                   state.packages.find(usable) || null;
+        if (!p0){ document.title = "NO-USABLE-PKG"; return; }
+        select(p0.id);
+        setTab("detail");
+        await sleep(400);
+        const pane = document.querySelector("#pane-detail");
+        const zone = document.querySelector("#dropzone");
+        const btn = document.querySelector("#btn-run");
+        const dragEv = t => {
+          const e = new Event(t, {bubbles: true});
+          e.dataTransfer = {types: ["Files"], dropEffect: ""};
+          return e;
+        };
+        // ① 拖上来（文件管理那一页开着时不该亮 —— 那不是"详情报"）
+        setTab("file");
+        await sleep(150);
+        pane.dispatchEvent(dragEv("dragenter"));
+        await sleep(80);
+        const hotOnFileTab = zone.classList.contains("on");
+        setTab("detail");
+        await sleep(150);
+        // ② 拖到详情报上：区域 + 按钮都得亮
+        pane.dispatchEvent(dragEv("dragenter"));
+        pane.dispatchEvent(dragEv("dragover"));
+        await sleep(120);
+        const zoneOn = zone.classList.contains("on");
+        const paneHot = pane.classList.contains("hot");
+        const btnHot = btn.classList.contains("hot");
+        const subText = (document.querySelector("#dz-sub") || {}).textContent || "";
+        // ③ 松手：宿主把真实路径送进来（这里直接调落地口）
+        const dir = M.dropDir, file = M.dropFile;
+        window.__mossDrop([{path: file, isDir: false, dir: dir}]);
+        await sleep(700);
+        const zoneOff = !zone.classList.contains("on");
+        const paneOff = !pane.classList.contains("hot");
+        const argsVal = (document.querySelector("#args") || {}).value || "";
+        const run = (M.runs || [])[0] || {};
+        const ok = !hotOnFileTab && zoneOn && paneHot && btnHot && zoneOff && paneOff &&
+                   argsVal === '"' + file + '"' && run.cwd === dir && run.pid === p0.id;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 高亮=" + (zoneOn && paneHot && btnHot ? 1 : 0) +
+          " 收尾=" + (zoneOff && paneOff ? 1 : 0) + " cwd=" + (run.cwd === dir ? 1 : 0);
+        document.querySelector("#fm-body").innerHTML = "";    // 别把界面挡着
+        document.querySelector("#dropzone").className = "";
+        document.querySelector("#out").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n拖动时高亮（详情报上）  = 区域 " + zoneOn + " / 面板 " + paneHot + " / 运行按钮 " + btnHot +
+          "\n文件管理那一页开着时高亮吗 = " + hotOnFileTab + "   （不该亮）" +
+          "\n浮层上写的话 = " + subText.slice(0, 90) +
+          "\n松手后高亮收干净了吗 = 区域 " + zoneOff + " / 面板 " + paneOff +
+          "\n参数框里放的是 = " + argsVal +
+          "\n真的跑了吗 = pid=" + (run.pid || "-") + "  cwd=" + (run.cwd || "-") +
+          "    （期望 pid=" + p0.id + "  cwd=" + dir + "）";
+        if (ok) setTab("console");
+        document.title = ok ? "READY" : "DROP-FAIL";
       }
     } catch(e){ document.title = "SCENARIO-ERR " + e.message; return; }
     await sleep(350);
