@@ -26,6 +26,7 @@ import http.server
 import shlex
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -48,6 +49,30 @@ def _load_data():
 
 DATA = _load_data()
 HOST = [str(x) for x in (DATA.get("host_cmd") or [])]
+
+
+def _build_stamp():
+    """当前这份界面代码的版本戳（`V-71`）。
+
+    ★ 为什么要有它：界面是**启动那一刻**读一次页面文件的 —— 一个开了很久的窗口跑的
+      是"那一天的代码"。你重开（或者只是点回任务栏那个窗口）时，看到的可能是几天前的
+      界面，而我们俩都以为在看新的（这次就为此绕了很久）。
+      有了这个戳，顶栏上直接写着是哪个提交，谁都不用猜。
+      拿不到就留空（发行版里没有 .git），**绝不因为它出错**。
+    """
+    import subprocess                                              # noqa: PLC0415
+    try:
+        r = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                           cwd=str(DATA.get("home") or "."), capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=3)
+        out = (r.stdout or "").strip()
+        return out if r.returncode == 0 and out else ""
+    except Exception:                                              # noqa: BLE001
+        return ""
+
+
+BUILD = _build_stamp()
+DATA["build"] = BUILD
 
 
 def _split(text):
@@ -895,6 +920,26 @@ class _EmbedHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a):                                          # noqa: A003
         pass                        # 别往控制台喷访问日志（一屏都是它）
 
+    def send_response(self, code, message=None):
+        """把每个请求 + 状态码记一行（`V-74`）。
+
+        ★ 为什么要留这个：界面一旦空白，第一件事就是问"请求到底有没有到我的服务"。
+          到了（200/403/404）= 服务没事，问题在页面；压根没到 = 请求被别人截走了
+          （代理之类）。日志写在 `user_data/state/_ui_http.log`，只留最近这些，别长成山。
+        """
+        try:
+            line = "%s  %s  %s\n" % (time.strftime("%H:%M:%S"), code, self.path)
+            path = USER_DATA / "state" / "_ui_http.log"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.is_file() and path.stat().st_size > 64 * 1024:
+                keep = path.read_text(encoding="utf-8", errors="replace")[-16 * 1024:]
+                path.write_text(keep, encoding="utf-8")
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(line)
+        except Exception:                                            # noqa: BLE001
+            pass
+        super().send_response(code, message)
+
     def _token_ok(self):
         tk = _EMBED_SRV["token"]
         return bool(tk) and self.path.startswith("/" + tk + "/")
@@ -1013,6 +1058,8 @@ class Api:
         if fresh:
             DATA.clear()
             DATA.update(fresh)
+            # ★ 宿主那份 payload 里没有 build 戳（它是这个脚本加的），覆盖之后要重新贴上
+            DATA["build"] = BUILD
             DATA.pop("stale_reason", None)
         else:
             DATA["stale_reason"] = self._payload_error or "读包表失败（宿主没有回话）"
@@ -1845,9 +1892,53 @@ class Api:
         return {"ok": True}
 
 
+# ★ 别让 WebView2 走系统代理（`V-73`）：界面这一页只跟 127.0.0.1 说话（壳 + 内嵌的包界面），
+#   而系统代理（`ProxyServer=127.0.0.1:7897`）会把本机请求也截走 —— 实测现场就是
+#   「同一个源、前几个 js `ERR_CONNECTION_REFUSED`、后几个却加载成功」，看着像服务死了，
+#   其实是代理时通时不通。用 WebView2 官方认的环境变量把它关掉（`setdefault`：外面想覆盖还能覆盖）。
+os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--no-proxy-server")
+
+
+def _note(text):
+    """在 `drop_log()` 还没定义的时候也能留个话（`V-72` 踩过：`_page_url` 是模块加载期调的）。
+
+    ★ 这时候只有 stderr 一定可用 —— `drop_log` 定义在文件更后面（拖放那一段）。
+    """
+    try:
+        print("[moss] %s" % text, file=sys.stderr, flush=True)
+    except Exception:                                              # noqa: BLE001
+        pass
+
+
+def _page_url():
+    """界面这一页该从哪儿加载（`V-72`）。
+
+    ★ 为什么不用 `file://`：pywebview 一看到本地文件 URL，就会**自己起一个内部 http 服务**
+      来发页面（`__init__.py` 的 `has_local_urls`）。那个服务不在我们手里 —— 实测它就拒连过：
+      devtools 里一屏 `ERR_CONNECTION_REFUSED`（`js/*.js` 全取不到）⇒ `Vue is not defined`、
+      `$ is not defined` ⇒ 界面空白。改用我们自己的 `_embed_server()`：只绑 127.0.0.1、
+      路径里带本次会话的随机 token、`Cache-Control: no-store`、每请求一个线程 —— 而且它
+      **是我们自己启动、自己掌握**的。顺带把「界面改完刷新就见效」也保住了。
+      起不来就退回 `file://`（老路子），并在日志里说一声。
+    """
+    try:
+        page = (HERE / "index.html").resolve()
+        rel = page.relative_to(HOME.resolve())
+    except (OSError, ValueError):
+        _note("page: 页面不在安装根下面，退回 file://")
+        return str(HERE / "index.html")
+    port, token = _embed_server()
+    if not port:
+        _note("page: 本地服务起不来（%s），退回 file://" % token)
+        return str(HERE / "index.html")
+    url = "http://127.0.0.1:%d/%s/%s" % (port, token, rel.as_posix())
+    _note("page: 界面从 %s 加载" % url)
+    return url
+
+
 window = webview.create_window(
     "moss",
-    str(HERE / "index.html"),
+    _page_url(),
     js_api=Api(),
     width=1280,
     height=860,
@@ -1953,4 +2044,11 @@ def _arm_file_drop():
 
 
 if __name__ == "__main__":
-    webview.start(_arm_file_drop)
+    # `--debug`（`V-70`）：开发/排查模式 —— pywebview 会**自动打开 devtools**，
+    # 随时按 F12 / 右键「检查」看控制台；页面里的 JS 报错也照样会写到状态栏（红字）。
+    # 用法：`moss ui --debug`（宿主会把参数原样转给这个脚本，改这里**不用重打包 exe**）。
+    DEBUG = any(a in ("--debug", "--dev", "-d") for a in sys.argv[1:])
+    if DEBUG:
+        print("[moss] 开发模式：devtools 已开（F12 / 右键「检查」）。"
+              "页面里的报错也会写到界面右下角状态栏。", flush=True)
+    webview.start(_arm_file_drop, debug=DEBUG)
