@@ -6,6 +6,17 @@ async function init(){
   $("#meta").textContent =
     DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home;
   renderList(); paintStates();
+  // ★ 启动诊断写一行到日志（`V-76`）：界面要是空白，我读这行就知道是哪种情况
+  //   （包 0 个 / 画不出来 / 脚本没跑），不用你找控制台。
+  try{
+    pywebview.api.ui_log("[启动诊断] 宿主包数=" + DATA.packages.length
+      + " 列表条目=" + document.querySelectorAll("#list .item").length
+      + " 历史条目=" + document.querySelectorAll("#hist .hitem").length
+      + " 桥=" + (window.pywebview && window.pywebview.api ? "有" : "无")
+      + " 页内错误=" + (window.__errors || []).length
+      + " 地址=" + location.href
+      + " 窗口=" + window.innerWidth + "x" + window.innerHeight);
+  }catch(e){}
   await loadHist();        // 先把历史读回来（loadHist 会顺手按 key 找回选中的那条）
   setSide(side);           // 切换条的高亮 / 隐藏状态跟 JS 变量对齐；顺带画一遍列表
   consoleKey = "__host__";

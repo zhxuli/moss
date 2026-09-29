@@ -763,6 +763,51 @@ table.p th{color:var(--dim);font-weight:500}
 
 
 
+<!-- 出了问题要**看得见**（`V-76`）：这段是**内联**的，排在所有外部脚本之前。
+     ★ 为什么非要内联：`js/*.js` 自己没加载上时，写在 js 里的错误处理根本跑不到（鸡生蛋）。
+     它管两件事：资源加载失败（哪个 URL 没下来）、以及页内报错 —— 都写到右下角状态栏（红字）
+     和 user_data/state/_ui_drop.log。 -->
+<script>
+(function(){
+  window.__errors = window.__errors || [];
+  var pending = [];
+  function flush(){
+    if (!(window.pywebview && window.pywebview.api && window.pywebview.api.ui_log)) return;
+    while (pending.length){
+      try{ window.pywebview.api.ui_log(pending.shift()); }catch(e){ return; }
+    }
+  }
+  window.addEventListener("pywebviewready", function(){ setTimeout(flush, 60); });
+  window.__mossTell = function(msg){
+    window.__errors.push(msg);
+    try{
+      var bar = document.getElementById("status-text");
+      if (bar){ bar.textContent = "⚠ " + msg; bar.className = "bad"; }
+    }catch(e){}
+    pending.push(msg);
+    flush();
+  };
+  window.addEventListener("error", function(e){
+    var t = e.target;
+    if (t && t.tagName && (t.tagName === "SCRIPT" || t.tagName === "LINK" || t.tagName === "IMG")){
+      window.__mossTell("[加载失败] " + t.tagName + " " + (t.src || t.href) + "   ← 页面 " + location.href);
+      return;
+    }
+    window.__mossTell("[页内报错] " + ((e && e.message) || e)
+      + (e && e.filename ? ("   @ " + e.filename + ":" + e.lineno) : ""));
+  }, true);
+  window.addEventListener("unhandledrejection", function(e){
+    var r = e && e.reason;
+    window.__mossTell("[未处理的 Promise] " + ((r && (r.message || r)) || e));
+  });
+  // 自测开关：Ctrl+Alt+E 故意扔一个错 —— 用来确认"红字 + 日志"这条路是通的
+  window.addEventListener("keydown", function(e){
+    if (e.ctrlKey && e.altKey && (e.key === "e" || e.key === "E")){
+      window.__mossTell("[自测] 这是你按 Ctrl+Alt+E 触发的假错误（能看到它就说明报错这条路是通的）");
+    }
+  });
+})();
+</script>
 <script src="vendor/highlight.min.js"></script>
 <script src="vendor/powershell.min.js"></script>
 <script src="vendor/dos.min.js"></script>

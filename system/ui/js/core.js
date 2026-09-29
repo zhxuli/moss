@@ -1,3 +1,22 @@
+/* ★ 出错要看得见（`V-76`）：这个界面没有能随手打开的控制台，某处一抛异常，表现就是
+   "左边空了 / 某块没了"，谁也看不出为什么。所以 onerror / unhandledrejection 全部收下来，
+   写到右下角状态栏（红字，一直在）+ toast + 日志文件（`user_data/state/_ui_drop.log`）。
+   （外一层的"资源加载失败"捕获在 `index.html` 里内联着 —— 那一层要防的是 js 自己都没加载上。） */
+if (!window.__mossReportInstalled){
+  window.__mossReportInstalled = 1;
+  window.addEventListener("error", function(e){
+    if (typeof window.__mossTell === "function" && !(e.target && e.target.tagName)){
+      window.__mossTell("[页内报错] " + ((e && e.message) || e));
+    }
+  });
+  window.addEventListener("unhandledrejection", function(e){
+    var r = e && e.reason;
+    if (typeof window.__mossTell === "function"){
+      window.__mossTell("[未处理的 Promise] " + ((r && (r.message || r)) || e));
+    }
+  });
+}
+
 /* moss 界面 · core.js —— 从 index.html 拆出来的（`V-67`），内容与拆分前一致。 */
 
 /* -*- coding: utf-8 -*- */
