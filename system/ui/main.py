@@ -1872,9 +1872,46 @@ class Api:
         return {"ok": True}
 
 
+def _note(text):
+    """在 `drop_log()` 还没定义的时候也能留个话（`V-72` 踩过：`_page_url` 是模块加载期调的）。
+
+    ★ 这时候只有 stderr 一定可用 —— `drop_log` 定义在文件更后面（拖放那一段）。
+    """
+    try:
+        print("[moss] %s" % text, file=sys.stderr, flush=True)
+    except Exception:                                              # noqa: BLE001
+        pass
+
+
+def _page_url():
+    """界面这一页该从哪儿加载（`V-72`）。
+
+    ★ 为什么不用 `file://`：pywebview 一看到本地文件 URL，就会**自己起一个内部 http 服务**
+      来发页面（`__init__.py` 的 `has_local_urls`）。那个服务不在我们手里 —— 实测它就拒连过：
+      devtools 里一屏 `ERR_CONNECTION_REFUSED`（`js/*.js` 全取不到）⇒ `Vue is not defined`、
+      `$ is not defined` ⇒ 界面空白。改用我们自己的 `_embed_server()`：只绑 127.0.0.1、
+      路径里带本次会话的随机 token、`Cache-Control: no-store`、每请求一个线程 —— 而且它
+      **是我们自己启动、自己掌握**的。顺带把「界面改完刷新就见效」也保住了。
+      起不来就退回 `file://`（老路子），并在日志里说一声。
+    """
+    try:
+        page = (HERE / "index.html").resolve()
+        rel = page.relative_to(HOME.resolve())
+    except (OSError, ValueError):
+        _note("page: 页面不在安装根下面，退回 file://")
+        return str(HERE / "index.html")
+    port, token = _embed_server()
+    if not port:
+        _note("page: 本地服务起不来（%s），退回 file://" % token)
+        return str(HERE / "index.html")
+    url = "http://127.0.0.1:%d/%s/%s" % (port, token, rel.as_posix())
+    _note("page: 界面从 %s 加载" % url)
+    return url
+
+
 window = webview.create_window(
     "moss",
-    str(HERE / "index.html"),
+    _page_url(),
     js_api=Api(),
     width=1280,
     height=860,
