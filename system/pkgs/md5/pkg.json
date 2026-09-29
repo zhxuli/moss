@@ -67,5 +67,13 @@
         "target": "hello"
       }
     ]
+  },
+  "drop": {
+    "dir": {
+      "param": true
+    },
+    "file": {
+      "param": true
+    }
   }
 }

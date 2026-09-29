@@ -138,21 +138,32 @@ aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--
 #tabactions .iconbtn{padding:4px 11px}
 .pane{flex:1;min-height:0;display:none}
 .pane.on{display:flex;flex-direction:column}
-/* ---- 拖进来的接收区（`V-35`）----
-   拖到详情报上：区域描蓝边 + 这块浮层 + 右上角「运行」按钮点亮（就是你说的
-   「接收按钮和区域是高亮的」）。浮层 `pointer-events:none`：它盖着整块，
-   要是能接事件，dragenter/dragleave 会被它自己反复触发，高亮就会闪。 */
+/* ---- 拖进来的接收区（`V-35` / `V-39`）----
+   拖着东西进窗口时：左边只列"收得下它"的包（`#dragbar` 那条就是提示），划过哪个包就
+   选中哪个；右边详情页浮出**投放框**，在框上松手才跑。
+   ★ 浮层 `pointer-events:none`：它盖着整块，要是能接事件，dragenter/dragleave 会被它
+     自己反复触发，高亮就会闪；框上那个 `.dz-box` 再单独 `pointer-events:auto`，
+     这样"鼠标在哪个框上"才问得出来（以后一个包有多条命令时要靠它分）。 */
+#dragbar{padding:7px 10px;font-size:12px;color:var(--fg2);background:var(--panel2);
+  border-bottom:1px solid var(--line2);display:flex;gap:7px;align-items:flex-start;
+  line-height:1.5}
+#dragbar b{color:var(--fg);font-weight:600}
+#dragbar svg{width:14px;height:14px;flex:none;margin-top:2px;color:var(--accent)}
 #dropzone{position:absolute;left:14px;right:14px;top:48px;bottom:14px;z-index:70;
-  display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;
-  border:2px dashed var(--accent);border-radius:16px;background:var(--drop-bg);
-  color:var(--accent);pointer-events:none;text-align:center;padding:20px;
-  box-shadow:0 4px 24px rgba(0,0,0,.06)}
+  display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;
+  pointer-events:none;text-align:center;padding:20px}
 #dropzone.on{display:flex}
-#dropzone .dz-icon{color:var(--accent);opacity:.9;line-height:0}
-#dropzone .dz-icon svg{width:40px;height:40px}
-#dropzone .dz-big{font-size:17px;font-weight:600}
-#dropzone .dz-sub{font-size:12.5px;color:var(--fg2);max-width:34em;line-height:1.6}
-#pane-detail.hot{box-shadow:inset 0 0 0 2px var(--accent)}
+.dz-box{pointer-events:auto;display:flex;flex-direction:column;align-items:center;gap:10px;
+  min-width:min(560px,80%);padding:26px 30px;border:2px dashed var(--accent);border-radius:16px;
+  background:var(--drop-bg);color:var(--accent);box-shadow:0 4px 24px rgba(0,0,0,.06);
+  transition:transform .10s ease-out,box-shadow .12s ease-out}
+#dropzone.over .dz-box{transform:scale(1.02);box-shadow:0 8px 30px rgba(0,113,227,.18)}
+.dz-box .dz-big{font-size:17px;font-weight:600}
+.dz-box .dz-sub{font-size:12.5px;color:var(--fg2);max-width:34em;line-height:1.6}
+.dz-box .dz-icon svg{width:40px;height:40px}
+#pane-detail.hot,#pane-detail.dover{box-shadow:inset 0 0 0 2px var(--accent)}
+body.dragging{cursor:copy}
+body.dragging .item{border-style:dashed}          /* 拖动时可选的那些包，边框变虚线 */
 #btn-run.hot{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);
   box-shadow:0 0 0 3px var(--field-focus)}
 /* ★ 别写 `#pane-x{display:none}`：ID 选择器优先级高于 `.pane.on`，面板会永远 0×0 */
@@ -471,6 +482,8 @@ table.p th{color:var(--dim);font-weight:500}
       <button id="sw-hist" title="最近跑过的路径调用（点一下重跑）"></button>
       <button id="btn-newpkg" class="iconbtn" title="新建一个包（moss --new）"></button>
     </div>
+    <!-- 拖动中的一条提示（`V-39`）：只列收得下它的包 -->
+    <div id="dragbar" hidden></div>
     <div id="list"></div>
     <div id="hist" hidden></div>
   </aside>
@@ -505,14 +518,9 @@ table.p th{color:var(--dim);font-weight:500}
       <div class="fmwrap" id="fm-body"></div>
     </section>
 
-    <!-- 拖进来的"接收区"（`V-35`）：只在拖到详情报上时出现。
-         ★ `pointer-events:none` 是关键 —— 它盖在页面上，要是能接事件，
-           拖动的 enter/leave 会被它自己反复触发，高亮就会一闪一闪。 -->
-    <div id="dropzone">
-      <div class="dz-icon" id="dz-icon"></div>
-      <div class="dz-big">松手 = 以它为当前目录运行</div>
-      <div class="dz-sub" id="dz-sub"></div>
-    </div>
+    <!-- 拖进来的"接收区"（`V-35` / `V-39`）：只在拖动中、而且当前这个包收得下的时候出现。
+         里面按 `pkg.json` 的 `drop` 声明画投放框（今天一个包最多一个"运行"框）。 -->
+    <div id="dropzone"></div>
   </div>
 </main>
 
@@ -862,89 +870,205 @@ function paintActions(p){
                                 : "把它的窗口显示出来并叫到前面"));
 }
 
-/* ---------------------------------------------------------------- 拖文件进来（`V-35`）
-   你拖着 Explorer 里的一个文件 / 文件夹丢到详情报上 ⇒ 意思只有一个：**以它为当前
-   目录，跑这个包**（目前就这一个意图，全局通用）。
+/* ---------------------------------------------------------------- 拖文件进来（`V-35` ✅ / `V-38` ✅ / `V-39` ✅）
+   一句话：**拖着文件或文件夹进窗口 ⇒ 只显示"收得下它"的包；划过谁就选中谁；到详情页的
+   投放框上松手，按那个包自己声明的规矩跑起来。**
+
    ★ 路径**不是页面拿到的**：Chromium 不给页面 `File.path`（安全），页面只看得到文件名。
      真实路径由宿主（`system/ui/main.py` 的 `_on_files_dropped`）从 WebView2 的
      `AdditionalObjects` 里取出来，再调下面这个 `window.__mossDrop(items)` 交给我们。
-     所以：**高亮 / 问"拖到哪儿"归页面管，路径归宿主给**。 */
-let dropDepth = 0;                       // 拖动进出会一对一对地来，用计数免得闪
+     **拖动时**页面只知道"拖的是文件还是文件夹"（够用来筛列表）；**松手后**才知道真实路径。
+   ★ 一个包"收什么、收到哪儿"全看它 `pkg.json` 里的 `drop` 声明（`V-38`）：
+        "drop": { "dir": {"cwd": true}, "file": {"param": true, "quote": true, "base": false} }
+     - `cwd`   = 把拖进来的**文件夹**当工作目录（拖的是文件 → 用文件所在的那个文件夹）
+     - `param` = 把路径**追加到参数串末尾**（强制末尾，你定的）
+     - `quote` = 加双引号（路径里有空白时无论如何都会加，不然宿主按空格拆词就拆坏了）
+     - `base`  = 只给文件名，不给完整路径（配合 `cwd` 用）
+     **没写 `drop` 的包 = 完全不收拖入**（比如快捷翻译）—— 拖动时它连列表都不出现。 */
+const DRAG = {on: false, kind: null, depth: 0, cmd: 0, hits: 0};
 
-function dropTargetPkg(){
-  // 只有"选中了一个包、而且正在看详情"的时候才收 —— 选的是历史条目时，
-  // "跑这个包"这句话没有主语。
-  return ($("#pane-detail") && $("#pane-detail").classList.contains("on")) ? cur : null;
+/* 拖进来的到底是文件还是文件夹：Chromium 的 `webkitGetAsEntry()` 在拖动过程中就能看。
+   认不出来（有些来源不给）→ null = "不知道"，那就按"两种都收的包"筛，别把人挡住。 */
+function dragKind(e){
+  try{
+    const items = e.dataTransfer && e.dataTransfer.items;
+    if (items && items.length && items[0].webkitGetAsEntry){
+      const en = items[0].webkitGetAsEntry();
+      if (en) return en.isDirectory ? "dir" : "file";
+    }
+  }catch(err){}
+  return null;
 }
-function dropHot(on){
-  const p = dropTargetPkg();
+function dragHasFiles(e){
+  return !!(e.dataTransfer && (e.dataTransfer.types || []).indexOf("Files") >= 0);
+}
+function dropAccepts(p, kind){
+  if (!p || !p.drop || !p.drop.length) return false;
+  if (kind === "dir") return p.drop.some(c => c.dir);
+  if (kind === "file") return p.drop.some(c => c.file);
+  return true;                                  // 不知道拖的是什么 → 两种都算
+}
+/* 这个包对"拖进来的是文件/文件夹"能做什么。以后一个包可以有多条命令（多个投放框）。 */
+function dropCommandsFor(p, isDir){
+  const k = isDir ? "dir" : "file";
+  return ((p && p.drop) || []).filter(c => c[k]).map(c => ({label: c.label || "运行", rule: c[k]}));
+}
+function dropKindName(kind){ return kind === "dir" ? "文件夹" : (kind === "file" ? "文件" : "文件/文件夹"); }
+
+/* ---- 拖动的开始 / 结束 ---- */
+function dragBegin(e){
+  if (DRAG.on) return;
+  DRAG.on = true;
+  DRAG.kind = dragKind(e);
+  DRAG.hits = 0;
+  DRAG.cmd = 0;
+  document.body.classList.add("dragging");
+  uiLog("drag begin kind=" + (DRAG.kind || "unknown") +
+        " accepts=" + DATA.packages.filter(p => dropAccepts(p, DRAG.kind)).length);
+  renderList();                                 // ★ 只列收得下它的包
+  paintDragBar();
+  // 当前这个包要是就收得下，投放框**立刻**出现（不用等你先划到别处再划回来）
+  paintDropZone(false);
+}
+function dragEnd(){
+  if (!DRAG.on){ paintDropZone(false); return; }
+  DRAG.on = false; DRAG.kind = null; DRAG.depth = 0; DRAG.cmd = 0;
+  document.body.classList.remove("dragging");
+  renderList();
+  paintDragBar();
+  paintDropZone(false);
+}
+/* 左上角那条提示：拖动中只显示收得下它的包 —— 免得你对着一个不收的包干瞪眼 */
+function paintDragBar(){
+  const bar = $("#dragbar");
+  if (!bar) return;
+  if (!DRAG.on){ bar.hidden = true; return; }
+  const n = DATA.packages.filter(p => dropAccepts(p, DRAG.kind)).length;
+  bar.hidden = false;
+  bar.innerHTML = ico("copy", "i") +
+    '<span>拖进来的是<b>' + dropKindName(DRAG.kind) + '</b>：只列出收得下它的 <b>' + n +
+    '</b> 个包' + (n ? " —— 划过哪个就选哪个" : "（一个都没有）") + '</span>';
+}
+
+/* ---- 投放框（`V-39`）：只在"当前这个包收得下"的时候出现 ---- */
+function paintDropZone(over, isDir, kind){
   const zone = $("#dropzone"), pane = $("#pane-detail"), btn = $("#btn-run");
-  const want = !!(on && p);
+  const p = cur;
+  const k = (kind !== undefined && kind !== null) ? kind : (isDir ? "dir" : DRAG.kind);
+  const cmds = DRAG.on && p ? dropCommandsFor(p, k === "dir") : [];
+  const want = !!(DRAG.on && cmds.length);
   if (zone){
     zone.classList.toggle("on", want);
-    if (want && $("#dz-sub")){
-      $("#dz-sub").textContent = "把这个包当作 :" + p.id + " 跑起来，" +
-        "工作目录就是它所在的目录（拖进来的是文件时，用它所在的那个文件夹）";
-      const ic = $("#dz-icon");
-      if (ic && !ic.innerHTML) ic.innerHTML = ico("folder-open", "i");
+    zone.classList.toggle("over", !!(want && over));
+    if (want){
+      zone.innerHTML = cmds.map((c, i) =>
+        '<div class="dz-box' + (i === DRAG.cmd ? " on" : "") + '" data-cmd="' + i + '">' +
+          '<div class="dz-big">松手 = ' + esc(c.label) + '</div>' +
+          '<div class="dz-sub">' + esc(dropZoneWhy(p, c.rule, k)) + '</div>' +
+        '</div>').join("");
     }
   }
   if (pane) pane.classList.toggle("hot", want);
   if (btn) btn.classList.toggle("hot", want);       // 右上角那个「运行」跟着亮
 }
-function clearDropHot(){ dropDepth = 0; dropHot(false); }
+function dropZoneWhy(p, rule, kind){
+  const what = rule.cwd && rule.param ? "当工作目录，并把这个路径追加到参数末尾"
+             : (rule.cwd ? "当工作目录" : "追加到参数末尾");
+  const which = kind === "dir" ? "这个文件夹" : (kind === "file" ? "这个文件" : "它");
+  return ":" + p.id + " —— 把" + which + what +
+         (rule.base ? "（只给文件名）" : "") + (rule.quote ? "（加引号）" : "");
+}
 
+/* ---- 页面这一侧的拖动事件（真实路径不在这里，见文件头的说明）---- */
 function bindDropZone(){
   const pane = $("#pane-detail");
   if (!pane) return;
-  const hasFiles = e => !!(e.dataTransfer &&
-    (e.dataTransfer.types || []).indexOf("Files") >= 0);
-  pane.addEventListener("dragenter", e => {
-    if (!hasFiles(e)) return;
+  document.addEventListener("dragenter", e => {
+    if (!dragHasFiles(e)) return;
+    DRAG.depth++;
+    if (!DRAG.on) dragBegin(e);
     e.preventDefault();
-    dropDepth++;
-    dropHot(true);
+  });
+  // ★ 列表那一列：划过哪个包就选中它（省得你再回去点一下）。
+  //   拖动过程中鼠标事件是不发的，只有 drag 事件 —— 所以用 dragover。
+  const list = $("#list");
+  if (list) list.addEventListener("dragover", e => {
+    if (!DRAG.on) return;
+    e.preventDefault();                 // 允许在列表上松手（松在这儿不跑，见 drop）
+    const row = e.target && e.target.closest ? e.target.closest(".item") : null;
+    if (!row) return;
+    const id = row.dataset.id;
+    if (id && (!cur || cur.id !== id)){
+      select(id);                       // 自动激活（它的详情页会跟着出现投放框）
+      paintDropZone(false);
+    }
   });
   pane.addEventListener("dragover", e => {
-    if (!hasFiles(e)) return;
-    e.preventDefault();                  // ★ 不 preventDefault 就不会有 drop 事件
+    if (!DRAG.on || !dragHasFiles(e)) return;
+    e.preventDefault();                 // ★ 不 preventDefault 就没有 drop 事件
     e.dataTransfer.dropEffect = "copy";
+    const box = e.target && e.target.closest ? e.target.closest(".dz-box") : null;
+    if (box){ const i = +box.dataset.cmd || 0; if (i !== DRAG.cmd){ DRAG.cmd = i; paintDropZone(true); } }
+    pane.classList.add("dover");
   });
   pane.addEventListener("dragleave", e => {
-    if (!hasFiles(e)) return;
-    dropDepth = Math.max(0, dropDepth - 1);
-    if (dropDepth === 0 && !e.relatedTarget) dropHot(false);
-    else if (dropDepth === 0) dropHot(false);
+    if (!dragHasFiles(e)) return;
+    DRAG.depth = Math.max(0, DRAG.depth - 1);
+    if (!e.relatedTarget) dragEnd();
+    pane.classList.remove("dover");
   });
   pane.addEventListener("drop", e => {
-    if (!hasFiles(e)) return;
-    e.preventDefault();                  // 路径由宿主送过来，这里只负责收拾高亮
-    clearDropHot();
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();                 // 真实路径由宿主送过来，这里只收拾界面
+    pane.classList.remove("dover");
+    uiLog("page drop: files=" + ((e.dataTransfer.files || []).length));
+    // ★ 先别拆投放框：宿主的路径是另一条路送来的（几毫秒后到 `__mossDrop`）
   });
-  // 拖出窗口（拖到别处去了）也要收干净，不然那块高亮会一直挂着
-  window.addEventListener("dragend", clearDropHot);
-  window.addEventListener("blur", clearDropHot);
-  document.addEventListener("dragleave", e => { if (!e.relatedTarget) clearDropHot(); });
+  // 拖出窗口 / 按 Esc 也要收干净，不然那块高亮会一直挂着
+  window.addEventListener("dragend", dragEnd);
+  window.addEventListener("blur", dragEnd);
+  document.addEventListener("dragleave", e => { if (!e.relatedTarget) dragEnd(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") dragEnd(); });
 }
 
-/* 宿主把真实路径送过来（drag & drop 的落地口）。items: [{path, isDir, dir}, …] */
+/* 宿主把真实路径送过来（drag & drop 的落地口）。items: [{path, isDir, dir, name}, …]
+   ★ 到这一步我们才知道真实路径，也才知道拖的到底是文件还是文件夹（以宿主说的为准）。 */
 window.__mossDrop = function(items){
-  clearDropHot();
-  if (!items || !items.length) return;
-  const p = dropTargetPkg();
-  if (!p){ toast("拖进来是要「用某个包跑它」—— 先在左边选一个包", true); return; }
+  const cmdIdx = DRAG.cmd;
+  dragEnd();
+  if (!items || !items.length){ uiLog("host drop: 没有路径（WebView2 没给）"); return; }
+  const p = cur;
   const it = items[0];
+  uiLog("host drop: " + JSON.stringify(items));
   if (items.length > 1)
-    toast("拖进来 " + items.length + " 个，先用第一个：" + it.path.split(/[\\/]/).pop());
-  // 参数框里放这个路径（带空白就加引号 —— 宿主那边是按**一个字符串**拆的，`CL-02`）
-  const box = argsInput();
-  if (box){
-    box.value = /\s/.test(it.path) ? '"' + it.path + '"' : it.path;
-    box.dispatchEvent(new Event("input"));       // 让"命令预览"跟着更新
+    toast("拖进来 " + items.length + " 个，先用第一个：" + (it.name || it.path));
+  const cmds = dropCommandsFor(p, it.isDir);
+  if (!p || !cmds.length){
+    toast("✗ " + (p ? (":" + p.id + " 不收" + (it.isDir ? "文件夹" : "文件"))
+                    : "先选一个包") + " —— 拖动时只列收得下它的包", true);
+    return;
   }
-  toast("以 " + (it.dir || "（默认）") + " 为当前目录运行 :" + p.id);
-  startRun(p, box ? box.value : "", it.dir);
+  const cmd = cmds[Math.min(cmdIdx || 0, cmds.length - 1)].rule;
+  let args = (argsInput() ? argsInput().value : "").trim();
+  let cwd = "";
+  if (cmd.cwd) cwd = it.isDir ? it.path : it.dir;      // 拖的是文件 → 用它所在的文件夹
+  if (cmd.param){
+    let v = cmd.base ? (it.name || "") : it.path;
+    if (cmd.quote || /\s/.test(v)) v = '"' + v + '"';  // 有空白必须加引号，不然被拆词
+    args = (args + " " + v).trim();                    // ★ 强制追加到末尾
+  }
+  const box = argsInput();
+  if (box){ box.value = args; box.dispatchEvent(new Event("input")); }
+  toast((cwd ? "以 " + cwd + " 为当前目录" : "按当前参数") + "运行 :" + p.id);
+  startRun(p, args, cwd);
 };
+
+/* 拖放这条线自己的日志（`user_data/state/_ui_drop.log`）。
+   `V-40` 就是"拖了没反应、什么都不知道" —— 有这条日志，一次就能分清是页面没收到拖动、
+   还是 WebView2 没给路径。失败不影响功能（纯记事）。 */
+function uiLog(text){
+  try{ pywebview.api.ui_log(String(text || "")); }catch(e){}
+}
 
 async function clickRun(p){
   /* 历史条目：跑 / 停都按 `histKey` 走（那才是它的命令行缓冲区键）。 */
@@ -1280,8 +1404,16 @@ function renderList(){
   const rows = DATA.packages.filter(p => !f ||
     [p.id, p.name, p.desc, (p.tags||[]).join(" "), (p.aliases||[]).join(" ")]
       .join(" ").toLowerCase().includes(f));
-  if (!rows.length){ box.innerHTML = '<div class="empty">没有匹配的包</div>'; return; }
-  for (const p of rows){
+  // ★ 正拖着东西的时候：**只列收得下它的包**（`V-39`）—— 不支持对应操作的先藏起来，
+  //   省得你对着一个根本不会理你的包干瞪眼。
+  const shown = DRAG.on ? rows.filter(p => dropAccepts(p, DRAG.kind)) : rows;
+  if (!shown.length){
+    box.innerHTML = '<div class="empty">' + (DRAG.on
+      ? ("没有包收「" + dropKindName(DRAG.kind) + "」")
+      : "没有匹配的包") + '</div>';
+    return;
+  }
+  for (const p of shown){
     const d = document.createElement("div");
     d.className = "item" + (cur && cur.id === p.id ? " sel" : "");
     d.dataset.id = p.id;

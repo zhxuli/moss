@@ -1388,6 +1388,11 @@ class Api:
             return {"ok": False, "msg": str(e)}
         return {"ok": True, "msg": "已在资源管理器中打开"}
 
+    def ui_log(self, text):
+        """界面写一行日志（拖放这条线在用，见 `drop_log`）。出问题能一次看清。"""
+        drop_log("page: " + str(text or ""))
+        return {"ok": True}
+
     def quit(self):
         window.destroy()
         return {"ok": True}
@@ -1407,22 +1412,56 @@ window = webview.create_window(
     text_select=True,
 )
 
-# ================================================================ 拖文件进来（`V-35`）
-# 你拖着 Explorer 里的一个文件 / 文件夹，丢到详情报上 ⇒ 意思就是「以它为当前目录，
-# 跑这个包」。**为什么非要有 Python 这一手**：Chromium **不把 `File.path` 交给页面**
-# （安全设计），页面那边只能拿到文件名。pywebview 走的是 WebView2 的 `AdditionalObjects`：
-# 拖进来的那一瞬间宿主拿得到**真实路径**，再塞进 DOM 事件的
+# ================================================================ 拖文件进来（`V-35` / `V-38` / `V-39`）
+# 你拖着 Explorer 里的一个文件 / 文件夹丢进窗口 ⇒ 界面只列"收得下它"的包、划过谁选谁，
+# 到详情页的投放框上松手就按那个包自己声明的规矩跑（`pkg.json` 的 `drop`）。
+# **为什么非要有 Python 这一手**：Chromium **不把 `File.path` 交给页面**（安全设计），
+# 页面那边只能拿到文件名。pywebview 走的是 WebView2 的 `AdditionalObjects`：拖进来的
+# 那一瞬间宿主拿得到**真实路径**，再塞进 DOM 事件的
 # `dataTransfer.files[i].pywebviewFullPath` 里。
 # ★ 但这条路**只有在 Python 这边挂过 drop 监听时才会开** —— pywebview 里有个
 #   `_dnd_state['num_listeners']`，是 0 的时候它把 WebView2 送来的文件直接丢掉
 #   （`edgechromium.on_script_notify`）。所以：**路径由这边收，收完交给页面去跑**
 #   （页面才知道现在选的是哪个包、参数框在哪儿、按钮怎么点亮）。
+# ★ 挂法和 pywebview 官方那个拖放例子一致（挂在 `document` 上 + prevent_default）：
+#   `V-40` 里"拖了没反应"的两个怀疑之一，就是当初挂在 `#pane-detail` 这个具体元素上
+#   没挂成功（而且我把异常吞了，看不见）。
+DROP_LOG = USER_DATA / "state" / "_ui_drop.log"
+
+
+def drop_log(text):
+    """拖放这条线的日志。**纯记事，坏了也不影响功能**（`V-40` 靠它定位）。
+
+    为什么要它：拖放出问题时，"页面没收到拖动"和"WebView2 没给路径"在界面上长得
+    一模一样（都是"啥都没发生"）。记一笔就能一次分清。只留最近这些，别让它无限长。
+    """
+    try:
+        DROP_LOG.parent.mkdir(parents=True, exist_ok=True)
+        if DROP_LOG.is_file() and DROP_LOG.stat().st_size > 256 * 1024:
+            keep = DROP_LOG.read_text(encoding="utf-8", errors="replace")[-64 * 1024:]
+            DROP_LOG.write_text(keep, encoding="utf-8")
+        line = "%s  %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), text)
+        with open(DROP_LOG, "a", encoding="utf-8") as fh:
+            fh.write(line)
+    except Exception:                                                # noqa: BLE001
+        pass
+
+
 def _on_files_dropped(event):
-    """页面详情报上的 drop。把真实路径交给页面，剩下的（选包 / 填参数 / 跑）归页面管。"""
+    """页面上的 drop。把真实路径交给页面，剩下的（选包 / 填参数 / 跑）归页面管。"""
     try:
         files = (event.get("dataTransfer") or {}).get("files") or []
-    except Exception:                                                # noqa: BLE001
+    except Exception as e:                                           # noqa: BLE001
+        drop_log("drop 事件读不出来：%r" % (e,))
         files = []
+    raw = []
+    for f in files:
+        try:
+            raw.append({"name": f.get("name"), "hasPath": bool(f.get("pywebviewFullPath")),
+                        "path": f.get("pywebviewFullPath")})
+        except Exception:                                            # noqa: BLE001
+            pass
+    drop_log("host drop: %d 个 —— %s" % (len(files), json.dumps(raw, ensure_ascii=False)))
     items = []
     for f in files:
         try:
@@ -1436,26 +1475,34 @@ def _on_files_dropped(event):
         except OSError:
             is_dir = False
         items.append({"path": str(p), "isDir": bool(is_dir),
-                      "dir": str(p) if is_dir else os.path.dirname(str(p))})
+                      "dir": str(p) if is_dir else os.path.dirname(str(p)),
+                      "name": os.path.basename(str(p))})
     if not items:
+        # ★ 这一段就是 `V-40` 的关键证据：WebView2 收到了 drop，但一个路径都没给
+        drop_log("→ 一个真实路径都没拿到（WebView2 没给；文件夹尤其可能这样）")
         return
     try:
-        window.evaluate_js("window.__mossDrop(%s)"
-                           % json.dumps(items, ensure_ascii=False))
-    except Exception:                                                # noqa: BLE001
-        pass
+        window.evaluate_js("window.__mossDrop(%s)" % json.dumps(items, ensure_ascii=False))
+        drop_log("→ 已交给页面：%s" % json.dumps(items, ensure_ascii=False))
+    except Exception as e:                                           # noqa: BLE001
+        drop_log("→ 交给页面时出错：%r" % (e,))
 
 
 def _arm_file_drop():
-    """页面加载完之后，在详情报上挂 drop 监听（`webview.start` 里跑，在别的线程）。"""
+    """页面加载完之后，挂上 drop 监听（`webview.start` 里跑，在别的线程）。
+
+    ★ 以前这里整段包在 `try/except: pass` 里 —— `V-40` 那种"拖了没反应"就完全查不出来
+      （异常被自己吞了，而 pywebview 那边"注册过监听"就会把路径收走，结果是收走了没人拿）。
+      现在**出错就记日志**，连 `import` 都放进 try 里。
+    """
     try:
+        from webview.dom import DOMEventHandler                 # noqa: PLC0415
         window.events.loaded.wait(20)
-        el = window.dom.get_element("#pane-detail")
-        if el is None:
-            return
-        el.events.drop += _on_files_dropped
-    except Exception:                                                # noqa: BLE001
-        pass          # 拖拽是锦上添花，挂不上也不能让界面起不来
+        window.dom.document.events.drop += DOMEventHandler(
+            _on_files_dropped, prevent_default=True, stop_propagation=True)
+        drop_log("armed: 监听挂在 document 上（num_listeners 应该 > 0 了）")
+    except Exception as e:                                           # noqa: BLE001
+        drop_log("armed 失败（拖放会完全没反应）：%r" % (e,))
 
 
 if __name__ == "__main__":

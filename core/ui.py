@@ -161,6 +161,9 @@ def build_payload():
             "aliases": [str(a) for a in (p.get("aliases") or [])],
             "tags": [str(t) for t in (p.get("tags") or [])],
             "params": p.get("params") or [],
+            # 「拖进来」声明（`V-38` ✅）：已经是"命令数组"了（`pkg.normalize_drop` 归一化过），
+            # 空数组 = 这个包不收拖入。界面拖动时**只列收得下的包**、只画对应的投放框。
+            "drop": p.get("drop") or [],
             "docs": p.get("docs") or {},
             "ai_expose": bool(ai.get("expose")),
             "ai_risk": str(ai.get("risk") or ""),

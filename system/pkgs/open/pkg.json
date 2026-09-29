@@ -62,5 +62,15 @@
         "target": "D:\\a.txt"
       }
     ]
+  },
+  "drop": {
+    "dir": {
+      "param": true,
+      "quote": true
+    },
+    "file": {
+      "param": true,
+      "quote": true
+    }
   }
 }

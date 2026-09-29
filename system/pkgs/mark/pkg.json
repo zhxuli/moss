@@ -55,5 +55,10 @@
   "ai": {
     "expose": false,
     "risk": "medium"
+  },
+  "drop": {
+    "dir": {
+      "cwd": true
+    }
   }
 }

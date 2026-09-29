@@ -62,5 +62,10 @@
         "args": "docs -a"
       }
     ]
+  },
+  "drop": {
+    "dir": {
+      "cwd": true
+    }
   }
 }
