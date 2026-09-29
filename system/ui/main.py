@@ -1800,26 +1800,45 @@ class Api:
     def settings_save(self, pairs):
         """把改过的值写回 `user_data/config.toml`（宿主按行换值，注释一字不动）。
 
-        回 `{"ok", "problems", "groups", "msg"}`：**problems 要原样带回去**，
-        界面得把"为什么不让这么改"摊开说（比如两个前缀同时留空）。
+        回 `{"ok", "problems", "msg"}`：**problems 要原样带回去**，
+        界面得把"为什么不让这么改"摊开说（每一条都带 `key`，好把那一行标红）。
         """
+        return self._settings_call("--settings-set", pairs, with_notes=False)
+
+    def settings_check(self, values):
+        """**只校验、不写盘**（`V-63`）：界面每改一下就问一次，用来标红 + 决定保存能不能点。
+
+        回 `{"ok", "problems", "notes", "live", "msg"}` —— 规则全在宿主那边
+        （`core/config.py` 的 `_check_values`），界面**不自己实现一遍**：
+        两处规则早晚会不一致，那种 bug 最难看出来。
+        """
+        return self._settings_call("--settings-check", values, with_notes=True)
+
+    def _settings_call(self, flag, payload, with_notes):
+        """`--settings-set` / `--settings-check` 共用的那一半（叫宿主 + 解析回话）。"""
+        empty = {"ok": False, "problems": [], "notes": {}, "live": "", "msg": ""}
         if not HOST:
-            return {"ok": False, "problems": [], "groups": [],
-                    "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
-        if not isinstance(pairs, dict) or not pairs:
-            return {"ok": True, "problems": [], "groups": [], "msg": "没改什么"}
+            empty["msg"] = "没拿到宿主命令（界面得由 moss 自己拉起）"
+            return empty
+        if not isinstance(payload, dict) or (not payload and not with_notes):
+            # 空调用：`set` 是"没改什么"；`check` 不一样 —— **空值也要问宿主**
+            # （宿主会把"当前生效的"补全，回一份 notes / live，面板第一屏就靠它）
+            return {"ok": True, "problems": [], "notes": {}, "live": "",
+                    "msg": "没改什么" if not with_notes else ""}
         # ★ `ensure_ascii=True`：这份 JSON 要走命令行（argv），全 ASCII 最省事 ——
         #   不然几个中文/全角符号就要跟 Windows 的命令行编码较劲。
-        payload = json.dumps(pairs, ensure_ascii=True)
-        r = _run_capture_split(HOST + ["--settings-set", payload])
+        body = json.dumps(payload, ensure_ascii=True)
+        r = _run_capture_split(HOST + [flag, body])
         data = _json_from_host(r.get("out"))
         if not isinstance(data, dict):
             tail = ((r.get("err") or "").strip().splitlines() or [""])[-1]
-            return {"ok": False, "problems": [], "groups": [],
-                    "msg": "保存失败：退出码 %s%s" % (r.get("code"),
-                                                     (" —— " + tail) if tail else "")}
+            return {"ok": False, "problems": [], "notes": {}, "live": "",
+                    "msg": "%s 失败：退出码 %s%s"
+                           % ("保存" if not with_notes else "检查", r.get("code"),
+                              (" —— " + tail) if tail else "")}
         return {"ok": bool(data.get("ok")), "problems": data.get("problems") or [],
-                "groups": data.get("groups") or [], "msg": ""}
+                "notes": data.get("notes") or {}, "live": data.get("live") or "",
+                "msg": ""}
 
     def quit(self):
         window.destroy()

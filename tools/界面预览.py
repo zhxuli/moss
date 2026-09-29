@@ -42,6 +42,7 @@
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -62,7 +63,7 @@ BROWSERS = [
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "drop-hot", "drop-dir", "drop-file", "console-input", "embed",
-          "statusbar", "settings",
+          "statusbar", "settings", "settings-bad", "settings-warn",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail"]
 
@@ -155,6 +156,27 @@ def mock_data():
                             "ext": p.suffix.lower().lstrip(".")})
         fs[rel] = {"ok": True, "rel": rel, "entries": entries, "writable": True,
                    "path": str(sub)}
+
+    # ★ 仓库里的 `user_data/pkgs/` 现在是**空的**（临时装的包都清理过了），可这几个
+    #   场景必须有"一个用户层的包"才试得出来：目录名≠id（`D-27`）、改名之后文件管理
+    #   还认不认路（`V-30`）、手改 id 之后要不要统一目录名（`V-32`/`V-33`）。
+    #   所以预览里**现造一个**：目录名 `my-first`、id `first` —— 正好就是那种不一致。
+    #   （`--check` 一开就露出来了：这三个场景原来一直在报 FAIL，只是没人读标题。）
+    if not any(p.get("layer") == "user" for p in (payload.get("packages") or [])):
+        udir = str(Path(payload["user_data"]) / "pkgs" / "my-first")
+        payload["packages"].append({
+            "id": "first", "name": "预览：第一个包", "desc": "预览用的用户层包（目录名 my-first）",
+            "kind": "task", "version": "0.1.0", "layer": "user", "dir": udir,
+            "aliases": [], "tags": [], "params": [], "drop": [], "ui": None, "docs": {},
+            "ai_expose": False, "ai_risk": "", "examples": [], "icon": "", "icon_svg": ""})
+        fs["user/pkgs/my-first"] = {
+            "ok": True, "rel": "user/pkgs/my-first", "writable": True, "path": udir,
+            "entries": [
+                {"name": "pkg.json", "rel": "user/pkgs/my-first/pkg.json", "dir": False,
+                 "size": 320, "mtime": 0, "ext": "json"},
+                {"name": "run.py", "rel": "user/pkgs/my-first/run.py", "dir": False,
+                 "size": 210, "mtime": 0, "ext": "py"}]}
+
     return {"payload": payload, "hist": hist, "fs": fs, "settings": settings,
             # 拖文件那个场景要的样本：故意用**带空格**的文件名，顺便验引号
             "dropDir": str(ROOT),
@@ -279,18 +301,56 @@ MOCK_JS = r"""
       }
       return {ok: true, code: 0, out: "(预览) 自检输出"};
     },
-    // ---- 「设置」（`V-60`）那两条：真后端去叫宿主 `--settings` / `--settings-set`，
-    //      预览里直接给真数据、把"改了什么"记下来给场景核对 ----
+    // ---- 「设置」（`V-60` / `V-63`）那几条：真后端去叫宿主 `--settings` /
+    //      `--settings-check` / `--settings-set`；预览里给真数据 + 一份**简化过的**
+    //      校验（真规则在 core/config.py，真机上由宿主算 —— 这里只为了看界面长什么样）。
     settings: async () => ({ok: true, path: M.settings.path, groups: M.settings.groups,
                             msg: ""}),
+    settings_check: async (vals) => {
+      M.values = vals;                       // 记住"页面现在是什么值"（保存时要用）
+      const probs = [];
+      const p = vals["symbols.path_mode"] || "", g = vals["symbols.plugin_mode"] || "";
+      if (!p && !g) probs.push({key: "symbols.path_mode", level: "error",
+        also: ["symbols.plugin_mode"],
+        why: "「路径调用」和「跑包」不能同时留空 —— 那样裸名（moss m）算哪一种就说不清了"});
+      const used = {}, label = {};
+      [["symbols.path_mode", "路径调用"], ["symbols.no_chdir_mode", "跑路径但不切目录"],
+       ["symbols.plugin_mode", "跑装好的包"], ["symbols.no_force_kill_mode", "后台脱离运行"]]
+        .forEach(pair => {
+          const v = vals[pair[0]] || "";
+          if (!v) return;
+          if (used[v]) probs.push({key: pair[0], level: "error", also: [used[v]],
+            why: "和「" + label[v] + "」用了同一个符号 " + v + " —— 命令含义会有歧义"});
+          else { used[v] = pair[0]; label[v] = pair[1]; }
+        });
+      const n = vals["symbols.no_chdir_mode"] || "", d = vals["symbols.no_force_kill_mode"] || "";
+      const notes = {
+        "symbols.path_mode": p ? ("现在：moss " + p + "m = 找文件") : "现在：裸名 moss m = 找文件",
+        "symbols.plugin_mode": g ? ("现在：moss " + g + "img = 跑包") : "现在：裸名 moss img = 跑包",
+        "symbols.no_chdir_mode": n ? ("现在：moss " + n + "m = 不切目录")
+                                   : "现在：这一类不带前缀（用裸名或路径前缀）",
+        "symbols.no_force_kill_mode": d ? ("现在：moss " + d + "m = 后台脱离")
+                                        : "现在：这一类不带前缀"};
+      const depth = parseInt(vals["search.max_parent_depth"], 10) || 3;
+      notes["search.max_parent_depth"] = "现在：从当前目录起，连自己带父目录一共 " +
+        (depth + 1) + " 个目录（当前 + 往上 " + depth + " 级）";
+      if (depth >= 6) probs.push({key: "search.max_parent_depth", level: "warn", also: [],
+        why: "找得有点远（一共 " + (depth + 1) + " 个目录）—— 容易撞上上层项目里的同名文件，"
+             + "撞上就会停下来问你"});
+      const live = (!p && !g)
+        ? "⚠ 两个都留空 —— 裸名（moss m）到底算找文件还是跑包，说不清了"
+        : ("现在：裸名 moss m 归「" + ((p && !g) ? "跑包" : "找文件") + "」" +
+           (p ? " ｜ moss " + p + "m 找文件" : "") + (g ? " ｜ moss " + g + "img 跑包" : "") +
+           (n ? " ｜ moss " + n + "m 不切目录" : "") + (d ? " ｜ moss " + d + "m 后台脱离" : ""));
+      return {ok: !probs.some(x => x.level === "error"), problems: probs, notes: notes,
+              live: live, msg: ""};
+    },
     settings_save: async (pairs) => {
       M.saved = pairs;
-      // 照真宿主的样子回一份"改完之后的当前值"，顺便把非法值拦下来（真宿主也拦）
-      const bad = [];
-      if (!pairs["symbols.path_mode"] && pairs["symbols.plugin_mode"] === "")
-        bad.push("「路径调用」和「跑包」不能同时留空 —— 那是假的，只是预览里的对照");
-      return {ok: bad.length === 0, problems: bad,
-              groups: M.settings.groups, msg: ""};
+      // 真宿主是"把这几项叠在当前文件上"再校验；这里叠在最后一次检查时的全量值上
+      const merged = Object.assign({}, M.values || {}, pairs);
+      const ck = await window.pywebview.api.settings_check(merged);
+      return {ok: ck.ok, problems: ck.problems, notes: ck.notes, live: ck.live, msg: ""};
     },
     open_ui: async () => ({ok: true, msg: "(预览) 已打开"}),
     pkg_stop: async () => ({ok: true, msg: "(预览) 已停止"}),
@@ -539,6 +599,16 @@ MOCK_JS = r"""
         await fmOpenPage("user/pkgs/" + oldDir + "/pkg.json");
         await sleep(300);
         const t = fmActiveTab();
+        // ★ 打不开就得**说出来**（`V-63`）：原来这里没护栏，`t` 是 null 时
+        //   直接抛 "Cannot set properties of null"，场景标题只留一句 SCENARIO-ERR，
+        //   看不出是"假文件系统里没这个包"还是"界面坏了"。
+        if (!t){
+          document.querySelector("#meta").textContent =
+            "SCENARIO-ERR 打不开 user/pkgs/" + oldDir + "/pkg.json（假的 FS 里没这个目录？）"
+            + " fs_read 失败过=" + (M.readFail || "无");
+          document.title = "NO-TAB";
+          return;
+        }
         let j = {};
         try{ j = JSON.parse(t.text); }catch(e){}
         j.id = "zzz9";
@@ -599,6 +669,13 @@ MOCK_JS = r"""
         await fmOpenPage("user/pkgs/" + oldDir + "/pkg.json");
         await sleep(300);
         const t = fmActiveTab();
+        if (!t){
+          document.querySelector("#meta").textContent =
+            "SCENARIO-ERR 打不开 user/pkgs/" + oldDir + "/pkg.json（假的 FS 里没这个目录？）"
+            + " fs_read 失败过=" + (M.readFail || "无");
+          document.title = "NO-TAB";
+          return;
+        }
         let j = {};
         try{ j = JSON.parse(t.text); }catch(e){}
         j.id = "3";
@@ -696,32 +773,103 @@ MOCK_JS = r"""
           " 齿轮边框=" + gearBorder + " 底色=" + gearBg;
         document.title = ok ? "READY" : "STATUS-FAIL";
       }
-      // ★ 「设置」面板（`V-60`）：打开 → 改两项（一个符号 + 一个开关）→ 保存 →
-      //   核对**只把改过的那两项**送回了宿主 → 再打开一次留给截图。
+      // ★ 「设置」面板（`V-60` / `V-63`）：打开 → 改一项（没冲突）→ 保存能点 → 存了 →
+      //   核对**只把改过的那项**送回了宿主 → 再打开一次留给截图。
       if (h === "settings"){
         await openSettings();
-        await sleep(500);
-        const rows = document.querySelectorAll("#set-body .setrow").length;
-        const groups = document.querySelectorAll("#set-body .setgroup").length;
-        const sym = document.querySelector('#set-body [data-key="symbols.no_chdir_mode"]');
-        const chk = document.querySelector('#set-body [data-key="output.pid"]');
-        const symBefore = sym ? sym.value : "";
-        if (sym) sym.value = "@";
-        if (chk) chk.checked = !chk.checked;
+        await sleep(700);                        // 等第一次"检查"回来（宿主那一圈）
+        const rows = document.querySelectorAll("#set-body .set-row").length;
+        const groups = document.querySelectorAll("#set-body .set-group").length;
+        const hasX = !!document.querySelector("#set-close svg");
+        const kinds = {
+          sw: document.querySelectorAll("#set-body .sw").length,
+          sym: document.querySelectorAll("#set-body .syminp").length,
+          txt: document.querySelectorAll("#set-body .txtinp").length,
+          step: document.querySelectorAll("#set-body .step").length};
+        const liveText = (document.querySelector("#set-live") || {}).textContent || "";
+        const depthNote = (document.querySelector(
+          '#set-body .set-row[data-key="search.max_parent_depth"] [data-role="now"]') || {})
+          .textContent || "";
+        const save0 = document.querySelector("#set-save");
+        const disabledAtStart = save0.disabled;   // 还没改：保存该是灰的
+        // ★ 选控件要选到**输入框**那一层：行（`.set-row`）自己也有 `data-key`
+        const sym = document.querySelector(
+          '#set-body .set-row[data-key="symbols.no_chdir_mode"] .syminp');
+        if (sym){ sym.value = "@"; sym.dispatchEvent(new Event("input", {bubbles: true})); }
+        await sleep(700);                         // 等检查回来（该放行保存）
+        const stateMoved = (document.querySelector("#set-state") || {}).textContent || "";
+        const enabledAfter = !save0.disabled;
         await saveSettings();
-        await sleep(600);
+        await sleep(500);
         const saved = M.saved || {};
         const closedAfterSave = !document.querySelector("#settings").classList.contains("on");
         await openSettings();                     // 再打开：留给截图看个完整的
-        await sleep(400);
+        await sleep(700);
         const opened = document.querySelector("#settings").classList.contains("on");
-        const ok = rows === 16 && groups === 4 && closedAfterSave && opened &&
-                   Object.keys(saved).length === 2 && saved["symbols.no_chdir_mode"] === "@" &&
-                   typeof saved["output.pid"] === "boolean";
+        const ok = rows === 16 && groups === 4 && hasX && kinds.sw === 8 && kinds.sym === 4 &&
+                   kinds.txt === 3 && kinds.step === 1 && disabledAtStart && enabledAfter &&
+                   /改了 1 项/.test(stateMoved) && /裸名/.test(liveText) &&
+                   /一共 4 个目录/.test(depthNote) && closedAfterSave && opened &&
+                   Object.keys(saved).length === 1 && saved["symbols.no_chdir_mode"] === "@";
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 行=" + rows + " 组=" + groups +
-          " 存了=" + JSON.stringify(saved) + " 存完关了=" + closedAfterSave;
+          "DIAG " + (ok ? "OK" : "FAIL") + " 行=" + rows + " 组=" + groups + " ×=" + (hasX ? 1 : 0) +
+          " 控件=" + JSON.stringify(kinds) + " 存了=" + JSON.stringify(saved) +
+          " 保存钮 起/改=" + (disabledAtStart ? "灰" : "亮") + "/" + (enabledAfter ? "亮" : "灰");
         document.title = ok ? "READY" : "SETTINGS-FAIL";
+      }
+      // ★ 冲突那一路（`V-63`）：把「跑包」的前缀清空 ⇒ 和「路径调用」同时留空。
+      //   期望：那一行飘红、控件也红、脚上写着为什么、**保存按钮禁用**；截图留在这个状态。
+      if (h === "settings-bad"){
+        await openSettings();
+        await sleep(700);
+        const inp = document.querySelector(
+          '#set-body .set-row[data-key="symbols.plugin_mode"] .syminp');
+        if (inp){ inp.value = ""; inp.dispatchEvent(new Event("input", {bubbles: true})); }
+        await sleep(800);                         // 等检查回来
+        // ★ 一条冲突牵涉两行（主行 + `also`）：**两行都要红**，原因写在主行上。
+        //   所以这里按"红了几行 + 有没有那句原因"判，别只盯某一行（换一边改就换一行报）。
+        let redCount = 0, reason = "";
+        document.querySelectorAll("#set-body .set-row").forEach(r => {
+          if (r.classList.contains("bad")) redCount++;
+          const w = r.querySelector('[data-role="why"]');
+          if (w && w.textContent) reason += " " + w.textContent;
+        });
+        const redRaw = redCount === 2;
+        const live = document.querySelector("#set-live");
+        const liveBad = !!live && live.classList.contains("bad");
+        const st = (document.querySelector("#set-state") || {}).textContent || "";
+        const disabled = document.querySelector("#set-save").disabled;
+        const ok = redRaw && /不能同时留空/.test(reason) && liveBad && /冲突/.test(st) && disabled;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 红了几行=" + redCount +
+          " 活预览红=" + (liveBad ? 1 : 0) + " 保存禁用=" + (disabled ? 1 : 0) +
+          " 脚上写着=" + JSON.stringify(st.slice(0, 34));
+        document.title = ok ? "READY" : "SETTINGS-BAD-FAIL";
+      }
+      // ★ 提醒那一路（`V-63`）：只提醒、**不拦保存**（黄的不是红的）。顺手把面板
+      //   滚到底，截图里能看到「找文件」「Ctrl+C」两组 + 那句"一共几个目录"。
+      if (h === "settings-warn"){
+        await openSettings();
+        await sleep(700);
+        const num = document.querySelector(
+          '#set-body .set-row[data-key="search.max_parent_depth"] .num');
+        if (num){ num.value = "8"; num.dispatchEvent(new Event("change", {bubbles: true})); }
+        await sleep(800);
+        const row = document.querySelector(
+          '#set-body .set-row[data-key="search.max_parent_depth"]');
+        const yellow = !!row && row.classList.contains("warn");
+        const why = row ? (row.querySelector('[data-role="why"]') || {}).textContent || "" : "";
+        const note = row ? (row.querySelector('[data-role="now"]') || {}).textContent || "" : "";
+        const st = (document.querySelector("#set-state") || {}).textContent || "";
+        const canSave = !document.querySelector("#set-save").disabled;
+        const liveUses = !!document.querySelector("#set-live");
+        document.querySelector("#set-body").scrollTop = 99999;   // 给截图看下半截
+        const ok = yellow && /提醒/.test(why) && /一共 9 个目录/.test(note) &&
+                   canSave && /改了 1 项/.test(st) && liveUses;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 黄=" + (yellow ? 1 : 0) +
+          " 能存=" + (canSave ? 1 : 0) + " 现在=" + JSON.stringify(note.slice(0, 30));
+        document.title = ok ? "READY" : "SETTINGS-WARN-FAIL";
       }
       // ★ 命令行那行输入（`V-43`）：包 `input()` 问你话时能答。
       //   真的 stdin 那条链由宿主侧测试证明；这里只验界面这半：
@@ -895,7 +1043,9 @@ MOCK_JS = r"""
       return;
     }
     await sleep(350);
-    if (document.title !== "STALE-PATH") document.title = "READY";
+    // ★ 只有"还停在初始标题"时才盖成 READY —— 以前这行会把场景自己设的
+    //   `...-FAIL` 一起盖掉，于是"截图里有 FAIL、工具还说 OK"（`V-63` 顺手修）。
+    if (!/FAIL|ERR|STALE/.test(document.title)) document.title = "READY";
   }
   window.addEventListener("load", () => {
     setTimeout(() => window.dispatchEvent(new Event("pywebviewready")), 10);
@@ -906,6 +1056,28 @@ MOCK_JS = r"""
 """
 
 
+def dom_title(exe, url, size, dark):
+    """把页面跑完后的 `<title>` 抠出来（`--dump-dom`）。
+
+    ★ 为什么值得多花一次浏览器启动：每个场景判完都会把结论写进 `document.title`
+      （`READY` / `xxx-FAIL`），但**光看截图是看不出标题栏的** —— 以前工具只检查
+      "图片生成没有"，所以场景失败也会报 OK（踩过）。有了这个，`--check` 才能当真用。
+    """
+    cmd = [exe, "--headless=new", "--disable-gpu", "--hide-scrollbars",
+           "--no-first-run", "--no-default-browser-check",
+           "--user-data-dir=" + str(PRE / "_profile_dom"), "--allow-file-access-from-files",
+           "--window-size=" + size, "--virtual-time-budget=6000", "--dump-dom", url]
+    if dark:
+        cmd.insert(2, "--force-dark-mode")
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=120)
+    except Exception:                                                 # noqa: BLE001
+        return None
+    m = re.search(r"<title>(.*?)</title>", r.stdout or "", re.S)
+    return (m.group(1).strip() if m else None)
+
+
 def main():
     for s in (sys.stdout, sys.stderr):
         try:
@@ -913,6 +1085,7 @@ def main():
         except Exception:
             pass
 
+    args = sys.argv[1:]
     exe = browser()
     if not exe:
         print("[错误] 找不到 Edge / Chrome，没法无头截图。")
@@ -944,16 +1117,19 @@ def main():
 
     SHOTS.mkdir(parents=True, exist_ok=True)
     url = (PRE / "index.html").as_uri()
-    scenes = [a for a in sys.argv[1:] if not a.startswith("-")] or SCENES
+    scenes = [a for a in args if not a.startswith("-")] or SCENES
     # `--size=1280,1200`：整页比一屏高时用得上（看看卡片下面是什么样）
-    size = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--size=")),
-                "1280,860")
+    size = next((a.split("=", 1)[1] for a in args if a.startswith("--size=")), "1280,860")
     # `--dark`：让 `prefers-color-scheme: dark` 生效 —— 深色那套令牌是另一份值，
     # 不单独看一眼很容易只在浅色下"看着没事"。
-    dark = "--dark" in sys.argv[1:]
+    dark = "--dark" in args
+    # `--check`：多跑一次 `--dump-dom`，把场景写进 `document.title` 的**结论**读出来 ——
+    # "图片生成了"不等于"场景判过了"。
+    check = "--check" in args
     print("浏览器 : %s" % exe)
     print("临时副本: %s" % PRE)
-    print("窗口    : %s%s" % (size, "  （深色）" if dark else ""))
+    print("窗口    : %s%s%s" % (size, "  （深色）" if dark else "",
+                                "  （--check：读标题里的结论）" if check else ""))
     print("=" * 64)
     bad = 0
     for sc in scenes:
@@ -970,11 +1146,18 @@ def main():
         r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=120)
         shutil.rmtree(prof, ignore_errors=True)
         ok = out.is_file() and out.stat().st_size > 2000
+        verdict = ""
+        if check:
+            shutil.rmtree(PRE / "_profile_dom", ignore_errors=True)
+            title = dom_title(exe, url + "#" + sc, size, dark)
+            good = bool(title) and not re.search(r"FAIL|ERR|STALE", title or "")
+            verdict = "  标题=%s" % (title or "（读不到）")
+            ok = ok and good
         if not ok:
             bad += 1
-        print("  %-16s %s  %s" % (sc, "OK" if ok else "FAIL",
-                                  ("%.0f KB" % (out.stat().st_size / 1024)) if out.is_file()
-                                  else (r.stderr or "")[-160:]))
+        print("  %-16s %s  %s%s" % (sc, "OK" if ok else "FAIL",
+                                   ("%.0f KB" % (out.stat().st_size / 1024)) if out.is_file()
+                                   else (r.stderr or "")[-160:], verdict))
     print("=" * 64)
     print("截图：%s" % SHOTS)
     print("★ 用 read_image 看图。仓库没被改动；临时副本可以随时删。")

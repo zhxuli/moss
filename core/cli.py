@@ -1257,6 +1257,25 @@ def main(argv):
         sys.stdout.write(_json.dumps(r, ensure_ascii=False))
         sys.stdout.flush()
         return 0 if r.get("ok") else 1
+    if first == "--settings-check":
+        # **只校验、不写盘**（`V-63`）：界面那颗齿轮每改一下就问一次 ——
+        # 用来把冲突的那一行标红、并决定「保存」按钮能不能点。规则只有 core 这一份，
+        # 界面不自己再实现一遍。参数同样是一份 JSON：{"段.键": 值}。
+        import json as _json
+        if not rest:
+            out.print_cyan("[错误] --settings-check 需要一份 JSON。")
+            return 1
+        try:
+            pairs = _json.loads(rest[0])
+        except ValueError as e:
+            out.print_cyan("[错误] --settings-check 的参数不是 JSON：%s" % e)
+            return 1
+        if not isinstance(pairs, dict):
+            out.print_cyan("[错误] --settings-check 要的是一个 JSON 对象（键 = 段.键）。")
+            return 1
+        sys.stdout.write(_json.dumps(config.settings_check(pairs), ensure_ascii=False))
+        sys.stdout.flush()
+        return 0
     if first == "--rename":
         if len(rest) < 2:
             out.print_cyan("[错误] --rename 需要两个名字：旧的（id 或别名）和新的 id。")
