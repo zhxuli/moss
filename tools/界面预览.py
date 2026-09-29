@@ -179,6 +179,8 @@ def mock_data():
                  "size": 210, "mtime": 0, "ext": "py"}]}
 
     return {"payload": payload, "hist": hist, "fs": fs, "settings": settings,
+            # `--early-ready`：让 mock 在 js/*.js 之前就发 ready（`V-68` 的竞态场景）
+            "earlyReady": ("--early-ready" in sys.argv[1:]),
             # 拖文件那个场景要的样本：故意用**带空格**的文件名，顺便验引号
             "dropDir": str(ROOT),
             "dropFile": str(ROOT / "一个 带空格的图片.png"),
@@ -192,6 +194,9 @@ MOCK_JS = r"""
 (function(){
   const M = __MOCK__;
   const state = M.payload, HIST = M.hist, FS = M.fs;
+  // ★ `--early-ready`：**在这里**（js/*.js 之前）就把 ready 发掉 —— 复现真机上
+  //   "pywebview 的 ready 早于 `js/app.js` 挂监听"那条竞态（`V-68`）。
+  if (M.earlyReady) window.dispatchEvent(new Event("pywebviewready"));
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   window.pywebview = { api: {
     state: async () => state,
@@ -1106,7 +1111,9 @@ MOCK_JS = r"""
     if (!/FAIL|ERR|STALE/.test(document.title)) document.title = "READY";
   }
   window.addEventListener("load", () => {
-    setTimeout(() => window.dispatchEvent(new Event("pywebviewready")), 10);
+    // `--early-ready`：**在页面脚本挂监听之前**就把 ready 发掉（`V-68` 那条竞态）。
+    // 真机上 pywebview 完全可能这么干（尤其界面拆成多个外部脚本之后）。
+    if (!M.earlyReady) window.dispatchEvent(new Event("pywebviewready"));
     setTimeout(scenario, 350);
   });
 })();

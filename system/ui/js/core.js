@@ -1,4 +1,76 @@
 /* moss 界面 · core.js —— 从 index.html 拆出来的（`V-67`），内容与拆分前一致。 */
+
+/* -*- coding: utf-8 -*- */
+/* moss 界面 · js/core.js 顶部的"出错要看得见"（`V-68`）
+   ============================================================================
+   ★ 为什么要有它：这个界面**没有能打开的控制台**。某个文件一抛异常，表现就是
+     "左边列表空了 / 某块没了"，谁也说不出为什么（你就碰上过：重开之后左侧什么都没有，
+     而窗口里一个字都没提示）。所以：
+       · `window.onerror` / `unhandledrejection` 全部收下来；
+       · 状态栏那行立刻标红写出来（一直在，不消失）；
+       · 同时弹一条 toast（让人马上注意到）；
+       · 攒进 `window.__errors`（探针脚本、以后排查都读它）。
+   ============================================================================ */
+window.__errors = [];
+
+function reportError(what, msg, stack){
+  const line = what + "：" + msg + (stack ? ("\n" + stack) : "");
+  try{ window.__errors.push(line); }catch(e){}
+  try{ console.error(line); }catch(e){}
+  try{
+    const bar = document.getElementById("status-text");
+    if (bar){ bar.textContent = "⚠ " + msg; bar.className = "bad"; }
+  }catch(e){}
+  try{ if (typeof toast === "function") toast("⚠ " + msg, true); }catch(e){}
+}
+
+window.addEventListener("error", function(e){
+  reportError("脚本出错", (e && e.message) || String(e),
+              (e && e.error && e.error.stack) || (e && e.filename
+                ? (e.filename + ":" + e.lineno + ":" + e.colno) : ""));
+});
+window.addEventListener("unhandledrejection", function(e){
+  const r = e && e.reason;
+  reportError("未处理的 Promise", (r && (r.message || r)) || String(e),
+              (r && r.stack) || "");
+});
+
+
+/* -*- coding: utf-8 -*- */
+/* moss 界面 · js/core.js 顶部的"出错要看得见"（`V-68`）
+   ============================================================================
+   ★ 为什么要有它：这个界面**没有能打开的控制台**。某个文件一抛异常，表现就是
+     "左边列表空了 / 某块没了"，谁也说不出为什么（你就碰上过：重开之后左侧什么都没有，
+     而窗口里一个字都没提示）。所以：
+       · `window.onerror` / `unhandledrejection` 全部收下来；
+       · 状态栏那行立刻标红写出来（一直在，不消失）；
+       · 同时弹一条 toast（让人马上注意到）；
+       · 攒进 `window.__errors`（探针脚本、以后排查都读它）。
+   ============================================================================ */
+window.__errors = [];
+
+function reportError(what, msg, stack){
+  const line = what + "：" + msg + (stack ? ("\n" + stack) : "");
+  try{ window.__errors.push(line); }catch(e){}
+  try{ console.error(line); }catch(e){}
+  try{
+    const bar = document.getElementById("status-text");
+    if (bar){ bar.textContent = "⚠ " + msg; bar.className = "bad"; }
+  }catch(e){}
+  try{ if (typeof toast === "function") toast("⚠ " + msg, true); }catch(e){}
+}
+
+window.addEventListener("error", function(e){
+  reportError("脚本出错", (e && e.message) || String(e),
+              (e && e.error && e.error.stack) || (e && e.filename
+                ? (e.filename + ":" + e.lineno + ":" + e.colno) : ""));
+});
+window.addEventListener("unhandledrejection", function(e){
+  const r = e && e.reason;
+  reportError("未处理的 Promise", (r && (r.message || r)) || String(e),
+              (r && r.stack) || "");
+});
+
 /* ============================================================================
    moss 界面：详情 / 命令行 / **文件管理**
    文件管理是**每个包自己的一套**（上下文按包 id 分），里面的子选项卡：
