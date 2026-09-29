@@ -49,6 +49,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# ★ 必须显式告诉 `core.paths` 安装根在哪：它是按 `sys.argv[0]` 定位的，从 `tools/` 里跑会算成
+#   `tools/` ⇒ 扫到 0 个包，mock 里只剩那个合成包 ⇒ drop 这些场景全挂（`V-79` 踩过，
+#   当时还以为是组件化改坏了）。
+os.environ.setdefault("MOSS_HOME", str(ROOT))
 SRC = ROOT / "system" / "ui"
 PRE = Path(__import__("tempfile").gettempdir()) / "moss_ui_preview"
 SHOTS = Path(__import__("tempfile").gettempdir()) / "moss_ui_shots"

@@ -90,44 +90,8 @@ function histDir(it){
 }
 
 function renderHist(){
-  const box = $("#hist");
-  const f = $("#q").value.trim().toLowerCase();
-  const rows = HIST.filter(it => !f ||
-    [it.name, it.target, it.args, it.cwd].join(" ").toLowerCase().includes(f));
-  if (!rows.length){
-    box.innerHTML = '<div class="empty">' +
-      (HIST.length ? "没有匹配的历史" :
-       "还没有历史。<br>历史只记<b>路径调用</b>（<span class=\"mono\">moss zeen</span> 这种）——<br>包调用不进历史。") +
-      '</div>';
-    return;
-  }
-  box.innerHTML = "";
-  const selKey = curH ? histKey(curH) : null;
-  for (const it of rows){
-    const d = document.createElement("div");
-    d.className = "hitem";
-    d.dataset.key = histKey(it);
-    d.dataset.state = RUNS[d.dataset.key] ? "running" : "idle";
-    if (d.dataset.key === selKey) d.classList.add("sel");
-    // ★ 目标文件已经没了的，整行**灰掉**：它已经跑不了了，
-    //   但记录还留着（当初在哪儿、跑过什么仍然有用），所以是灰不是删。
-    const gone = it.exists === false;
-    if (gone){
-      d.classList.add("dead");
-      d.title = "这个文件已经不在了：" + (it.target || "");
-    }
-    const when = (it.ts || "").replace("T", " ").slice(5, 16);
-    d.innerHTML = histIconHTML(it) +
-      '<div class="hmain">' +
-        '<div class="hname">' + esc(it.name) +
-          (it.args ? ' <span class="sub">' + esc(it.args) + '</span>' : "") + '</div>' +
-        '<div class="hsub">' + esc(it.cwd || "") + '　·　' + esc(when) + '</div>' +
-      '</div>' +
-      '<span class="hstat"></span>';
-    d.onclick = () => selectHist(it);          // 选中，不跑
-    box.appendChild(d);
-  }
-  paintHistStats();
+  bumpLists();
+  Vue.nextTick(() => { try{ paintHistStats(); }catch(e){} });
 }
 
 function paintHistStats(){
@@ -204,36 +168,20 @@ function rerunLast(){
   startRun(p, lastRun.args);
 }
 
+/* 列表 / 历史的"该重画了"信号（`V-79`）。
+   ★ 为什么用举牌而不是把 DATA/HIST 变成响应式：`DATA`/`HIST`/`cur`/`curH`/`side` 都是**别的文件**里的
+     普通 `let`（整个被重新赋值），改成响应式要动一圈别的模块；原来的代码本来就在"数据变了"的地方
+     显式调 `renderList()` / `renderHist()`，所以**保留那几个函数名当门面**、让它们举牌最省事，
+     行为也一字不变（外部调用点一个都不用改）。 */
+const LISTR = Vue.reactive({rev: 0});
+function bumpLists(){ LISTR.rev++; }
+
 function renderList(){
-  const f = $("#q").value.trim().toLowerCase();
-  const box = $("#list");
-  box.innerHTML = "";
-  const rows = DATA.packages.filter(p => !f ||
-    [p.id, p.name, p.desc, (p.tags||[]).join(" "), (p.aliases||[]).join(" ")]
-      .join(" ").toLowerCase().includes(f));
-  // ★ 正拖着东西的时候：**只列收得下它的包**（`V-39`）—— 不支持对应操作的先藏起来，
-  //   省得你对着一个根本不会理你的包干瞪眼。
-  const shown = DRAG.on ? rows.filter(p => dropAccepts(p, DRAG.kind)) : rows;
-  if (!shown.length){
-    box.innerHTML = '<div class="empty">' + (DRAG.on
-      ? ("没有包收「" + dropKindName(DRAG.kind) + "」")
-      : "没有匹配的包") + '</div>';
-    return;
-  }
-  for (const p of shown){
-    const d = document.createElement("div");
-    d.className = "item" + (cur && cur.id === p.id ? " sel" : "");
-    d.dataset.id = p.id;
-    d.dataset.state = rowStateOf(p.id);      // 宿主口径：在跑 / 没在跑
-    d.innerHTML = iconHTML(p, "ico") +
-      '<div style="min-width:0;flex:1">' +
-        '<div class="nm">' + esc(p.name) + ' <span class="sub">:' + esc(p.id) + '</span></div>' +
-        '<div class="ds">' + esc(p.desc) + '</div></div>' +
-      '<span class="rowstat"></span>';
-    d.onclick = () => select(p.id);
-    box.appendChild(d);
-  }
-  paintRowStats();
+  // 门面：原来的调用点（drop.js / files.js / app.js / select …）照旧调它
+  bumpLists();
+  // ★ Vue 是异步渲染：状态那一小块（行尾图标）等这一帧画完再填 —— 原来这里是同步调的，
+  //   已确认没有任何调用方在 renderList() 之后**同步**读 `.item`，所以放到 nextTick 是安全的。
+  Vue.nextTick(() => { try{ paintRowStats(); }catch(e){} });
 }
 function safeSvg(text){
   try{
@@ -536,3 +484,92 @@ async function cmdForgetHist(it){
   renderHist();
   renderDetail();
 }
+
+
+/* ================================================================ 左侧两个列表（Vue 组件，`V-79`）
+   为什么拆这两个：它们是"左侧那一栏"的全部，改坏了最显眼、也最好验（有没有 19 个包、能不能点）。
+   ★ 行内容仍然用**一次 innerHTML** 画（`v-html`）—— 这样 DOM 结构与类名跟改造前**逐字节一致**，
+     预览场景（按选择器断言）与 `paintRowStats()` / `paintHistStats()`（按 `.rowstat` / `.hstat` 找元素）
+     都照旧работа。①*/
+const MossList = {
+  name: "moss-list",
+  data(){ return { R: LISTR }; },
+  computed: {
+    rows(){
+      this.R.rev;                                  // 登记依赖：谁举牌就重算
+      const f = $("#q").value.trim().toLowerCase();
+      const all = DATA.packages.filter(p => !f ||
+        [p.id, p.name, p.desc, (p.tags||[]).join(" "), (p.aliases||[]).join(" ")]
+          .join(" ").toLowerCase().includes(f));
+      // ★ 正拖着东西的时候：**只列收得下它的包**（`V-39`）—— 不支持对应操作的先藏起来
+      return DRAG.on ? all.filter(p => dropAccepts(p, DRAG.kind)) : all;
+    },
+    emptyHTML(){
+      return DRAG.on ? ("没有包收「" + dropKindName(DRAG.kind) + "」") : "没有匹配的包";
+    },
+  },
+  methods: {
+    selId(){ return cur ? cur.id : null; },
+    stateOf(id){ return rowStateOf(id); },          // 宿主口径：在跑 / 没在跑
+    rowHTML(p){
+      return iconHTML(p, "ico") +
+        '<div style="min-width:0;flex:1">' +
+          '<div class="nm">' + esc(p.name) + ' <span class="sub">:' + esc(p.id) + '</span></div>' +
+          '<div class="ds">' + esc(p.desc) + '</div></div>' +
+        '<span class="rowstat"></span>';
+    },
+    pick(id){ select(id); },
+  },
+  template: `
+    <div v-if="!rows.length" class="empty">{{ emptyHTML }}</div>
+    <template v-else>
+      <div v-for="p in rows" :key="p.id" class="item" :class="{sel: p.id === selId()}"
+           :data-id="p.id" :data-state="stateOf(p.id)" @click="pick(p.id)" v-html="rowHTML(p)"></div>
+    </template>`,
+};
+
+const MossHist = {
+  name: "moss-hist",
+  data(){ return { R: LISTR }; },
+  computed: {
+    rows(){
+      this.R.rev;                                  // 同上：举牌就重算
+      const f = $("#q").value.trim().toLowerCase();
+      return HIST.filter(it => !f ||
+        [it.name, it.target, it.args, it.cwd].join(" ").toLowerCase().includes(f));
+    },
+    emptyHTML(){
+      return HIST.length ? "没有匹配的历史"
+        : ('还没有历史。<br>历史只记<b>路径调用</b>（<span class="mono">moss zeen</span> 这种）——'
+           + '<br>包调用不进历史。');
+    },
+  },
+  methods: {
+    keyOf(it){ return histKey(it); },
+    stateOf(it){ return RUNS[histKey(it)] ? "running" : "idle"; },
+    dead(it){ return it.exists === false; },
+    titleOf(it){ return this.dead(it) ? ("这个文件已经不在了：" + (it.target || "")) : null; },
+    rowHTML(it){
+      const when = (it.ts || "").replace("T", " ").slice(5, 16);
+      return histIconHTML(it) +
+        '<div class="hmain">' +
+          '<div class="hname">' + esc(it.name) +
+            (it.args ? ' <span class="sub">' + esc(it.args) + '</span>' : "") + '</div>' +
+          '<div class="hsub">' + esc(it.cwd || "") + '　·　' + esc(when) + '</div>' +
+        '</div>' +
+        '<span class="hstat"></span>';
+    },
+    pick(it){ selectHist(it); },                   // 选中，不跑
+  },
+  template: `
+    <div v-if="!rows.length" class="empty" v-html="emptyHTML"></div>
+    <template v-else>
+      <div v-for="it in rows" :key="keyOf(it)" class="hitem"
+           :class="{sel: curH && keyOf(it) === keyOf(curH), dead: dead(it)}"
+           :data-key="keyOf(it)" :data-state="stateOf(it)" :title="titleOf(it)"
+           @click="pick(it)" v-html="rowHTML(it)"></div>
+    </template>`,
+};
+
+Vue.createApp(MossList).mount("#list");
+Vue.createApp(MossHist).mount("#hist");
