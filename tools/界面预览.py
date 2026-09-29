@@ -61,7 +61,7 @@ BROWSERS = [
 
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
-          "drop-hot", "drop-run",
+          "drop-hot", "drop-dir", "drop-file",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail"]
 
@@ -178,6 +178,8 @@ MOCK_JS = r"""
       (M.runs = M.runs || []).push({pid: pid, args: args, cwd: cwd});
       return {ok: true, run_id: "r1", pid: 1};
     },
+    // 拖放那条线的日志（真后端写 user_data/state/_ui_drop.log）；预览里攒着看
+    ui_log: async (text) => { (M.uiLogs = M.uiLogs || []).push(String(text || "")); return {ok: true}; },
     run_poll: async () => ({ok: true, running: false, code: 0,
       out: "[执行] md5\n[目录] " + state.home + "\n\n900150983cd24fb0d6963f7d28e17f72\n"}),
     run_stop: async () => ({ok: true, msg: "(预览) 已停止"}),
@@ -550,81 +552,107 @@ MOCK_JS = r"""
             .replace(/&/g, "&amp;").replace(/</g, "&lt;") + '</pre>';
         document.title = ok ? "READY" : "BAD-ID-FAIL";
       }
+      // ★ 拖入三件套（`V-35`/`V-38`/`V-39`）：真实的 OS 拖动没法自动化（得人拿鼠标拖），
+      //   所以拆成能测的两半 ——
+      //     ① 拖动那半：用**合成事件**（带 types:["Files"]，items 里给一个
+      //        `webkitGetAsEntry()`，跟真拖动一样能看出是文件还是文件夹）
+      //     ② 松手那半：直接调落地口 `window.__mossDrop([...])`
+      //        （真机上由宿主从 WebView2 取到真实路径后调用它）
       if (h === "drop-hot"){
-        // 只看"拖上来时"长什么样（不松手）：接收区 + 运行按钮都要亮
-        const usable = p => { try{ return !!FS[pkgRel(p)]; }catch(e){ return false; } };
-        const p0 = state.packages.find(x => x.layer === "user" && usable(x)) ||
-                   state.packages.find(usable) || null;
-        if (!p0){ document.title = "NO-USABLE-PKG"; return; }
-        select(p0.id);
-        setTab("detail");
-        await sleep(400);
-        const e = new Event("dragenter", {bubbles: true});
-        e.dataTransfer = {types: ["Files"], dropEffect: ""};
-        document.querySelector("#pane-detail").dispatchEvent(e);
-        await sleep(200);
-        document.title = "READY";
-      }
-      // ★ 拖文件进来（`V-35`）：拖动时区域/按钮高亮；松手后＝以它为当前目录跑这个包。
-      //   真实的 OS 拖动没法自动化（得人拿鼠标拖），所以这里拆成两半测：
-      //   拖动那半用**合成事件**（带 types:["Files"]），松手那半直接调那个落地口
-      //   `window.__mossDrop(...)`（真机上由宿主从 WebView2 取到真实路径后调用它）。
-      if (h === "drop-run"){
-        const usable = p => { try{ return !!FS[pkgRel(p)]; }catch(e){ return false; } };
-        const p0 = state.packages.find(x => x.layer === "user" && usable(x)) ||
-                   state.packages.find(usable) || null;
-        if (!p0){ document.title = "NO-USABLE-PKG"; return; }
-        select(p0.id);
-        setTab("detail");
-        await sleep(400);
-        const pane = document.querySelector("#pane-detail");
-        const zone = document.querySelector("#dropzone");
-        const btn = document.querySelector("#btn-run");
-        const dragEv = t => {
-          const e = new Event(t, {bubbles: true});
-          e.dataTransfer = {types: ["Files"], dropEffect: ""};
+        // 只看"拖上来时"长什么样（不松手）：列表只列收得下的 + 详情页浮出投放框
+        const dragEv = isDir => {
+          const e = new Event("dragenter", {bubbles: true});
+          e.dataTransfer = {types: ["Files"], dropEffect: "",
+            items: [{webkitGetAsEntry: () => ({isDirectory: isDir, name: "x"})}]};
           return e;
         };
-        // ① 拖上来（文件管理那一页开着时不该亮 —— 那不是"详情报"）
-        setTab("file");
-        await sleep(150);
-        pane.dispatchEvent(dragEv("dragenter"));
-        await sleep(80);
-        const hotOnFileTab = zone.classList.contains("on");
+        select("md5");
         setTab("detail");
-        await sleep(150);
-        // ② 拖到详情报上：区域 + 按钮都得亮
-        pane.dispatchEvent(dragEv("dragenter"));
-        pane.dispatchEvent(dragEv("dragover"));
-        await sleep(120);
-        const zoneOn = zone.classList.contains("on");
-        const paneHot = pane.classList.contains("hot");
-        const btnHot = btn.classList.contains("hot");
-        const subText = (document.querySelector("#dz-sub") || {}).textContent || "";
-        // ③ 松手：宿主把真实路径送进来（这里直接调落地口）
-        const dir = M.dropDir, file = M.dropFile;
-        window.__mossDrop([{path: file, isDir: false, dir: dir}]);
-        await sleep(700);
-        const zoneOff = !zone.classList.contains("on");
-        const paneOff = !pane.classList.contains("hot");
-        const argsVal = (document.querySelector("#args") || {}).value || "";
+        await sleep(400);
+        document.dispatchEvent(dragEv(false));
+        await sleep(250);
+        document.title = "READY";
+      }
+      if (h === "drop-dir" || h === "drop-file"){
+        const isDirDrag = h === "drop-dir";
+        const wantId = isDirDrag ? "tree" : "md5";
+        const pane = document.querySelector("#pane-detail");
+        const dz = document.querySelector("#dropzone");
+        const dragEv = (t, isDir) => {
+          const e = new Event(t, {bubbles: true});
+          e.dataTransfer = {types: ["Files"], dropEffect: "",
+            items: [{webkitGetAsEntry: () => ({isDirectory: isDir, name: "x"})}]};
+          return e;
+        };
+        // 先站在一个**不收**这类东西的包上（快捷翻译没有参数、也不收拖入）
+        select("fanyi");
+        setTab("detail");
+        await sleep(350);
+        const beforeIds = [].slice.call(document.querySelectorAll("#list .item"))
+                            .map(e => e.dataset.id);
+        // ① 拖进来：列表应该只列"收得下它"的包
+        document.dispatchEvent(dragEv("dragenter", isDirDrag));
+        await sleep(300);
+        const afterIds = [].slice.call(document.querySelectorAll("#list .item"))
+                           .map(e => e.dataset.id);
+        const filtered = afterIds.length > 0 && afterIds.every(id => {
+          const p = state.packages.find(x => x.id === id);
+          return p && p.drop && p.drop.some(c => isDirDrag ? c.dir : c.file);
+        });
+        const hidFanyi = afterIds.indexOf("fanyi") < 0;
+        const bar = document.querySelector("#dragbar");
+        const barText = (bar && !bar.hidden) ? bar.textContent : "";
+        // ② 划过目标那一行 → 应该自动选中它，并浮出投放框
+        const row = [].slice.call(document.querySelectorAll("#list .item"))
+                      .find(e => e.dataset.id === wantId);
+        let hovered = false, boxText = "", boxOn = false;
+        if (row){
+          row.dispatchEvent(dragEv("dragover", isDirDrag));
+          await sleep(300);
+          hovered = !!(cur && cur.id === wantId);   // `cur` 是主脚本里的顶层 let，
+                                                    // 不是 window 的属性（别写 self.cur）
+          boxOn = dz.classList.contains("on");
+          const big = dz.querySelector(".dz-big"), sub = dz.querySelector(".dz-sub");
+          boxText = (big ? big.textContent : "") + " / " + (sub ? sub.textContent : "");
+        }
+        // ③ 松手：宿主把真实路径送过来
+        const p0 = state.packages.find(x => x.id === wantId);
+        const argsBefore = (document.querySelector("#args") || {}).value || "";
+        const dropPath = isDirDrag ? M.dropDir : M.dropFile;
+        const html = {path: dropPath, isDir: isDirDrag,
+                      dir: isDirDrag ? dropPath : M.dropDir,
+                      name: isDirDrag ? dropPath.split(/[\\/]/).pop()
+                                      : dropPath.split(/[\\/]/).pop()};
+        window.__mossDrop([html]);
+        await sleep(800);
+        const argsAfter = (document.querySelector("#args") || {}).value || "";
         const run = (M.runs || [])[0] || {};
-        const ok = !hotOnFileTab && zoneOn && paneHot && btnHot && zoneOff && paneOff &&
-                   argsVal === '"' + file + '"' && run.cwd === dir && run.pid === p0.id;
+        const zoneOff = !dz.classList.contains("on");
+        // 期望：tree = 只改工作目录、参数一个字不动；md5 = 只追加参数、cwd 不动
+        const wantCwd = isDirDrag ? dropPath : "";
+        const wantArgs = isDirDrag ? argsBefore
+          : ((argsBefore ? argsBefore + " " : "") +
+             (/\s/.test(dropPath) ? '"' + dropPath + '"' : dropPath));
+        const ok = filtered && hidFanyi && !!barText && hovered && boxOn && zoneOff &&
+                   run.pid === wantId && (run.cwd || "") === wantCwd &&
+                   argsAfter === wantArgs;
+        const diag = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n拖动前列表  = " + beforeIds.length + " 个（含 fanyi=" + (beforeIds.indexOf("fanyi") >= 0) + "）" +
+          "\n拖动后列表  = " + afterIds.length + " 个：" + afterIds.join(",") +
+          "\n只列收得下的 = " + filtered + "   不收的藏起来了吗 = " + hidFanyi +
+          "\n左边那条提示 = " + barText.replace(/\s+/g, " ").slice(0, 80) +
+          "\n划过 " + wantId + " 自动选中 = " + hovered + "   投放框出现 = " + boxOn +
+          "\n框上写的话  = " + boxText.replace(/\s+/g, " ").slice(0, 120) +
+          "\n松手后框收了吗 = " + zoneOff +
+          "\n参数框 之前/之后 = " + JSON.stringify(argsBefore) + " → " + JSON.stringify(argsAfter) +
+          "\n跑起来了吗  = pid=" + (run.pid || "-") + "  args=" + JSON.stringify(run.args || "") +
+          "  cwd=" + JSON.stringify(run.cwd || "") +
+          "\n页面日志    = " + JSON.stringify(M.uiLogs || []);
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 高亮=" + (zoneOn && paneHot && btnHot ? 1 : 0) +
-          " 收尾=" + (zoneOff && paneOff ? 1 : 0) + " cwd=" + (run.cwd === dir ? 1 : 0);
-        document.querySelector("#fm-body").innerHTML = "";    // 别把界面挡着
+          "DIAG " + (ok ? "OK" : "FAIL") + " 筛=" + (filtered && hidFanyi ? 1 : 0) +
+          " 选中=" + (hovered ? 1 : 0) + " 框=" + (boxOn ? 1 : 0) + " 跑=" + (run.pid === wantId ? 1 : 0);
+        document.querySelector("#out").textContent = diag;
         document.querySelector("#dropzone").className = "";
-        document.querySelector("#out").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") +
-          "\n拖动时高亮（详情报上）  = 区域 " + zoneOn + " / 面板 " + paneHot + " / 运行按钮 " + btnHot +
-          "\n文件管理那一页开着时高亮吗 = " + hotOnFileTab + "   （不该亮）" +
-          "\n浮层上写的话 = " + subText.slice(0, 90) +
-          "\n松手后高亮收干净了吗 = 区域 " + zoneOff + " / 面板 " + paneOff +
-          "\n参数框里放的是 = " + argsVal +
-          "\n真的跑了吗 = pid=" + (run.pid || "-") + "  cwd=" + (run.cwd || "-") +
-          "    （期望 pid=" + p0.id + "  cwd=" + dir + "）";
         if (ok) setTab("console");
         document.title = ok ? "READY" : "DROP-FAIL";
       }

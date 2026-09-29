@@ -11,6 +11,9 @@ user_data/
 # 构建产物：由 tools/build.py 现场产出，不进 git
 # （解放行版时把 moss.exe + system\ 一起拷走即可）
 moss.exe
+# 重新打包时如果旧的 exe 正被界面占用（Windows 不让删正在运行的 exe），
+# 会先把它改名成 moss.exe.old 再打新的 —— 那也是构建产物，不进 git。
+moss.exe.old
 # nuitka 的中间产物
 moss.build/
 moss.dist/

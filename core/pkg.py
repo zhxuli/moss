@@ -90,7 +90,65 @@ def normalize(raw, pid=None):
     pkg.setdefault("capabilities", {})
     pkg.setdefault("output", {"mode": "text"})
     pkg.setdefault("ai", {"expose": False})
+    pkg["drop"] = normalize_drop(pkg.get("drop"))
     return pkg
+
+
+#: 「拖进来」声明（`V-38` ✅）。每条命令能做两件事：
+#:   `cwd`   把拖进来的目录当**工作目录**（拖的是文件时 = 它所在的文件夹）
+#:   `param` 把路径**追加到参数串末尾**（强制末尾 —— 你定的）
+#: 再有 `quote`（加不加双引号）、`base`（只给文件名不给完整路径）。
+_DROP_KINDS = ("file", "dir")
+_DROP_KEYS = ("cwd", "param", "quote", "base")
+
+
+def _norm_drop_rule(rule, where):
+    """`file` / `dir` 里那一条。`False` / 空 → None（这一种不收）。"""
+    if rule is None or rule is False or rule == "":
+        return None
+    if rule is True:                       # `"dir": true` → 收，但没说怎么用 → 当"进参数"
+        return {"cwd": False, "param": True, "quote": False, "base": False}
+    if not isinstance(rule, dict):
+        print("[警告] %s 里的这一项应该是对象或 false，已忽略：%r" % (where, rule),
+              file=sys.stderr)
+        return None
+    out = dict((k, bool(rule.get(k))) for k in _DROP_KEYS)
+    for k in rule:
+        if k not in _DROP_KEYS:
+            print("[提示] %s 里多了一个不认识的键 %r，已忽略" % (where, k), file=sys.stderr)
+    if not out["cwd"] and not out["param"]:
+        out["param"] = True                # 收了却什么都没说 → 当"进参数"，别让它白收
+    return out
+
+
+def normalize_drop(raw):
+    """把 `drop` 归一化成**一个命令的数组**（`V-38`）。
+
+    ★ 两种写法都收：单个对象（一条命令，最常见）或数组（一个包有多种拖入命令）。
+      归一化成数组之后，界面那边只有一种形状要处理 —— 以后加第二种命令不用改界面。
+    ★ **不写 / 空 = 这个包完全不收拖入**（比如「快捷翻译」），返回 `[]`。
+    """
+    if raw is None or raw == "" or raw is False:
+        return []
+    items = raw if isinstance(raw, list) else [raw]
+    out = []
+    for i, it in enumerate(items):
+        where = "pkg.json 的 drop[%d]" % i
+        if not isinstance(it, dict):
+            print("[警告] %s 应该是对象，已忽略：%r" % (where, it), file=sys.stderr)
+            continue
+        cmd = {"label": str(it.get("label") or "运行")}
+        for kind in _DROP_KINDS:
+            cmd[kind] = _norm_drop_rule(it.get(kind), where)
+        if cmd["file"] is None and cmd["dir"] is None:
+            print("[警告] %s 里 file / dir 一个都没写（或都写了 false），这条命令没用，"
+                  "已忽略" % where, file=sys.stderr)
+            continue
+        for k in it:
+            if k not in _DROP_KINDS and k != "label":
+                print("[提示] %s 里多了一个不认识的键 %r，已忽略" % (where, k), file=sys.stderr)
+        out.append(cmd)
+    return out
 
 
 def load(pkg_dir):

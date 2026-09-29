@@ -68,5 +68,11 @@
   },
   "docs": {
     "agent": "AGENT.md"
+  },
+  "drop": {
+    "dir": {
+      "param": true,
+      "quote": true
+    }
   }
 }
