@@ -139,6 +139,30 @@ def host_cmd():
     return [exe]
 
 
+def _ui_of(pkg, pkg_dir):
+    """包的「界面」声明（`V-48` ✅）：`"ui": {"embed": "ui/index.html"}`。
+
+    声明里写的是**相对包目录**的路径；这里解析成**绝对路径**再交给界面 ——
+    界面只管把它变成 `file://` 塞进 iframe，不用自己拼包目录（也不用认识包格式）。
+    文件不存在就当没声明（并在 stderr 说一句），免得界面上多出一个点进去空白的选项卡。
+    """
+    raw = pkg.get("ui")
+    if not isinstance(raw, dict):
+        return None
+    rel = str(raw.get("embed") or "").strip()
+    if not rel:
+        return None
+    full = (Path(pkg_dir) / rel).resolve() if not os.path.isabs(rel) else Path(rel)
+    if not full.is_file():
+        print("[警告] %s 声明了界面 %r，但文件不存在（这个包不会有「界面」选项卡）"
+              % (pkg_dir, rel), file=sys.stderr)
+        return None
+    title = raw.get("title")
+    if isinstance(title, dict):
+        title = title.get("zh-CN") or title.get("en") or ""
+    return {"embed": str(full), "title": str(title or "")}
+
+
 def build_payload():
     """交给界面的全部数据（界面只是个渲染器，不认识 pkg.json 的格式）。"""
     pkgs = []
@@ -164,6 +188,9 @@ def build_payload():
             # 「拖进来」声明（`V-38` ✅）：已经是"命令数组"了（`pkg.normalize_drop` 归一化过），
             # 空数组 = 这个包不收拖入。界面拖动时**只列收得下的包**、只画对应的投放框。
             "drop": p.get("drop") or [],
+            # 「界面能不能内嵌」（`V-48` ✅）：`_ui_of()` 已经把相对路径解析成绝对路径。
+            # `None` = 这个包没有可内嵌的界面（界面上那个选项卡就不出现）。
+            "ui": _ui_of(p, rec["dir"]),
             "docs": p.get("docs") or {},
             "ai_expose": bool(ai.get("expose")),
             "ai_risk": str(ai.get("risk") or ""),

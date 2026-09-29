@@ -1,0 +1,68 @@
+/* BMI 计算器（示例包）的样式。刻意写得普通一点 —— 这是包的界面，不是 moss 的界面，
+   想怎么长就怎么长；这里只保证"内嵌进窄一点的选项卡里也不难看"。 */
+:root {
+  --fg: #1d1d1f; --fg2: #515154; --dim: #86868b; --line: #e6e6ea;
+  --bg: #f6f6f8; --panel: #fff; --accent: #0071e3; --ok: #1f9d55;
+  --thin: #6b8afd; --over: #d97706; --fat: #d64545;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #f5f5f7; --fg2: #d1d1d6; --dim: #a1a1a6; --line: #33333a;
+    --bg: #16161a; --panel: #1e1e23; --accent: #0a84ff;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+#app { max-width: 860px; margin: 0 auto; padding: 22px 20px 30px; }
+header h1 { font-size: 21px; margin: 0 0 4px; }
+.sub { margin: 0 0 8px; color: var(--fg2); font-size: 13px; }
+.env { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 16px; }
+.tag {
+  font-size: 12px; padding: 2px 9px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--fg2);
+}
+.tag.on { border-color: var(--accent); color: var(--accent); }
+.who { font-size: 12px; color: var(--dim); }
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px 18px; margin: 0 0 14px;
+}
+.label { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--dim);
+         text-transform: uppercase; margin-bottom: 8px; }
+.clock .big { font-size: 40px; font-weight: 600; font-variant-numeric: tabular-nums;
+              letter-spacing: .02em; line-height: 1.1; }
+.clock .row { display: flex; gap: 14px; color: var(--fg2); font-size: 13px; margin-top: 4px; }
+.inputs { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+.inputs label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--fg2); }
+.inputs input {
+  width: 92px; padding: 7px 9px; font: inherit; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 9px;
+}
+.inputs input:focus { outline: 0; border-color: var(--accent); }
+.inputs i { font-style: normal; color: var(--dim); font-size: 12px; }
+button.primary {
+  padding: 8px 16px; font: inherit; font-weight: 500; color: #fff; cursor: pointer;
+  background: var(--accent); border: 0; border-radius: 9px;
+}
+button.primary:disabled { opacity: .6; cursor: default; }
+.result { margin-top: 14px; }
+.bmi { display: flex; align-items: baseline; gap: 10px; }
+.bmi .num { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.level { font-size: 13px; padding: 2px 9px; border-radius: 999px; border: 1px solid currentColor; }
+.lv-thin { color: var(--thin); } .lv-ok { color: var(--ok); }
+.lv-over { color: var(--over); } .lv-fat { color: var(--fat); }
+.advice { color: var(--fg2); margin-top: 2px; }
+.bad { margin-top: 12px; color: var(--fat); }
+.hint { margin-top: 14px; font-size: 12.5px; color: var(--dim); }
+.dim { color: var(--dim); }
+.small { font-size: 12px; }
+.mono, code, pre { font-family: ui-monospace, Consolas, monospace; }
+code { font-size: 12.5px; color: var(--fg2); }
+pre.mono { margin: 0; padding: 10px 12px; background: var(--bg); border-radius: 10px;
+           border: 1px solid var(--line); font-size: 12.5px; color: var(--fg2); white-space: pre-wrap; }
+footer { display: flex; gap: 14px; justify-content: space-between; flex-wrap: wrap;
+         font-size: 12px; margin-top: 6px; }

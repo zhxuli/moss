@@ -246,6 +246,11 @@ def _bad_name(name):
 # 比"按窗口标题猜"可靠得多（标题会被包自己改，也可能撞名）。
 _pkg_procs = {}          # 包 id -> {(pid, 创建时间)} —— 见 _remember_proc 的说明
 _pkg_hidden = {}         # 包 id -> [被藏起来的窗口句柄]（显示时只放这几个）
+#: 内嵌界面的后端进程（`V-48` ✅）：包 id -> {"proc": Popen, "lines": [非消息输出]}
+#: ★ 跟 `_pkg_procs` 分开记：那两个是"包=独立进程/窗口"那套，这个是"界面嵌在我们这一页里"
+#:   的那套。**切走选项卡不会碰它**（这就是你要的"切走还在后台跑"）。
+EMBED = {}
+EMBED_LOCK = threading.Lock()
 
 
 def _remember_proc(pkg, pid):
@@ -820,6 +825,52 @@ def _kill_tree(pid):
                        creationflags=NO_WINDOW)
     except Exception:
         pass
+
+
+def _pump_embed(pid, proc):
+    """读内嵌后端进程的输出，按行分两路（`V-48` ✅）：
+
+      · `{` 开头 → 当**消息**，原样送进页面（`window.__mossEmbedFromBackend(一行)`）；
+      · 其余（宿主横幅、包的 print）→ 攒起来给命令行面板看，别丢。
+
+    ★ 进程结束时要告诉页面一声，不然界面那边会一直等一个已经不在的后端。
+    """
+    try:
+        for line in proc.stdout:
+            s = (line or "").rstrip("\n")
+            if not s.strip():
+                continue
+            if s.lstrip().startswith("{"):
+                try:
+                    # ★ 带上 pid：界面上可能同时开着好几个包的内嵌界面，
+                    #   它得知道这一行是谁说的，才能送回**那一帧**。
+                    window.evaluate_js("window.__mossEmbedFromBackend(%s, %s)"
+                                       % (json.dumps(str(pid)), json.dumps(s, ensure_ascii=False)))
+                except Exception:                                    # noqa: BLE001
+                    pass
+            else:
+                with EMBED_LOCK:
+                    rec = EMBED.get(pid)
+                    if rec is not None:
+                        rec["lines"].append(s + "\n")
+                        if len(rec["lines"]) > 500:                  # 别越攒越多
+                            del rec["lines"][:200]
+    except Exception:                                                # noqa: BLE001
+        pass
+    finally:
+        try:
+            proc.wait(timeout=5)
+        except Exception:                                            # noqa: BLE001
+            pass
+        code = proc.returncode
+        with EMBED_LOCK:
+            if EMBED.get(pid, {}).get("proc") is proc:
+                EMBED.pop(pid, None)
+        try:
+            window.evaluate_js("window.__mossEmbedGone(%s, %s)"
+                               % (json.dumps(pid), json.dumps(code)))
+        except Exception:                                            # noqa: BLE001
+            pass
 
 
 def _pump_output(rid):
@@ -1512,6 +1563,93 @@ class Api:
         """界面写一行日志（拖放这条线在用，见 `drop_log`）。出问题能一次看清。"""
         drop_log("page: " + str(text or ""))
         return {"ok": True}
+
+    # ------------------------------------------------ 内嵌界面（`V-48` ✅）
+    # 「界面」选项卡里那个 iframe 的另一头，就是这个包的后端进程。
+    # ★ 宿主在这里**只当管子**（不懂协议）：页面里 `moss.call("bmi", {...})` 的请求由
+    #   包自己的垫片包成一行 JSON，这边原样写进进程 stdin；进程回的行再原样送回页面。
+    #   好处：协议归包和契约管，宿主不用为每个方法改代码。
+    # ★ 只把 `{` 开头的行当消息转走 —— 宿主的横幅是 `[执行]/[目录]/[PID]` 这种
+    #   **数组样子**的行，包的普通输出（print）也可能有；那些进命令行面板，不当消息。
+    def embed_start(self, pid, cwd=""):
+        """给这个包起一个"内嵌界面"的后端进程（`MOSS_UI_EMBED=1`）。已经起着就复用。"""
+        pid = str(pid)
+        with EMBED_LOCK:
+            cur = EMBED.get(pid)
+            if cur and cur["proc"].poll() is None:
+                return {"ok": True, "pid": cur["proc"].pid, "reused": True}
+        env = dict(os.environ)
+        env["MOSS_UI_EMBED"] = "1"          # 约定：包看到它就"别开窗口，在 stdio 上说话"
+        env["MOSS_INTERACTIVE"] = "1"
+        workdir = None
+        if cwd:
+            try:
+                if Path(str(cwd)).is_dir():
+                    workdir = str(cwd)
+            except OSError:
+                workdir = None
+        argv = HOST + [":" + pid]
+        try:
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.PIPE, env=env, cwd=workdir,
+                                    text=True, encoding="utf-8", errors="replace",
+                                    bufsize=1, creationflags=NO_WINDOW)
+        except OSError as e:
+            return {"ok": False, "msg": "启动失败：%s" % e}
+        with EMBED_LOCK:
+            EMBED[pid] = {"proc": proc, "lines": []}
+        threading.Thread(target=_pump_embed, args=(pid, proc), daemon=True).start()
+        return {"ok": True, "pid": proc.pid}
+
+    def embed_send(self, pid, text):
+        """把页面发来的一行（JSON 文本）写进后端进程的 stdin。"""
+        pid = str(pid)
+        with EMBED_LOCK:
+            rec = EMBED.get(pid)
+        if not rec or rec["proc"].poll() is not None:
+            return {"ok": False, "msg": "这个包的内嵌进程已经结束了"}
+        try:
+            rec["proc"].stdin.write(str(text).rstrip("\n") + "\n")
+            rec["proc"].stdin.flush()
+        except (BrokenPipeError, OSError, ValueError) as e:
+            return {"ok": False, "msg": "写不进去了：%s" % e}
+        return {"ok": True}
+
+    def embed_stop(self, pid):
+        """停掉这个包的内嵌进程（界面上的「停止」）。"""
+        pid = str(pid)
+        with EMBED_LOCK:
+            rec = EMBED.get(pid)
+        if not rec:
+            return {"ok": False, "msg": "这个包没在内嵌运行"}
+        _kill_tree(rec["proc"].pid)          # 连子孙一起（包可能自己又起了进程）
+        try:
+            rec["proc"].kill()
+        except Exception:                                            # noqa: BLE001
+            pass
+        with EMBED_LOCK:
+            EMBED.pop(pid, None)
+        return {"ok": True, "msg": "已停掉这个包的内嵌进程"}
+
+    def embed_state(self, pid):
+        """内嵌进程还在不在（界面切走再切回来要靠它判断要不要重起）。"""
+        pid = str(pid)
+        with EMBED_LOCK:
+            rec = EMBED.get(pid)
+        alive = bool(rec and rec["proc"].poll() is None)
+        return {"ok": True, "running": alive, "pid": (rec["proc"].pid if rec else 0),
+                "lines": len(rec["lines"]) if rec else 0}
+
+    def embed_take(self, pid):
+        """把后端**不是消息**的那些输出拿走（进命令行面板，别丢了）。"""
+        pid = str(pid)
+        with EMBED_LOCK:
+            rec = EMBED.get(pid)
+            if not rec:
+                return {"ok": True, "text": ""}
+            text = "".join(rec["lines"])
+            rec["lines"] = []
+        return {"ok": True, "text": text}
 
     def quit(self):
         window.destroy()
