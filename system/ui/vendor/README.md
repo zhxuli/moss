@@ -8,6 +8,7 @@
 | `powershell.min.js` | 高亮语言包：PowerShell（`.ps1`） | 11.9.0 | BSD-3-Clause | highlight.js 官方语言包 |
 | `dos.min.js` | 高亮语言包：DOS 批处理（`.bat` / `.cmd`）—— common 构建里没有，单独补 | 11.9.0 | BSD-3-Clause | highlight.js 官方语言包 |
 | `lucide.js` | 图标库：`{名字: '<path .../>'}` 的表 + `ico(name)` 函数，**只收了用到的 82 个** | lucide-static 1.48.0 | ISC | `unpkg.com/lucide-static`，见 `lucide-LICENSE.txt` |
+| `vue.global.prod.js` | Vue **3 全局构建**（自带模板编译器，所以 `js/settings.js` 里的 `template:` 字符串能直接用） | 3.x | MIT | 与 `system/pkgs/bmi/ui/vendor/` 里那份**同一份**（`V-67` 界面组件化时拿过来的） |
 
 ## 为什么这么放
 
@@ -15,6 +16,8 @@
 - **图标内联成路径表**：页面要按**文件后缀**动态换图标（`.py` / `.json` / `.png` … 各一个），
   一个个去读 `.svg` 文件既慢又要处理跨源；内联成一张表最快。
   图标统一 24×24、1.5 描边、`currentColor` —— 和 18 个包自带的 `icon.svg` 同一套风格。
+- **框架只在需要组件的地方引入**：`V-67` 起界面用 Vue 3 写组件（第一个是设置面板），
+  但**不是**每个页面都改写成组件 —— 没动的那几块还是原来的经典脚本，改一块验一块。
 - **高亮语言包按需补**：common 构建已经覆盖我们全部代码文件，只差 `.bat`（dos），
   所以只补了它一个（PowerShell 是照 exec 的做法单独带）。
 
