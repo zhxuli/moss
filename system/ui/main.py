@@ -51,6 +51,30 @@ DATA = _load_data()
 HOST = [str(x) for x in (DATA.get("host_cmd") or [])]
 
 
+def _build_stamp():
+    """当前这份界面代码的版本戳（`V-71`）。
+
+    ★ 为什么要有它：界面是**启动那一刻**读一次页面文件的 —— 一个开了很久的窗口跑的
+      是"那一天的代码"。你重开（或者只是点回任务栏那个窗口）时，看到的可能是几天前的
+      界面，而我们俩都以为在看新的（这次就为此绕了很久）。
+      有了这个戳，顶栏上直接写着是哪个提交，谁都不用猜。
+      拿不到就留空（发行版里没有 .git），**绝不因为它出错**。
+    """
+    import subprocess                                              # noqa: PLC0415
+    try:
+        r = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                           cwd=str(DATA.get("home") or "."), capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=3)
+        out = (r.stdout or "").strip()
+        return out if r.returncode == 0 and out else ""
+    except Exception:                                              # noqa: BLE001
+        return ""
+
+
+BUILD = _build_stamp()
+DATA["build"] = BUILD
+
+
 def _split(text):
     """把参数框里那串文本拆成 argv。
 
@@ -1014,6 +1038,8 @@ class Api:
         if fresh:
             DATA.clear()
             DATA.update(fresh)
+            # ★ 宿主那份 payload 里没有 build 戳（它是这个脚本加的），覆盖之后要重新贴上
+            DATA["build"] = BUILD
             DATA.pop("stale_reason", None)
         else:
             DATA["stale_reason"] = self._payload_error or "读包表失败（宿主没有回话）"
