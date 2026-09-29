@@ -658,7 +658,14 @@ def cmd_new(pid, kind="task"):
     print("     1) 改 pkg.json 里的 name / desc / params")
     print("     2) 改 run.py 干活（参数读 MOSS_PKG_PARAMS，结果写 MOSS_RESULT_FILE）")
     print("     3) 跑：moss :%s 你好 3" % pid)
-    out.print_cyan("契约（字段含义、环境变量、数据放哪）：moss --spec")
+    # ★ 这一行是给"要界面的包"看的（`V-58` ✅）：默认方案是**网页界面 + ui.embed**，
+    #   不是每个包自己 webview.create_window 开窗口 —— 写在这儿，因为"刚新建一个包"
+    #   正是最该看到它的时候（给人看，也给 AI 看）。
+    print("     4) 要界面？**别自己开窗口** —— 照 system/pkgs/bmi/ 抄一份网页界面，"
+          "在 pkg.json 里声明")
+    print("        \"ui\": {\"embed\": \"ui/index.html\"}：既能在 moss 的「界面」选项卡里"
+          "内嵌跑，也能 moss :%s 自己开窗口" % pid)
+    out.print_cyan("契约（字段、环境变量、数据放哪、界面怎么写）：moss --spec")
     return 0
 
 
