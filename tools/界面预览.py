@@ -153,7 +153,9 @@ def mock_data():
     return {"payload": payload, "hist": hist, "fs": fs,
             # 拖文件那个场景要的样本：故意用**带空格**的文件名，顺便验引号
             "dropDir": str(ROOT),
-            "dropFile": str(ROOT / "一个 带空格的图片.png")}
+            "dropFile": str(ROOT / "一个 带空格的图片.png"),
+            # 再给一个**没有空格**的：验"无论如何都要加引号"（`V-41`）
+            "dropFile2": str(ROOT / "download.ico")}
 
 
 MOCK_JS = r"""
@@ -628,14 +630,28 @@ MOCK_JS = r"""
         const argsAfter = (document.querySelector("#args") || {}).value || "";
         const run = (M.runs || [])[0] || {};
         const zoneOff = !dz.classList.contains("on");
-        // 期望：tree = 只改工作目录、参数一个字不动；md5 = 只追加参数、cwd 不动
-        const wantCwd = isDirDrag ? dropPath : "";
+        // ④ 再拖一次（**没有空格**的路径）：验两件事 ——
+        //    a) 连着拖不会把上一次那段叠在参数里（你实测叠成两条路径，md5 就判成字符串了）
+        //    b) 不加引号的 Windows 路径会被 shlex 吃光反斜杠，所以**无论如何都要加引号**
+        let twice = "", twiceRun = {};
+        if (!isDirDrag){
+          const p2 = M.dropFile2;                       // 例：…\download.ico（没有空格）
+          window.__mossDrop([{path: p2, isDir: false, dir: M.dropDir,
+                              name: p2.split(/[\\/]/).pop()}]);
+          await sleep(700);
+          twice = (document.querySelector("#args") || {}).value || "";
+          twiceRun = (M.runs || [])[1] || {};
+        }
+        // 期望：tree = 只改工作目录、参数一个字不动；md5 = 工作目录是文件所在目录、
+        //       参数只给**引号包着的文件名**（包自己按 cwd 拼）
+        const wantCwd = isDirDrag ? dropPath : M.dropDir;
         const wantArgs = isDirDrag ? argsBefore
-          : ((argsBefore ? argsBefore + " " : "") +
-             (/\s/.test(dropPath) ? '"' + dropPath + '"' : dropPath));
+          : '"' + dropPath.split(/[\\/]/).pop() + '"';
         const ok = filtered && hidFanyi && !!barText && hovered && boxOn && zoneOff &&
                    run.pid === wantId && (run.cwd || "") === wantCwd &&
-                   argsAfter === wantArgs;
+                   argsAfter === wantArgs &&
+                   (isDirDrag || (twice === '"' + M.dropFile2.split(/[\\/]/).pop() + '"' &&
+                                  (twiceRun.cwd || "") === M.dropDir));
         const diag = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n拖动前列表  = " + beforeIds.length + " 个（含 fanyi=" + (beforeIds.indexOf("fanyi") >= 0) + "）" +
           "\n拖动后列表  = " + afterIds.length + " 个：" + afterIds.join(",") +
@@ -647,6 +663,10 @@ MOCK_JS = r"""
           "\n参数框 之前/之后 = " + JSON.stringify(argsBefore) + " → " + JSON.stringify(argsAfter) +
           "\n跑起来了吗  = pid=" + (run.pid || "-") + "  args=" + JSON.stringify(run.args || "") +
           "  cwd=" + JSON.stringify(run.cwd || "") +
+          (isDirDrag ? "" :
+            "\n再拖一次    = args=" + JSON.stringify(twice) + "  cwd=" +
+            JSON.stringify(twiceRun.cwd || "") +
+            "\n（连着拖不该叠起来；没有空格的路径也必须加引号，不然反斜杠会被 shlex 吃光）") +
           "\n页面日志    = " + JSON.stringify(M.uiLogs || []);
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 筛=" + (filtered && hidFanyi ? 1 : 0) +

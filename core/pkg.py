@@ -98,6 +98,10 @@ def normalize(raw, pid=None):
 #:   `cwd`   把拖进来的目录当**工作目录**（拖的是文件时 = 它所在的文件夹）
 #:   `param` 把路径**追加到参数串末尾**（强制末尾 —— 你定的）
 #: 再有 `quote`（加不加双引号）、`base`（只给文件名不给完整路径）。
+#:  ★ `quote` **默认是 True**（`V-41` ✅）：Windows 路径里全是反斜杠，而界面把参数串
+#:    交给宿主时要过一次 `shlex` —— **不加引号的 `C:\a\b.ico` 会被吃掉所有反斜杠**
+#:    （实测：`shlex.split(r"C:\Users\x\y.ico")` → `['C:Usersxy.ico']`），包那边就当成
+#:    一段字符串了。要"原样不引号"的包，写 `"quote": false` 明说。
 _DROP_KINDS = ("file", "dir")
 _DROP_KEYS = ("cwd", "param", "quote", "base")
 
@@ -107,12 +111,13 @@ def _norm_drop_rule(rule, where):
     if rule is None or rule is False or rule == "":
         return None
     if rule is True:                       # `"dir": true` → 收，但没说怎么用 → 当"进参数"
-        return {"cwd": False, "param": True, "quote": False, "base": False}
+        return {"cwd": False, "param": True, "quote": True, "base": False}
     if not isinstance(rule, dict):
         print("[警告] %s 里的这一项应该是对象或 false，已忽略：%r" % (where, rule),
               file=sys.stderr)
         return None
     out = dict((k, bool(rule.get(k))) for k in _DROP_KEYS)
+    out["quote"] = True if rule.get("quote") is None else bool(rule.get("quote"))
     for k in rule:
         if k not in _DROP_KEYS:
             print("[提示] %s 里多了一个不认识的键 %r，已忽略" % (where, k), file=sys.stderr)
