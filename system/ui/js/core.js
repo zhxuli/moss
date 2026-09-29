@@ -1,0 +1,107 @@
+/* moss 界面 · core.js —— 从 index.html 拆出来的（`V-67`），内容与拆分前一致。 */
+/* ============================================================================
+   moss 界面：详情 / 命令行 / **文件管理**
+   文件管理是**每个包自己的一套**（上下文按包 id 分），里面的子选项卡：
+       「文件」固定不可关（目录浏览，资源管理器那套操作）
+       + 每打开一个文件一个子选项卡（可关、带未保存黄点）
+   高亮与编辑器结构照抄 exec；图标用 Lucide。
+   ========================================================================== */
+
+let DATA = null, cur = null, tab = "detail";
+/* ★ 右边那三个选项卡的"当前对象"有两种：**包**（`cur`）和**一条历史**（`curH`）。
+   两者互斥 —— 选了一个就把另一个清掉，左边的高亮跟着走。
+   为什么不合成一个对象：包有一堆历史没有的字段（版本/层/参数表/AI 开关/卸载），
+   历史有的是包没有的（目标绝对路径 / 当初的 cwd / 那次的结果）；
+   合成一个就得到处判空，不如分成两份、用一个 `selObj()` 取"现在是谁"。 */
+let curH = null;
+function isHist(o){ return !!o && !o.id && !!o.target; }   // 包有 id，历史有 target
+function selObj(){ return curH || cur; }
+let lastRun = null;
+/* 上一次输入框里写的参数，**按包各记一份**。
+   ★ 为什么要记：详情页在"一次运行结束"时会重画（`finishRun` → `renderDetail`），
+     重画会把输入框整个换掉 —— 于是你刚填的参数（或者刚拖进来的那个路径）
+     在跑完的一瞬间就消失了，看着像没生效。记一份、重画时放回去。 */
+const ARGS = {};
+/* 包 id 的规矩（宿主 `core/paths.py` 的 `ID_RE`，`F-26`）：它是身份，还要当目录名用
+   （`state/<id>`），所以只允许小写字母开头 + 小写字母/数字/下划线/连字符，最长 32。
+   界面这边也存一份：保存清单时能**当场**说清楚哪儿不合法，不用等宿主把包丢掉。 */
+const ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+/* 上一次弹过的"包表没读回来"的原因 —— 同一个原因只弹一次，别每 5 秒刷一次屏。 */
+let lastStaleReason = "";
+const $ = s => document.querySelector(s);
+
+/* ---------------------------------------------------------------- 后缀 → 图标/颜色/语言 */
+const EXT = {
+  py:{i:"file-code",c:"#3572A5",l:"python"}, pyw:{i:"file-code",c:"#3572A5",l:"python"},
+  js:{i:"file-code",c:"#c9a227",l:"javascript"}, mjs:{i:"file-code",c:"#c9a227",l:"javascript"},
+  ts:{i:"file-code",c:"#2b7489",l:"typescript"}, go:{i:"file-code",c:"#00ADD8",l:"go"},
+  rs:{i:"file-code",c:"#dea584",l:"rust"}, c:{i:"file-code",c:"#7a7a7a",l:"c"},
+  h:{i:"file-code",c:"#7a7a7a",l:"c"}, cpp:{i:"file-code",c:"#f34b7d",l:"cpp"},
+  java:{i:"file-code",c:"#b07219",l:"java"}, cs:{i:"file-code",c:"#178600",l:"csharp"},
+  php:{i:"file-code",c:"#7a86b8",l:"php"}, rb:{i:"file-code",c:"#cc342d",l:"ruby"},
+  lua:{i:"file-code",c:"#000080",l:"lua"}, sql:{i:"database",c:"#e38c00",l:"sql"},
+  html:{i:"globe",c:"#e34c26",l:"xml"}, htm:{i:"globe",c:"#e34c26",l:"xml"},
+  xml:{i:"code",c:"#8a8a8a",l:"xml"}, svg:{i:"palette",c:"#ffb13b",l:"xml"},
+  css:{i:"palette",c:"#563d7c",l:"css"}, scss:{i:"palette",c:"#c6538c",l:"scss"},
+  less:{i:"palette",c:"#1d365d",l:"less"},
+  json:{i:"braces",c:"#c9a227",l:"json"}, jsonc:{i:"braces",c:"#c9a227",l:"json"},
+  md:{i:"book-open",c:"#6e7781",l:"markdown"}, markdown:{i:"book-open",c:"#6e7781",l:"markdown"},
+  txt:{i:"file-text",c:"#6e7781",l:"plaintext"}, log:{i:"file-text",c:"#6e7781",l:"plaintext"},
+  bat:{i:"terminal",c:"#8a8a8a",l:"dos"}, cmd:{i:"terminal",c:"#8a8a8a",l:"dos"},
+  ps1:{i:"terminal",c:"#2f6fb5",l:"powershell"}, psm1:{i:"terminal",c:"#2f6fb5",l:"powershell"},
+  sh:{i:"terminal",c:"#4f9d3a",l:"bash"}, bash:{i:"terminal",c:"#4f9d3a",l:"bash"},
+  toml:{i:"settings",c:"#9c4221",l:"ini"}, ini:{i:"settings",c:"#9c4221",l:"ini"},
+  cfg:{i:"settings",c:"#9c4221",l:"ini"}, conf:{i:"settings",c:"#9c4221",l:"ini"},
+  yml:{i:"settings",c:"#cb171e",l:"yaml"}, yaml:{i:"settings",c:"#cb171e",l:"yaml"},
+  png:{i:"file-image",c:"#a074c4"}, jpg:{i:"file-image",c:"#a074c4"},
+  jpeg:{i:"file-image",c:"#a074c4"}, gif:{i:"file-image",c:"#a074c4"},
+  webp:{i:"file-image",c:"#a074c4"}, bmp:{i:"file-image",c:"#a074c4"},
+  ico:{i:"file-image",c:"#a074c4"},
+  exe:{i:"binary",c:"#8a8a8a"}, dll:{i:"binary",c:"#8a8a8a"}, pyd:{i:"binary",c:"#8a8a8a"},
+  zip:{i:"file-archive",c:"#e0a800"}, "7z":{i:"file-archive",c:"#e0a800"},
+  rar:{i:"file-archive",c:"#e0a800"}, gz:{i:"file-archive",c:"#e0a800"},
+  mp3:{i:"file-audio",c:"#1f9d55"}, wav:{i:"file-audio",c:"#1f9d55"},
+  mp4:{i:"file-video",c:"#d64545"}, mkv:{i:"file-video",c:"#d64545"},
+  csv:{i:"file-spreadsheet",c:"#1f9d55"}, xlsx:{i:"file-spreadsheet",c:"#1f9d55"},
+  key:{i:"file-key",c:"#c9a227"}, pem:{i:"file-key",c:"#c9a227"},
+  license:{i:"copyright",c:"#6e7781"},
+};
+const NO_EXT = {
+  LICENSE:{i:"copyright",c:"#6e7781",l:"plaintext"},
+  "pkg.json":{i:"braces",c:"#c9a227",l:"json"},
+  ".gitignore":{i:"file-cog",c:"#8a8a8a",l:"plaintext"},
+  ".gitattributes":{i:"file-cog",c:"#8a8a8a",l:"plaintext"},
+};
+function extOf(entry){
+  const name = (entry.name || "").toLowerCase();
+  if (NO_EXT[name]) return Object.assign({ext:""}, NO_EXT[name]);
+  return Object.assign({ext: entry.ext || ""}, EXT[entry.ext] || {i:"file", c:"#8a8a8a"});
+}
+function fileIconHTML(entry, open){
+  if (entry.dir) return '<span style="color:#e0a800;display:flex">' +
+    ico(open ? "folder-open" : "folder", "i") + '</span>';
+  const e = extOf(entry);
+  return '<span style="color:' + e.c + ';display:flex">' + ico(e.i, "i") + '</span>';
+}
+function typeLabel(entry){
+  if (entry.dir) return "文件夹";
+  const e = entry.ext || "";
+  return e ? (e.toUpperCase() + " 文件") : "文件";
+}
+function humanSize(n){
+  if (n == null) return "";
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1048576).toFixed(1) + " MB";
+}
+function fmtTime(sec){
+  if (!sec) return "";
+  const d = new Date(sec * 1000), p = n => String(n).padStart(2, "0");
+  return d.getFullYear() + "/" + p(d.getMonth() + 1) + "/" + p(d.getDate()) + " " +
+         p(d.getHours()) + ":" + p(d.getMinutes());
+}
+function escapeHtml(s){
+  return String(s == null ? "" : s)
+    .replace(/[&<>"]/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+}
+const esc = escapeHtml;

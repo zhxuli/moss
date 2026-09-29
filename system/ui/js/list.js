@@ -1,0 +1,538 @@
+/* moss 界面 · list.js —— 从 index.html 拆出来的（`V-67`），内容与拆分前一致。 */
+/* ---------------------------------------------------------------- 显示 / 隐藏
+   管的是**这个包自己的界面窗口**（GUI 包跑起来那扇窗）：藏起来 ≠ 关掉，
+   还能再叫出来。窗口归属由宿主认（进程树 ∪ 进程环境里的 MOSS_PKG_ID），
+   所以从终端开的也认得出来。 */
+async function toggleVis(p){
+  if (isHist(p)) return;                  // 路径调用没有"包自己的窗口"（按钮也是禁用的）
+  const st = PST[p.id] || {windows: 0, visible: false};
+  const r = st.visible ? await pywebview.api.pkg_hide(p.id)
+                       : await pywebview.api.pkg_show(p.id);
+  toast(r.msg, !r.ok);
+  setTimeout(() => refreshPkgState(p), 400);
+}
+
+/* 详情页开着的时候，每 2.5 秒对一次状态（包可能是从别处启动/关掉的）
+   ★ 现在左侧列表也要显示状态，所以**一次把所有包都问回来**、不管在哪个选项卡。 */
+function pkgPollStart(){
+  if (pstTimer) return;
+  pstTimer = setInterval(refreshAllStates, 2500);
+}
+
+/* ---------------------------------------------------------------- 包列表 */
+let side = "pkg";               // pkg | hist（左侧顶部那个切换）
+
+function setSide(which){
+  side = which;
+  $("#sw-pkg").classList.toggle("on", which === "pkg");
+  $("#sw-hist").classList.toggle("on", which === "hist");
+  $("#list").hidden = which !== "pkg";
+  $("#hist").hidden = which !== "hist";
+  $("#btn-newpkg").hidden = which !== "pkg";   // 新建的是**包**，历史这边不该有这个按钮
+  $("#q").placeholder = which === "pkg" ? "搜索包名 / 说明 / 标签…"
+                                        : "搜索历史（名字 / 参数 / 目录）…";
+  if (which === "hist") loadHist().then(renderHist); else renderList();
+}
+
+/* ---------------------------------------------------------------- 历史（路径调用）
+   数据来自 `user_data/history/*.jsonl`（宿主那侧读好、去过重）。
+   ★ 点一下 = **选中它**（不再是直接重跑）—— 和包列表一样：右边出「详情 / 命令行 /
+     文件管理」三个选项卡，只有点「运行」（或详情里那个参数框回车）才真的跑，
+     而且**在它当初的目录里跑**。行尾那颗播放图标仍然是"点一下就重跑"。
+   目标目录里若有 `icon.xxx` 就用它当图标；没有就按目标文件的
+   **后缀**画一个（跟文件管理器里同一个图标），不是一个千篇一律的返回箭头。 */
+let HIST = [];
+
+async function loadHist(){
+  try{
+    const r = await pywebview.api.hist_list(60);
+    HIST = (r && r.ok && r.items) || [];
+  }catch(e){ HIST = []; }
+  // 选中的那条会被重新读成**新对象** —— 按 key 找回来，别让详情里看的是旧的
+  if (curH){
+    const k = histKey(curH);
+    curH = HIST.find(x => histKey(x) === k) || curH;
+  }
+}
+
+// 键要带参数：同一个文件用不同参数跑过，是**两条**历史，不能共用一份控制台
+function histKey(it){ return "hist:" + it.target + (it.args ? " " + it.args : ""); }
+function histIconHTML(it, cls){
+  const c = cls || "hico";
+  if (it.icon_svg){ const s = safeSvg(it.icon_svg); if (s) return '<span class="' + c + '">' + s + '</span>'; }
+  if (it.icon) return '<span class="' + c + '"><img src="' + it.icon + '" alt=""></span>';
+  // 没有 icon.xxx：按目标文件的类型画（和文件管理里那套完全同一个图标）
+  const nm = it.name || it.target || "";
+  const e = extOf({name: nm, ext: (nm.split(".").pop() || "").toLowerCase()});
+  return '<span class="' + c + '" style="color:' + e.c + '">' + ico(e.i, "i") + '</span>';
+}
+
+/* 一条历史的目标目录，写成页面用的 rel：优先落在 user_data / system 两个根里，
+   落到外面就是 `abs/<绝对路径>`（宿主认这个前缀，见 `system/ui/main.py` 的 ABS_ROOT）。
+   ★ 根那一段**大小写不敏感**地比（Windows 路径本来就无所谓大小写）——
+     不然盘符写小写就会掉进 `abs/`，面包屑上看着像"跑到外面去了"。 */
+function dirRel(dir){
+  const norm = s => String(s || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const d = norm(dir);
+  if (!d) return null;
+  const dl = d.toLowerCase();
+  for (const [key, base] of [["user", norm(DATA.user_data)],
+                             ["system", norm(DATA.home) + "/system"]]){
+    const bl = base.toLowerCase();
+    if (dl === bl) return key;
+    if (dl.startsWith(bl + "/")) return key + d.slice(base.length);
+  }
+  return "abs/" + d;
+}
+function histDir(it){
+  const d = it.cwd || (it.target ? it.target.replace(/[\\/][^\\/]*$/, "") : "");
+  return dirRel(d);
+}
+
+function renderHist(){
+  const box = $("#hist");
+  const f = $("#q").value.trim().toLowerCase();
+  const rows = HIST.filter(it => !f ||
+    [it.name, it.target, it.args, it.cwd].join(" ").toLowerCase().includes(f));
+  if (!rows.length){
+    box.innerHTML = '<div class="empty">' +
+      (HIST.length ? "没有匹配的历史" :
+       "还没有历史。<br>历史只记<b>路径调用</b>（<span class=\"mono\">moss zeen</span> 这种）——<br>包调用不进历史。") +
+      '</div>';
+    return;
+  }
+  box.innerHTML = "";
+  const selKey = curH ? histKey(curH) : null;
+  for (const it of rows){
+    const d = document.createElement("div");
+    d.className = "hitem";
+    d.dataset.key = histKey(it);
+    d.dataset.state = RUNS[d.dataset.key] ? "running" : "idle";
+    if (d.dataset.key === selKey) d.classList.add("sel");
+    // ★ 目标文件已经没了的，整行**灰掉**：它已经跑不了了，
+    //   但记录还留着（当初在哪儿、跑过什么仍然有用），所以是灰不是删。
+    const gone = it.exists === false;
+    if (gone){
+      d.classList.add("dead");
+      d.title = "这个文件已经不在了：" + (it.target || "");
+    }
+    const when = (it.ts || "").replace("T", " ").slice(5, 16);
+    d.innerHTML = histIconHTML(it) +
+      '<div class="hmain">' +
+        '<div class="hname">' + esc(it.name) +
+          (it.args ? ' <span class="sub">' + esc(it.args) + '</span>' : "") + '</div>' +
+        '<div class="hsub">' + esc(it.cwd || "") + '　·　' + esc(when) + '</div>' +
+      '</div>' +
+      '<span class="hstat"></span>';
+    d.onclick = () => selectHist(it);          // 选中，不跑
+    box.appendChild(d);
+  }
+  paintHistStats();
+}
+
+function paintHistStats(){
+  document.querySelectorAll(".hitem").forEach(el => {
+    const key = el.dataset.key;
+    const box = el.querySelector(".hstat");
+    if (!box) return;
+    const running = !!RUNS[key];
+    el.dataset.state = running ? "running" : "idle";
+    const it = HIST.find(x => histKey(x) === key);
+    const gone = it && it.exists === false;
+    // 文件没了的：不放"运行"按钮 —— 点了也只会报"目标已经不在了"，不如不给点
+    if (gone && !running){
+      box.innerHTML = "";
+      return;
+    }
+    box.innerHTML = running
+      ? '<button class="ic-run" title="正在跑 —— 点这里停掉它">' + ico("square", "i") + '</button>'
+      : '<button class="idle" title="不选中，直接重跑这次调用">' + ico("play", "i") + '</button>';
+    const b = box.querySelector("button");
+    if (b) b.onclick = (ev) => {
+      ev.stopPropagation();                    // 点图标不要连带选中那一行
+      if (running) stopRun(key); else rerunHistByKey(key);
+    };
+  });
+}
+
+function rerunHistByKey(key, args){
+  const it = HIST.find(x => histKey(x) === key);
+  if (it) rerunHist(it, args);
+}
+
+/* 选中一条历史：右边三个选项卡跟着换成"这一条"的。 */
+function selectHist(it){
+  curH = it; cur = null;
+  consoleKey = histKey(it);
+  renderList(); renderHist(); renderDetail(); paintConsole();
+  setTab("detail");
+  fmSelect(histKey(it), /*keepTab*/ true);     // 文件管理换成"这条调用所在的目录"
+}
+
+async function rerunHist(it, args){
+  const key = histKey(it);
+  if (RUNS[key]) return;
+  const a = args === undefined ? (it.args || "") : args;
+  lastRun = {key: key, args: a, label: "moss /" + it.name};
+  consoleKey = key;
+  setConsole(key, "$ moss /" + it.name + (a ? " " + a : ""), "运行中");
+  // ★ 宿主会把**它真正要跑的命令和当前目录**回报回来（`rerun_argv` 那条规则：
+  //   绝对路径 moss 的解析器不认，得翻成"手敲形式"）。所以这里用 `r.cmd` 覆盖一遍，
+  //   界面上显示的就是真的那条命令，不是界面自己猜的。
+  const r = await pywebview.api.path_start(it.target, it.cwd || "", a);
+  if (!r.ok){
+    setConsole(key, "$ moss /" + it.name + "\n\n启动失败：" + (r.msg || ""), "启动失败");
+    toast("✗ " + (r.msg || "启动失败"), true);
+    return;
+  }
+  const cmd = r.cmd || ("moss /" + it.name);
+  setConsole(key, "$ " + cmd + (r.cwd ? "\n# 当前目录：" + r.cwd : ""), "运行中");
+  RUNS[key] = {rid: r.run_id, cmd: cmd, timer: null, stopped: false,
+               switched: false, tabAtStart: tab};
+  paintHistStats();
+  paintActions(selObj());
+  pollRun(key);
+}
+
+/* 「再跑一次」按 key 也认（历史那条会走它） */
+function rerunLast(){
+  if (!lastRun) return;
+  if (lastRun.key) return rerunHistByKey(lastRun.key, lastRun.args);
+  const p = DATA.packages.find(x => x.id === lastRun.id);
+  if (!p){ toast("找不到 :" + lastRun.id + " 这个包了", true); return; }
+  if (RUNS[p.id]) return;
+  startRun(p, lastRun.args);
+}
+
+function renderList(){
+  const f = $("#q").value.trim().toLowerCase();
+  const box = $("#list");
+  box.innerHTML = "";
+  const rows = DATA.packages.filter(p => !f ||
+    [p.id, p.name, p.desc, (p.tags||[]).join(" "), (p.aliases||[]).join(" ")]
+      .join(" ").toLowerCase().includes(f));
+  // ★ 正拖着东西的时候：**只列收得下它的包**（`V-39`）—— 不支持对应操作的先藏起来，
+  //   省得你对着一个根本不会理你的包干瞪眼。
+  const shown = DRAG.on ? rows.filter(p => dropAccepts(p, DRAG.kind)) : rows;
+  if (!shown.length){
+    box.innerHTML = '<div class="empty">' + (DRAG.on
+      ? ("没有包收「" + dropKindName(DRAG.kind) + "」")
+      : "没有匹配的包") + '</div>';
+    return;
+  }
+  for (const p of shown){
+    const d = document.createElement("div");
+    d.className = "item" + (cur && cur.id === p.id ? " sel" : "");
+    d.dataset.id = p.id;
+    d.dataset.state = rowStateOf(p.id);      // 宿主口径：在跑 / 没在跑
+    d.innerHTML = iconHTML(p, "ico") +
+      '<div style="min-width:0;flex:1">' +
+        '<div class="nm">' + esc(p.name) + ' <span class="sub">:' + esc(p.id) + '</span></div>' +
+        '<div class="ds">' + esc(p.desc) + '</div></div>' +
+      '<span class="rowstat"></span>';
+    d.onclick = () => select(p.id);
+    box.appendChild(d);
+  }
+  paintRowStats();
+}
+function safeSvg(text){
+  try{
+    const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+    if (doc.querySelector("parsererror")) return "";
+    doc.querySelectorAll("script,foreignObject,iframe").forEach(n => n.remove());
+    doc.querySelectorAll("*").forEach(n => {
+      [...n.attributes].forEach(a => {
+        if (/^on/i.test(a.name) || /^(href|xlink:href)$/i.test(a.name)) n.removeAttribute(a.name);
+      });
+    });
+    const svg = doc.documentElement;
+    svg.removeAttribute("width"); svg.removeAttribute("height");
+    return svg.outerHTML;
+  }catch(e){ return ""; }
+}
+function iconHTML(p, cls){
+  if (p.icon_svg){ const s = safeSvg(p.icon_svg); if (s) return '<span class="' + cls + '">' + s + '</span>'; }
+  if (p.icon) return '<span class="' + cls + '"><img src="' + p.icon + '" alt=""></span>';
+  return '<span class="' + cls + '"></span>';
+}
+function pkgRel(p){
+  const norm = s => String(s || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const d = norm(p.dir), userd = norm(DATA.user_data), sysroot = norm(DATA.home) + "/system";
+  if (d === userd || d.startsWith(userd + "/")) return "user" + d.slice(userd.length);
+  if (d === sysroot || d.startsWith(sysroot + "/")) return "system" + d.slice(sysroot.length);
+  return null;
+}
+function select(id){
+  cur = DATA.packages.find(p => p.id === id) || null;
+  curH = null;                                // 选了包就把"历史那条"放下（两者互斥）
+  consoleKey = cur ? cur.id : "__host__";     // 命令行跟着换成"这个包自己的那份"
+  renderList(); renderHist(); renderDetail(); paintConsole(); setTab("detail");
+  // 换了包 → 文件管理跟着换到"这个包的那一套"（每个包一份上下文，互不干扰）
+  if (cur) fmSelect(cur.id, /*keepTab*/ true);
+  paintEmbedTab();                            // 第四个选项卡：这个包有没有界面
+}
+function renderDetail(){
+  const box = $("#pane-detail");
+  const who = selObj();
+  if (!who){ box.innerHTML = '<div class="empty">左边选一个包，或者一条历史</div>'; return; }
+  if (isHist(who)) return renderDetailHist(who, box);
+  const p = cur, params = p.params || [];
+  const prop = (k, v) => '<div class="prop"><div class="prop-k">' + esc(k) +
+    '</div><div class="prop-v">' + v + '</div></div>';
+  let html = '<div class="dwrap"><div class="dhead">' +
+      // 头部 4 块直接摆进 3 行网格（位置由 CSS 的 grid-area 定，DOM 顺序不影响画面）
+      '<div class="dicon">' + iconHTML(p, "") + '</div>' +
+      '<h1 class="dtitle" title="' + esc(p.name) + '">' + esc(p.name) + '</h1>' +
+      (p.desc ? '<p class="ddesc">' + esc(p.desc) + '</p>' : '') +
+      '<div class="dmeta">:' + esc(p.id) + ' · v' + esc(p.version || "?") + ' · ' +
+        esc(p.kind) + ' · ' + esc(p.layer) + ' 层' +
+        (p.shadowed ? ' · 遮住了 ' + esc(p.shadowed) + ' 层的同名包' : '') + '</div>' +
+    '</div>';
+
+  // 属性：别名 / 标签 / AI。用"标签 : 值"的行，不做成一堆药丸 ——
+  // 药丸只留给"点一下就填进去"那种真动作（例子）。
+  const props = [];
+  if ((p.aliases || []).length)
+    props.push(prop("别名", (p.aliases || []).map(a => '<span class="mono">:' + esc(a) +
+      '</span>').join('&nbsp; ')));
+  if ((p.tags || []).length)
+    props.push(prop("标签", (p.tags || []).map(t => '<span class="tag">' + esc(t) +
+      '</span>').join("")));
+  if (p.ai_expose)
+    props.push(prop("AI", '可调用 <span class="soft">· 风险 ' +
+      esc(p.ai_risk || "?") + '</span>'));
+  if (props.length)
+    html += '<section class="dsec"><div class="props">' + props.join("") + '</div></section>';
+
+  if (params.length){
+    html += '<section class="dsec"><div class="props">' +
+      params.map(pa => '<div class="prop"><div class="prop-k mono">' + esc(pa.name) +
+        '</div><div class="prop-v">' + esc(pa.type || "string") +
+        '<span class="soft"> · ' + (pa.required ? "必填" : "可留空") +
+        (pa.rest ? " · 余下全给它" : "") + '</span>' +
+        (pa.desc ? '<div class="pdesc">' + esc(pa.desc) + '</div>' : '') +
+        (pa.placeholder ? '<div class="pex">例：' + esc(pa.placeholder) + '</div>' : '') +
+        '</div></div>').join("") + '</div></section>';
+  }
+  // ★ 过滤掉空的例子：`pkg.json` 里 `ai.examples` 的 `args` 可能是空串
+  //   （有的包就是 ['', '']），不过滤会画出一排**空药丸**、整块看着像坏了。
+  const exs = (p.examples || []).map(x => String(x || "")).filter(x => x.trim());
+  if (exs.length){
+    html += '<section class="dsec"><div class="chips">' +
+      exs.map(e => '<button class="chip" data-args="' + esc(e) + '">' + esc(e) +
+        '</button>').join("") + '</div></section>';
+  }
+
+  // ★ 目录名和 id 允许不一样（`D-27` 方案 C）。不一样时**不报错**，只是把这件事
+  //   摆在明面上，并给一个现成的统一动作（宿主那条 `--rename <id> <id>` 只改目录名）。
+  const dirBase = (String(p.dir || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop()) || "";
+  const oddDir = dirBase && dirBase !== p.id;
+  const renameBtn = '<button class="btn" id="btn-rename" title="给这个包改名（moss --rename）">' +
+      ico("pencil", "i") + '<span>更名</span></button>';
+
+  html += '<section class="dsec"><div class="runrow">' +
+      '<input id="args" placeholder="参数（可留空；回车 = 运行）" value="' +
+        esc(ARGS[p.id] || "") + '">' +
+      '<button class="btn" id="btn-openui" title="打开这个包自己的界面（后台运行，不等它）">' +
+        ico("app-window", "i") + '<span>打开界面</span></button></div>' +
+      '<div class="runhint">命令预览: <span class="mono" id="preview"></span>' +
+      ' · 右上角是「运行 / 停止」</div></section>' +
+    // 更名：单独一块（它既不是危险动作，也不属于「跑一下」）
+    '<section class="dsec"><div class="row-split">' +
+      (oddDir
+        ? '<span class="hint">目录名 <span class="mono">' + esc(dirBase) +
+          '</span> 和 id <span class="mono">' + esc(p.id) +
+          '</span> 不一样（不碍事）</span>' +
+          '<span class="row-inline">' +
+          '<button class="btn" id="btn-align" title="只把包目录名改成 id —— 数据目录和清单都不动">' +
+            ico("folder-tree", "i") + '<span>对齐目录名</span></button>' +
+          renameBtn + '</span>'
+        : '<span class="hint">改 id：包目录名、数据目录 ' +
+          '<span class="mono">user_data/state/&lt;id&gt;</span>、清单里的 id 一起改</span>' +
+          renameBtn) +
+      '</div></section>' +
+    '<section class="dsec danger">' +
+      '<div class="danger-text">永久删除: 包本体 + 它的数据（不进回收站）</div>' +
+      '<button class="btn danger" id="btn-remove" title="卸载这个包（moss --remove）">' +
+        ico("trash-2", "i") + '<span>卸载</span></button></section></div>';
+  box.innerHTML = html;
+  const upd = () => {
+    $("#preview").textContent = "moss :" + p.id +
+      ($("#args").value.trim() ? " " + $("#args").value.trim() : "");
+    ARGS[p.id] = $("#args").value;              // 记住它，重画之后要放回去
+  };
+  $("#args").addEventListener("input", upd);
+  $("#args").addEventListener("keydown", (e) => {
+    if (e.key === "Enter"){ e.preventDefault(); startRun(p, $("#args").value); }
+  });
+  upd();
+  // 例子：现在是真的 <button class="chip" data-args="…">（以前是 span 加个 .click 类）
+  box.querySelectorAll(".chip[data-args]").forEach(c => {
+    c.onclick = () => { $("#args").value = c.dataset.args || ""; upd(); };
+  });
+  // 那组按钮现在钉在选项卡行上（paintActions 管），这里只挂钩子。
+  // ★ 只用绑一次：上一版遗留的那段老处理函数（先 disabled=true 再调阻塞式 run）
+  //   还留在下面，正好把这一行覆盖掉 —— 表现就是"停止按钮是灰的、点了没反应"。
+  paintActions(p);
+  $("#btn-run").onclick = () => clickRun(p);
+  $("#btn-vis").onclick = () => toggleVis(p);
+  refreshPkgState(p);
+  $("#btn-openui").onclick = async () => {    const r = await pywebview.api.open_ui(p.id, $("#args").value);
+    // 不切选项卡：带界面的包本来就没有命令行输出，停在详情更合理
+    paintRowStats();
+    setTimeout(() => refreshPkgState(p), 1500);
+    setTimeout(() => refreshPkgState(p), 3500);
+  };
+  $("#btn-remove").onclick = () => cmdRemovePkg(p);
+  $("#btn-rename").onclick = () => cmdRenamePkg(p);
+  if ($("#btn-align")) $("#btn-align").onclick = () => cmdAlignPkgDir(p);
+}
+
+/* 对齐目录名：把包目录名改成它的 id（`D-27` 方案 C 里那个"一键统一"）。
+   走的还是宿主那条 `--rename`，只是新旧 id 都写成它现在的 id —— 于是宿主
+   只改目录名，**id / 数据目录 / 清单一个字都不动**。 */
+async function cmdAlignPkgDir(p){
+  const oldRel = pkgRel(p);              // 改名前后 id 不变，只有目录名变
+  consoleKey = "__host__";
+  const cmd = "moss --rename " + p.id + " " + p.id;
+  setConsole("__host__", "$ " + cmd, "运行中");
+  const r = await pywebview.api.run_host("--rename " + p.id + " " + p.id);
+  setConsole("__host__", "$ " + cmd + "\n\n" + (r.out || "(没有输出)"),
+             r.code === 0 ? "完成" : ("退出码 " + r.code));
+  if (r.code !== 0){
+    toast("✗ 没对齐成，看「命令行」里说了什么", true);
+    setTab("console");
+    return;
+  }
+  toast("包目录名已对齐成 :" + p.id);
+  // ★ 目录名换了（id 没换）—— 文件管理缓存里那条路径**还是旧目录**，
+  //   不搬的话双击一个文件去编辑，宿主会说「不是文件」。这条正是这个 bug 的现场。
+  await refreshPkgs(p.id);
+  const np = DATA.packages.find(x => x.id === p.id);
+  fmReRoot(oldRel, np ? pkgRel(np) : null);
+  if (np) select(p.id);
+  else renderDetail();
+}
+
+/* 更名：界面只负责问"改成什么"，改的事交给宿主（`moss --rename`）。
+   为什么不自己改：一次要动**包目录名 / 数据目录 / 清单里的 id** 三样，
+   这套规则只有宿主那侧知道；界面自己拼路径，正是 `D-27` 里那几处毛病的来源。 */
+async function cmdRenamePkg(p){
+  askText("给这个包改名", p.id, async (newId) => {
+    newId = String(newId || "").trim().toLowerCase();
+    if (!newId || newId === p.id) return;
+    const oldRel = pkgRel(p);            // 改名前它那个目录（文件管理缓存里记的就是它）
+    consoleKey = "__host__";
+    const cmd = "moss --rename " + p.id + " " + newId;
+    setConsole("__host__", "$ " + cmd, "运行中");
+    const r = await pywebview.api.run_host("--rename " + p.id + " " + newId);
+    setConsole("__host__", "$ " + cmd + "\n\n" + (r.out || "(没有输出)"),
+               r.code === 0 ? "完成" : ("退出码 " + r.code));
+    if (r.code !== 0){
+      toast("✗ 改名失败，看「命令行」里说了什么", true);
+      setTab("console");
+      return;
+    }
+    toast("已改名为 :" + newId);
+    // ★ 目录整个换了地方，文件管理里缓存的路径（当前目录 / 历史 / 打开的文件）
+    //   必须跟着搬 —— 否则双击一个文件去编辑，宿主会说「不是文件」。
+    await refreshPkgs(newId);            // 包表重问一遍（旧 id 没了、新 id 出现）
+    const np = DATA.packages.find(x => x.id === newId);
+    fmReRoot(oldRel, np ? pkgRel(np) : null);
+    if (np) select(newId);
+    else renderDetail();
+  });
+}
+
+/* ---------------------------------------------------------------- 详情：一条历史
+   和包那份**长得一样**（同一个 .hd / .sec / .row-inline 结构），内容按"这条记录
+   真有什么"来给 —— **没有的就不显示**（参数空着不写"参数（无）"，
+   上次结果不知道就不写；说明性的废话也不写）。 */
+function renderDetailHist(it, box){
+  const when = (it.ts || "").replace("T", " ");
+  const gone = it.exists === false;
+  // 只放"真有值"的行；一行都没有，这一块就不出现
+  const rows = [];
+  if (it.cwd) rows.push(["工作目录", it.cwd,
+    it.cwd_exists === false ? "这个目录也不在了" : ""]);
+  if (it.args) rows.push(["参数", it.args, ""]);
+  if (when) rows.push(["时间", when, ""]);
+  if (it.exit !== null && it.exit !== undefined)
+    rows.push(["上次退出码", String(it.exit), ""]);
+  let html = '<div class="dwrap"><div class="dhead">' +
+      // 历史没有"说明"，右边第一二行留空 —— 路径放在**第三行**，和左边的名字对齐
+      '<div class="dicon">' + histIconHTML(it, "") + '</div>' +
+      '<h1 class="dtitle" title="' + esc(it.name) + '">' + esc(it.name) + '</h1>' +
+      '<div class="dmeta">' + esc(it.target || "") + '</div>' +
+    '</div>';
+  if (gone){
+    html += '<div class="warnbox">' + ico("alert-triangle", "i") +
+      '<span>这个文件已经不在了，跑不了。记录还留着，想清掉就点下面那个按钮。</span></div>';
+  }
+  html += '<section class="dsec"><div class="runrow">' +
+      // ★ 这里用 `#hargs` / `#hpreview`（而不是包详情那对 `#args` / `#preview`）：
+      //   两个详情同一个时刻只会存在一个（都往 #pane-detail 里写），
+      //   但静态检查"整个页面每个 id 只能出现一次"就分不清了 —— 换成不同的 id，
+      //   那条检查才继续有用。要取输入框请走 `argsInput()`。
+      '<input id="hargs" placeholder="参数（留空 = 上次那样；回车 = 运行）" value="' +
+        esc(it.args || "") + '"' + (gone ? " disabled" : "") + '>' +
+      '<button class="btn" id="btn-run2"' + (gone ? " disabled" : "") + '>' +
+        ico("play", "i") + '<span>运行</span></button>' +
+      '<button class="btn" id="btn-opendir" title="用 Windows 资源管理器打开它所在的目录">' +
+        ico("folder-open", "i") + '<span>打开所在目录</span></button></div>' +
+      '<div class="runhint">命令预览: <span class="mono" id="hpreview"></span></div>' +
+      '</section>';
+  if (rows.length){
+    html += '<section class="dsec"><div class="props">' +
+      rows.map(r => '<div class="prop"><div class="prop-k">' + esc(r[0]) +
+        '</div><div class="prop-v mono">' + esc(r[1]) +
+        (r[2] ? ' <span class="soft">' + esc(r[2]) + '</span>' : '') +
+        '</div></div>').join("") + '</div></section>';
+  }
+  html += '<section class="dsec danger">' +
+      '<div class="danger-text">只删这条记录，那个文件本身不动</div>' +
+      '<button class="btn danger" id="btn-forget" title="从历史里删掉这条记录">' +
+        ico("trash-2", "i") + '<span>删除这条记录</span></button></section></div>';
+  box.innerHTML = html;
+
+  const upd = () => {
+    const a = $("#hargs").value.trim();
+    // 和宿主 `rerun_argv` 同一条规则的**近似预览**：真正跑的时候宿主回回来的 `cmd`
+    // 才是准的（会打到「命令行」上）。这里只求"看着像手敲的那条"。
+    $("#hpreview").textContent = "moss /" + it.name + (a ? " " + a : "");
+  };
+  $("#hargs").addEventListener("input", upd);
+  $("#hargs").addEventListener("keydown", (e) => {
+    if (e.key === "Enter"){ e.preventDefault(); rerunHist(it, $("#hargs").value); }
+  });
+  upd();
+
+  paintActions(it);
+  $("#btn-run").onclick = () => clickRun(it);
+  $("#btn-vis").onclick = () => {};            // 已禁用；留个空钩子不放旧的包 handler
+  $("#btn-run2").onclick = () => rerunHist(it, $("#hargs").value);
+  $("#btn-opendir").onclick = () => {
+    pywebview.api.fs_open_default(histDir(it)).then(r => toast(r.msg, !r.ok));
+  };
+  $("#btn-forget").onclick = () => cmdForgetHist(it);
+}
+
+/* 删一条历史记录：**真删** —— 把那几行从账里抠掉（原地改、保留行尾）。
+   ★ **不弹确认框**：这里碰不到任何文件，弹窗只会拖慢一次清理动作。
+     这里也确实碰不到任何文件：只动 `user_data/history/*.jsonl` 里那几行。
+     （包那边的「卸载」是**真删文件**，确认框保留。）
+   ★ 为什么不做成"追加一条墓碑、读的时候跳过"：那样"能不能跳过"取决于读的人那份代码
+     认不认墓碑 —— 终端里的 `moss --history` 跑的是**编在 exe 里的** `core/history.py`，
+     旧 exe 不认识，于是"界面里删了、终端里还在"。所以删除做成真删。 */
+async function cmdForgetHist(it){
+  // ★ 要传**记录自己的去重键**（`it.key`，后端按 `kind|目标|params|args` 匹配），
+  //   不能传 `histKey(it)` —— 那是界面这边"控制台缓冲区"的键（`hist:<目标> <args>`），
+  //   两边格式不同，传错了后端就一条也匹配不到，只会回"已经没有这条了"。
+  const r = await pywebview.api.hist_forget(it.key || "");
+  toast(r.ok ? ("已删掉这条记录：" + it.name) : ("✗ " + (r.msg || "删不掉")), !r.ok);
+  if (!r.ok) return;
+  if (curH && histKey(curH) === histKey(it)) curH = null;
+  await loadHist();
+  renderHist();
+  renderDetail();
+}

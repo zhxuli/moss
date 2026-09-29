@@ -1,0 +1,146 @@
+/* 「设置」面板的样式（跟 `js/settings.js` 那个 Vue 组件配套） */
+/* ---------------------------------------------------------------- 「设置」面板（`V-60` ✅ / `V-63` ✅ / `V-66`）
+   内容全部来自宿主（`moss --settings` / `--settings-check`），界面不自己列设置项、
+   也不自己实现校验规则 —— 就不会出现"面板里有、文件里没有""两处规则不一致"这种事。
+
+   ★ 结构（`V-63` + `V-66`）：
+       .card       圆角 + overflow:hidden（**自己不滚**，滚动条压不到圆角）
+       ├ .set-head 标题 + 配置文件 + ×
+       ├ .set-main flex
+       │   ├ .set-nav  左侧分类（点一下切一组，一次只看一组 —— 不再是一长条）
+       │   └ .set-body 右侧内容（**唯一滚动层**，没有圆角）
+       └ .set-foot 状态 + 取消 / 保存
+   ★ 说明放进 `?` 图标的 hover 提示里（不是整格 hover）：面板上只有标签和控件。 */
+#settings{position:fixed;inset:0;background:rgba(0,0,0,.38);display:none;
+  align-items:center;justify-content:center;z-index:85}
+#settings.on{display:flex}
+.card.wide{width:min(760px,94vw);height:min(560px,86vh);max-width:none;padding:0;
+  border-radius:14px;display:flex;flex-direction:column;overflow:hidden}
+.set-head{display:flex;align-items:center;gap:10px;padding:14px 14px 12px 18px;
+  border-bottom:1px solid var(--hair);flex:none}
+.set-head h3{margin:0;font-size:15px;flex:none}
+.set-sub{flex:1;min-width:0;color:var(--dim);font-size:11.5px;font-family:var(--mono);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.set-x{width:26px;height:26px;flex:none;border:0;border-radius:8px;background:transparent;
+  color:var(--dim);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+  padding:0;transition:background .15s ease-out,color .15s ease-out}
+.set-x:hover{background:var(--hover);color:var(--fg)}
+.set-x svg{width:15px;height:15px}
+.set-main{flex:1;min-height:0;display:flex}
+
+/* 左侧分类 */
+.set-nav{width:152px;flex:none;background:var(--panel2);border-right:1px solid var(--hair);
+  padding:8px;display:flex;flex-direction:column;gap:2px}
+.set-navitem{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
+  font:inherit;font-size:12.5px;color:var(--fg2);background:transparent;border:0;
+  cursor:pointer;text-align:left;transition:background .15s ease-out,color .15s ease-out}
+.set-navitem:hover{background:var(--hover)}
+.set-navitem.on{background:var(--sel);color:var(--accent);font-weight:600}
+.set-navitem svg{width:14px;height:14px;flex:none;opacity:.75}
+.set-navitem.on svg{opacity:1}
+.set-navitem .set-dot{width:6px;height:6px;border-radius:50%;background:#d64545;margin-left:auto;
+  flex:none;display:none}
+.set-navitem.has-bad .set-dot{display:block}
+.set-navitem.has-warn .set-dot{background:#e0a02a;display:block}
+.set-navspacer{flex:1}
+
+/* 右侧内容：一次只显示一组 */
+.set-body{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;padding:16px 20px 10px}
+.set-pane{display:none}
+.set-pane.on{display:block}
+.set-ptitle{font-size:13.5px;font-weight:600;margin:0}
+.set-pdesc{font-size:12px;color:var(--dim);line-height:1.65;margin:4px 0 14px}
+/* 开关类：一行一个（本来就该一行一个 —— 左边名字、右边开关） */
+.set-list{display:flex;flex-direction:column}
+.set-item{display:grid;grid-template-columns:1fr auto;align-items:center;gap:0 10px;
+  padding:9px 2px;border-top:1px solid var(--hair)}
+.set-item:first-child{border-top:0}
+.set-item:hover{background:var(--panel2)}
+/* 输入类：两列 */
+.set-fields{display:grid;grid-template-columns:1fr 1fr;gap:14px 16px}
+.set-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.set-lbl{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--fg2);
+  min-width:0;cursor:default}
+.set-lbl span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-item .set-lbl{flex:1}
+.set-info{width:14px;height:14px;flex:none;color:var(--dim2);opacity:.55;
+  display:inline-flex;align-items:center;justify-content:center;cursor:help;
+  transition:opacity .15s,color .15s}
+.set-lbl:hover .set-info,.set-info:hover{opacity:1;color:var(--accent)}
+.set-info svg{width:13px;height:13px}
+.set-prob{grid-column:1/-1;display:none;font-size:11.5px;line-height:1.55;margin-top:2px}
+.set-item.bad,.set-field.bad{background:rgba(214,69,69,.07);border-radius:8px}
+.set-item.bad .set-lbl span,.set-field.bad .set-lbl span{color:#d64545}
+.set-item.bad .set-prob,.set-field.bad .set-prob{display:block;color:#d64545}
+.set-item.warn,.set-field.warn{background:rgba(255,159,10,.08);border-radius:8px}
+.set-item.warn .set-prob,.set-field.warn .set-prob{display:block;color:#a86400}
+.set-field.bad,.set-field.warn{padding:6px 8px;margin:-6px -8px}
+.set-item.bad,.set-item.warn{padding-left:8px;padding-right:8px}
+
+/* ★ 控件（`V-63` 的教训：这几条**必须带 `#settings ` 前缀** —— 全局那条
+   `.card input{width:100%}`（确认框用的）是"一个类 + 一个元素"，优先级高过单类选择器） */
+#settings .inp{width:100%;height:32px;padding:0 11px;border-radius:8px;
+  border:1px solid var(--ctl-in);background:var(--panel2);color:var(--fg);
+  font-family:var(--mono);font-size:12.5px;outline:none;
+  transition:border-color .12s,box-shadow .12s}
+#settings .inp::placeholder{color:var(--ph);font-family:inherit}
+#settings .inp:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+/* 开关 */
+.sw{width:38px;height:22px;border-radius:99px;border:1px solid var(--ctl);background:var(--panel2);
+  position:relative;cursor:pointer;flex:none;padding:0;transition:background .16s,border-color .16s}
+.sw::after{content:"";position:absolute;top:1px;left:1px;width:18px;height:18px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);
+  transition:transform .16s cubic-bezier(.4,0,.2,1)}
+.sw[aria-checked="true"]{background:var(--accent);border-color:var(--accent)}
+.sw[aria-checked="true"]::after{transform:translateX(16px)}
+.sw:focus-visible{outline:none;box-shadow:0 0 0 3px var(--field-focus)}
+/* 步进器 */
+#settings .step{display:inline-flex;align-items:center;border:1px solid var(--ctl-in);
+  border-radius:8px;overflow:hidden;background:var(--panel2);height:32px;flex:none}
+#settings .step button{width:30px;height:100%;border:0;background:transparent;color:var(--fg2);
+  cursor:pointer;font-size:15px;line-height:1;padding:0;transition:background .12s,color .12s}
+#settings .step button:hover:not(:disabled){background:var(--hover);color:var(--fg)}
+#settings .step button:disabled{opacity:.3;cursor:default}
+#settings .step .num{width:44px;height:100%;text-align:center;font-family:var(--mono);
+  font-size:13px;border:0;border-left:1px solid var(--hair);border-right:1px solid var(--hair);
+  background:transparent;color:var(--fg);outline:none}
+/* 冲突/提醒时控件也变色 */
+.set-item.bad .sw,.set-field.bad .inp,.set-field.bad .step{border-color:#d64545;
+  box-shadow:0 0 0 3px rgba(214,69,69,.14)}
+.set-item.warn .sw,.set-field.warn .inp,.set-field.warn .step{border-color:#e0a02a;
+  box-shadow:0 0 0 3px rgba(224,160,42,.16)}
+/* 快捷命令那页底下的预览行（照那个稿子：一行把四条命令都摆出来） */
+.set-live{margin-top:16px;padding:10px 12px;border-radius:10px;background:var(--tile);
+  font-family:var(--mono);font-size:12px;color:var(--fg2);line-height:1.8;word-break:break-all}
+.set-live b{color:var(--fg);font-weight:600}
+.set-live.bad{background:rgba(214,69,69,.08);color:#d64545}
+
+/* 脚：状态 + 按钮 */
+.set-foot{display:flex;align-items:center;gap:10px;padding:12px 14px 12px 18px;
+  border-top:1px solid var(--hair);flex:none;background:var(--panel2)}
+.set-state{font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;flex:1;min-width:0}
+.set-state.moved{color:var(--accent)}
+.set-state.bad{color:#d64545}
+.set-foot .btn{padding:7px 15px;border-radius:8px;border:1px solid var(--ctl);
+  background:var(--panel);color:var(--fg);cursor:pointer;font:inherit;font-size:13px}
+.set-foot .btn:hover{background:var(--hover)}
+.set-foot .btn.primary{background:var(--accent);border-color:var(--accent);
+  color:var(--accent-fg)}
+.set-foot .btn.primary:hover{filter:brightness(1.06)}
+.set-foot .btn:disabled{opacity:.45;cursor:default;filter:none}
+.set-foot .btn-quiet{padding:7px 12px;border-radius:8px;border:1px solid transparent;
+  background:transparent;color:var(--dim);cursor:pointer;font:inherit;font-size:13px}
+.set-foot .btn-quiet:hover{background:var(--hover);color:var(--fg)}
+
+/* hover 提示（`V-66`：从 `?` 图标 / 标签触发）。挂 body 上 + fixed 定位 —— 
+   放滚动层里会被裁掉。 */
+#tip{position:fixed;z-index:95;max-width:320px;padding:9px 12px;border-radius:10px;
+  background:var(--panel);border:1px solid var(--line);
+  box-shadow:0 12px 34px rgba(0,0,0,.26);font-size:12px;line-height:1.65;color:var(--fg2);
+  pointer-events:none}
+#tip b{display:block;font-size:12.5px;color:var(--fg);margin-bottom:3px}
+#tip .tip-now{font-family:var(--mono);font-size:11.5px;color:var(--dim2);margin-top:5px}
+#tip .tip-prob{margin-top:5px}
+#tip .tip-prob.bad{color:#d64545}
+#tip .tip-prob.warn{color:#a86400}
