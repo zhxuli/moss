@@ -298,19 +298,33 @@ table.fb td.dim{color:var(--dim)}
   border:1px solid var(--line);border-radius:16px;
   box-shadow:0 4px 24px rgba(0,0,0,.03)}
 
-/* ---------- 头部：左右两块 ---------- */
-.dhead{display:flex;gap:18px;align-items:flex-start;margin-bottom:16px}
-.dhead-l{flex:none;display:flex;flex-direction:column;gap:10px;max-width:210px}
-.dhead-r{flex:1;min-width:0;padding-top:2px}
-.dicon{display:flex;align-items:center;justify-content:center;width:48px;height:48px;
+/* ---------- 头部：**3 行网格** ----------
+   ┌──────────┬──────────────────────────────┐
+   │          │ 说明（最多两行）               │  行 1-2
+   │  [图标]   │                              │
+   │  名字     │ :md5 · v1.0.0 · task · 层     │  行 3
+   └──────────┴──────────────────────────────┘
+   为什么用 grid 而不是两个 flex 列：用户要的是"右侧三行 = 左侧两行图标 + 一行名字"，
+   也就是**左右的行要真的对齐**。grid 的行高由两列共同决定，天然等高；
+   两个各自堆叠的 flex 列只能靠调数值凑，一改字号就歪。
+   · 图标与名字在左列里**居中对齐**（列宽 = 两者较宽的那个，各自居中 ⇒ 互相对齐）；
+   · 名字**永不换行**（`nowrap` + 省略号）—— 名字一折行最难看；太长就省略，
+     左列封顶 200px，不至于把右边挤没；
+   · 说明**最多两行**（`-webkit-line-clamp:2`）。 */
+.dhead{display:grid;grid-template-columns:max-content minmax(0,1fr);
+  column-gap:18px;row-gap:8px;margin-bottom:16px}
+.dicon{grid-area:1 / 1 / 3 / 2;align-self:center;justify-self:center;
+  display:flex;align-items:center;justify-content:center;width:44px;height:44px;
   background:var(--tile);border-radius:12px;color:var(--fg2)}
-.dicon svg,.dicon img{width:24px;height:24px}
-h1.dtitle{font-size:21px;font-weight:600;margin:0;letter-spacing:.2px;line-height:1.25;
-  word-break:break-word}
-.dmeta{font-size:12.5px;color:var(--dim);font-family:var(--mono);line-height:1.5;
-  word-break:break-all}
-.ddesc{font-size:13.5px;color:var(--fg2);line-height:1.6;margin:6px 0 0;
-  word-break:break-word}
+.dicon svg,.dicon img{width:22px;height:22px}
+h1.dtitle{grid-area:3 / 1 / 4 / 2;align-self:baseline;text-align:center;font-size:21px;
+  font-weight:600;line-height:1.25;letter-spacing:.2px;margin:0;max-width:200px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ddesc{grid-area:1 / 2 / 3 / 3;align-self:center;margin:0;font-size:13.5px;
+  line-height:1.6;color:var(--fg2);word-break:break-word;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.dmeta{grid-area:3 / 2 / 4 / 3;align-self:baseline;font-size:12.5px;color:var(--dim);
+  font-family:var(--mono);line-height:1.5;word-break:break-all}
 
 /* ---------- 小节卡 ---------- */
 .dsec{background:var(--panel2);border:1px solid var(--line);border-radius:12px;
@@ -1207,16 +1221,13 @@ function renderDetail(){
   const prop = (k, v) => '<div class="prop"><div class="prop-k">' + esc(k) +
     '</div><div class="prop-v">' + v + '</div></div>';
   let html = '<div class="dwrap"><div class="dhead">' +
-      '<div class="dhead-l">' +
-        '<div class="dicon">' + iconHTML(p, "") + '</div>' +
-        '<h1 class="dtitle">' + esc(p.name) + '</h1>' +
-      '</div>' +
-      '<div class="dhead-r">' +
-        '<div class="dmeta">:' + esc(p.id) + ' · v' + esc(p.version || "?") + ' · ' +
-          esc(p.kind) + ' · ' + esc(p.layer) + ' 层' +
-          (p.shadowed ? ' · 遮住了 ' + esc(p.shadowed) + ' 层的同名包' : '') + '</div>' +
-        (p.desc ? '<p class="ddesc">' + esc(p.desc) + '</p>' : '') +
-      '</div>' +
+      // 头部 4 块直接摆进 3 行网格（位置由 CSS 的 grid-area 定，DOM 顺序不影响画面）
+      '<div class="dicon">' + iconHTML(p, "") + '</div>' +
+      '<h1 class="dtitle" title="' + esc(p.name) + '">' + esc(p.name) + '</h1>' +
+      (p.desc ? '<p class="ddesc">' + esc(p.desc) + '</p>' : '') +
+      '<div class="dmeta">:' + esc(p.id) + ' · v' + esc(p.version || "?") + ' · ' +
+        esc(p.kind) + ' · ' + esc(p.layer) + ' 层' +
+        (p.shadowed ? ' · 遮住了 ' + esc(p.shadowed) + ' 层的同名包' : '') + '</div>' +
     '</div>';
 
   // 属性：别名 / 标签 / AI。用"标签 : 值"的行，不做成一堆药丸 ——
@@ -1309,11 +1320,10 @@ function renderDetailHist(it, box){
   if (it.exit !== null && it.exit !== undefined)
     rows.push(["上次退出码", String(it.exit), ""]);
   let html = '<div class="dwrap"><div class="dhead">' +
-      '<div class="dhead-l">' +
-        '<div class="dicon">' + histIconHTML(it, "") + '</div>' +
-        '<h1 class="dtitle">' + esc(it.name) + '</h1>' +
-      '</div>' +
-      '<div class="dhead-r"><div class="dmeta">' + esc(it.target || "") + '</div></div>' +
+      // 历史没有"说明"，右边第一二行留空 —— 路径放在**第三行**，和左边的名字对齐
+      '<div class="dicon">' + histIconHTML(it, "") + '</div>' +
+      '<h1 class="dtitle" title="' + esc(it.name) + '">' + esc(it.name) + '</h1>' +
+      '<div class="dmeta">' + esc(it.target || "") + '</div>' +
     '</div>';
   if (gone){
     html += '<div class="warnbox">' + ico("alert-triangle", "i") +
