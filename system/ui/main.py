@@ -874,12 +874,26 @@ def _embed_server():
             return _EMBED_SRV["port"], _EMBED_SRV["token"]
         token = uuid.uuid4().hex
         try:
-            httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _EmbedHandler)
+            httpd = _EmbedServer(("127.0.0.1", 0), _EmbedHandler)
         except OSError as e:
             return 0, "起不来：%s" % e
         _EMBED_SRV.update({"httpd": httpd, "port": httpd.server_address[1], "token": token})
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         return _EMBED_SRV["port"], token
+
+
+class _EmbedServer(http.server.ThreadingHTTPServer):
+    """发页面 / 发包界面用的本地服务（`V-77` 起改成这个子类）。
+
+    ★ 只为了把**连接队列**放大：`socketserver` 默认 `request_queue_size = 5`，
+      而 Chromium 对同一个源会**并发开 6 条连接**（HTML 里十几个 script/link 一起下）。
+      Windows 上队列一满**直接给 ERR_CONNECTION_REFUSED**（不是让你排队等）——
+      实测现场就是"同一秒里一半请求 200、另一半连服务都没进到"，界面因此半死不活。
+      放大到 128 之后这个坑就没了。`MOSS_EMBED_BACKLOG` 只是为了对照实验留的口子。
+    """
+    daemon_threads = True
+    allow_reuse_address = True
+    request_queue_size = int(os.environ.get("MOSS_EMBED_BACKLOG") or 128)
 
 
 class _EmbedHandler(http.server.SimpleHTTPRequestHandler):
@@ -1885,6 +1899,48 @@ def _note(text):
         pass
 
 
+def _inline_page():
+    """把界面的 css/js **就地展开**成一份自包含的 HTML，返回它的路径（`V-78`）。
+
+    ★ 为什么非这么做：页面里十几个 `script`/`link`，每一个都要过一次本地 http。
+      实测那条路会抖（同一个源、同一秒：一半请求 200，另一半连服务都没进到，
+      浏览器报 `ERR_CONNECTION_REFUSED`）⇒ `Vue is not defined` / `$ is not defined`
+      ⇒ 界面半死不活。展开成一份之后，**子资源请求数变成 0**，它再抖也伤不到界面。
+    ★ 源码仍然是拆开的多文件（`system/ui/css|js/*`）；这一步只是运行时的组装，
+      生成的那份放在 `user_data/state/_ui_inline.html`，能直接打开、也能看。
+    ★ 展开不了就返回 None，调用方退回原来的做法（绝不因为这点事让界面开不了）。
+    """
+    try:
+        page = HERE / "index.html"
+        html = page.read_text(encoding="utf-8")
+
+        def css_repl(m):
+            rel = m.group(1).strip()
+            try:
+                return "<style>\n" + (HERE / rel).read_text(encoding="utf-8") + "\n</style>"
+            except OSError:
+                return m.group(0)          # 读不到就原样留着（宁可少内联一个）
+
+        def js_repl(m):
+            rel = m.group(1).strip()
+            try:
+                body = (HERE / rel).read_text(encoding="utf-8")
+            except OSError:
+                return m.group(0)
+            # 内联之后脚本里出现 `</script>` 会提前结束这一块 —— 拆开写，避免踩它
+            return "<script>\n" + body.replace("</script>", "<\\/script>") + "\n</script>"
+
+        html = re.sub(r'<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>', css_repl, html)
+        html = re.sub(r'<script[^>]*src="([^"]+)"[^>]*></script>', js_repl, html)
+        out = USER_DATA / "state" / "_ui_inline.html"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(html, encoding="utf-8", newline="")
+        return out
+    except Exception as e:                                            # noqa: BLE001
+        _note("page: 展开自包含页面失败（%r），退回原做法" % (e,))
+        return None
+
+
 def _page_url():
     """界面这一页该从哪儿加载（`V-72`）。
 
@@ -1906,6 +1962,16 @@ def _page_url():
     if not port:
         _note("page: 本地服务起不来（%s），退回 file://" % token)
         return str(HERE / "index.html")
+    # ★ 优先用"展开成一份"的页面（`V-78`）：子资源请求 0，那条会抖的传输碰不到它
+    inlined = _inline_page()
+    if inlined is not None:
+        try:
+            rel = inlined.resolve().relative_to(HOME.resolve())
+            url = "http://127.0.0.1:%d/%s/%s" % (port, token, rel.as_posix())
+            _note("page: 界面从 %s 加载（自包含，子资源 0 个）" % url)
+            return url
+        except (OSError, ValueError):
+            _note("page: 展开后的页面不在安装根下面，用原始页面")
     url = "http://127.0.0.1:%d/%s/%s" % (port, token, rel.as_posix())
     _note("page: 界面从 %s 加载" % url)
     return url
