@@ -767,6 +767,11 @@ table.p th{color:var(--dim);font-weight:500}
 <script src="vendor/powershell.min.js"></script>
 <script src="vendor/dos.min.js"></script>
 <script src="vendor/lucide.js"></script>
+<!-- ★ Vue **要在所有 js/*.js 之前**：`js/files.js` 的 `FM` 是 `Vue.reactive(...)` 建的
+     （`js/settings.js` 的组件也用它），晚一步加载整个文件管理都起不来。
+     顺序：lucide → vue → core → panels → console → drop → embed → list → files → modal
+     → settings → app。 -->
+<script src="vendor/vue.global.prod.js"></script>
 
 <!-- ★ 预览工具（tools/界面预览.py）把"假后端"插在下面这个 <script> 之前 ——
      锚点是 `<script>` 换行 + `/* =====`。它必须排在所有 js/ 脚本前面：
@@ -781,10 +786,14 @@ table.p th{color:var(--dim);font-weight:500}
      js/drop.js      拖文件进来
      js/embed.js     包自己的界面（内嵌那一帧）
      js/list.js      包列表 + 历史 + 详情
-     js/files.js     文件管理（资源管理器 + 编辑器）
+     js/files.js     文件管理（资源管理器 + 编辑器；`V-69` 起画界面也是 **Vue 3 组件**）
      js/modal.js     模态框 / toast / 状态栏
      js/settings.js  ★ 设置面板（**Vue 3 组件**，自己带模板和状态）
      js/app.js       启动 + 新建/卸载包
+
+   ★ `vendor/vue.global.prod.js` 必须在**所有 `js/*.js` 之前**：`js/files.js` 里那个
+     `FM` 是 `Vue.reactive(...)` 建的、组件也要 `Vue.createApp`。它排在 `lucide.js`
+     之后、这个说明块之前（原来排在 `files.js` 后面 —— 那时只有设置面板用 Vue）。
 
    ★ 为什么是"经典脚本 + 顺序加载"而不是 ES module：这个页面是 pywebview 从
      `file://` 打开的，Chromium 对 `file://` 下的 module 直接按 CORS 拦掉
@@ -801,7 +810,6 @@ table.p th{color:var(--dim);font-weight:500}
 <script src="js/list.js"></script>
 <script src="js/files.js"></script>
 <script src="js/modal.js"></script>
-<script src="vendor/vue.global.prod.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/app.js"></script>
 </body>
