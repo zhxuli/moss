@@ -41,6 +41,7 @@
   还是要在真界面里试。
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -59,7 +60,7 @@ BROWSERS = [
 ]
 
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
-          "pkg-renamed-file", "pkg-align-file",
+          "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail"]
 
@@ -69,6 +70,34 @@ def browser():
         if Path(b).is_file():
             return b
     return None
+
+
+def js_syntax_problem(js):
+    """用 node 检查一段 JS 的语法。没问题返回 ""，有问题返回那几行报错。
+
+    没装 node 就直接放过（这工具本来只是个"截图看看"的辅助，不该因此罢工）。
+    """
+    node = shutil.which("node")
+    if not node:
+        return ""
+    fd, name = __import__("tempfile").mkstemp(suffix=".js")
+    os.close(fd)
+    tmp = Path(name)
+    try:
+        # `MOCK_JS` 是**带 `<script>` 标签的一整段**（要塞回 HTML 里），查语法得先把
+        # 标签剥掉，否则 node 只会说"Unexpected token '<'"
+        body = js.split("<script>", 1)[-1].rsplit("</script>", 1)[0]
+        tmp.write_text(body, encoding="utf-8")
+        r = subprocess.run([node, "--check", str(tmp)], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        if r.returncode == 0:
+            return ""
+        lines = (r.stderr or "").strip().splitlines()
+        return "\n  ".join(lines[:6])
+    except Exception:
+        return ""
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def mock_data():
@@ -198,8 +227,11 @@ MOCK_JS = r"""
                  : {ok: true, rel: rel, entries: [], writable: true, path: rel};
     },
     // ★ 这里**照着真宿主的行为来**：路径不存在就是「不是文件」。
-    //   以前这个假 API 对任何路径都回一份内容，于是"改名后双击旧路径"这种毛病
+    //   以前这个假 API 对任何路径都回同一段内容，于是"改名后双击旧路径"这种毛病
     //   在预览里永远看不出来（producer 说没事、真机上说不是文件）。
+    //   ★★ 而且 `pkg.json` 必须回**这个包真清单的 JSON**（带 id！）——
+    //   回一段假的 python 代码，编辑清单那些场景解析出来就没有 id，
+    //   假后端会照着 `F-26` 把这个包丢掉，整个场景看起来像"包没了"（踩过）。
     fs_read: async (rel) => {
       const parent = String(rel || "").split("/").slice(0, -1).join("/");
       if (!FS[parent]){
@@ -207,30 +239,79 @@ MOCK_JS = r"""
         return {ok: false, msg: "不是文件：" + rel};
       }
       M.readOk = rel;
-      return {ok: true, text: "import hashlib\n\n\ndef run():\n"
-                              + "    print('预览')\n", binary: false, too_big: false,
+      let text = "import hashlib\n\n\ndef run():\n    print('预览')\n";
+      if (/pkg\.json$/i.test(String(rel))){
+        const dirName = String(rel).split("/").slice(-2)[0];
+        const p = state.packages.find(x => String(x.dir || "")
+                     .replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() === dirName);
+        text = JSON.stringify({spec: 1, id: (p && p.id) || dirName, kind: "task",
+                               version: (p && p.version) || "0.1.0",
+                               name: (p && p.name) || dirName,
+                               desc: (p && p.desc) || ""}, null, 2) + "\n";
+      }
+      return {ok: true, text: text, binary: false, too_big: false,
               rel: rel, path: rel, writable: true};
     },
     // ★ 写 pkg.json 时真的改掉那份假 payload（模拟宿主重新扫盘）——
     //   这样才能验证"存了清单之后界面会重新解析"这条路。
+    //   ★★ 注意这里**只改清单里的字段，不动目录**：真宿主就是这样 —— 手工把 id
+    //      改掉之后，包目录还叫原来的名字（`D-27` 容许的不一致），要统一得另外动手。
     fs_write: async (rel, text) => {
       if (/(^|\/)pkg\.json$/i.test(rel || "")){
-        try{
-          const j = JSON.parse(text);
-          const pid = String(rel).split("/").slice(-2)[0];
-          const p = state.packages.find(x => x.id === pid);
-          if (p){ if (j.name) p.name = j.name; if (j.desc) p.desc = j.desc; }
-          document.title = "WROTE";
-        }catch(e){ document.title = "BADJSON " + e.message; }
+        const parts = String(rel).split("/");
+        const dirName = parts[parts.length - 2];
+        const at = x => String(x.dir || "")
+          .replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() === dirName;
+        const p = state.packages.find(at);
+        if (!p) return {ok: true, msg: "(预览) 已保存"};
+        // ★ 照真宿主的扫描规矩来（`F-26`）：清单读不出来 / id 不合法 ⇒ **这个包
+        //   会被当成不存在**。假后端也得这么做，否则"存了个非法 id"在预览里
+        //   看起来没事，而真机上包直接没了。
+        let j = null;
+        try{ j = JSON.parse(text); }catch(e){
+          state.packages = state.packages.filter(x => x !== p);
+          M.dropped = "JSON 坏";
+          document.title = "BADJSON";
+          return {ok: true, msg: "(预览) 已保存"};
+        }
+        const id = String((j && j.id) || "");
+        if (!/^[a-z][a-z0-9_-]{0,31}$/.test(id)){
+          state.packages = state.packages.filter(x => x !== p);
+          M.dropped = "id 不合法";
+          document.title = "BADID";
+          return {ok: true, msg: "(预览) 已保存"};
+        }
+        p.id = id;
+        if (j.name) p.name = j.name;
+        if (j.desc) p.desc = j.desc;
+        document.title = "WROTE";
       }
       return {ok: true, msg: "(预览) 已保存"};
     },
     fs_mkdir: async () => ({ok: true, msg: "(预览) 已创建"}),
     fs_touch: async () => ({ok: true, msg: "(预览) 已创建"}),
-    fs_rename: async () => ({ok: true, msg: "(预览) 已改名"}),
+    fs_rename: async (rel, newName) => {
+      // 真的在假文件系统里搬一下（场景要验「旧数据目录跟着一起搬」）
+      const from = String(rel || "");
+      const to = from.replace(/[^/]+$/, String(newName || ""));
+      if (!FS[from]) return {ok: false, msg: "(预览) 没有这个东西：" + from};
+      if (FS[to]) return {ok: false, msg: "(预览) 已经有一个同名的了"};
+      const v = FS[from];
+      delete FS[from];
+      v.rel = to;
+      (v.entries || []).forEach(e => { e.rel = to + e.rel.slice(from.length); });
+      FS[to] = v;
+      (M.moves = M.moves || []).push(from + " → " + to);
+      return {ok: true, rel: to, old: from, msg: "(预览) 已改名"};
+    },
     fs_delete: async () => ({ok: true, msg: "(预览) 已挪进回收站"}),
     fs_copy: async () => ({ok: true, msg: "(预览) 已复制"}),
-    fs_exists: async () => ({ok: true, has: {}}),
+    // 照真宿主来：说有就是真有（假文件系统的键就是那些目录 / 文件）
+    fs_exists: async (rels) => {
+      const has = {};
+      (rels || []).forEach(r => { has[r] = !!FS[r]; });
+      return {ok: true, has: has};
+    },
     fs_open_default: async () => ({ok: true, msg: "(预览) 已打开"}),
     fs_reveal: async () => ({ok: true, msg: "(预览) 已定位"}),
     fs_roots: async () => ({roots: []}),
@@ -347,6 +428,121 @@ MOCK_JS = r"""
           diag.replace(/&/g, "&amp;").replace(/</g, "&lt;") + '</pre>';
         document.title = ok ? "READY" : "STALE-PATH";
       }
+      // ★ 你说的那条路：打开 pkg.json → 把 id 改了 → 点保存。
+      //   期望：界面重新解析、**发现不配套就问一句**、点"统一"之后目录名跟着改、
+      //   旧数据目录一起搬、文件管理里的路径也换成新的（双击还能编辑）。
+      if (h === "pkg-edit-id"){
+        // 出错了要看得见：场景里的异常 / Promise 拒绝都收进来（否则只能瞎猜）
+        M.errs = [];
+        window.addEventListener("error", e => M.errs.push("ERR " + e.message));
+        window.addEventListener("unhandledrejection",
+          e => M.errs.push("REJ " + ((e.reason && e.reason.message) || e.reason)));
+        const origAms = window.afterManifestSaved;
+        window.afterManifestSaved = async function(a, b){
+          M.amsRan = true;
+          try{ return await origAms(a, b); }
+          catch(e){ M.amsErr = String((e && e.message) || e); throw e; }
+        };
+        const baseOf = x => String(x.dir || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+        // 必须挑一个**假文件系统里真有的**包（不然连 pkg.json 都打不开）
+        const usable = p => { try{ return !!FS[pkgRel(p)]; }catch(e){ return false; } };
+        const p0 = state.packages.find(x => x.layer === "user" && usable(x)) ||
+                   state.packages.find(usable) || null;
+        if (!p0){ document.title = "NO-USABLE-PKG"; return; }
+        const oldDir = baseOf(p0);
+        // 造一个"旧数据目录"，看"一起搬"那条路
+        FS["user/state/" + oldDir] = {ok: true, rel: "user/state/" + oldDir, writable: true,
+                                      path: "(预览)", entries: []};
+        select(p0.id);
+        setTab("file");
+        await sleep(400);
+        await fmOpenPage("user/pkgs/" + oldDir + "/pkg.json");
+        await sleep(300);
+        const t = fmActiveTab();
+        let j = {};
+        try{ j = JSON.parse(t.text); }catch(e){}
+        j.id = "zzz9";
+        t.text = JSON.stringify(j, null, 2);
+        fmSave(t);
+        await sleep(1400);                       // 存盘 → 重问包表 → 对账 → 弹框
+        const modal = document.querySelector("#modal");
+        const asked = !!(modal && modal.classList.contains("on"));
+        const box = document.querySelector("#m-text");
+        const askText = box ? String(box.textContent || "") : "";
+        if (asked) document.querySelector("#m-ok").click();   // 点"确定" = 统一
+        await sleep(1600);
+        const np = state.packages.find(x => x.id === "zzz9");
+        const newDir = baseOf(np || {});
+        const s2 = FM.st["zzz9"];
+        const rels2 = ((s2 && s2.entries) || []).map(e => e.rel);
+        const tgt = rels2.find(r => /pkg\.json$/.test(r)) || rels2[0];
+        if (tgt) await fmOpenPage(tgt);
+        await sleep(400);
+        const t2 = fmActiveTab();
+        const ok = asked && !!np && newDir === "zzz9" &&
+                   !!FS["user/pkgs/zzz9"] && !FS["user/pkgs/" + oldDir] &&
+                   !!FS["user/state/zzz9"] && !FS["user/state/" + oldDir] &&
+                   !!(t2 && /zzz9/.test(String(t2.rel))) && !M.readFail;
+        const diag = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n问了没有 = " + asked + "\n问的话  = " + askText.replace(/\s+/g, " ").slice(0, 160) +
+          "\n新包     = " + (np ? np.id + "  dir=" + newDir : "（没有）") +
+          "\n包目录   = zzz9 在=" + !!FS["user/pkgs/zzz9"] +
+          "  旧 " + oldDir + " 还在=" + !!FS["user/pkgs/" + oldDir] +
+          "\n数据目录 = zzz9 在=" + !!FS["user/state/zzz9"] +
+          "  旧 " + oldDir + " 还在=" + !!FS["user/state/" + oldDir] +
+          "\n搬动记录 = " + JSON.stringify(M.moves || []) +
+          "\n文件管理 = " + ((s2 && s2.rel) || "-") + " 列了 " + rels2.length +
+          " 项  打开=" + (t2 ? t2.rel : "失败") + "  读失败=" + (M.readFail || "无") +
+          "\n对账跑了 = " + (M.amsRan ? 1 : 0) + "  对账里的错 = " + (M.amsErr || "无") +
+          "\n页面错误 = " + JSON.stringify(M.errs || []);
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 问了=" + (asked ? 1 : 0) +
+          " 新包=" + (np ? newDir : "-") + " 打开=" + (t2 ? 1 : 0);
+        document.querySelector("#fm-body").innerHTML =
+          '<pre style="padding:18px 22px;font-size:13px;line-height:1.7;white-space:pre-wrap">' +
+          diag.replace(/&/g, "&amp;").replace(/</g, "&lt;") + '</pre>';
+        document.title = ok ? "READY" : "EDIT-ID-FAIL";
+      }
+      // ★ 反面：把 id 改成**非法**的（`F-26` 不允许数字开头）。期望：宿主不收这个包
+      //   （它从列表里消失），界面**说清楚为什么**，而不是默默让它不见、更不是
+      //   傻乎乎地"统一"成一个非法目录名。
+      if (h === "pkg-edit-bad-id"){
+        const baseOf = x => String(x.dir || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+        const usable = p => { try{ return !!FS[pkgRel(p)]; }catch(e){ return false; } };
+        const p0 = state.packages.find(x => x.layer === "user" && usable(x)) ||
+                   state.packages.find(usable) || null;
+        if (!p0){ document.title = "NO-USABLE-PKG"; return; }
+        const oldDir = baseOf(p0);
+        select(p0.id);
+        setTab("file");
+        await sleep(400);
+        await fmOpenPage("user/pkgs/" + oldDir + "/pkg.json");
+        await sleep(300);
+        const t = fmActiveTab();
+        let j = {};
+        try{ j = JSON.parse(t.text); }catch(e){}
+        j.id = "3";
+        t.text = JSON.stringify(j, null, 2);
+        fmSave(t);
+        await sleep(1400);
+        const modalOn = document.querySelector("#modal").classList.contains("on");
+        const gone = !state.packages.some(x => baseOf(x) === oldDir);
+        const toasts = [].slice.call(document.querySelectorAll("#toasts .toast"))
+                         .map(e => e.textContent).join(" ｜ ");
+        const ok = !modalOn && gone && /不合法/.test(toasts);
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 弹框=" + (modalOn ? 1 : 0) +
+          " 包没了=" + (gone ? 1 : 0);
+        document.querySelector("#fm-body").innerHTML =
+          '<pre style="padding:18px 22px;font-size:13px;line-height:1.7;white-space:pre-wrap">' +
+          ("DIAG " + (ok ? "OK" : "FAIL") +
+           "\n宿主把包丢了吗 = " + gone + "   （假后端记的是：" + (M.dropped || "没丢") + "）" +
+           "\n还弹框问「统一」吗 = " + modalOn + "   （非法 id 不该问，应该直接说清楚）" +
+           "\n界面说的话 = " + (toasts || "（什么都没说 —— 这就是毛病）") +
+           "\n目录还在吗 = " + !!FS["user/pkgs/" + oldDir] + "  （包目录没动，是对的）")
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;") + '</pre>';
+        document.title = ok ? "READY" : "BAD-ID-FAIL";
+      }
     } catch(e){ document.title = "SCENARIO-ERR " + e.message; return; }
     await sleep(350);
     if (document.title !== "STALE-PATH") document.title = "READY";
@@ -385,6 +581,14 @@ def main():
               % page.count(anchor))
         return 1
     inject = MOCK_JS.replace("__MOCK__", json.dumps(mock_data(), ensure_ascii=False))
+    # ★ 注入的这段假后端**先过一遍语法检查**。踩过：脚本里少一个引号 / 多一对引号，
+    #   浏览器整段不执行 ⇒ `init()` 压根没跑 ⇒ 截出来是一张**白板**（页面还在、
+    #   列表空着），而工具只会说"OK 18 KB"。这种坑不拦一下，每次都要从头猜。
+    bad = js_syntax_problem(inject)
+    if bad:
+        print("[错误] 注入的假后端有 JS 语法错（浏览器会整段不执行 ⇒ 截图是白板）：\n  %s"
+              % bad)
+        return 1
     (PRE / "index.html").write_text(page.replace(anchor, inject + anchor),
                                     encoding="utf-8", newline="")
 

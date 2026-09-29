@@ -75,6 +75,25 @@ def _run_capture(argv):
     return {"code": r.returncode, "out": (r.stdout or "") + (r.stderr or "")}
 
 
+def _run_capture_split(argv):
+    """跑宿主命令，**stdout 和 stderr 分开**拿（`V-31`）。
+
+    ★ 为什么必须分开：`--ui-payload` 的 stdout 是一份**纯 JSON**，而宿主扫描时
+      的告警（「pkg.json 解析失败」/「id 不合法」）走 **stderr**。上面那个
+      `_run_capture` 是把两股**合并**的 —— 于是一个坏包就能让 JSON 后面多一句话，
+      `json.loads` 直接报 `Extra data: line 1 column N`，界面只好退回旧快照：
+      **看起来就是"界面不刷新"，而且一句提示都没有**（实测过）。
+      跑包那条路要合并（人家本来就是人看的文本），读包表这条必须分开。
+    """
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace",
+                           creationflags=NO_WINDOW)
+    except OSError as e:
+        return {"code": -1, "out": "", "err": "启动失败：%s" % e}
+    return {"code": r.returncode, "out": r.stdout or "", "err": r.stderr or ""}
+
+
 # ================================================================ 文件系统
 # 界面里的「文件管理」选项卡要能像资源管理器那样操作。三条底线：
 #
@@ -759,28 +778,48 @@ class Api:
           之后列表里看不到新包 —— 界面再来读还是旧的那份，详情里连目录都拿不到。
           现在改成回宿主跑一次 `--ui-payload`（宿主那边就是把 `build_payload()` 原样输出），
           包列表 / 图标 / 目录全是新的；宿主不可用时退回启动时那份，界面不会因此打不开。
+
+        ★ 退回去这件事**不能是静默的**（`V-31` ✅）：退回时在数据里挂一句
+          `stale_reason`，界面会把它弹出来 —— 否则"界面不刷新"就成了玄学，
+          你看到的只是"我新建的包不见了"，而真正的原因（宿主那边有话说）谁也看不见。
         """
         fresh = self._host_payload()
         if fresh:
             DATA.clear()
             DATA.update(fresh)
+            DATA.pop("stale_reason", None)
+        else:
+            DATA["stale_reason"] = self._payload_error or "读包表失败（宿主没有回话）"
         return DATA
 
     def _host_payload(self):
-        """回宿主问一次 payload。失败返回 None（调用方退回旧的）。"""
+        """回宿主问一次 payload。失败返回 None（调用方退回旧的），原因记在 `_payload_error`。"""
+        self._payload_error = ""
         if not HOST:
+            self._payload_error = "没拿到宿主命令（界面得由 moss 自己拉起）"
             return None
         try:
-            r = _run_capture(HOST + ["--ui-payload"])
-        except OSError:
+            r = _run_capture_split(HOST + ["--ui-payload"])     # ★ stdout / stderr 分开
+        except OSError as e:
+            self._payload_error = "叫不动宿主：%s" % e
             return None
-        if r.get("code") != 0 or not (r.get("out") or "").strip():
+        out = (r.get("out") or "").strip()
+        if r.get("code") != 0 or not out:
+            tail = ((r.get("err") or "").strip().splitlines() or [""])[-1]
+            self._payload_error = ("宿主退出码 %s%s"
+                                   % (r.get("code"), ("：" + tail) if tail else ""))
             return None
         try:
-            data = json.loads(r["out"])
-        except ValueError:
+            data = json.loads(out)
+        except ValueError as e:
+            tail = ((r.get("err") or "").strip().splitlines() or [""])[-1]
+            self._payload_error = ("宿主的话里混进了不是 JSON 的东西（%s）%s"
+                                   % (e, (" —— 宿主说：" + tail) if tail else ""))
             return None
-        return data if isinstance(data, dict) and "packages" in data else None
+        if not (isinstance(data, dict) and "packages" in data):
+            self._payload_error = "宿主回的 JSON 里没有 packages"
+            return None
+        return data
 
     def run(self, pid, args_text=""):
         """带参数跑一个包并等它跑完（老的阻塞式；界面现在走 run_start 那一套）。"""
