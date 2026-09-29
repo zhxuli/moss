@@ -61,7 +61,7 @@ BROWSERS = [
 
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
-          "drop-hot", "drop-dir", "drop-file",
+          "drop-hot", "drop-dir", "drop-file", "console-input",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail"]
 
@@ -185,6 +185,11 @@ MOCK_JS = r"""
     run_poll: async () => ({ok: true, running: false, code: 0,
       out: "[执行] md5\n[目录] " + state.home + "\n\n900150983cd24fb0d6963f7d28e17f72\n"}),
     run_stop: async () => ({ok: true, msg: "(预览) 已停止"}),
+    // 给正在跑的进程喂一行（`V-43`）：真后端写进它的 stdin，这里记下来
+    run_input: async (rid, line) => {
+      (M.inputs = M.inputs || []).push({rid: rid, line: line});
+      return {ok: true};
+    },
     path_start: async () => ({ok: true, run_id: "r1", pid: 1,
       cmd: "moss /main.py", cwd: "D:\\python\\wwwroot\\ZeEn"}),
     run_host: async (text) => {
@@ -560,6 +565,52 @@ MOCK_JS = r"""
       //        `webkitGetAsEntry()`，跟真拖动一样能看出是文件还是文件夹）
       //     ② 松手那半：直接调落地口 `window.__mossDrop([...])`
       //        （真机上由宿主从 WebView2 取到真实路径后调用它）
+      // ★ 命令行那行输入（`V-43`）：包 `input()` 问你话时能答。
+      //   真的 stdin 那条链由宿主侧测试证明；这里只验界面这半：
+      //   在跑 → 输入行可用；发一行 → 回显进输出 + 调了 run_input；跑完 → 又禁用。
+      if (h === "console-input"){
+        const p0 = state.packages.find(x => x.id === "img") || state.packages[0];
+        select(p0.id);
+        setTab("console");
+        await sleep(300);
+        const inp = document.querySelector("#stdin"), btn = document.querySelector("#btn-send");
+        const beforeDisabled = inp.disabled;
+        // 造一个"正在跑"：直接塞进 RUNS 再刷一下（预览的假 run_poll 会立刻结束）
+        RUNS[p0.id] = {rid: "r1", cmd: "moss :" + p0.id, timer: null,
+                              stopped: false, switched: false, tabAtStart: "console"};
+        setConsole(p0.id, "$ moss :" + p0.id + "\n输出到哪？（没有默认值，请自己选）\n" +
+          "   1) 覆盖原图\n   2) 删除原图\n   3) 新文件夹\n", "运行中");
+        await sleep(200);
+        const liveOk = !inp.disabled && !btn.disabled;
+        inp.value = "3";
+        document.querySelector("#btn-send").click();
+        await sleep(400);
+        const sent = (M.inputs || [])[0] || {};
+        const echoed = (document.querySelector("#out").textContent || "").includes("3");
+        const cleared = inp.value === "";
+        // 跑完了 → 输入行该禁用
+        delete RUNS[p0.id];
+        paintInbar(p0.id);
+        await sleep(150);
+        const afterDisabled = inp.disabled;
+        const ok = beforeDisabled && liveOk && sent.line === "3" && sent.rid === "r1" &&
+                   echoed && cleared && afterDisabled;
+        // ★ 截图要拍的是"活着"那一眼：把在跑的状态摆回去（问题 + 我答的那行都在），
+        //   判定结果放顶栏（短），别用诊断文字盖住要看的东西。
+        RUNS[p0.id] = {rid: "r1", cmd: "moss :" + p0.id, timer: null,
+                              stopped: false, switched: false, tabAtStart: "console"};
+        setConsole(p0.id, "$ moss :" + p0.id + "\n输出到哪？（没有默认值，请自己选）\n" +
+          "   1) 覆盖原图 —— 直接写回源目录，同名文件会被覆盖\n" +
+          "   2) 删除原图 —— 转换成功后删除源文件，无法撤销\n" +
+          "   3) 新文件夹 —— 输出到 compressed_output\\，原图不动\n3\n", "运行中");
+        await sleep(250);
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 没跑时禁用=" + beforeDisabled +
+          " 在跑时可用=" + liveOk + " 发出=" + (sent.line === "3" ? 1 : 0) +
+          " 回显=" + echoed + " 清空=" + cleared + " 跑完禁用=" + afterDisabled;
+        document.title = ok ? "READY" : "STDIN-FAIL";
+      }
+
       if (h === "drop-hot"){
         // 只看"拖上来时"长什么样（不松手）：列表只列收得下的 + 详情页浮出投放框
         const dragEv = isDir => {
@@ -676,7 +727,15 @@ MOCK_JS = r"""
         if (ok) setTab("console");
         document.title = ok ? "READY" : "DROP-FAIL";
       }
-    } catch(e){ document.title = "SCENARIO-ERR " + e.message; return; }
+    } catch(e){
+      // ★ 场景里出错要**看得见**：光设 document.title 是看不见的（截图不看标题栏），
+      //   而工具只检查"图片有没有生成" ⇒ 出错也报 OK（踩过：`window.RUNS` 那次）。
+      //   所以同时把错误写进顶栏，截图里一眼就能看到。
+      document.title = "SCENARIO-ERR " + e.message;
+      const _m = document.querySelector("#meta");
+      if (_m) _m.textContent = "SCENARIO-ERR " + e.message;
+      return;
+    }
     await sleep(350);
     if (document.title !== "STALE-PATH") document.title = "READY";
   }

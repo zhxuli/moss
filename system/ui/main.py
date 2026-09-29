@@ -846,6 +846,7 @@ class Api:
                 workdir = None
         try:
             proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.PIPE,
                                     text=True, encoding="utf-8", errors="replace",
                                     bufsize=1, creationflags=NO_WINDOW, cwd=workdir)
         except OSError as e:
@@ -861,6 +862,38 @@ class Api:
                         RUNS.pop(old, None)
         threading.Thread(target=_pump_output, args=(rid,), daemon=True).start()
         return {"ok": True, "run_id": rid, "pid": proc.pid}
+
+    def run_input(self, run_id, text=""):
+        """往正在跑的那个进程的 **stdin 写一行**（`V-43` ✅）。
+
+        为什么要有它：不少包会**问你一句**再干活 —— 图片工具第一句就是
+        「输出到哪？1) 覆盖原图 2) 删除原图 3) 新文件夹」，它 `input()` 等着；
+        而界面原来那份命令行是**只读**的（只能看输出），于是包就一直卡在那儿。
+        现在命令行下面多一行输入框，回车就走这里。
+
+        ★ 这条路能通，是因为宿主起子进程时**没接 stdin**（`engine` 里只给了 stdout /
+          stderr），子进程直接继承宿主的 stdin ⇒ 我们给宿主的 stdin 接一根管子，
+          管子另一头就是包在等的那一行。子进程的环境里宿主已经摆了
+          `PYTHONIOENCODING=utf-8`（`engine.build_env`），所以这边按 UTF-8 写是对的。
+        """
+        with RUNS_LOCK:
+            run = RUNS.get(str(run_id))
+        if not run:
+            return {"ok": False, "msg": "这次运行已经结束了（没有进程在等）"}
+        proc = run.get("proc")
+        # ★ 先看进程还在不在：管道**死了也还能写**（内核缓冲），写进去没人读、也不报错 ——
+        #   那种"看着发出去了其实没人收"最误导人，所以先问一句。
+        if proc is not None and proc.poll() is not None:
+            return {"ok": False, "msg": "它已经跑完了（没在等你回答）"}
+        stdin = getattr(proc, "stdin", None)
+        if stdin is None:
+            return {"ok": False, "msg": "这次运行没接上输入"}
+        try:
+            stdin.write(str(text) + "\n")
+            stdin.flush()
+        except (BrokenPipeError, OSError, ValueError) as e:
+            return {"ok": False, "msg": "它已经不吃输入了（可能跑完了，或者根本没在等）：%s" % e}
+        return {"ok": True}
 
     def run_poll(self, run_id):
         """问一次状态：还在跑吗、输出到哪了、结束了的话退出码是多少。"""
