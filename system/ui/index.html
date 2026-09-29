@@ -177,6 +177,17 @@ body.dragging .item{border-style:dashed}          /* 拖动时可选的那些包
   color:var(--out-fg);font-family:var(--mono);font-size:13px;line-height:1.55;
   white-space:pre-wrap;word-break:break-word;user-select:text;cursor:text}
 #out::selection{background:#3a5a8c;color:#fff}
+/* 命令行下面那行输入（`V-43`）：包在 `input()` 等你回答时，敲这里。
+   底色跟输出区一致，看着像"终端的最下面一行"；没在跑时整条压暗 + 禁用。 */
+#inbar{display:flex;gap:8px;align-items:center;padding:7px 12px;flex:none;
+  background:var(--out-bg);border-top:1px solid rgba(255,255,255,.10)}
+#inbar .ps1{color:#7fb3ff;font-family:var(--mono);font-size:14px;flex:none;line-height:1}
+#inbar input{flex:1;min-width:0;background:transparent;border:0;outline:0;
+  color:var(--out-fg);font-family:var(--mono);font-size:13px;padding:3px 0}
+#inbar input::placeholder{color:#6b7480}
+#inbar input:disabled{cursor:not-allowed}
+#inbar.off{opacity:.62}
+#inbar .btn{padding:4px 12px;font-size:12.5px}
 /* 还没跑过时那块输出区是**一大片纯黑**，看着像个洞。给一句暗色提示。 */
 #out:empty::before{content:"（还没有输出）在「详情」里点「运行」，输出会出现在这里。";
   color:#5d6773}
@@ -511,6 +522,15 @@ table.p th{color:var(--dim);font-weight:500}
         <button id="btn-clear" class="iconbtn" title="清空输出"></button>
       </div>
       <pre id="out">就绪。选一个包，填参数，点「运行」。</pre>
+      <!-- 给正在跑的那个进程喂一行输入（`V-43` ✅）。
+           有些包会**问你一句**（「输出到哪？1/2/3」`input()`），以前命令行只能看、不能答，
+           它们就只能一直卡在那儿。回车 = 发一行给它的 stdin。 -->
+      <div id="inbar">
+        <span class="ps1">›</span>
+        <input id="stdin" placeholder="先跑一个包，才能给它输入…" autocomplete="off"
+               spellcheck="false" disabled>
+        <button id="btn-send" class="btn" disabled>发送</button>
+      </div>
     </section>
 
     <section class="pane" id="pane-file">
@@ -715,6 +735,37 @@ function paintConsole(){
   el.textContent = b.text;
   el.scrollTop = el.scrollHeight;
   $("#outinfo").textContent = consoleTitle(key) + " · " + (b.info || "");
+  paintInbar(key);
+}
+/* 输入行：只在"当前这一份命令行真的有个在跑的进程"时可用（`V-43`）。
+   没在跑 / 跑完了 → 禁用 + 换一句占位话，省得你以为发了没反应。 */
+function paintInbar(key){
+  const inp = $("#stdin"), btn = $("#btn-send"), bar = $("#inbar");
+  if (!inp || !bar) return;
+  const run = RUNS[key || ""];
+  const live = !!run;
+  inp.disabled = !live;
+  if (btn) btn.disabled = !live;
+  bar.classList.toggle("off", !live);
+  const ph = live ? "包在等你的回答就敲在这里，回车发送（比如 1 / 2 / 3）"
+                  : (key === "__host__" ? "宿主自己的输出没有输入这回事"
+                                        : "这个包现在没在跑 —— 先在「详情」里点运行");
+  if (inp.placeholder !== ph) inp.placeholder = ph;
+}
+/* 发一行给正在跑的那个进程的 stdin。先把这一行**回显**到输出里（像终端那样），
+   不然"我到底发出去没有"看不出来。 */
+async function sendStdin(){
+  const key = consoleKey || "__host__";
+  const inp = $("#stdin");
+  if (!inp || inp.disabled) return;
+  const run = RUNS[key];
+  if (!run){ toast("这个包现在没在跑", true); return; }
+  const line = inp.value;
+  inp.value = "";
+  const b = consoleBuf(key);
+  setConsole(key, (b.text || "").replace(/\n?$/, "\n") + line + "\n", b.info);
+  const r = await pywebview.api.run_input(run.rid, line);
+  if (!r || !r.ok) toast("✗ " + ((r && r.msg) || "发不出去"), true);
 }
 function setConsole(key, text, info){
   const b = consoleBuf(key);
@@ -1143,6 +1194,11 @@ async function startRun(p, args, cwd){
   }
   RUNS[p.id] = {rid: r.run_id, cmd: cmd, timer: null, stopped: false,
                 switched: false, tabAtStart: tab};   // 记下"起跑时用户在看哪一页"
+  paintInbar(p.id);                      // 刚起跑：命令行下面那行输入框可以用了
+  // 人正看着命令行这一页 → 把光标放到输入框里（包一问，直接敲就行）。
+  // 只在"起跑那一刻"给一次，不在每次刷新时抢（不然你选中输出文字会被打断）。
+  if (tab === "console")
+    setTimeout(() => { const i = $("#stdin"); if (i && !i.disabled) i.focus(); }, 60);
   refreshPkgState(p);                    // 让按钮立刻变成「停止」
   pollRun(p.id);
 }
@@ -1197,6 +1253,7 @@ function finishRun(id, code, text){
   paintRowStats();
   // 详情正开着"这次跑的那个对象"就重画一遍（包 或 历史条目 —— 收尾信息在详情里也显示）
   if ((cur && cur.id === id) || (curH && histKey(curH) === id)) renderDetail();
+  paintInbar(id);                        // 跑完了：输入行该禁用掉（没人在等了）
   paintActions(selObj());
   paintHistStats();
   // ★ 退出码回来了不等于"它没在跑" —— 有的包 fork 出界面自己就退了。
@@ -2743,8 +2800,7 @@ document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
   if (b.dataset.tab === "file") fmSelect(fmCtxKey());
   else setTab(b.dataset.tab);
 });
-$("#btn-copy").onclick = copyOut;
-$("#btn-clear").onclick = () => setConsole(consoleKey, "", "还没跑过");
+$("#btn-copy").onclick = copyOut;$("#btn-clear").onclick = () => setConsole(consoleKey, "", "还没跑过");
 $("#m-cancel").onclick = closeModal;
 $("#m-ok").onclick = () => { const cb = modalCb; closeModal(); if (cb) cb(); };
 $("#m-input").addEventListener("keydown", e => {
@@ -2753,6 +2809,11 @@ $("#m-input").addEventListener("keydown", e => {
 });
 $("#modal").addEventListener("click", e => { if (e.target.id === "modal") closeModal(); });
 $("#btn-rerun").onclick = rerunLast;
+// 命令行那行输入（`V-43`）：回车 = 发一行给正在跑的那个进程
+$("#btn-send").onclick = sendStdin;
+$("#stdin").addEventListener("keydown", e => {
+  if (e.key === "Enter"){ e.preventDefault(); sendStdin(); }
+});
 
 /* ---------------------------------------------------------------- 新建 / 卸载
    这两个功能 CLi 早就有（`moss --new` / `moss --remove`），界面这边原来漏了。
