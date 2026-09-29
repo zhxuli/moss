@@ -3,32 +3,9 @@
 async function init(){
   setStatus("就绪");        // 状态栏（`V-61`）：还没干任何事时它是空的，给一句起点
   DATA = await pywebview.api.state();
-  // ★ 顶栏带上代码版本戳（`V-71`）：这个窗口是哪份代码，一眼可辨
-  //   （界面只在启动时读一次页面 —— 老窗口跑的是老代码，别猜）
   $("#meta").textContent =
-    DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home
-    + (DATA.build ? (" · 界面 " + DATA.build) : "");
+    DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home;
   renderList(); paintStates();
-  // ★ 状态栏上写清楚"现在是什么情况"（`V-71`）：包数 + 这份界面的提交号。
-  //   左边要是空白，看一眼这行就能定性：是包真的 0 个、还是画不出来、还是脚本没跑。
-  setStatus("就绪 · " + DATA.packages.length + " 个包"
-            + (DATA.build ? (" · 界面 " + DATA.build) : ""));
-  if (DATA.packages.length && !document.querySelectorAll("#list .item").length){
-    reportError("列表没画出来", "宿主说有 " + DATA.packages.length
-                + " 个包，但 #list 里一个条目都没有（看 devtools 控制台）", "");
-  }
-  // ★ 启动诊断写进日志（`V-71`）：这行会落到 `user_data/state/_ui_drop.log` ——
-  //   界面要是有毛病，我读它就知道是"包 0 个 / 画不出来 / 脚本没跑"哪一类。
-  try{
-    pywebview.api.ui_log("[启动诊断] 界面=" + (DATA.build || "无")
-      + " 宿主包数=" + DATA.packages.length
-      + " 列表条目=" + document.querySelectorAll("#list .item").length
-      + " 历史条目=" + document.querySelectorAll("#hist .hitem").length
-      + " 桥=" + (window.pywebview && window.pywebview.api ? "有" : "无")
-      + " 页内错误=" + (window.__errors || []).length
-      + " 窗口=" + window.innerWidth + "x" + window.innerHeight
-      + " 地址=" + location.href);
-  }catch(e){}
   await loadHist();        // 先把历史读回来（loadHist 会顺手按 key 找回选中的那条）
   setSide(side);           // 切换条的高亮 / 隐藏状态跟 JS 变量对齐；顺带画一遍列表
   consoleKey = "__host__";
@@ -190,14 +167,6 @@ async function boot(){
 }
 
 window.addEventListener("pywebviewready", boot);
-
-/* ★ 看门狗（`V-71`）：真出了"界面没初始化完"这种事（`V-68` 那次就是），
-   以前的表现是**一片空白、一个字都不说**。5 秒还没 DATA 就红字报出来。 */
-setTimeout(function(){
-  if (DATA === null){
-    reportError("界面没初始化完", "DATA 还是空的：脚本没跑到 / 桥没就绪 / 这个窗口是旧的", "");
-  }
-}, 5000);
 
 (function waitBridge(n){
   if (window.pywebview && window.pywebview.api && window.pywebview.api.state){ boot(); return; }
