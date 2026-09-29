@@ -20,7 +20,9 @@
   参数内容一律不碰（中文文件名里的（）、，、。都是合法字符）。
 """
 import copy
+import os
 import tomllib
+from pathlib import Path
 
 from . import paths
 
@@ -63,6 +65,9 @@ CONFIG = copy.deepcopy(DEFAULT_CONFIG)
 CONFIG_TEMPLATE = '''# moss 配置 —— 改完存盘即生效（下一次运行 moss 时读它）。
 # 这个文件管的是**宿主**：命令前缀符号 / 输出横幅 / 搜索层数 / Ctrl-C 策略。
 # 什么都不改也能用；下面每一项都写了它是干什么的。
+#
+# ★ 不想开编辑器也行：`moss ui` 界面**右下角那颗齿轮**就是这份文件的面板
+#   ——「设置」里改的和这里手改的是同一个文件，它按行换值，注释和排版一字不动。
 
 [symbols]
 # 命令前缀符号。四项都可以改成你顺手的字符 —— `moss` 会先去掉前缀再判断类型。
@@ -100,6 +105,321 @@ max_parent_depth = 3
 # Ctrl+C 怎么停：true = 第一次就强杀整棵树；false = 先温和 terminate，再按一次才强杀。
 force_kill = true
 '''
+
+
+# ================================================================ 「设置」面板（`V-60` ✅）
+# 界面上那颗齿轮点开就是这份清单：**把 user_data/config.toml 里已有的键用控件呈现出来**。
+#
+# ★ 它不新增任何配置项，也不是"第二处设置"：改完还是写回同一个 `config.toml`
+#   （按行换值、注释一字不动，见 `set_values`）。所以手改文件和用面板改，
+#   结果完全一样，不会出现"面板说 A、文件说 B"。
+# ★ 顺序 = 人会怎么找：先符号（最常改），再输出横幅，再找文件，最后 Ctrl-C。
+# ★ `settings_problems()` 会核对「每个默认键都有一行、没有多余的键」，挂在
+#   `moss --selfcheck` 上 —— 以后给 DEFAULT_CONFIG 加了键却忘了加这里，自检会说话。
+# ★ `type` 决定面板画什么控件：`symbol`（前缀符号，单行窄框）、`text`（普通文本）、
+#   `bool`（开关）、`int`（数字）。写回时按 TOML 语法生成值。
+SETTINGS_GROUPS = [
+    {"name": "命令前缀符号",
+     "hint": "四项都可以改成你顺手的字符。★ 谁留空，裸名就归谁 —— "
+             "比如「路径调用」留空 = `moss m` 跑脚本；想变成 `moss img` 直接跑包，"
+             "就把「跑包」也留空、这里填个符号。",
+     "items": [
+         {"key": "symbols.path_mode", "label": "路径调用（空串 = 裸名）", "type": "symbol",
+          "hint": "例：留空 → moss m"},
+         {"key": "symbols.no_chdir_mode", "label": "跑路径但不切目录", "type": "symbol",
+          "hint": "例：/ → moss /m"},
+         {"key": "symbols.plugin_mode", "label": "跑装好的包", "type": "symbol",
+          "hint": "例：: → moss :img"},
+         {"key": "symbols.no_force_kill_mode", "label": "后台脱离运行", "type": "symbol",
+          "hint": "例：~ → moss ~m（脱离后 Ctrl+C 也管不到它）"},
+     ]},
+    {"name": "每次运行前后的提示",
+     "hint": "嫌吵就关掉对应的开关。横幅文本留空 = 不打印。",
+     "items": [
+         {"key": "output.auto_clear_screen", "label": "运行前清屏", "type": "bool"},
+         {"key": "output.start_banner", "label": "起始横幅文本", "type": "text",
+          "hint": "空 = 不打印"},
+         {"key": "output.end_banner", "label": "结束横幅文本", "type": "text",
+          "hint": "空 = 不打印"},
+         {"key": "output.start_time", "label": "打印开始时间", "type": "bool"},
+         {"key": "output.end_time", "label": "打印结束时间", "type": "bool"},
+         {"key": "output.duration", "label": "打印运行总长", "type": "bool"},
+         {"key": "output.pid", "label": "打印子进程 PID", "type": "bool"},
+         {"key": "output.directory", "label": "打印工作目录", "type": "bool"},
+         {"key": "output.command", "label": "打印将要执行的命令", "type": "bool"},
+         {"key": "output.symbol", "label": "行首符号", "type": "text",
+          "hint": "空 = 用内置的"},
+     ]},
+    {"name": "找文件",
+     "hint": "运行 `moss m` 这类路径调用时，从当前目录往上找几层。",
+     "items": [
+         {"key": "search.max_parent_depth", "label": "向上找几层目录", "type": "int",
+          "hint": "1~20，默认 3"},
+     ]},
+    {"name": "Ctrl+C",
+     "hint": "关掉的话：第一次按只温和地请它退出，再按一次才强杀整棵树。",
+     "items": [
+         {"key": "ctrl_c.force_kill", "label": "第一次按就强杀整棵树", "type": "bool"},
+     ]},
+]
+
+
+def _setting_spec(key):
+    """按键（`段.键`）取面板上那一项的定义；没有返回 None。"""
+    for g in SETTINGS_GROUPS:
+        for it in g["items"]:
+            if it["key"] == key:
+                return it
+    return None
+
+
+def settings_problems():
+    """自检用：面板清单和 `DEFAULT_CONFIG` 对不对得上。返回问题清单（空 = 一致）。
+
+    两边的**键集合必须完全一样**：面板漏一个键 = 用户改不到它；面板多一个键 =
+    点保存时写不进去（`set_values` 会说"文件里没找到那一行"）。所以这里两个方向都查。
+    """
+    problems = []
+    seen = set()
+    for g in SETTINGS_GROUPS:
+        for it in g["items"]:
+            key = str(it.get("key") or "")
+            if "." not in key:
+                problems.append("设置项 %r 的键要写成「段.键」" % key)
+                continue
+            section, name = key.split(".", 1)
+            if section not in DEFAULT_CONFIG or name not in DEFAULT_CONFIG.get(section, {}):
+                problems.append("设置项 %s 在 DEFAULT_CONFIG 里没有对应的键" % key)
+                continue
+            if key in seen:
+                problems.append("设置项 %s 出现了两次" % key)
+            seen.add(key)
+            want = DEFAULT_CONFIG[section][name]
+            kind = it.get("type") or "text"
+            if isinstance(want, bool) and kind != "bool":
+                problems.append("设置项 %s 是个开关，type 该写 bool（现在 %r）" % (key, kind))
+            elif isinstance(want, int) and not isinstance(want, bool) and kind != "int":
+                problems.append("设置项 %s 是整数，type 该写 int（现在 %r）" % (key, kind))
+            elif isinstance(want, str) and kind not in ("symbol", "text"):
+                problems.append("设置项 %s 是字符串，type 该写 symbol/text（现在 %r）"
+                                % (key, kind))
+    for section, defaults in DEFAULT_CONFIG.items():
+        for name in defaults:
+            key = "%s.%s" % (section, name)
+            if key not in seen:
+                problems.append("默认配置里有 %s，但设置面板清单里没有它" % key)
+    return problems
+
+
+def settings_groups():
+    """给「设置」面板的那份数据：分组 + 每项的当前值 / 默认值 / 说明。"""
+    out = []
+    for g in SETTINGS_GROUPS:
+        items = []
+        for it in g["items"]:
+            section, name = it["key"].split(".", 1)
+            items.append({
+                "key": it["key"],
+                "label": it["label"],
+                "type": it.get("type") or "text",
+                "hint": it.get("hint") or "",
+                "value": CONFIG.get(section, {}).get(name, DEFAULT_CONFIG[section][name]),
+                "default": DEFAULT_CONFIG[section][name],
+            })
+        out.append({"name": g["name"], "hint": g.get("hint") or "", "items": items})
+    return out
+
+
+def settings_payload():
+    """`moss --settings` 输出给界面的东西（**纯 JSON**）。
+
+    为什么要有这条命令：界面跑在自带运行时里，而 `core` 是编进 exe 的
+    （`K-10` 内核最小化）—— 磁盘上根本没有 core 这个目录，界面 import 不到它。
+    所以界面要读设置、要改设置，都只能回来叫宿主（和跑包、`--ui-payload` 同一条路）。
+    """
+    return {"path": str(paths.USER_CONFIG), "groups": settings_groups()}
+
+
+def _check_values(values):
+    """写盘之前先看这批值本身合不合法（面板的"守门人"）。返回问题清单（空 = 可以写）。
+
+    ★ 为什么在这里拦"两个前缀都留空" / "两个前缀撞车"：这两种配置会让
+      「裸名到底算什么」说不清，`load()` 每次都只会打一行提示、然后按默认处理 ——
+      用户以为自己改了、其实没生效。面板是**有人看着的编辑器**，那种情况下
+      直接说"这么配不行"比"写进去、然后每次启动都抱怨一句"强。
+    """
+    spec = {}
+    for g in SETTINGS_GROUPS:
+        for it in g["items"]:
+            spec[it["key"]] = it
+    # 校验看的是「**改完之后的整体**」，不是只看这次动的那几项
+    after = {}
+    for key in spec:
+        section, name = key.split(".", 1)
+        after[key] = CONFIG.get(section, {}).get(name, DEFAULT_CONFIG[section][name])
+    after.update(values)
+
+    problems = []
+    for key, val in values.items():
+        it = spec.get(key)
+        if it is None:
+            problems.append("不认识的设置项：%s" % key)
+            continue
+        kind = it.get("type") or "text"
+        if kind == "bool":
+            if not isinstance(val, bool):
+                problems.append("%s 要的是开关（true/false），收到 %r" % (key, val))
+        elif kind == "int":
+            if isinstance(val, bool) or not isinstance(val, int):
+                problems.append("%s 要的是整数，收到 %r" % (key, val))
+            elif not 1 <= val <= 20:
+                problems.append("%s 只允许 1~20（现在 %r）" % (key, val))
+        else:
+            if not isinstance(val, str):
+                problems.append("%s 要的是字符串，收到 %r" % (key, val))
+                continue
+            if kind == "symbol":
+                if len(val) > 4:
+                    problems.append("%s 最多 4 个字符（现在 %r）" % (key, val))
+                if any(c.isspace() for c in val):
+                    problems.append("%s 里不能有空格 / 换行（现在 %r）" % (key, val))
+                if "#" in val or "=" in val or '"' in val or "'" in val:
+                    problems.append("%s 里不能有 # = \" ' 这几个字符（会和配置文件语法打架，"
+                                    "现在 %r）" % (key, val))
+            else:
+                # TOML 的基本字符串**不能跨行**：横幅文本里混进换行会把整个文件写坏，
+                # 而界面上的框就是单行的 —— 这里挡住，别让它有机会落到文件里。
+                if "\n" in val or "\r" in val:
+                    problems.append("%s 里不能有换行（现在 %r）" % (key, val))
+
+    if not after.get("symbols.path_mode") and not after.get("symbols.plugin_mode"):
+        problems.append("「路径调用」和「跑包」不能同时留空 —— 那样裸名（moss m）"
+                        "算是哪一种就说不清了")
+    used = {}
+    for key in ("symbols.path_mode", "symbols.no_chdir_mode",
+                "symbols.plugin_mode", "symbols.no_force_kill_mode"):
+        v = after.get(key) or ""
+        if not v:
+            continue                    # 空串不是符号，是"这一类不带前缀"，不参与查重
+        if v in used:
+            problems.append("「%s」和「%s」用了同一个符号 %r —— 命令含义会有歧义"
+                            % (used[v], key, v))
+        else:
+            used[v] = key
+    return problems
+
+
+def _toml_literal(value, kind):
+    """按 TOML 语法写出一个值（这一步决定文件里长什么样）。"""
+    if kind == "bool":
+        return "true" if value else "false"
+    if kind == "int":
+        return str(int(value))
+    s = str(value)
+    return '"%s"' % s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _split_comment(rest):
+    """把一行的「值 + 后面那段注释」拆开，返回 (值连着它的留白, 注释段)。
+
+    ★ 为什么得扫一遍字符串：符号是用户随便填的，`path_mode = "#"` 是**合法值** ——
+      用 `rest.find("#")` 去切会把值本身当成注释切掉，于是"改了、看着没变"。
+    """
+    quote = ""
+    i = 0
+    while i < len(rest):
+        c = rest[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+        elif c in "\"'":
+            quote = c
+        elif c == "#":
+            return rest[:i], rest[i:]
+        i += 1
+    return rest, ""
+
+
+def set_values(values, path=None):
+    """把面板上改过的值写回配置文件，返回 `{"ok", "problems", "groups"}`。
+
+    ★ 为什么按行换值，而不是"重新生成整个文件"：那份 TOML 的注释**就是说明书**
+      （`D-23`：自动生成的默认文件本身就是文档）。重新生成会把注释全丢掉 ——
+      用户下次打开只看见一堆键值，根本不知道某个空串是"没设"还是"故意的"。
+    ★ 一个键都没找到 = 一行都不写（不做"写一半"）：半截生效比没生效更难查。
+    ★ 写完**立刻按 TOML 读回来核对**：说的和写的不是一回事，这种错在这儿抓住最省事。
+    """
+    target = Path(path) if path else paths.USER_CONFIG
+    problems = _check_values(values)
+    if problems:
+        return {"ok": False, "problems": problems, "groups": settings_groups()}
+
+    try:
+        if not target.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(CONFIG_TEMPLATE, encoding="utf-8", newline="\n")
+        raw = target.read_text(encoding="utf-8")
+    except OSError as e:
+        return {"ok": False, "problems": ["读不了配置文件：%s" % e], "groups": settings_groups()}
+
+    nl = "\r\n" if "\r\n" in raw else "\n"
+    section = ""
+    left = dict(values)
+    lines = []
+    for line in raw.splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            section = s[1:-1].strip()
+            lines.append(line)
+            continue
+        head, sep, rest = line.partition("=")
+        key = "%s.%s" % (section, head.strip()) if (sep and section) else ""
+        if key in left:
+            kind = (_setting_spec(key) or {}).get("type") or "text"
+            val, comment = _split_comment(rest)
+            if val.strip():                                  # 值两边原来的留白照抄
+                lead = val[:len(val) - len(val.lstrip())]
+                trail = val[len(val.rstrip()):]
+            else:
+                lead, trail = (val or " "), ""
+            lines.append("%s=%s%s%s%s" % (head, lead, _toml_literal(left.pop(key), kind),
+                                          trail, comment.rstrip()))
+            continue
+        lines.append(line)
+
+    if left:
+        for k in left:
+            problems.append("配置文件里没找到 %s 那一行（我没动这个文件）" % k)
+        return {"ok": False, "problems": problems, "groups": settings_groups()}
+
+    tmp = target.with_name(target.name + ".tmp")
+    try:
+        tmp.write_text(nl.join(lines) + nl, encoding="utf-8", newline="")
+        os.replace(str(tmp), str(target))
+    except OSError as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return {"ok": False, "problems": ["写不进配置文件：%s" % e], "groups": settings_groups()}
+
+    try:
+        with open(target, "rb") as f:
+            got = tomllib.load(f)
+    except Exception as e:                                   # noqa: BLE001
+        problems.append("写完之后这个文件读不回来了：%s" % e)
+    else:
+        for key, want in values.items():
+            sec, name = key.split(".", 1)
+            have = (got.get(sec) or {}).get(name, "<没有>")
+            if have != want:
+                problems.append("%s 没写进去：想要 %r，文件里是 %r" % (key, want, have))
+            else:
+                CONFIG.setdefault(sec, {})[name] = want      # 内存里那份也跟着更新
+    return {"ok": not problems, "problems": problems, "groups": settings_groups()}
 
 
 def _collect_problems(user, problems):

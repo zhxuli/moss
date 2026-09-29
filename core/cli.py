@@ -937,6 +937,17 @@ def cmd_selfcheck(table):
               % ("**跑包**" if config.bare_owner() == "package" else "找文件（路径调用）",
                  config.path_symbol(), config.plugin_symbol(),
                  config.no_chdir_symbol(), config.detach_symbol()))
+    # 「设置」面板（`V-60`）能不能改全：面板清单必须和默认配置的键**一一对应**，
+    # 漏一个用户就改不到、多一个点保存就写不进去。两边都查（`settings_problems`）。
+    sp = config.settings_problems()
+    if sp:
+        ok = False
+        print("     ✗ 设置面板的清单和默认配置对不上：")
+        for p in sp:
+            print("       - %s" % p)
+    else:
+        print("     设置面板  : %d 项，和默认配置一一对应 ✔"
+              % sum(len(g["items"]) for g in config.settings_groups()))
 
     rts = runners_mod.list_runtimes()
     print("  自带运行时: %d 个" % len(rts))
@@ -1217,6 +1228,35 @@ def main(argv):
         sys.stdout.write(_json.dumps(_ui.build_payload(), ensure_ascii=False))
         sys.stdout.flush()
         return 0
+    if first == "--settings":
+        # 界面那颗齿轮要读的东西（JSON，只有 JSON、没有横幅）。
+        # 为什么走命令行而不是"界面自己读文件"：界面跑在自带运行时里、**不 import core**
+        # （core 编在 exe 里，磁盘上没这个目录），而且那份 TOML 的解析规则、默认值、
+        # 「什么算写错了」的判断全在 core 里 —— 界面自己再实现一遍就是两处真相。
+        # 和 `--ui-payload`（`V-31`）同一条路。不给用户用，USAGE 里也不列。
+        import json as _json
+        sys.stdout.write(_json.dumps(config.settings_payload(), ensure_ascii=False))
+        sys.stdout.flush()
+        return 0
+    if first == "--settings-set":
+        # 参数是**一份 JSON 对象**：`{"symbols.plugin_mode": ":", "output.pid": true}`。
+        # 只改这些键的值，注释和排版一字不动（`config.set_values`）。
+        import json as _json
+        if not rest:
+            out.print_cyan("[错误] --settings-set 需要一份 JSON。")
+            return 1
+        try:
+            pairs = _json.loads(rest[0])
+        except ValueError as e:
+            out.print_cyan("[错误] --settings-set 的参数不是 JSON：%s" % e)
+            return 1
+        if not isinstance(pairs, dict):
+            out.print_cyan("[错误] --settings-set 要的是一个 JSON 对象（键 = 段.键）。")
+            return 1
+        r = config.set_values(pairs)
+        sys.stdout.write(_json.dumps(r, ensure_ascii=False))
+        sys.stdout.flush()
+        return 0 if r.get("ok") else 1
     if first == "--rename":
         if len(rest) < 2:
             out.print_cyan("[错误] --rename 需要两个名字：旧的（id 或别名）和新的 id。")

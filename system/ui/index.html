@@ -483,6 +483,48 @@ table.p th{color:var(--dim);font-weight:500}
   padding:7px 14px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.22);
   max-width:70vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .toast.bad{border-color:#d64545;color:#d64545}
+
+/* ---------------------------------------------------------------- 底部状态栏（`V-61` ✅）
+   左边是**最近一条状态提示**（toast 说了什么，它就留什么），右边一颗齿轮开「设置」。
+   ★ 只放这一行字：状态栏最容易变成"什么信息都往里塞"的垃圾场，而现在真正需要
+     一直看得见的信息还没有 —— 与其猜，不如空着。 */
+#statusbar{flex:none;display:flex;align-items:center;gap:8px;height:26px;
+  padding:0 6px 0 12px;border-top:1px solid var(--line);background:var(--panel);
+  color:var(--dim);font-size:12px;user-select:none}
+#status-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#status-text.bad{color:#d64545}
+#statusbar .sp{flex:1}
+#statusbar .iconbtn{width:22px;height:22px}
+#statusbar .iconbtn svg{width:14px;height:14px}
+
+/* ---------------------------------------------------------------- 「设置」面板（`V-60` ✅）
+   内容全部来自宿主（`moss --settings`），界面不自己列设置项 —— 也就不会出现
+   "面板里有、文件里没有"这种两处真相。 */
+#settings{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;
+  align-items:center;justify-content:center;z-index:85}
+#settings.on{display:flex}
+.card.wide{min-width:min(620px,92vw);max-width:660px;max-height:84vh;overflow:auto}
+#set-path{font-family:var(--mono);font-size:12px}
+.setgroup{margin:0 0 14px}
+.setgroup h4{margin:0 0 2px;font-size:13px;color:var(--fg)}
+.sethint{margin:0 0 6px;font-size:12px;color:var(--dim);line-height:1.6}
+.setrow{display:flex;align-items:center;gap:10px;padding:6px 0;
+  border-top:1px solid var(--hair)}
+.setrow:first-of-type{border-top:0}
+.setname{flex:1;font-size:13px;line-height:1.45}
+.setnow{font-size:11.5px;color:var(--dim2)}
+.setrow input[type=text],.setrow input[type=number]{width:190px;padding:5px 9px;
+  border-radius:7px;border:1px solid var(--ctl-in);background:var(--panel2);
+  color:var(--fg);font-family:var(--mono);font-size:12.5px;outline:none;flex:none}
+.setrow input[type=number]{width:80px}
+.setrow input[type=text]:focus,.setrow input[type=number]:focus{
+  border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+.setrow input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);flex:none}
+#set-problems{margin:10px 0 0;padding:9px 11px;border-radius:9px;font-size:12.5px;
+  line-height:1.7;background:rgba(214,69,69,.10);border:1px solid rgba(214,69,69,.35);
+  color:#d64545}
+#settings .btns{align-items:center}
+#settings .btns .sp{flex:1}
 </style>
 </head>
 <body>
@@ -572,6 +614,13 @@ table.p th{color:var(--dim);font-weight:500}
   </div>
 </main>
 
+<!-- 底部状态栏（`V-61` ✅）：左边"最近一条状态提示"，右边那颗齿轮开「设置」。 -->
+<footer id="statusbar">
+  <span id="status-text">就绪</span>
+  <span class="sp"></span>
+  <button id="btn-settings" class="iconbtn" title="设置（就是 user_data/config.toml）"></button>
+</footer>
+
 <div id="ctxmenu" hidden></div>
 <div id="modal"><div class="card">
   <h3 id="m-title">标题</h3>
@@ -583,6 +632,23 @@ table.p th{color:var(--dim);font-weight:500}
   </div>
 </div></div>
 <div id="toasts"></div>
+
+<!-- 「设置」面板（`V-60` ✅）：齿轮点开的就是它。里面每一行都由宿主给
+     （`moss --settings`：分组 / 标签 / 类型 / 当前值 / 说明）—— 界面只负责画控件。
+     ★ 它改的就是 `user_data/config.toml`，不新增第二处设置存放地。 -->
+<div id="settings"><div class="card wide">
+  <h3>设置</h3>
+  <p id="set-path"></p>
+  <div id="set-body"></div>
+  <div id="set-problems" hidden></div>
+  <p class="setnote">改完下一次启动 moss 生效（这个界面用的是启动时读到的值）。
+    配置文件里的注释和排版不会被动。</p>
+  <div class="btns">
+    <span class="sp"></span>
+    <button id="set-cancel">取消</button>
+    <button id="set-save" class="primary">保存</button>
+  </div>
+</div></div>
 
 <script src="vendor/highlight.min.js"></script>
 <script src="vendor/powershell.min.js"></script>
@@ -1413,6 +1479,7 @@ async function startRun(p, args, cwd){
   }
   RUNS[p.id] = {rid: r.run_id, cmd: cmd, timer: null, stopped: false,
                 switched: false, tabAtStart: tab};   // 记下"起跑时用户在看哪一页"
+  setStatus("正在跑 " + cmd);                       // 状态栏（`V-61`）
   paintInbar(p.id);                      // 刚起跑：命令行下面那行输入框可以用了
   // 人正看着命令行这一页 → 把光标放到输入框里（包一问，直接敲就行）。
   // 只在"起跑那一刻"给一次，不在每次刷新时抢（不然你选中输出文字会被打断）。
@@ -1464,6 +1531,9 @@ function finishRun(id, code, text){
   delete RUNS[id];
   const stopped = !!run.stopped;
   maybeAutoSwitch(id, run, text);        // 跑得太快、第一轮就结束时也要按规则切一次
+  // ★ 状态栏（`V-61`）留一句**说事实**的收尾：非 0 退出码不一律当故障（很多包这样是正常的）
+  setStatus((stopped ? "已停止 " : "跑完了 ") + run.cmd + " · 退出码 " + code,
+            code !== 0 && !stopped);
   setConsole(id, "$ " + run.cmd + "\n\n" + (text || "(这个包没有输出)") + "\n" +
              runTail(code, text, stopped),
              // ★ 只说事实（退出码是多少），不判"故障" —— 非 0 在很多包里是正常现象
@@ -2934,6 +3004,8 @@ document.addEventListener("keydown", (e) => {
     }
   }
   if (e.key === "Escape" && $("#modal").classList.contains("on")) closeModal();
+  // 「设置」面板也认 Esc（`V-60`）：确认框那条路在上面 —— 两个不会同时在
+  if (e.key === "Escape" && $("#settings").classList.contains("on")) closeSettings();
 });
 document.addEventListener("click", (e) => { if (!e.target.closest("#ctxmenu")) hideCtx(); });
 window.addEventListener("blur", hideCtx);
@@ -2962,7 +3034,18 @@ function askConfirm(title, text, cb){
   modalCb = () => cb();
 }
 function closeModal(){ $("#modal").classList.remove("on"); modalCb = null; }
+/* ---------------------------------------------------------------- 状态栏（`V-61` ✅）
+   一句话：**toast 说什么，状态栏就留什么。** 这样"最近一条状态提示"不需要到处
+   埋点 —— 现有那些 toast（跑起来了 / 已停止 / 保存失败…）自动就会沉淀到最下面那行，
+   2.4 秒后 toast 消失，字还留在状态栏上。 */
+function setStatus(text, bad){
+  const el = $("#status-text");
+  if (!el) return;
+  el.textContent = String(text == null ? "" : text);
+  el.className = bad ? "bad" : "";
+}
 function toast(text, bad){
+  setStatus(text, bad);
   const box = $("#toasts");
   const el = document.createElement("div");
   el.className = "toast" + (bad ? " bad" : "");
@@ -2971,8 +3054,120 @@ function toast(text, bad){
   setTimeout(() => el.remove(), 2400);
 }
 
+/* ---------------------------------------------------------------- 「设置」面板（`V-60` ✅）
+   齿轮点开 → 问宿主当前设置 → 画控件 → 保存时只把**改过的那几项**送回去。
+   ★ 界面这里不认识任何设置项：分组名、标签、控件类型、说明、当前值全是宿主给的
+     （`core/config.py` 的 `SETTINGS_GROUPS`）。以后宿主加一个配置项，这里一行都不用改。 */
+let SET = null;                 // {path, groups, orig}
+
+async function openSettings(){
+  const r = await pywebview.api.settings();
+  if (!r || !r.ok){ toast("✗ 读设置失败：" + ((r && r.msg) || ""), true); return; }
+  SET = {path: r.path || "", groups: r.groups || [], orig: {}};
+  renderSettings();
+  const probs = $("#set-problems");
+  probs.hidden = true; probs.textContent = "";
+  $("#settings").classList.add("on");
+  // 宿主顺带说的话（首次运行帮你建了配置文件 / 配置里哪一行写坏了）别吞掉
+  if (r.msg) toast(r.msg);
+}
+function closeSettings(){ $("#settings").classList.remove("on"); }
+
+function renderSettings(){
+  const box = $("#set-body");
+  box.innerHTML = "";
+  $("#set-path").textContent = SET.path ? ("配置文件：" + SET.path) : "";
+  SET.groups.forEach(g => {
+    const sec = document.createElement("div");
+    sec.className = "setgroup";
+    const h = document.createElement("h4");
+    h.textContent = g.name;
+    sec.appendChild(h);
+    if (g.hint){
+      const p = document.createElement("p");
+      p.className = "sethint"; p.textContent = g.hint;
+      sec.appendChild(p);
+    }
+    (g.items || []).forEach(it => {
+      SET.orig[it.key] = it.value;
+      const row = document.createElement("div");
+      row.className = "setrow";
+      const name = document.createElement("div");
+      name.className = "setname";
+      name.textContent = it.label;
+      if (it.hint){
+        const tip = document.createElement("div");
+        tip.className = "setnow"; tip.textContent = it.hint;
+        name.appendChild(tip);
+      }
+      let inp;
+      if (it.type === "bool"){
+        inp = document.createElement("input");
+        inp.type = "checkbox"; inp.checked = !!it.value;
+      } else if (it.type === "int"){
+        inp = document.createElement("input");
+        inp.type = "number"; inp.min = "1"; inp.max = "20"; inp.value = it.value;
+      } else {
+        inp = document.createElement("input");
+        inp.type = "text"; inp.value = (it.value == null ? "" : it.value);
+        if (it.type === "symbol"){ inp.maxLength = 4; inp.style.width = "90px"; }
+        inp.spellcheck = false; inp.autocomplete = "off";
+      }
+      inp.dataset.key = it.key;
+      inp.dataset.type = it.type;
+      row.appendChild(name); row.appendChild(inp);
+      sec.appendChild(row);
+    });
+    box.appendChild(sec);
+  });
+}
+
+/* 只收集**和打开时不一样**的那几项（没动过的键一个字节都不写回去）。 */
+function collectSettings(){
+  const pairs = {};
+  document.querySelectorAll("#set-body [data-key]").forEach(el => {
+    const k = el.dataset.key, t = el.dataset.type;
+    let v;
+    if (t === "bool") v = !!el.checked;
+    else if (t === "int"){
+      v = parseInt(el.value, 10);
+      if (!isFinite(v)) v = SET.orig[k];
+    } else v = el.value.trim();
+    if (String(v) !== String(SET.orig[k])) pairs[k] = v;
+  });
+  return pairs;
+}
+
+async function saveSettings(){
+  const pairs = collectSettings();
+  const probs = $("#set-problems");
+  if (!Object.keys(pairs).length){
+    toast("没有改动");
+    closeSettings();
+    return;
+  }
+  const r = await pywebview.api.settings_save(pairs);
+  const list = ((r && r.problems) || []).slice();
+  if (!r || !r.ok || list.length){
+    // ★ 没保存成 / 宿主不让这么存：**留在面板里**，把原因摊开写清楚
+    if (!list.length) list.push((r && r.msg) || "宿主没说为什么");
+    probs.hidden = false;
+    probs.innerHTML = "";
+    list.forEach(t => {
+      const d = document.createElement("div");
+      d.textContent = "· " + t;
+      probs.appendChild(d);
+    });
+    toast(r && r.ok ? "改了一部分 —— 看面板里的话" : "没保存 —— 看面板里的话", true);
+    return;
+  }
+  toast("已保存到 config.toml（下次启动 moss 生效）");
+  closeSettings();
+}
+
 /* ---------------------------------------------------------------- 启动 */
 async function init(){
+  setStatus("就绪");        // 状态栏（`V-61`）：还没干任何事时它是空的，给一句起点
   DATA = await pywebview.api.state();
   $("#meta").textContent =
     DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home;
@@ -3006,6 +3201,7 @@ function paintStaticIcons(){
   //   以前用的是 `corner-up-left`（一个"返回箭头"），跟"历史"不是一回事。
   $("#sw-hist").innerHTML = ico("history", "i") + '<span>历史</span>';
   $("#btn-newpkg").innerHTML = ico("file-plus", "i");
+  $("#btn-settings").innerHTML = ico("settings", "i");   // 状态栏那颗齿轮（`V-61`）
   $("#btn-refresh").innerHTML   = ico("refresh-cw", "i");
   $("#btn-copy").innerHTML      = ico("copy", "i");
   $("#btn-rerun").innerHTML     = ico("rotate-cw", "i");
@@ -3037,6 +3233,11 @@ $("#btn-embed-window").onclick = () => {
 };
 
 $("#btn-copy").onclick = copyOut;$("#btn-clear").onclick = () => setConsole(consoleKey, "", "还没跑过");
+/* 状态栏那颗齿轮（`V-60`）：打开「设置」= 另一种改 config.toml 的方式 */
+$("#btn-settings").onclick = openSettings;
+$("#set-cancel").onclick = closeSettings;
+$("#set-save").onclick = saveSettings;
+$("#settings").addEventListener("click", e => { if (e.target.id === "settings") closeSettings(); });
 $("#m-cancel").onclick = closeModal;
 $("#m-ok").onclick = () => { const cb = modalCb; closeModal(); if (cb) cb(); };
 $("#m-input").addEventListener("keydown", e => {

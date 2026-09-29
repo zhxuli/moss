@@ -95,6 +95,34 @@ def _run_capture_split(argv):
     return {"code": r.returncode, "out": r.stdout or "", "err": r.stderr or ""}
 
 
+def _json_from_host(out):
+    """从宿主的 stdout 里取出那份 JSON。取不到返回 None。
+
+    ★ 为什么不能直接 `json.loads(整段)`：宿主启动时会先跑 `config.load()`，
+      而配置文件**不存在**（首次运行）或**写坏了**时，它会往 stdout 打几句
+      「[配置] 未找到配置文件……」。那几行和我们这份 JSON 混在一起就是
+      `Extra data: line 1 column N` —— 界面只好退回旧快照，看起来就是"界面不刷新，
+      还不知道为什么"（`V-31` 那次就是这一类）。所以：整段能解析就用整段，
+      不然**从最后往前找第一个 `{` 开头的行**——两条命令的输出都是一行 JSON。
+    """
+    s = (out or "").strip()
+    if not s:
+        return None
+    try:
+        return json.loads(s)
+    except ValueError:
+        pass
+    for line in reversed(s.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            return json.loads(line)
+        except ValueError:
+            continue
+    return None
+
+
 # ================================================================ 文件系统
 # 界面里的「文件管理」选项卡要能像资源管理器那样操作。三条底线：
 #
@@ -1007,12 +1035,11 @@ class Api:
             self._payload_error = ("宿主退出码 %s%s"
                                    % (r.get("code"), ("：" + tail) if tail else ""))
             return None
-        try:
-            data = json.loads(out)
-        except ValueError as e:
+        data = _json_from_host(out)
+        if data is None:
             tail = ((r.get("err") or "").strip().splitlines() or [""])[-1]
-            self._payload_error = ("宿主的话里混进了不是 JSON 的东西（%s）%s"
-                                   % (e, (" —— 宿主说：" + tail) if tail else ""))
+            self._payload_error = ("宿主没回 JSON%s"
+                                   % ((" —— 宿主说：" + tail) if tail else ""))
             return None
         if not (isinstance(data, dict) and "packages" in data):
             self._payload_error = "宿主回的 JSON 里没有 packages"
@@ -1747,6 +1774,52 @@ class Api:
             text = "".join(rec["lines"])
             rec["lines"] = []
         return {"ok": True, "text": text}
+
+    # ------------------------------------------------ 设置（`V-60` ✅）
+    # 那颗齿轮点开就是这里。★ 界面**不 import core**（core 编在 exe 里，磁盘上没这个
+    # 目录），所以读和写都得回宿主：`moss --settings` / `moss --settings-set <JSON>`。
+    # 和 `--ui-payload`、跑包走的是同一条路 —— 不另开一条通道。
+    def settings(self):
+        """读当前设置：分组 + 每项的当前值 / 默认值 / 说明（都是宿主给的）。"""
+        if not HOST:
+            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+        r = _run_capture_split(HOST + ["--settings"])
+        data = _json_from_host(r.get("out"))
+        if not isinstance(data, dict) or not data.get("groups"):
+            tail = ((r.get("err") or "").strip().splitlines() or [""])[-1]
+            return {"ok": False, "msg": "读设置失败：退出码 %s%s"
+                                        % (r.get("code"), (" —— " + tail) if tail else "")}
+        # 宿主偶尔会多打一句提示（首次运行生成配置文件 / 配置写坏了），
+        # 那些话在 stdout 上、不当错误，但**别扔**：拼进 msg 让用户看得见。
+        extra = [l for l in (r.get("out") or "").splitlines()
+                 if l.strip() and not l.strip().startswith("{")]
+        return {"ok": True, "path": str(data.get("path") or ""),
+                "groups": data.get("groups") or [],
+                "msg": " ".join(x.strip() for x in extra)[:400]}
+
+    def settings_save(self, pairs):
+        """把改过的值写回 `user_data/config.toml`（宿主按行换值，注释一字不动）。
+
+        回 `{"ok", "problems", "groups", "msg"}`：**problems 要原样带回去**，
+        界面得把"为什么不让这么改"摊开说（比如两个前缀同时留空）。
+        """
+        if not HOST:
+            return {"ok": False, "problems": [], "groups": [],
+                    "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+        if not isinstance(pairs, dict) or not pairs:
+            return {"ok": True, "problems": [], "groups": [], "msg": "没改什么"}
+        # ★ `ensure_ascii=True`：这份 JSON 要走命令行（argv），全 ASCII 最省事 ——
+        #   不然几个中文/全角符号就要跟 Windows 的命令行编码较劲。
+        payload = json.dumps(pairs, ensure_ascii=True)
+        r = _run_capture_split(HOST + ["--settings-set", payload])
+        data = _json_from_host(r.get("out"))
+        if not isinstance(data, dict):
+            tail = ((r.get("err") or "").strip().splitlines() or [""])[-1]
+            return {"ok": False, "problems": [], "groups": [],
+                    "msg": "保存失败：退出码 %s%s" % (r.get("code"),
+                                                     (" —— " + tail) if tail else "")}
+        return {"ok": bool(data.get("ok")), "problems": data.get("problems") or [],
+                "groups": data.get("groups") or [], "msg": ""}
 
     def quit(self):
         window.destroy()
