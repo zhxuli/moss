@@ -85,18 +85,29 @@ class Embedded:
         self._lock = threading.Lock()
         self._stop = False
 
-    # ---- 可以被界面调的方法
+    # ---- 可以被界面调的方法（**每个都 print 一句**：这样在"命令行"那一页
+    #      或者独立窗口的控制台里，你能亲眼看见是 Python 在干活）
     def now(self, params=None):
+        print('[bmi] 界面问了时间 → %s（Python 算的）' % now_payload()['text'], flush=True)
         return now_payload()
 
     def bmi(self, params=None):
         p = params or {}
-        return calc_bmi(p.get('height'), p.get('weight'))
+        got = calc_bmi(p.get('height'), p.get('weight'))
+        if got.get('ok'):
+            print('[bmi] Python 算完：%s cm / %s kg → BMI %s（%s）'
+                  % (p.get('height'), p.get('weight'), got.get('bmi'), got.get('level')),
+                  flush=True)
+        else:
+            print('[bmi] Python 没算成：%s' % got.get('why'), flush=True)
+        return got
 
     def subscribe(self, params=None):
         """界面说"我要实时时间" —— 之后由**后端主动推**（`{"event": "time"}`）。"""
+        ev = str((params or {}).get('event') or 'time')
         with self._lock:
-            self._subs.add(str((params or {}).get('event') or 'time'))
+            self._subs.add(ev)
+        print('[bmi] 开始每秒推时间（Python 的线程在跑）', flush=True)
         return {'subscribed': sorted(self._subs)}
 
     def unsubscribe(self, params=None):
@@ -105,6 +116,8 @@ class Embedded:
         return {'subscribed': sorted(self._subs)}
 
     def info(self, params=None):
+        print('[bmi] 后端信息：pid=%d python=%s（内嵌模式）'
+              % (os.getpid(), sys.version.split()[0]), flush=True)
         return {'pid': os.getpid(), 'python': sys.version.split()[0],
                 'cwd': os.getcwd(), 'embedded': True}
 
@@ -154,51 +167,54 @@ def run_window():
     class Api:
         """独立窗口这边的后端。
 
-        ★ 每个方法都**必须**收得下那一个参数：pywebview 的 JS 桥是把 JS 那边的实参
-          原样传进来的（界面里 `moss.call('now', {})` 就会调成 `now({})`）——
-          少写一个参数就是 `TypeError: now() takes 1 positional argument but 2 were given`
-          （实测踩到：控制台里那行 [pywebview] Traceback）。
+        ★ 两个坑，都实测踩过：
+          ① **每个方法都得收得下那一个参数**：pywebview 的 JS 桥是把 JS 那边的实参原样
+             传进来的（界面里 `moss.call('now', {})` 就会调成 `now({})`），少写一个参数就是
+             `TypeError: now() takes 1 positional argument but 2 were given`。
+          ② **绝对别把 `window`（或任何带循环引用的东西）挂成属性**：pywebview 生成 JS 桥时
+             要遍历这个对象的属性，挂上去之后桥会**整个失效** —— 实测 `window.pywebview.api`
+             的方法列表变成空的、页面里每个调用都失败，控制台还会刷一屏
+             `Empty.Empty.Empty…: maximum recursion depth exceeded`。
+             要拿窗口（比如主动推事件）就在外面用闭包/模块变量拿，别放这儿。
         """
 
         def __init__(self):
             self._stop = False
             self._subs = set()
-            self.window = None
+            self._ticking = False
 
         def now(self, params=None):
+            print('[bmi] 界面问了时间 → %s（Python 算的）' % now_payload()['text'], flush=True)
             return now_payload()
 
         def bmi(self, params=None):
-            return calc_bmi((params or {}).get('height'), (params or {}).get('weight'))
+            p = params or {}
+            got = calc_bmi(p.get('height'), p.get('weight'))
+            if got.get('ok'):
+                print('[bmi] Python 算完：%s cm / %s kg → BMI %s（%s）'
+                      % (p.get('height'), p.get('weight'), got.get('bmi'), got.get('level')),
+                      flush=True)
+            else:
+                print('[bmi] Python 没算成：%s' % got.get('why'), flush=True)
+            return got
 
         def info(self, params=None):
+            print('[bmi] 后端信息：pid=%d python=%s（独立窗口模式）'
+                  % (os.getpid(), sys.version.split()[0]), flush=True)
             return {'pid': os.getpid(), 'python': sys.version.split()[0],
                     'cwd': os.getcwd(), 'embedded': False}
 
         def subscribe(self, params=None):
-            """界面说"我要实时时间" —— 独立窗口这边**由后端主动推**
+            """界面说"我要实时时间" —— 独立窗口这边也**由后端主动推**
             （跟内嵌模式一个效果：调页面里的 `window.moss.__emit`）。"""
             ev = str((params or {}).get('event') or 'time')
             self._subs.add(ev)
-            if ev == 'time' and not getattr(self, '_ticking', False):
-                self._ticking = True
-                threading.Thread(target=self._tick, daemon=True).start()
+            print('[bmi] 开始每秒推时间（Python 的线程在跑）', flush=True)
             return {'subscribed': sorted(self._subs)}
 
         def unsubscribe(self, params=None):
             self._subs.discard(str((params or {}).get('event') or 'time'))
             return {'subscribed': sorted(self._subs)}
-
-        def _tick(self):
-            while not self._stop:
-                time.sleep(1.0)
-                if 'time' not in self._subs or not self.window:
-                    continue
-                try:
-                    self.window.evaluate_js('window.moss && window.moss.__emit("time", %s)'
-                                            % json.dumps(now_payload(), ensure_ascii=False))
-                except Exception:                                    # noqa: BLE001
-                    pass
 
         def stop(self, params=None):
             self._stop = True
@@ -207,7 +223,24 @@ def run_window():
     api = Api()
     window = webview.create_window(TITLE, url=UI, js_api=api,
                                    width=980, height=720, min_size=(720, 560))
-    api.window = window
+
+    # ★ 推时间这件事用**闭包**拿窗口（不能挂在 api 上，见上面 ②）
+    def ticker():
+        n = 0
+        while not api._stop:
+            time.sleep(1.0)
+            if 'time' not in api._subs:
+                continue
+            n += 1
+            try:
+                window.evaluate_js('window.moss && window.moss.__emit("time", %s)'
+                                   % json.dumps(now_payload(), ensure_ascii=False))
+            except Exception:                                        # noqa: BLE001
+                return
+            if n % 10 == 0:                     # 每 10 秒说一声"我还在干活"（别刷屏）
+                print('[bmi] 已经推了 %d 次时间（Python 还在跑）' % n, flush=True)
+
+    threading.Thread(target=ticker, daemon=True).start()
     window.events.closing += lambda: setattr(api, '_stop', True)
     webview.start()
     return 0
