@@ -1,13 +1,11 @@
 /* moss 界面 · app.js —— 从 index.html 拆出来的（`V-67`），内容与拆分前一致。 */
 /* ---------------------------------------------------------------- 启动 */
-async function init(){
-  setStatus("就绪");        // 状态栏（`V-61`）：还没干任何事时它是空的，给一句起点
-  DATA = await pywebview.api.state();
-  $("#meta").textContent =
-    DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home;
-  renderList(); paintStates();
-  // ★ 启动诊断写一行到日志（`V-76`）：界面要是空白，我读这行就知道是哪种情况
-  //   （包 0 个 / 画不出来 / 脚本没跑），不用你找控制台。
+
+/* 启动诊断（`V-76` / `V-81`）：往 `user_data/state/_ui_drop.log` 写一行 —— 界面要是
+   空白，我读这行就知道是哪种情况（包 0 个 / 画不出来 / 脚本没跑），不用你找控制台。
+   ★ 只能在**列表和历史都画完之后**调：这两个列表是 Vue 组件画的，`renderList()` 只举牌、
+   DOM 要等下一拍（`await Vue.nextTick()`），早读永远读到 0 行。 */
+function writeStartDiag(){
   try{
     pywebview.api.ui_log("[启动诊断] 宿主包数=" + DATA.packages.length
       + " 列表条目=" + document.querySelectorAll("#list .item").length
@@ -17,8 +15,24 @@ async function init(){
       + " 地址=" + location.href
       + " 窗口=" + window.innerWidth + "x" + window.innerHeight);
   }catch(e){}
+}
+
+async function init(){
+  setStatus("就绪");        // 状态栏（`V-61`）：还没干任何事时它是空的，给一句起点
+  DATA = await pywebview.api.state();
+  $("#meta").textContent =
+    DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home;
+  renderList(); paintStates();
   await loadHist();        // 先把历史读回来（loadHist 会顺手按 key 找回选中的那条）
   setSide(side);           // 切换条的高亮 / 隐藏状态跟 JS 变量对齐；顺带画一遍列表
+  // ★ 启动诊断写一行到日志（`V-76`）：界面要是空白，我读这行就知道是哪种情况
+  //   （包 0 个 / 画不出来 / 脚本没跑），不用你找控制台。
+  // ★ `V-81`：列表/历史现在是 **Vue 组件**画的（`V-79`/`V-80`）—— `renderList()` 只举牌，
+  //   DOM 要等**下一拍**才更新。不等这一拍的话，这行日志永远写着"列表条目=0 历史条目=0"
+  //   （你机器上那几行 `宿主包数=19 列表条目=0` 就是这么来的），把"画不出来"和"还没画"
+  //   混成同一件事 —— 我自己就被它绕过一次。所以：等一拍 + 挪到历史也读回来之后再写。
+  await Vue.nextTick();
+  writeStartDiag();
   consoleKey = "__host__";
   paintConsole();
   pkgPollStart();          // 每 2.5 秒把所有包的状态对一次（列表 + 按钮都要）

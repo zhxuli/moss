@@ -173,11 +173,14 @@ function rerunLast(){
      普通 `let`（整个被重新赋值），改成响应式要动一圈别的模块；原来的代码本来就在"数据变了"的地方
      显式调 `renderList()` / `renderHist()`，所以**保留那几个函数名当门面**、让它们举牌最省事，
      行为也一字不变（外部调用点一个都不用改）。 */
-const LISTR = Vue.reactive({rev: 0});
+const LISTR = Vue.reactive({rev: 0, ready: false});
 function bumpLists(){ LISTR.rev++; }
 
 function renderList(){
   // 门面：原来的调用点（drop.js / files.js / app.js / select …）照旧调它
+  // ★ `V-81`：举牌的同时告诉组件"包表回来了没有" —— 没回来就**先别画**（`rows` 里挡着），
+  //   否则页面加载那一刻 `DATA` 还是 null，`DATA.packages` 会抛错。
+  LISTR.ready = !!(DATA && DATA.packages);
   bumpLists();
   // ★ Vue 是异步渲染：状态那一小块（行尾图标）等这一帧画完再填 —— 原来这里是同步调的，
   //   已确认没有任何调用方在 renderList() 之后**同步**读 `.item`，所以放到 nextTick 是安全的。
@@ -219,11 +222,10 @@ function select(id){
   if (cur) fmSelect(cur.id, /*keepTab*/ true);
   paintEmbedTab();                            // 第四个选项卡：这个包有没有界面
 }
-function renderDetail(){
-  const box = $("#pane-detail");
+function renderDetailHTML(){
   const who = selObj();
-  if (!who){ box.innerHTML = '<div class="empty">左边选一个包，或者一条历史</div>'; return; }
-  if (isHist(who)) return renderDetailHist(who, box);
+  if (!who) return '<div class="empty">左边选一个包，或者一条历史</div>';
+  if (isHist(who)) return renderDetailHistHTML(who);
   const p = cur, params = p.params || [];
   const prop = (k, v) => '<div class="prop"><div class="prop-k">' + esc(k) +
     '</div><div class="prop-v">' + v + '</div></div>';
@@ -303,7 +305,27 @@ function renderDetail(){
       '<div class="danger-text">永久删除: 包本体 + 它的数据（不进回收站）</div>' +
       '<button class="btn danger" id="btn-remove" title="卸载这个包（moss --remove）">' +
         ico("trash-2", "i") + '<span>卸载</span></button></section></div>';
-  box.innerHTML = html;
+  return html;
+}
+
+/* 详情页的接线（把那些 id 找出来绑处理器）—— 每次重画之后跑一遍，
+   内容与改造前**逐行一致**，只是不再依赖那个局部 box 变量。 */
+function wireDetail(){
+  const who = selObj();
+  if (!who) return;
+  if (isHist(who)) return wireDetailHist(who);
+  const p = cur;
+  // ★ `V-81` 修：详情页搬进组件的时候，原来那个局部变量 `box` 被弄丢了 —— 下面找
+  //   `.chip` 那一行会抛 `ReferenceError: box is not defined`，**它后面那一串按钮就全都
+  //   没绑上**（运行 / 停止 / 打开界面 / 更名 / 卸载，一个都点不动）。
+  //   而 Vue 默认把组件里的异常只写进控制台（这个界面没有控制台）⇒ 界面上一个字都不报，
+  //   看着就是"更名和卸载坏了"。（同一条根因现在会走 `reportError` 报出来。）
+  const box = $("#pane-detail");
+  const host = box;
+  // ★ 每个 rev 只接一次线（`V-80`）：v-html 的内容没变时 Vue 不会重设 innerHTML，
+  //   这时候再绑一遍监听器就会**重复**（回车跑两次那种）。
+  if (host && host.dataset.wiredRev === String(DETAILR.rev)) return;
+  if (host) host.dataset.wiredRev = String(DETAILR.rev);
   const upd = () => {
     $("#preview").textContent = "moss :" + p.id +
       ($("#args").value.trim() ? " " + $("#args").value.trim() : "");
@@ -335,6 +357,7 @@ function renderDetail(){
   $("#btn-rename").onclick = () => cmdRenamePkg(p);
   if ($("#btn-align")) $("#btn-align").onclick = () => cmdAlignPkgDir(p);
 }
+
 
 /* 对齐目录名：把包目录名改成它的 id（`D-27` 方案 C 里那个"一键统一"）。
    走的还是宿主那条 `--rename`，只是新旧 id 都写成它现在的 id —— 于是宿主
@@ -396,7 +419,7 @@ async function cmdRenamePkg(p){
    和包那份**长得一样**（同一个 .hd / .sec / .row-inline 结构），内容按"这条记录
    真有什么"来给 —— **没有的就不显示**（参数空着不写"参数（无）"，
    上次结果不知道就不写；说明性的废话也不写）。 */
-function renderDetailHist(it, box){
+function renderDetailHistHTML(it){
   const when = (it.ts || "").replace("T", " ");
   const gone = it.exists === false;
   // 只放"真有值"的行；一行都没有，这一块就不出现
@@ -441,8 +464,14 @@ function renderDetailHist(it, box){
       '<div class="danger-text">只删这条记录，那个文件本身不动</div>' +
       '<button class="btn danger" id="btn-forget" title="从历史里删掉这条记录">' +
         ico("trash-2", "i") + '<span>删除这条记录</span></button></section></div>';
-  box.innerHTML = html;
+  return html;
+}
 
+/* 历史详情的接线 —— 同上，逐行搬运。 */
+function wireDetailHist(it){
+  const host = $("#pane-detail");
+  if (host && host.dataset.wiredRev === String(DETAILR.rev)) return;
+  if (host) host.dataset.wiredRev = String(DETAILR.rev);
   const upd = () => {
     const a = $("#hargs").value.trim();
     // 和宿主 `rerun_argv` 同一条规则的**近似预览**：真正跑的时候宿主回回来的 `cmd`
@@ -464,6 +493,14 @@ function renderDetailHist(it, box){
   };
   $("#btn-forget").onclick = () => cmdForgetHist(it);
 }
+
+/* 老签名保留：想往指定的 box 里塞还能用（谁在用就照旧）。 */
+function renderDetailHist(it, box){
+  const html = renderDetailHistHTML(it);
+  if (box) box.innerHTML = html;
+  wireDetailHist(it);
+}
+
 
 /* 删一条历史记录：**真删** —— 把那几行从账里抠掉（原地改、保留行尾）。
    ★ **不弹确认框**：这里碰不到任何文件，弹窗只会拖慢一次清理动作。
@@ -497,6 +534,13 @@ const MossList = {
   computed: {
     rows(){
       this.R.rev;                                  // 登记依赖：谁举牌就重算
+      // ★ `V-81`：组件是**页面加载那一刻**就挂上的，而包表要等 `init()` 里
+      //   `await pywebview.api.state()` 回来才有 —— 中间这段时间 `DATA` 还是 `null`。
+      //   不在这儿挡一下，`DATA.packages` 就是一抛（`Proxy.rows … Cannot read
+      //   properties of null (reading 'packages')`，你从 devtools 里看到的就是它）。
+      //   挡法不是"判空返回 []"（那样启动一瞬间会闪一句"没有匹配的包"），
+      //   而是**数据没回来就先不画**（`ready` 由 `renderList()` 举牌时一起给）。
+      if (!this.R.ready) return [];
       const f = $("#q").value.trim().toLowerCase();
       const all = DATA.packages.filter(p => !f ||
         [p.id, p.name, p.desc, (p.tags||[]).join(" "), (p.aliases||[]).join(" ")]
@@ -521,10 +565,12 @@ const MossList = {
     pick(id){ select(id); },
   },
   template: `
-    <div v-if="!rows.length" class="empty">{{ emptyHTML }}</div>
-    <template v-else>
-      <div v-for="p in rows" :key="p.id" class="item" :class="{sel: p.id === selId()}"
-           :data-id="p.id" :data-state="stateOf(p.id)" @click="pick(p.id)" v-html="rowHTML(p)"></div>
+    <template v-if="R.ready">
+      <div v-if="!rows.length" class="empty">{{ emptyHTML }}</div>
+      <template v-else>
+        <div v-for="p in rows" :key="p.id" class="item" :class="{sel: p.id === selId()}"
+             :data-id="p.id" :data-state="stateOf(p.id)" @click="pick(p.id)" v-html="rowHTML(p)"></div>
+      </template>
     </template>`,
 };
 
@@ -571,5 +617,27 @@ const MossHist = {
     </template>`,
 };
 
-Vue.createApp(MossList).mount("#list");
-Vue.createApp(MossHist).mount("#hist");
+mountVue(MossList, "#list");
+mountVue(MossHist, "#hist");
+
+
+/* ================================================================ 详情页（Vue 组件，`V-80`）
+   为什么是"薄组件"：这一页的 DOM 与接线又长又老（`renderDetailHTML` 一次拼出整页、
+   `wireDetail` 按 id 绑一堆处理器），**重写成模板的收益抵不上风险**。所以这一步只做一件事：
+   把它挪进组件、由状态驱动重画 —— 结构、文案、类名、id、接线全部原样。
+   外面照旧调 `renderDetail()`（门面）。 */
+const DETAILR = Vue.reactive({rev: 0});
+function renderDetail(){ DETAILR.rev++; }
+
+const MossDetail = {
+  name: "moss-detail",
+  data(){ return { R: DETAILR }; },
+  computed: {
+    html(){ this.R.rev; return renderDetailHTML(); },   // 登记依赖：谁举牌就重算
+  },
+  mounted(){ wireDetail(); },
+  updated(){ wireDetail(); },
+  // `display:contents`：这层壳不参与布局，画面与改造前一致
+  template: '<div style="display:contents" v-html="html"></div>',
+};
+mountVue(MossDetail, "#pane-detail");

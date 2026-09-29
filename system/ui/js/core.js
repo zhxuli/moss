@@ -2,93 +2,50 @@
    "左边空了 / 某块没了"，谁也看不出为什么。所以 onerror / unhandledrejection 全部收下来，
    写到右下角状态栏（红字，一直在）+ toast + 日志文件（`user_data/state/_ui_drop.log`）。
    （外一层的"资源加载失败"捕获在 `index.html` 里内联着 —— 那一层要防的是 js 自己都没加载上。） */
-if (!window.__mossReportInstalled){
-  window.__mossReportInstalled = 1;
-  window.addEventListener("error", function(e){
-    if (typeof window.__mossTell === "function" && !(e.target && e.target.tagName)){
-      window.__mossTell("[页内报错] " + ((e && e.message) || e));
-    }
-  });
-  window.addEventListener("unhandledrejection", function(e){
-    var r = e && e.reason;
-    if (typeof window.__mossTell === "function"){
-      window.__mossTell("[未处理的 Promise] " + ((r && (r.message || r)) || e));
-    }
-  });
+/* ★ 出错要看得见（`V-76` / `V-81`）：这个界面没有能随手打开的控制台，
+   某处一抛异常，表现就是“左边空了 / 某块没了”，谁也看不出为什么。
+   ★ 唯一“一定跑得到”的那份在 `index.html` 里**内联**着（资源加载失败 + 页内报错
+   → 状态栏红字 + `user_data/state/_ui_drop.log`）—— 因为 `js/*.js` 自己没加载上时，
+   写在 js 里的报错处理根本跑不到（鸡生蛋）。所以这里**不再重复挂** window 上的
+   `error` / `unhandledrejection`（以前重复挂了三份，一个错误会被报三四次），只补一件它管不到的事：
+   **Vue 组件里的异常** —— Vue 默认只把它写进控制台，而这个界面没有控制台。
+   （`V-81` 就是这么摸出来的：详情页接线里一个变量名写错 ⇒ 后面那串按钮全没绑上，
+   界面上却一个字都不报。） */
+window.__errors = window.__errors || [];
+
+function reportError(what, msg, stack){
+  const line = what + "：" + msg + (stack ? ("\n" + stack) : "");
+  try{ console.error(line); }catch(e){}
+  if (typeof window.__mossTell === "function"){
+    try{ window.__mossTell(line); }catch(e){}     // 状态栏红字 + 日志文件，都由它写
+  }else{
+    try{ window.__errors.push(line); }catch(e){}
+  }
+  try{ if (typeof toast === "function") toast("⚠ " + msg, true); }catch(e){}
+}
+
+/* ★ 光靠上面那条 `__mossTell` 还管不到 **Vue 组件里的异常**：Vue 默认把它只写进控制台，
+   而这个界面没有能随手打开的控制台 ⇒ 必须挂 errorHandler。
+   ⚠️ 实测（`V-81`）：`vue.global.prod.js`（3.5.43）里**没有 `Vue.config`**
+   （`typeof Vue.config === "undefined"`），所以 Vue 2 那种"设全局 config"的写法在这儿
+   **一声不响地失效** —— 我第一版就是这么写的，结果你从 devtools 里看到的那条报错
+   （`Proxy.rows` 读 `DATA.packages`），界面上一个字都没留下，我还差点当它是旧页面残留。
+   只能**按 app 设**：`app.config.errorHandler`。 */
+function onVueError(err, vm, info){
+  reportError("组件出错" + (info ? ("（" + info + "）") : ""),
+              (err && err.message) || String(err), (err && err.stack) || "");
+}
+
+/* 建 Vue app 一律走这个 —— 省得哪一处忘了挂 errorHandler（忘了就又是"静悄悄死掉"）。
+   返回值与 `Vue.createApp(x).mount(y)` 一样（根组件实例），调用点别的都不用改。
+   自测这条路的场景：预览里的 `err-path`（用**这个函数**建一个会在 computed 里抛错的组件）。 */
+function mountVue(comp, target){
+  const app = Vue.createApp(comp);
+  app.config.errorHandler = onVueError;
+  return app.mount(target);
 }
 
 /* moss 界面 · core.js —— 从 index.html 拆出来的（`V-67`），内容与拆分前一致。 */
-
-/* -*- coding: utf-8 -*- */
-/* moss 界面 · js/core.js 顶部的"出错要看得见"（`V-68`）
-   ============================================================================
-   ★ 为什么要有它：这个界面**没有能打开的控制台**。某个文件一抛异常，表现就是
-     "左边列表空了 / 某块没了"，谁也说不出为什么（你就碰上过：重开之后左侧什么都没有，
-     而窗口里一个字都没提示）。所以：
-       · `window.onerror` / `unhandledrejection` 全部收下来；
-       · 状态栏那行立刻标红写出来（一直在，不消失）；
-       · 同时弹一条 toast（让人马上注意到）；
-       · 攒进 `window.__errors`（探针脚本、以后排查都读它）。
-   ============================================================================ */
-window.__errors = [];
-
-function reportError(what, msg, stack){
-  const line = what + "：" + msg + (stack ? ("\n" + stack) : "");
-  try{ window.__errors.push(line); }catch(e){}
-  try{ console.error(line); }catch(e){}
-  try{
-    const bar = document.getElementById("status-text");
-    if (bar){ bar.textContent = "⚠ " + msg; bar.className = "bad"; }
-  }catch(e){}
-  try{ if (typeof toast === "function") toast("⚠ " + msg, true); }catch(e){}
-}
-
-window.addEventListener("error", function(e){
-  reportError("脚本出错", (e && e.message) || String(e),
-              (e && e.error && e.error.stack) || (e && e.filename
-                ? (e.filename + ":" + e.lineno + ":" + e.colno) : ""));
-});
-window.addEventListener("unhandledrejection", function(e){
-  const r = e && e.reason;
-  reportError("未处理的 Promise", (r && (r.message || r)) || String(e),
-              (r && r.stack) || "");
-});
-
-
-/* -*- coding: utf-8 -*- */
-/* moss 界面 · js/core.js 顶部的"出错要看得见"（`V-68`）
-   ============================================================================
-   ★ 为什么要有它：这个界面**没有能打开的控制台**。某个文件一抛异常，表现就是
-     "左边列表空了 / 某块没了"，谁也说不出为什么（你就碰上过：重开之后左侧什么都没有，
-     而窗口里一个字都没提示）。所以：
-       · `window.onerror` / `unhandledrejection` 全部收下来；
-       · 状态栏那行立刻标红写出来（一直在，不消失）；
-       · 同时弹一条 toast（让人马上注意到）；
-       · 攒进 `window.__errors`（探针脚本、以后排查都读它）。
-   ============================================================================ */
-window.__errors = [];
-
-function reportError(what, msg, stack){
-  const line = what + "：" + msg + (stack ? ("\n" + stack) : "");
-  try{ window.__errors.push(line); }catch(e){}
-  try{ console.error(line); }catch(e){}
-  try{
-    const bar = document.getElementById("status-text");
-    if (bar){ bar.textContent = "⚠ " + msg; bar.className = "bad"; }
-  }catch(e){}
-  try{ if (typeof toast === "function") toast("⚠ " + msg, true); }catch(e){}
-}
-
-window.addEventListener("error", function(e){
-  reportError("脚本出错", (e && e.message) || String(e),
-              (e && e.error && e.error.stack) || (e && e.filename
-                ? (e.filename + ":" + e.lineno + ":" + e.colno) : ""));
-});
-window.addEventListener("unhandledrejection", function(e){
-  const r = e && e.reason;
-  reportError("未处理的 Promise", (r && (r.message || r)) || String(e),
-              (r && r.stack) || "");
-});
 
 /* ============================================================================
    moss 界面：详情 / 命令行 / **文件管理**

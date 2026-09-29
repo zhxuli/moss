@@ -66,6 +66,7 @@ BROWSERS = [
 
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
+          "btn-detail", "err-path",
           "drop-hot", "drop-dir", "drop-file", "console-input", "embed",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
@@ -162,25 +163,28 @@ def mock_data():
         fs[rel] = {"ok": True, "rel": rel, "entries": entries, "writable": True,
                    "path": str(sub)}
 
-    # ★ 仓库里的 `user_data/pkgs/` 现在是**空的**（临时装的包都清理过了），可这几个
-    #   场景必须有"一个用户层的包"才试得出来：目录名≠id（`D-27`）、改名之后文件管理
-    #   还认不认路（`V-30`）、手改 id 之后要不要统一目录名（`V-32`/`V-33`）。
-    #   所以预览里**现造一个**：目录名 `my-first`、id `first` —— 正好就是那种不一致。
-    #   （`--check` 一开就露出来了：这三个场景原来一直在报 FAIL，只是没人读标题。）
-    if not any(p.get("layer") == "user" for p in (payload.get("packages") or [])):
-        udir = str(Path(payload["user_data"]) / "pkgs" / "my-first")
-        payload["packages"].append({
-            "id": "first", "name": "预览：第一个包", "desc": "预览用的用户层包（目录名 my-first）",
-            "kind": "task", "version": "0.1.0", "layer": "user", "dir": udir,
-            "aliases": [], "tags": [], "params": [], "drop": [], "ui": None, "docs": {},
-            "ai_expose": False, "ai_risk": "", "examples": [], "icon": "", "icon_svg": ""})
-        fs["user/pkgs/my-first"] = {
-            "ok": True, "rel": "user/pkgs/my-first", "writable": True, "path": udir,
-            "entries": [
-                {"name": "pkg.json", "rel": "user/pkgs/my-first/pkg.json", "dir": False,
-                 "size": 320, "mtime": 0, "ext": "json"},
-                {"name": "run.py", "rel": "user/pkgs/my-first/run.py", "dir": False,
-                 "size": 210, "mtime": 0, "ext": "py"}]}
+    # ★ 预览里**总是**现造一个用户层的包：目录名 `preview-my-first`、id `first` ——
+    #   目录名 != id，正好就是 `D-27` 那两个分支要的情形（改名之后文件管理还认不认路
+    #   `V-30`、手改 id 之后要不要统一目录名 `V-32`/`V-33`）。
+    #   ★ 为什么从"只在 `user_data/pkgs/` 为空时才造"改成**总是造**（`V-81`）：你在界面上
+    #   新建了一个包（`user_data/pkgs/my-first`，id 也叫 `my-first`）之后，这几个场景就
+    #   悄悄换了对象 —— 找不到 id `first` 就退回 `packages[0]`（`ai`，一个系统包、目录名
+    #   还正好等于 id），于是 `pkg-renamed-file` 判 FAIL / `pkg-odd-dir` 其实没试到那条
+    #   分支，而**界面代码一个字没动**。场景绑在自己这份固定数据上，才不受你本机装了什么影响。
+    udir = str(Path(payload["user_data"]) / "pkgs" / "preview-my-first")
+    payload["packages"].append({
+        "id": "first", "name": "预览：第一个包",
+        "desc": "预览用的用户层包（目录名 preview-my-first，故意和 id 不一样）",
+        "kind": "task", "version": "0.1.0", "layer": "user", "dir": udir,
+        "aliases": [], "tags": [], "params": [], "drop": [], "ui": None, "docs": {},
+        "ai_expose": False, "ai_risk": "", "examples": [], "icon": "", "icon_svg": ""})
+    fs["user/pkgs/preview-my-first"] = {
+        "ok": True, "rel": "user/pkgs/preview-my-first", "writable": True, "path": udir,
+        "entries": [
+            {"name": "pkg.json", "rel": "user/pkgs/preview-my-first/pkg.json", "dir": False,
+             "size": 320, "mtime": 0, "ext": "json"},
+            {"name": "run.py", "rel": "user/pkgs/preview-my-first/run.py", "dir": False,
+             "size": 210, "mtime": 0, "ext": "py"}]}
 
     return {"payload": payload, "hist": hist, "fs": fs, "settings": settings,
             # `--early-ready`：让 mock 在 js/*.js 之前就发 ready（`V-68` 的竞态场景）
@@ -276,6 +280,9 @@ MOCK_JS = r"""
     path_start: async () => ({ok: true, run_id: "r1", pid: 1,
       cmd: "moss /main.py", cwd: "D:\\python\\wwwroot\\ZeEn"}),
     run_host: async (text) => {
+      // ★ 宿主命令全部记一笔（`V-81`）：场景要能判定"界面到底有没有把这条命令交给宿主"
+      //   —— 以前只判"截图生成了没有"，按钮压根没绑上也是 OK。
+      (M.host = M.host || []).push(String(text || ""));
       // ★ `--rename <旧> <新id>`：假宿主**真的**把包改名 —— id / dir 都改，
       //   假文件系统里那个目录也一起搬。这样才能验"改名之后文件管理还认不认路"。
       const m = /^\s*--rename\s+(\S+)\s+(\S+)\s*$/.exec(String(text || ""));
@@ -1100,6 +1107,84 @@ MOCK_JS = r"""
         if (ok) setTab("console");
         document.title = ok ? "READY" : "DROP-FAIL";
       }
+      // ★ 报错这条路本身也要能自证（`V-81`）：故意造一个"计算属性里抛错"的组件（和
+      //   `MossList.rows` 读 `DATA.packages` 抛的那个是同一类），看它有没有被
+      //   `Vue.config.errorHandler` 收进 `window.__errors`。
+      //   为什么要这条：那道"有错就判 PAGE-ERR"的闸要是本身收不到错，坏代码照样过 ——
+      //   我更怕这个（你正是从 devtools 里看到一条我这边"零错误"的报错）。
+      if (h === "err-path"){
+        const before = (window.__errors || []).length;
+        const div = document.createElement("div");
+        document.body.appendChild(div);
+        // 用**界面自己那条路**（`mountVue`）建一个"computed 里抛错"的组件 —— 和
+        // `MossList.rows` 读 `DATA.packages` 抛的那个是同一类、同一条通路。
+        let mounted = "ok";
+        try{
+          mountVue({ computed: { boom(){ throw new Error("自测：故意在 computed 里扔的错"); } },
+                     template: "<div>{{ boom }}</div>" }, div);
+        }catch(e){ mounted = "抛出到外面:" + e.message; }
+        await sleep(250);
+        div.remove();
+        const errs = window.__errors || [];
+        const got = errs.length - before;
+        const first = String(errs[before] || "");
+        const ok = got > 0 && /组件出错|自测/.test(first);
+        window.__errPathOK = ok;                 // 别把这条"故意错的"算到最后那道闸头上
+        document.querySelector("#meta").textContent = "ERR-PATH " + (ok ? "OK" : "FAIL") +
+          " 收到 " + got + " 条（" + mounted + "）：" + first.replace(/\n/g, " ").slice(0, 150);
+        document.title = ok ? "READY" : "ERRPATH-FAIL";
+        return;
+      }
+
+      // ★ 点**真按钮**（`V-81`）：详情页那串按钮是 `wireDetail()` 挨个 `.onclick` 绑上去的，
+      //   只要它中途抛一次异常，**它后面那些按钮就全没绑上**，而界面一个字都不报 ——
+      //   表现就是"更名和卸载坏了"。这条场景把"每个按钮都绑上了没有 + 点了到底有没有
+      //   把命令交给宿主"变成一次判定（以前只判"截图生成了没有"，全死也是 OK）。
+      if (h === "btn-detail"){
+        const p0 = state.packages.find(x => x.id === "first") ||
+                   state.packages.find(x => x.layer === "user") || state.packages[0];
+        const oldId = p0.id, newId = oldId + "9";
+        select(oldId);
+        await sleep(400);
+        M.host = [];
+        const dead = ["btn-run", "btn-vis", "btn-openui", "btn-rename", "btn-remove"]
+          .filter(i => { const el = document.getElementById(i);
+                         return !el || typeof el.onclick !== "function"; });
+        // 更名：点真按钮 → 弹窗里填新 id → 确定
+        const rn = document.getElementById("btn-rename");
+        if (rn) rn.click();
+        await sleep(250);
+        const inp = document.getElementById("m-input");
+        const mok = document.getElementById("m-ok");
+        if (!inp || !mok){ document.title = "BTN-NO-MODAL"; return; }
+        inp.value = newId; mok.click();
+        await sleep(1600);
+        const renamed = M.host.some(t => new RegExp("^--rename\\s+" + oldId + "\\s+" + newId + "$")
+                                          .test(t.trim()));
+        const gotNew = !!state.packages.find(x => x.id === newId);
+        const lostOld = !state.packages.find(x => x.id === oldId);
+        // 卸载：改名之后界面**又重画过一遍**，正好试试接线跟没跟上
+        const rm = document.getElementById("btn-remove");
+        if (rm) rm.click();
+        await sleep(250);
+        const mok2 = document.getElementById("m-ok");
+        if (!mok2){ document.title = "BTN-NO-CONFIRM"; return; }
+        mok2.click();
+        await sleep(1200);
+        const removed = M.host.some(t => new RegExp("^--remove\\s+" + newId + "\\s+-y$")
+                                          .test(t.trim()));
+        const errs = window.__errors || [];
+        const ok = !dead.length && renamed && gotNew && lostOld && removed;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          " 没绑上的按钮=" + (dead.join(",") || "无") + " 更名=" + (renamed ? 1 : 0) +
+          " 卸载=" + (removed ? 1 : 0) + " 页内错=" + errs.length +
+          " 宿主命令=" + JSON.stringify(M.host);
+        document.title = ok ? "READY"
+          : ("BTN-FAIL 死=" + (dead.join(",") || "无") + " 更名=" + (renamed ? 1 : 0) +
+             " 卸载=" + (removed ? 1 : 0) + " 页内错=" + errs.length + " " +
+             String(errs[0] || "").slice(0, 70));
+        return;
+      }
     } catch(e){
       // ★ 场景里出错要**看得见**：光设 document.title 是看不见的（截图不看标题栏），
       //   而工具只检查"图片有没有生成" ⇒ 出错也报 OK（踩过：`window.RUNS` 那次）。
@@ -1110,9 +1195,20 @@ MOCK_JS = r"""
       return;
     }
     await sleep(350);
+    // ★ 页面里只要攒下过错误（`window.__errors`：内联那段捕获 + Vue 的 errorHandler 都往
+    //   这里写），这个场景就不算过 —— 否则"某块静悄悄地死了"又会溜过去（`V-81`）。
+    const _pe = window.__errors || [];
     // ★ 只有"还停在初始标题"时才盖成 READY —— 以前这行会把场景自己设的
     //   `...-FAIL` 一起盖掉，于是"截图里有 FAIL、工具还说 OK"（`V-63` 顺手修）。
-    if (!/FAIL|ERR|STALE/.test(document.title)) document.title = "READY";
+    if (!/FAIL|ERR|STALE/.test(document.title)){
+      if (_pe.length && !window.__errPathOK){
+        document.title = "PAGE-ERR " + _pe.length + " " + String(_pe[0]).slice(0, 90);
+        const _m2 = document.querySelector("#meta");
+        if (_m2) _m2.textContent = "PAGE-ERR\n" + _pe.slice(0, 3).join("\n").slice(0, 400);
+      } else {
+        document.title = "READY";
+      }
+    }
   }
   window.addEventListener("load", () => {
     // `--early-ready`：**在页面脚本挂监听之前**就把 ready 发掉（`V-68` 那条竞态）。

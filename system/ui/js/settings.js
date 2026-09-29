@@ -317,7 +317,7 @@ function settingsApp(){
   if (!_settingsApp){
     const host = document.getElementById("settings-host");
     if (!host) return null;
-    _settingsApp = Vue.createApp(MossSettings).mount(host);
+    _settingsApp = mountVue(MossSettings, host);
   }
   return _settingsApp;
 }
