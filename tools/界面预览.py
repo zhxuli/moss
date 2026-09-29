@@ -61,7 +61,7 @@ BROWSERS = [
 
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
-          "drop-hot", "drop-dir", "drop-file", "console-input",
+          "drop-hot", "drop-dir", "drop-file", "console-input", "embed",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail"]
 
@@ -185,6 +185,43 @@ MOCK_JS = r"""
     run_poll: async () => ({ok: true, running: false, code: 0,
       out: "[执行] md5\n[目录] " + state.home + "\n\n900150983cd24fb0d6963f7d28e17f72\n"}),
     run_stop: async () => ({ok: true, msg: "(预览) 已停止"}),
+    // ---- 内嵌界面（`V-48`）那四个接口。预览里"包的后端"是假的：就地回几条，
+    //      协议跟真的一模一样（真后端是那个包的进程，在 stdio 上说 JSON 行）----
+    embed_start: async (pid) => {
+      M.embed = {pid: pid, t: setInterval(() => {
+        const d = new Date();
+        window.__mossEmbedFromBackend(pid, JSON.stringify({event: "time", data: {
+          text: d.toTimeString().slice(0, 8),
+          date: d.toISOString().slice(0, 10), week: "一二三四五六日"[d.getDay()],
+          who: "(预览) 假后端"}}));
+      }, 1000)};
+      return {ok: true, pid: 4242};
+    },
+    embed_send: async (pid, line) => {
+      let req = {};
+      try { req = JSON.parse(line); } catch(e){}
+      const reply = (result) => window.__mossEmbedFromBackend(pid, JSON.stringify(
+        {id: req.id, ok: true, result: result}));
+      const d = new Date();
+      if (req.method === "info") reply({pid: 4242, python: "3.12（预览）", cwd: "(预览)", embedded: true});
+      else if (req.method === "now") reply({text: d.toTimeString().slice(0, 8),
+        date: d.toISOString().slice(0, 10), week: "一二三四五六日"[d.getDay()],
+        who: "(预览) 假后端"});
+      else if (req.method === "subscribe") reply({subscribed: ["time"]});
+      else if (req.method === "bmi") {
+        const h = (req.params.height || 0) / 100, w = req.params.weight || 0;
+        const v = Math.round((w / (h * h)) * 100) / 100;
+        const lv = v < 18.5 ? ["偏瘦", "多吃点，别熬夜。"] : v < 24 ? ["正常", "保持住。"]
+                 : v < 28 ? ["超重", "少喝奶茶，多走路。"] : ["肥胖", "认真考虑一下运动和饮食吧。"];
+        reply({ok: true, bmi: v, level: lv[0], advice: lv[1],
+               who: "(预览) 假后端", at: {text: d.toTimeString().slice(0, 8)}});
+      } else reply(null);
+      return {ok: true};
+    },
+    embed_stop: async () => { if (M.embed && M.embed.t) clearInterval(M.embed.t);
+                              M.embed = null; return {ok: true, msg: "(预览) 已停"}; },
+    embed_state: async () => ({ok: true, running: !!M.embed}),
+    embed_take: async () => ({ok: true, text: ""}),
     // 给正在跑的进程喂一行（`V-43`）：真后端写进它的 stdin，这里记下来
     run_input: async (rid, line) => {
       (M.inputs = M.inputs || []).push({rid: rid, line: line});
@@ -565,6 +602,40 @@ MOCK_JS = r"""
       //        `webkitGetAsEntry()`，跟真拖动一样能看出是文件还是文件夹）
       //     ② 松手那半：直接调落地口 `window.__mossDrop([...])`
       //        （真机上由宿主从 WebView2 取到真实路径后调用它）
+      // ★ 内嵌界面（`V-48`）：拿**真包的页面**（`ui.embed` 指到 system/pkgs/bmi/ui/index.html）
+      //   走一遍完整回路 —— Vue3 应用 + 垫片 + postMessage + 壳的转发 + （假）后端。
+      //   验的正是"标题栏多出第四个选项卡、里面真的能算、切走再回来还在"。
+      if (h === "embed"){
+        const p0 = state.packages.find(x => x.ui && x.ui.embed) || null;
+        if (!p0){ document.title = "NO-EMBED-PKG";
+                  document.querySelector("#meta").textContent = "SCENARIO-ERR 没有带 ui 声明的包";
+                  return; }
+        select(p0.id);
+        await sleep(400);
+        const tabBtn = document.querySelector('.tab[data-tab="embed"]');
+        const tabShown = !!(tabBtn && !tabBtn.hidden);
+        await embedOpen(p0);                       // = 点「运行」
+        await sleep(2500);                          // 等 iframe 加载 + Vue 挂载 + 问后端
+        const frame = document.querySelector("#embed-wrap iframe[data-pid='" + p0.id + "']");
+        let inner = null;
+        try { inner = frame.contentDocument; }catch(e){ inner = null; }
+        // file:// 的 iframe 是"另一个源"，父页面**读不到**里面（这正是隔离）——
+        // 所以这里只验"壳这一侧"，里面的内容靠截图看。
+        const shown = document.querySelector("#pane-embed").classList.contains("on");
+        // 切走再切回来：iframe 不该被卸载（你要的"切走还在跑"）
+        const srcBefore = frame.getAttribute("src");
+        setTab("file");
+        await sleep(300);
+        setTab("embed");
+        await sleep(300);
+        const srcAfter = frame.getAttribute("src");
+        const sameFrame = (srcBefore === srcAfter) && !!srcAfter && srcAfter !== "about:blank";
+        const ok = tabShown && shown && sameFrame;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 选项卡=" + (tabShown ? 1 : 0) +
+          " 显示了=" + (shown ? 1 : 0) + " 切走不卸载=" + (sameFrame ? 1 : 0);
+        document.title = ok ? "READY" : "EMBED-FAIL";
+      }
       // ★ 命令行那行输入（`V-43`）：包 `input()` 问你话时能答。
       //   真的 stdin 那条链由宿主侧测试证明；这里只验界面这半：
       //   在跑 → 输入行可用；发一行 → 回显进输出 + 调了 run_input；跑完 → 又禁用。

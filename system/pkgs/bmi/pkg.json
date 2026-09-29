@@ -1,0 +1,44 @@
+{
+  "spec": 1,
+  "id": "bmi",
+  "kind": "task",
+  "version": "0.1.0",
+  "name": {
+    "zh-CN": "BMI 计算器（示例包）",
+    "en": "BMI calculator (sample)"
+  },
+  "desc": {
+    "zh-CN": "示例包：Vue3 界面 + Python 后端。既能自己开窗口，也能内嵌进 moss 的「界面」选项卡",
+    "en": "Sample package: Vue3 UI + Python backend; standalone window or embedded tab"
+  },
+  "tags": [
+    "示例",
+    "vue",
+    "内嵌"
+  ],
+  "aliases": [
+    "bmi"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.py"
+  },
+  "params": [],
+  "ui": {
+    "embed": "ui/index.html",
+    "title": {
+      "zh-CN": "BMI 计算器"
+    }
+  },
+  "ai": {
+    "expose": false
+  },
+  "drop": {
+    "file": {
+      "param": true
+    }
+  },
+  "docs": {
+    "zh-CN": "这个包是拿来当**样板**的：一份界面代码（ui/index.html + ui/app.js，Vue 3），两种跑法 ——\n\n  moss :bmi          独立开一个窗口（不依赖 moss 的界面）\n  在 moss 里点「运行」 内嵌到「界面」选项卡里跑\n\n界面跟后端说话全部经过 ui/moss-embed.js 这个垫片；业务（BMI 怎么算、时间是多少）全在 main.py 里。"
+  }
+}
