@@ -1581,8 +1581,41 @@ function fmSave(t){
   if (!t || t.binary) return;
   pywebview.api.fs_write(t.rel, t.text, t.encoding || "utf-8", t.bom || "").then(r => {
     toast(r.ok ? ("已保存 " + t.rel + (r.factory ? "（出厂件）" : "")) : ("✗ " + r.msg), !r.ok);
-    if (r.ok){ t.original = t.text; fmPaintBar(); fmPaintDirty(t); }
+    if (!r.ok) return;
+    t.original = t.text; fmPaintBar(); fmPaintDirty(t);
+    // 存的是**包清单** ⇒ 界面手里那份包数据已经过期了，重新解析一遍
+    if (isPkgManifest(t.rel)) refreshPkgs();
   });
+}
+
+/* ---------------------------------------------------------------- 包数据刷新
+   `pkg.json` 是宿主唯一的清单来源；它一变，界面手里那份（名字 / 说明 / 参数表 /
+   图标 / 入口）就全是旧的。界面的 `DATA` 是**问宿主要来的**（不自己解析包格式，
+   见 `U-16`），所以这里就是"再问一遍 + 重画受影响的地方"。
+   ★ 刻意**不调用 `init()`**：那会把文件管理切回"全部文件"、丢掉当前目录和打开的
+     文件 —— 用户正开着 pkg.json 在编辑，保存一下就被弹走是不能接受的。
+     这里只刷新包列表、状态与详情；文件管理的目录 / 子选项卡（含编辑器里的内容）
+     原样不动，只把子选项卡的**名字**重画一下。 */
+function isPkgManifest(rel){
+  return /(^|\/)pkg\.json$/i.test(String(rel || ""));
+}
+async function refreshPkgs(){
+  let fresh;
+  try{ fresh = await pywebview.api.state(); }catch(e){ return; }
+  if (!fresh || !fresh.packages) return;
+  DATA = fresh;
+  renderList(); paintStates();
+  // `DATA` 换了新对象，`cur` 得指向新的那一份，否则详情里读到的还是旧字段
+  if (cur){
+    const id = cur.id;
+    cur = DATA.packages.find(p => p.id === id) || null;
+    if (cur) renderDetail();
+    else {                       // 清单被删/改到认不出来了：这个包已经不在了
+      cur = null; renderDetail();
+      toast("这个包已经不在列表里了（pkg.json 被删掉或改坏了）", true);
+    }
+  }
+  fmPaintBar();                  // 子选项卡上那个包名可能变了
 }
 
 /* ---- 渲染：子选项卡条 + 各页 ---- */
@@ -2032,6 +2065,7 @@ async function fmCmd(act){
     toast(r.msg, !r.ok);
     if (r.ok && s.clip.cut) s.clip = null;
     fmRefresh();
+    if (r.ok && (r.made || []).some(isPkgManifest)) refreshPkgs();   // 搬进/搬出了一个包
     return;
   }
   if (act === "newfile" || act === "newdir"){
@@ -2045,6 +2079,7 @@ async function fmCmd(act){
         const s2 = fmState(FM.ctx);
         s2.sel.clear(); s2.sel.add(r.rel);
         if (!isDir) fmOpenPage(r.rel); else fmRender();
+        if (isPkgManifest(r.rel)) refreshPkgs();     // 新建了一个清单 ⇒ 这是新包
       }
     });
     return;
@@ -2061,6 +2096,7 @@ async function fmCmd(act){
         if (t){ t.rel = r.rel; t.name = r.rel.split("/").pop(); }
         s2.sel.clear(); s2.sel.add(r.rel);
         fmRefresh();
+        if (isPkgManifest(r.old) || isPkgManifest(r.rel)) refreshPkgs();
       }
     });
     return;
@@ -2078,6 +2114,7 @@ async function fmCmd(act){
           if (!s2.tabs.some(t => t.rel === s2.active)) s2.active = "__browse__";
           s2.sel.clear();
           fmRefresh();
+          if (selArr.some(isPkgManifest)) refreshPkgs();
         }
       });
     return;
