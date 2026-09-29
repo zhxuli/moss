@@ -22,6 +22,11 @@ function reportError(what, msg, stack){
     if (bar){ bar.textContent = "⚠ " + msg; bar.className = "bad"; }
   }catch(e){}
   try{ if (typeof toast === "function") toast("⚠ " + msg, true); }catch(e){}
+  // ★ 写进日志文件（`V-71`）：界面里出的事，我在外面也读得到（不用你开控制台）
+  try{
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.ui_log)
+      window.pywebview.api.ui_log("[页内报错] " + what + "：" + msg);
+  }catch(e){}
 }
 
 window.addEventListener("error", function(e){
