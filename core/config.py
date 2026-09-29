@@ -124,57 +124,55 @@ force_kill = true
 SETTINGS_GROUPS = [
     {"name": "命令前缀符号", "icon": "hash", "live": True,
      "blurb": "moss 看行首那个符号决定这条命令是什么意思。四项都可以换成你顺手的字符"
-              "（moss 会先去掉前缀，再判断这条命令属于哪一类）。",
+              "（moss 会先去掉前缀，再判断这条命令属于哪一类）。"
+              "谁留空，裸名就归谁 —— 这一组的两项是互相牵制的，清空了会有红字提示。",
      "items": [
          {"key": "symbols.path_mode", "label": "路径调用", "type": "symbol",
-          "hint": "留空 = 裸名就是它：moss m 直接在当前目录（及上层）找 main.py 之类的入口跑"},
-         {"key": "symbols.no_chdir_mode", "label": "跑路径但不切目录", "type": "symbol",
-          "hint": "moss /m：在当前目录跑那个文件，不切到它所在的目录"
-                  "（脚本要用当前目录的相对路径时用）"},
-         {"key": "symbols.plugin_mode", "label": "跑装好的包", "type": "symbol",
-          "hint": "moss :img：冒号后面是包名，id 和别名都能用"},
-         {"key": "symbols.no_force_kill_mode", "label": "后台脱离运行", "type": "symbol",
-          "hint": "moss ~m：脱离控制台跑，Ctrl+C 也管不到它（跑服务、跑长任务用）"},
+          "hint": "留空 = 裸名就是它：moss m 直接在当前目录（及上层）找 main.py 之类的入口跑。"},
+         {"key": "symbols.no_chdir_mode", "label": "不切目录", "type": "symbol",
+          "hint": "moss /m：在**当前目录**跑那个文件，不切到它所在的目录 —— "
+                  "脚本里要用当前目录的相对路径时用这个。"},
+         {"key": "symbols.plugin_mode", "label": "跑包", "type": "symbol",
+          "hint": "moss :img：冒号后面是包名，id 和别名都能用。"},
+         {"key": "symbols.no_force_kill_mode", "label": "后台脱离", "type": "symbol",
+          "hint": "moss ~m：脱离控制台跑，Ctrl+C 也管不到它 —— 跑服务、跑长任务用。"},
      ]},
-    {"name": "每次运行前后的提示", "icon": "terminal",
+    {"name": "运行时打印的提示", "icon": "terminal",
      "blurb": "每次跑东西时，宿主在运行前 / 运行后打印的那几行。嫌吵就关掉对应的开关"
               "（关掉之后，界面「命令行」那一页里也会少这几行）。",
      "items": [
          {"key": "output.auto_clear_screen", "label": "运行前清屏", "type": "bool",
-          "hint": "先清掉上一次的输出再跑；想留着它就别开"},
-         {"key": "output.command", "label": "打印将要执行的命令", "type": "bool",
-          "hint": "把最终敲的那条命令原样打出来（排查参数问题时最有用的一行）"},
-         {"key": "output.directory", "label": "打印工作目录", "type": "bool",
-          "hint": "这个包（或脚本）是在哪个目录里跑的"},
-         {"key": "output.pid", "label": "打印子进程 PID", "type": "bool",
-          "hint": "子进程的进程号 —— 和任务管理器里对上号用"},
-         {"key": "output.start_time", "label": "打印开始时间", "type": "bool",
-          "hint": "哪一刻开始跑的"},
-         {"key": "output.end_time", "label": "打印结束时间", "type": "bool",
-          "hint": "哪一刻跑完的"},
-         {"key": "output.duration", "label": "打印运行总长", "type": "bool",
-          "hint": "跑完打印这次用了多久（秒）"},
-         {"key": "output.start_banner", "label": "起始横幅文本", "type": "text",
-          "hint": "运行前打印的一整行自定义文字；留空 = 不打印"},
-         {"key": "output.end_banner", "label": "结束横幅文本", "type": "text",
-          "hint": "运行后打印的一整行自定义文字；留空 = 不打印"},
+          "hint": "先清掉上一次的输出再跑；想留着它就别开。"},
+         {"key": "output.command", "label": "打印命令", "type": "bool",
+          "hint": "把最终敲的那条命令原样打出来 —— 排查参数问题时最有用的一行。"},
+         {"key": "output.directory", "label": "打印目录", "type": "bool",
+          "hint": "这个包（或脚本）是在哪个目录里跑的。"},
+         {"key": "output.pid", "label": "打印 PID", "type": "bool",
+          "hint": "子进程的进程号 —— 和任务管理器里对上号用。"},
+         {"key": "output.start_time", "label": "开始时间", "type": "bool",
+          "hint": "哪一刻开始跑的。"},
+         {"key": "output.end_time", "label": "结束时间", "type": "bool",
+          "hint": "哪一刻跑完的。"},
+         {"key": "output.duration", "label": "运行总长", "type": "bool",
+          "hint": "跑完打印这次用了多久（秒）。"},
+         {"key": "output.start_banner", "label": "起始横幅", "type": "text",
+          "hint": "运行前打印的一整行自定义文字；留空 = 不打印。"},
+         {"key": "output.end_banner", "label": "结束横幅", "type": "text",
+          "hint": "运行后打印的一整行自定义文字；留空 = 不打印。"},
          {"key": "output.symbol", "label": "行首符号", "type": "text",
-          "hint": "上面那几行开头的符号（例如 >）；留空 = 用内置的 [执行] 这种"},
+          "hint": "上面那几行开头的符号（例如 >）；留空 = 用内置的 [执行] 这种。"},
      ]},
-    {"name": "找文件", "icon": "folder-open",
-     "blurb": "moss m 这类路径调用怎么找文件：从当前目录开始一层层往上，"
-              "谁先命中算谁（找到了就不再往上找）。",
+    {"name": "别的", "icon": "sliders",
+     "blurb": "两件单独的事：找文件往上找几层，以及按 Ctrl+C 时怎么处理子进程树。",
      "items": [
          {"key": "search.max_parent_depth", "label": "向上找几层", "type": "int",
-          "hint": "含当前目录在内，最多看几个目录。往上找得越远越慢，也越容易撞上"
-                  "上层项目里的同名文件（撞上就会问你选哪个）"},
-     ]},
-    {"name": "Ctrl+C", "icon": "alert-triangle",
-     "blurb": "在终端里跑东西时按 Ctrl+C，宿主怎么处理这个子进程树。",
-     "items": [
-         {"key": "ctrl_c.force_kill", "label": "第一次按就强杀整棵树", "type": "bool",
-          "hint": "关掉之后：第一次按只温和地请它退出，再按一次才强杀整棵树"
-                  "—— 有收尾工作的包适合关掉"},
+          "hint": "跑 moss m 这类路径调用时，从当前目录开始一层层往上找，谁先命中算谁。"
+                  "这一项是「含当前目录在内最多看几个目录」：默认 3 = 当前 + 往上 3 级，"
+                  "一共 4 个目录。往上找得越远越慢，也越容易撞上上层项目里的同名文件"
+                  "（撞上就会停下来问你选哪个）。"},
+         {"key": "ctrl_c.force_kill", "label": "Ctrl+C 就强杀", "type": "bool",
+          "hint": "在终端里按 Ctrl+C 时，第一次就强杀整棵进程树。关掉之后：第一次只温和地"
+                  "请它退出，再按一次才强杀 —— 有收尾工作的包适合关掉。"},
      ]},
 ]
 
