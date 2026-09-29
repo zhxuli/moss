@@ -524,6 +524,12 @@ let curH = null;
 function isHist(o){ return !!o && !o.id && !!o.target; }   // 包有 id，历史有 target
 function selObj(){ return curH || cur; }
 let lastRun = null;
+/* 包 id 的规矩（宿主 `core/paths.py` 的 `ID_RE`，`F-26`）：它是身份，还要当目录名用
+   （`state/<id>`），所以只允许小写字母开头 + 小写字母/数字/下划线/连字符，最长 32。
+   界面这边也存一份：保存清单时能**当场**说清楚哪儿不合法，不用等宿主把包丢掉。 */
+const ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+/* 上一次弹过的"包表没读回来"的原因 —— 同一个原因只弹一次，别每 5 秒刷一次屏。 */
+let lastStaleReason = "";
 const $ = s => document.querySelector(s);
 
 /* ---------------------------------------------------------------- 后缀 → 图标/颜色/语言 */
@@ -1705,7 +1711,7 @@ function fmSave(t){
     if (!r.ok) return;
     t.original = t.text; fmPaintBar(); fmPaintDirty(t);
     // 存的是**包清单** ⇒ 界面手里那份包数据已经过期了，重新解析一遍
-    if (isPkgManifest(t.rel)) refreshPkgs();
+    if (isPkgManifest(t.rel)) refreshPkgs(null, true).then(() => afterManifestSaved(t.rel, t.text));
   });
 }
 
@@ -1720,7 +1726,7 @@ function fmSave(t){
 function isPkgManifest(rel){
   return /(^|\/)pkg\.json$/i.test(String(rel || ""));
 }
-async function refreshPkgs(preferId){
+async function refreshPkgs(preferId, quiet){
   let fresh;
   try{ fresh = await pywebview.api.state(); }catch(e){ return; }
   if (!fresh || !fresh.packages) return;
@@ -1736,10 +1742,102 @@ async function refreshPkgs(preferId){
     if (cur) renderDetail();
     else {                       // 清单被删/改到认不出来了：这个包已经不在了
       cur = null; renderDetail();
-      toast("这个包已经不在列表里了（pkg.json 被删掉或改坏了）", true);
+      // `quiet`：存清单那条路自己会说得更准（是 JSON 坏了还是 id 不合法），
+      // 别在这儿再抢一句含糊的（`V-33`）。
+      if (!quiet) toast("这个包已经不在列表里了（pkg.json 被删掉或改坏了）", true);
     }
   }
   fmPaintBar();                  // 子选项卡上那个包名可能变了
+  // 撤回快照这件事**不能静默**（`V-31` ✅）：宿主那边有话说（多半是某个包的
+  // `pkg.json` 写坏了 / id 不合法），把它原话弹出来 —— 否则你看到的现象只是
+  // "我新建的包怎么不出现"，真正的原因谁也看不见。
+  const sr = fresh.stale_reason;
+  if (sr && sr !== lastStaleReason){
+    lastStaleReason = sr;
+    toast("读包表失败，界面现在显示的是旧数据：" + sr, true);
+  } else if (!sr){
+    lastStaleReason = "";
+  }
+}
+
+/* ---------------------------------------------------------------- 存完清单对一遍账
+   （`V-33` ✅，你定的）你说的是：「我修改了 pkg.json 以后 我点保存按钮 你应该重新解析
+   并且发现不配套的情况 然后这个时候 你应该询问用户 这种情况应该怎么处理 就类似于现在
+   的更名功能 如果更改了文件夹名字 进行了统一 那么 文件管理这里 你也需要把路径从原来
+   的变更新的」。
+
+   所以这里就是"重新解析"之后的**对账**。一个包有**三把钥匙**（`D-27`）：
+       包目录名 ／ 清单里的 id ／ 数据目录 state/<id>
+   手工改清单最容易把它们改散，散了的后果又特别难查（数据"凭空没了"、
+   文件管理指着不存在的路径）。对账分三种结果：
+     · 宿主压根没收下它（JSON 坏 / id 非法 / id 被占）→ 说清楚为什么，别让它
+       "从列表里消失得不明不白"；
+     · 收下了，但目录名和 id 不一样 → **问一句**，你说统一就走更名那笔事务
+       （目录名一起改；旧数据目录还在的话一起搬），然后把文件管理里的路径
+       从旧的换成新的；
+     · 都对得上 → 什么都不做。 */
+async function afterManifestSaved(fileRel, text){
+  if (DATA.stale_reason) return;                 // 包表本身没读回来，别乱下结论（上面弹过了）
+  const dirRel = String(fileRel).replace(/\/[^/]+$/, "");   // `…/pkg.json` → 它所在的包目录
+  const base = dirRel.split("/").pop() || "";
+  const layer = dirRel.split("/")[0];            // user / system —— 目录得改回**同一层**里
+  const p = DATA.packages.find(x => pkgRel(x) === dirRel);
+  let why = "", newId = "";
+  if (!p){
+    try{ newId = String((JSON.parse(text) || {}).id || "").trim().toLowerCase(); }
+    catch(e){ why = "pkg.json 不是合法 JSON（" + e.message + "）"; }
+    if (!why && !ID_RE.test(newId))
+      why = "id '" + newId + "' 不合法（只允许 " + ID_RE.source + "）";
+    if (!why && DATA.packages.some(x => x.id === newId))
+      why = "id '" + newId + "' 已经被别的包用了";
+    if (!why) why = "清单读不出来（宿主没认这个包）";
+    toast("✗ 宿主没收下这个包：" + why, true);
+    return;
+  }
+  if (p.id === base) return;                    // 三把钥匙对得上，收工
+  const oldData = "user/state/" + base, newData = "user/state/" + p.id;
+  let moveData = false;
+  try{
+    const has = await pywebview.api.fs_exists([oldData, newData]);
+    const h = (has && has.has) || {};
+    moveData = !!h[oldData] && !h[newData];
+  }catch(e){ moveData = false; }
+  askConfirm("清单和包目录不一样了",
+    "你把这个包的 id 改成了 <b>" + esc(p.id) + "</b>，但包目录还叫 <b>" + esc(base) + "</b>。" +
+    (moveData ? "<br>另外旧数据目录 <b>user_data/state/" + esc(base) + "</b> 还在，" +
+                "一起搬成 <b>state/" + esc(p.id) + "</b>。" : "") +
+    "<br><br>要我把包目录名" + (moveData ? "（连同旧数据）" : "") +
+    "一起改成 <b>" + esc(p.id) + "</b> 吗？",
+    () => unifyPkgDir(p, dirRel, moveData, layer));
+}
+
+/* 统一：目录名 → id。走宿主那笔改名事务（新旧 id 都写成它现在的 id ⇒ 只改目录名），
+   旧数据目录另搬一下（宿主不预建数据目录，`state/` 又在 user_data 里，用文件接口搬即可），
+   最后**把文件管理里那些缓存路径从旧的换成新的**（不然双击编辑会说「不是文件」，`V-30`）。 */
+async function unifyPkgDir(p, dirRel, moveData, layer){
+  consoleKey = "__host__";
+  const cmd = "moss --rename " + p.id + " " + p.id;
+  setConsole("__host__", "$ " + cmd, "运行中");
+  const r = await pywebview.api.run_host("--rename " + p.id + " " + p.id);
+  setConsole("__host__", "$ " + cmd + "\n\n" + (r.out || "(没有输出)"),
+             r.code === 0 ? "完成" : ("退出码 " + r.code));
+  if (r.code !== 0){
+    toast("✗ 没统一成，看「命令行」里说了什么", true);
+    setTab("console");
+    return;
+  }
+  if (moveData){
+    const base = String(dirRel).split("/").pop();
+    const rr = await pywebview.api.fs_rename("user/state/" + base, p.id);
+    toast(rr.ok ? ("旧数据已搬到 state/" + p.id)
+                : ("⚠ 目录名改好了，但旧数据没搬成：" + rr.msg), !rr.ok);
+  }
+  toast("已统一：包目录名 → " + p.id);
+  const newRel = (layer || "user") + "/pkgs/" + p.id;
+  await refreshPkgs(p.id);
+  fmReRoot(dirRel, newRel);                       // ★ 文件管理里的路径跟着搬
+  if (DATA.packages.some(x => x.id === p.id)) select(p.id);
+  else renderDetail();
 }
 
 /* ---- 渲染：子选项卡条 + 各页 ---- */
