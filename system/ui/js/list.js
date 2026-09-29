@@ -281,8 +281,14 @@ function renderDetailHTML(){
       ico("pencil", "i") + '<span>更名</span></button>';
 
   html += '<section class="dsec"><div class="runrow">' +
-      '<input id="args" placeholder="参数（可留空；回车 = 运行）" value="' +
-        esc(ARGS[p.id] || "") + '">' +
+      // ★ 参数框右边那颗"一键清空"（`V-86`，你要的）：**有内容时才浮出来**，
+      //   悬浮在框内右侧（`.argbox` 定位），点一下清空并把光标留在框里。
+      '<span class="argbox">' +
+        '<input id="args" placeholder="参数（可留空；回车 = 运行）" value="' +
+          esc(ARGS[p.id] || "") + '">' +
+        '<button class="argclear" id="btn-args-clear" title="清空参数" hidden>' +
+          ico("x", "i") + '</button>' +
+      '</span>' +
       '<button class="btn" id="btn-openui" title="打开这个包自己的界面（后台运行，不等它）">' +
         ico("app-window", "i") + '<span>打开界面</span></button></div>' +
       '<div class="runhint">命令预览: <span class="mono" id="preview"></span>' +
@@ -326,10 +332,17 @@ function wireDetail(){
   //   这时候再绑一遍监听器就会**重复**（回车跑两次那种）。
   if (host && host.dataset.wiredRev === String(DETAILR.rev)) return;
   if (host) host.dataset.wiredRev = String(DETAILR.rev);
+  const aclr = $("#btn-args-clear");            // 参数框右边那颗"一键清空"（`V-86`）
   const upd = () => {
     $("#preview").textContent = "moss :" + p.id +
       ($("#args").value.trim() ? " " + $("#args").value.trim() : "");
     ARGS[p.id] = $("#args").value;              // 记住它，重画之后要放回去
+    if (aclr) aclr.hidden = !$("#args").value;  // 有内容才浮出来
+  };
+  if (aclr) aclr.onclick = () => {
+    $("#args").value = "";
+    upd();
+    $("#args").focus();                         // 清完光标留在框里，接着就能打字
   };
   $("#args").addEventListener("input", upd);
   $("#args").addEventListener("keydown", (e) => {
@@ -445,8 +458,13 @@ function renderDetailHistHTML(it){
       //   两个详情同一个时刻只会存在一个（都往 #pane-detail 里写），
       //   但静态检查"整个页面每个 id 只能出现一次"就分不清了 —— 换成不同的 id，
       //   那条检查才继续有用。要取输入框请走 `argsInput()`。
-      '<input id="hargs" placeholder="参数（留空 = 上次那样；回车 = 运行）" value="' +
-        esc(it.args || "") + '"' + (gone ? " disabled" : "") + '>' +
+      '<span class="argbox">' +
+        '<input id="hargs" placeholder="参数（留空 = 上次那样；回车 = 运行）" value="' +
+          esc(it.args || "") + '"' + (gone ? " disabled" : "") + '>' +
+        // 和包详情那颗一样（`V-86`）：有内容才浮出来 —— 目标没了的这条禁用着，就不给
+        '<button class="argclear" id="btn-hargs-clear" title="清空参数" hidden>' +
+          ico("x", "i") + '</button>' +
+      '</span>' +
       '<button class="btn" id="btn-run2"' + (gone ? " disabled" : "") + '>' +
         ico("play", "i") + '<span>运行</span></button>' +
       '<button class="btn" id="btn-opendir" title="用 Windows 资源管理器打开它所在的目录">' +
@@ -472,11 +490,19 @@ function wireDetailHist(it){
   const host = $("#pane-detail");
   if (host && host.dataset.wiredRev === String(DETAILR.rev)) return;
   if (host) host.dataset.wiredRev = String(DETAILR.rev);
+  const inp = $("#hargs"), aclr = $("#btn-hargs-clear");   // 清空那颗（`V-86`）
   const upd = () => {
-    const a = $("#hargs").value.trim();
+    const a = inp.value.trim();
     // 和宿主 `rerun_argv` 同一条规则的**近似预览**：真正跑的时候宿主回回来的 `cmd`
     // 才是准的（会打到「命令行」上）。这里只求"看着像手敲的那条"。
     $("#hpreview").textContent = "moss /" + it.name + (a ? " " + a : "");
+    // 有内容才浮出来；目标已经不在（输入框禁用）的那条不给
+    if (aclr) aclr.hidden = !inp.value || inp.disabled;
+  };
+  if (aclr) aclr.onclick = () => {
+    inp.value = "";
+    upd();
+    if (!inp.disabled) inp.focus();             // 清完光标留在框里
   };
   $("#hargs").addEventListener("input", upd);
   $("#hargs").addEventListener("keydown", (e) => {

@@ -66,7 +66,7 @@ BROWSERS = [
 
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
-          "btn-detail", "err-path",
+          "btn-detail", "err-path", "args-clear",
           "drop-hot", "drop-dir", "drop-file", "console-input", "embed",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
@@ -945,6 +945,42 @@ MOCK_JS = r"""
         document.title = ok ? "READY" : ("TIP-FAIL 显示=" + shown + " hover=" + byHover +
           " ?=" + !!q + " 错=" + (M.tipErr || "无"));
       }
+      // ★ 参数框右边那颗"一键清空"（`V-86`）：没内容时**不该出现**，打字后出现，
+      //   点一下要清空 + 预览行跟着变 + 光标回到框里。
+      if (h === "args-clear"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        await sleep(400);
+        const inp = document.querySelector("#args");
+        const btn = document.querySelector("#btn-args-clear");
+        if (!inp || !btn){ document.title = "ARGS-NO-ELEMENT"; return; }
+        const hiddenWhenEmpty = btn.hidden;
+        const invisibleWhenEmpty = getComputedStyle(btn).display === "none";
+        // 打字 → 按钮该浮出来 + 预览行跟着变
+        inp.value = "a.png -o D:\\out";
+        inp.dispatchEvent(new Event("input", {bubbles: true}));
+        await sleep(150);
+        const shown = !btn.hidden && getComputedStyle(btn).display !== "none";
+        const preview1 = (document.querySelector("#preview") || {}).textContent || "";
+        // 点它 → 输入框空、预览行回到只有命令名、按钮又藏起来、光标在框里
+        btn.click();
+        await sleep(150);
+        const cleared = inp.value === "";
+        const preview2 = (document.querySelector("#preview") || {}).textContent || "";
+        const hiddenAgain = btn.hidden;
+        const focused = document.activeElement === inp;
+        const ok = hiddenWhenEmpty && invisibleWhenEmpty && shown &&
+                   /a\.png/.test(preview1) && cleared && !/a\.png/.test(preview2) &&
+                   hiddenAgain && focused && !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          " 空时藏=" + hiddenWhenEmpty + "/" + invisibleWhenEmpty +
+          " 打字后露=" + shown + " 清空=" + cleared + " 又藏=" + hiddenAgain +
+          " 光标回框=" + focused +
+          " 预览=" + JSON.stringify([preview1, preview2]);
+        document.title = ok ? "READY" : "ARGS-CLEAR-FAIL";
+        return;
+      }
+
       // ★ 命令行那行输入（`V-43`）：包 `input()` 问你话时能答。
       //   真的 stdin 那条链由宿主侧测试证明；这里只验界面这半：
       //   在跑 → 输入行可用；发一行 → 回显进输出 + 调了 run_input；跑完 → 又禁用。

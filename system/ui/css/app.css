@@ -454,6 +454,22 @@ table.p th{color:var(--dim);font-weight:500}
   outline:none;transition:border-color .12s,box-shadow .12s}
 #args:focus,#hargs:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
 #args::placeholder,#hargs::placeholder{color:var(--dim)}
+/* ★ 参数框右边那颗"一键清空"（`V-86`）：`#args` / `#hargs` 外面套一层 `.argbox` 定位，
+   按钮悬浮在框内右侧；**只在框里有内容时**才出现（`hidden` 由 `wireDetail()` 管）。
+   `padding-right` 给按钮让出地方，免得长参数压到它下面。 */
+.argbox{position:relative;display:flex;flex:1;min-width:180px;max-width:620px}
+/* ★ 右内边距得用 ID 选择器写：上面那条 `#args,#hargs{…}` 是 ID 级，
+   `.argbox > input` 那条（类+标签）压不过它 —— 否则长参数会钻到按钮下面。 */
+.argbox > #args,.argbox > #hargs{flex:1;min-width:0;padding-right:32px}
+.argclear{position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  display:flex;align-items:center;justify-content:center;width:20px;height:20px;
+  padding:0;border:0;border-radius:50%;background:transparent;color:var(--dim);
+  cursor:pointer;opacity:.7;transition:background .12s,color .12s,opacity .12s}
+.argclear:hover{background:var(--line);color:var(--fg);opacity:1}
+.argclear:active{transform:translateY(-50%) scale(.92)}
+/* `[hidden]` 必须显式写：上面那条 `display:flex` 比浏览器默认的 `[hidden]{display:none}` 优先 */
+.argclear[hidden]{display:none}
+.argclear svg{width:13px;height:13px}
 .empty{color:var(--dim);text-align:center;margin-top:70px;font-size:13px}
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;
   align-items:center;justify-content:center;z-index:80}

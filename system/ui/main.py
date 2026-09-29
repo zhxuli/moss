@@ -17,6 +17,7 @@ v0 只做四件事：列包、看一个包的说明与参数、带参数跑并�
 放在 exe 外面的理由（`K-10`）。
 """
 import base64
+import codecs
 import ctypes
 import ctypes.wintypes as wt
 import json
@@ -1005,18 +1006,58 @@ def _pump_embed(pid, proc):
 
 
 def _pump_output(rid):
-    """读线程：把子进程的输出一行行攒进 RUNS[rid]['lines']。"""
+    """读线程：把子进程的输出攒进 `RUNS[rid]['lines']`。
+
+    ★ `V-86`（写那个交互测试包时实测出来的）：原来是 `for line in proc.stdout` —— 那是
+      **按行**交。而"半行"（尾巴上没有换行的输出，最典型的就是 `input("你叫什么？ ")`
+      的提示语）会一直被它攥着不交 ⇒ 界面上看着像"跑起来了、但什么都不问"，而你其实
+      正被这个包等着回答；等你敲完回车，那句问题才连着你答的一起蹦出来（实测就是这样）。
+      所以现在：① 按**块**读（一行一行、或者一个字一个字都太慢）；
+      ② 攒到换行就立刻交；③ 手里那半行超过 0.12 秒等不到新数据，也先交出去。
+    """
     r = RUNS.get(rid)
     if not r:
         return
     proc = r["proc"]
-    try:
-        for line in proc.stdout:
+    pending = [""]                     # 还没交出去的那半行（两个线程都碰，走 RUNS_LOCK）
+    stop = threading.Event()
+
+    def emit(text):
+        if not text:
+            return
+        with RUNS_LOCK:
+            r["lines"].append(text)
+
+    def ticker():
+        # 每 0.12 秒看一眼：手里还攥着半行就先交出去（提示语这类没有换行的输出也能及时看到）
+        while not stop.wait(0.12):
             with RUNS_LOCK:
-                r["lines"].append(line)
+                chunk, pending[0] = pending[0], ""
+            emit(chunk)
+
+    threading.Thread(target=ticker, daemon=True).start()
+    dec = codecs.getincrementaldecoder("utf-8")("replace")
+    try:
+        fd = proc.stdout.fileno()
+        while True:
+            buf = os.read(fd, 4096)
+            if not buf:
+                break
+            text = dec.decode(buf)
+            if not text:
+                continue
+            with RUNS_LOCK:
+                parts = (pending[0] + text).split("\n")
+                pending[0] = parts.pop()           # 最后一段可能没有换行，留着
+            if parts:
+                emit("\n".join(parts) + "\n")
     except Exception:
         pass
     finally:
+        stop.set()
+        with RUNS_LOCK:
+            chunk, pending[0] = pending[0], ""
+        emit(chunk)
         try:
             proc.wait(timeout=5)
         except Exception:
