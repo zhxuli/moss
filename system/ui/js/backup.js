@@ -26,6 +26,7 @@ const BK = Vue.reactive({
   exportTo: "", exportBak: false, dropOver: false,   // 导出（`V-88`）
   fps: {}, fresh: {},                   // 现读磁盘：指纹 + 现大小 + 目录子树（`V-94`，不信界面缓存）
   leftOnly: 0,
+  ig: null,                            // 过滤规则（`V-105`）：文件在哪、现在生效哪些
 });
 
 /* ================================================================ 差异视图（`V-94`）
@@ -216,6 +217,21 @@ const MossFileSnap = {
              es.map(e => e.name + ":" + (e.size || 0) + (e.dir ? "d" : "")).join(",") +
              "|" + ((s && s.stale) ? 1 : 0);
     },
+    /* 过滤提示（`V-105`）：创建快照那一小块里那一行淡字 —— 你说的"不那么明显的位置提示" */
+    igShort(){
+      const g = BK.ig || {};
+      if (!g.ok) return "snapshot.ignore";
+      return g.name + (g.count ? ("（" + g.count + " 条）") : "（空）");
+    },
+    igTip(){
+      const g = BK.ig || {};
+      const builtin = (g.builtin || []).join(" / ");
+      return "存快照时按这份规则过滤（写法同 .gitignore 的常用那几条）：\n" +
+             (g.path || "user_data/snapshot.ignore") + "\n" +
+             (g.count ? ("你的规则：\n" + (g.user || []).join("\n")) : "你的规则：还没有（点一下看怎么写）") +
+             "\n内置（永远生效）：" + builtin +
+             "\n写法：*.log 按名字 / build/ 只排目录 / user/pkgs/old/ 按路径 / !keep.log 反向保留";
+    },
     /* 差异视图（`V-94`）：行 = 当前目录这一层的"左边（现在）+ 右边（快照）" */
     /* ★ 快照那一列**只列快照里真有的东西**："只有现在有"的那些（绿色）只出现在**左边**那张表里。
        你 2026-09-30 反馈的第一条就是它 —— 新建一个 `untitled.py`，快照里怎么也冒出来了。 */
@@ -281,6 +297,7 @@ const MossFileSnap = {
   },
   mounted(){
     this.refresh();
+    this.loadIgnore();
     /* 边栏宽度能拖（`V-92`）：细线贴在根元素左边缘上，往右拖变窄、往左拖变宽。
        上限按窗口宽度算（最多占 60%），双击回到 320。 */
     bindColResize(this.$el.querySelector(".b-bkgrip"), this.$el, -1, 200,
@@ -324,6 +341,56 @@ const MossFileSnap = {
     mirrorSizeCls(e){
       if (e.snap === null) return {dim: true};
       return {dim: e.state === "empty"};
+    },
+    /* 读过滤规则（`V-105`）：进边栏时读一次，用户点那一行时再读一次（他可能刚编辑过文件） */
+    async loadIgnore(){
+      try{
+        const r = await pywebview.api.backup_ignore();
+        BK.ig = r || {ok: false};
+      }catch(e){ BK.ig = {ok: false}; }
+    },
+    /* 点那行淡字：弹一个**说明**（不是编辑器 —— 在界面里改过滤规则是 `V-104 E` 那一条，还没做） */
+    async editIgnore(){
+      await this.loadIgnore();
+      const g = BK.ig || {};
+      askText("快照的过滤规则（每行一条）", ((g.user || []).join("\n")) || "", async (v) => {
+        const r = await pywebview.api.backup_ignore_save(String(v || ""));
+        if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "存不下"), true); return; }
+        await this.loadIgnore();
+        notice("过滤规则已保存", "现在生效 <b>" + (r.count || 0) + "</b> 条（覆盖前留了一份 .bak）<br>下次存快照就按新规则。");
+      });
+    },
+    async preview(){
+      BK.busy = "试算…";
+      try{
+        const r = await pywebview.api.backup_preview(bkScopeRels());
+        if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "算不出来"), true); return; }
+        const ex = (r.exclude || []).slice(0, 6).join("<br>");
+        notice("按现在的规则会这样存", "会存 <b>" + r.n_in + "</b> 个 · 排掉 <b>" + r.n_out + "</b> 个<br><br>" + (r.n_out ? ("排掉的：<br>" + esc(ex)) : ""));
+      }catch(e){ reportError("试算失败", String((e && e.message) || e)); }
+      finally{ BK.busy = ""; }
+    },
+    async showIgnore(){
+      await this.loadIgnore();
+      const g = BK.ig || {};
+      const rules = (g.user && g.user.length)
+        ? g.user.map(x => "<code>" + esc(x) + "</code>").join("、")
+        : "（还没有规则，现在只按内置那几条排）";
+      notice("快照的过滤规则",
+        "存快照时，下面这些东西**不会被存进去**：<br><br>" +
+        "你的规则文件：<b class=\"mono\">" + esc(g.path || "") + "</b><br>" +
+        "现在生效： " + rules + "<br><br>" +
+        "内置（永远生效，改不掉）：<span class=\"mono\">" +
+        esc((g.builtin || []).join(" / ")) + "</span><br><br>" +
+        "<b>兼容</b>（和 .gitignore 一个意思）：<br>" +
+        "<code>*.log</code> 按名字 · <code>build/</code> 只排目录 · <code>?ache</code> 一个字符 · " +
+        "<code>**/deep.txt</code> 任意层级 · <code>logs/**</code> 目录下全部 · " +
+        "<code>/user/state/tmp</code> 从根锚定 · <code>user/pkgs/old/</code> 按路径 · " +
+        "<code>!keep.log</code> 反向保留 · <code>[0-9]*.tmp</code> 字符集 · <code>#</code> 注释<br><br>" +
+        "<b>不兼容</b>：子目录各自的 .gitignore 继承 / 转义（<code>\\#</code>、<code>\\!</code>）/ " +
+        "大小写敏感（我们一律不区分）/ git 那条「被排掉的目录里不能再 <code>!</code> 放回来」（我们允许）。<br><br>" +
+        "完整的清单也写在那个文件里（打开就是模板）。用记事本改完就生效 —— 下次存快照按新规则。",
+        {tip: "在界面里直接改这个文件还没做（记在 V-104 E）"});
     },
     /* 重算"当前目录"的对照：先问一下现在这一层每个文件的指纹（大小不一样就不必问），
        再拼出模型。选中快照变化、目录切换、盘上变了都会走到这里。 */
@@ -625,6 +692,11 @@ const MossFileSnap = {
              title="给这次快照起个名，留空就用时间">
       <input v-model="BK.note" class="bk-note" placeholder="注释（可留空）"
              title="这次改了什么、为什么要存 —— 以后翻快照时看得懂">
+      <div class="bk-ig" :title="igTip" @click.stop="editIgnore()">
+        过滤：{{ igShort }}
+      </div>
+      <span class="bk-ig bk-pre" title="试算：按现在的规则，这次会存哪些、排掉哪些（不落盘）"
+            @click.stop="preview()">试算</span>
       <span class="sp"></span>
       <button class="iconbtn b-bkcancel" title="取消（不存了）" v-html='ico("x", "i")'
               @click="BK.formOpen = false"></button>

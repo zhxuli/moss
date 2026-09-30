@@ -276,9 +276,14 @@ def _cmd_save(pos, opt, flag, subj_srcs=()):
     except Exception as e:                                          # noqa: BLE001
         out.print_cyan("[错误] 存快照失败：%s" % e)
         return EXIT_FAIL
+    tag = opt.get("--tag") or ""
+    if tag:
+        t = _load_tags(st, g)
+        t[str(tag)] = m.get("id")
+        _save_tags(st, g, t)
     if "--json" in flag:
         print(_j({"ok": True, "id": m.get("id"), "group": m.get("group"),
-                  "title": m.get("title"), "stats": m.get("stats")}))
+                  "title": m.get("title"), "tag": tag or None, "stats": m.get("stats")}))
     else:
         s = m.get("stats") or {}
         out.print_cyan("快照已存：%s（%s）—— %s 个文件、%s；新增 %s 块"
@@ -320,7 +325,10 @@ def _pick(b, st, key, group):
     if key and key not in ("latest", "last"):
         if g and key in st.ids(g):
             return key, g
-        for gg in st.groups():                      # 没给组就全库找一遍
+        tg, tid = _find_tag(st, key)                # ★ `V-107` C：先当**标签**找
+        if tid:
+            return tid, (g or tg)
+        for gg in st.groups():                      # 再当 id 全库找一遍
             if key in st.ids(gg):
                 return key, (g or gg)
         return None, g
@@ -501,6 +509,65 @@ def _find_in(b, st, bid, group, want):
 
 
 
+
+# ---------------------------------------------------------------- 标签（`V-107` C）
+def _tags_file(st, g):
+    return st.group_dir(g) / "tags.json"
+
+
+def _load_tags(st, g):
+    """一个组的标签：`{标签: 快照id}`。坏文件当空（不让它拦住备份这件事）。"""
+    try:
+        f = _tags_file(st, g)
+        if f.is_file():
+            d = json.loads(f.read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else {}
+    except Exception:                                                   # noqa: BLE001
+        pass
+    return {}
+
+
+def _save_tags(st, g, d):
+    try:
+        f = _tags_file(st, g)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        tmp = f.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, f)
+    except Exception as e:                                              # noqa: BLE001
+        out.print_cyan("⚠ 标签没能写下来：%s" % e)
+
+
+def _find_tag(st, name):
+    for g in st.groups():
+        t = _load_tags(st, g)
+        if name in t:
+            return g, t[name]
+    return None, None
+
+
+def _cmd_tags(pos, opt, flag):
+    """`moss --snap tags [对象]` —— 看钉过哪些标签。"""
+    b = _store()
+    st = b.BackupStore(paths.USER_DIR / "backups", _rel_of, _resolve, trash=_trash)
+    g = opt.get("--group") or ""
+    outd = {}
+    for gg in ([g] if g else st.groups()):
+        t = _load_tags(st, gg)
+        if t:
+            outd[gg] = t
+    if "--json" in flag:
+        print(_j(outd))
+        return EXIT_OK
+    if not outd:
+        out.print_cyan("还没有标签（存的时候加 `--tag 名字` 就钉一个）。")
+        return EXIT_NOTHING
+    for gg, t in outd.items():
+        print("  %s" % gg)
+        for k, v in t.items():
+            print("    %-18s → %s" % (k, v))
+    return EXIT_OK
+
 def _split_id(pos, group):
     """`cat` / `ls` 的位置参数怎么理解：第一个要是 **id / latest** 就当 id，否则当**路径**，
     快照取"最近那一次" —— 插件名已经被 `cmd_snap` 拿掉了，`cat :md5 pkg.json` 到这儿只剩
@@ -642,11 +709,156 @@ def _cmd_check(pos, opt, flag):
     out.print_cyan("校验通过：%d 次快照的内容块都在、指纹都对得上。" % len(rows))
     return EXIT_OK
 
+
+def _cmd_ignore(opt, flag):
+    """`moss --snap ignore` —— **告诉用户"快照会按什么规则过滤"**：文件在哪、现在生效哪些。
+
+    为什么要这条命令：过滤是"看不见的行为"（文件被悄悄排掉了，用户会以为快照漏了东西）。
+    所以除了写进 `--snap --help`，还要有一条"你随时能问"的命令。"""
+    b = _store()
+    f = paths.USER_DIR / b.IGNORE_NAME
+    user = []
+    if f.is_file():
+        try:
+            user = b.parse_ignore(f.read_text(encoding="utf-8", errors="replace"))
+        except Exception:                                           # noqa: BLE001
+            user = []
+    builtin = list(b.DEFAULT_EXCLUDES) + ["/" + p for p in b.PATH_EXCLUDES]
+    if "--json" in flag:
+        print(_j({"ok": True, "path": str(f), "exists": f.is_file(),
+                  "user": user, "builtin": builtin}))
+        return EXIT_OK
+    print("快照过滤规则：")
+    print("  你的规则文件：%s%s" % (f, "" if f.is_file() else "（还没有；第一次存快照时会自动生成模板）"))
+    if user:
+        for r in user:
+            print("    %s" % r)
+    else:
+        print("    （空的 —— 现在只按内置那几条排）")
+    print("  内置（永远生效，改不掉）：%s" % " / ".join(builtin))
+    print("  兼容（和 .gitignore 一个意思）：")
+    print("    *.log          按名字（任意层级的同名文件/目录）")
+    print("    build/         末尾带 / = 只排目录（连带里面的东西）")
+    print("    ?ache          一个字符（? = 一个非 / 字符）")
+    print("    **/deep.txt    任意层级下的 deep.txt（** 跨目录）")
+    print("    logs/**        某个目录下的全部（含子目录）")
+    print("    /user/state/tmp  开头带 / = 从 user_data 根锚定")
+    print("    user/pkgs/old/   中间带 / 的按相对 user_data 的路径")
+    print("    !keep.log      反向保留（前面被排掉的，这个要回来）")
+    print("    [0-9]*.tmp     方括号字符集      # 注释、空行忽略")
+    print("  不兼容（我们没照 git 做，别指望）：")
+    print("    · 子目录里各自的 .gitignore 继承（只有 snapshot.ignore 这一个文件）")
+    print("    · 转义写法（\\#、\\!）没法排一个真的以 # 开头的名字")
+    print("    · 大小写敏感 —— 我们一律不区分大小写")
+    print("    · git 那条「被排掉的目录里不能再 ! 放回来」—— 我们允许放回来（更宽松）")
+    return EXIT_OK
+
+
+def _cmd_revert(pos, opt, flag):
+    """`moss --snap revert <对象> [id|标签]` —— **一键「对比 + 回退」**（AI 最常用的动作）。
+
+    ① 先算差异、逐条打出「比这次快照变了什么」；
+    ② 再按 `git restore` 那套对齐：缺的补上、不一样的回退（覆盖前留 `.bak`），**多出来的不动**
+       （要「一模一样」加 `--sync`：多出来的挪进回收站）；
+    ③ 不带 `--yes` 只打印（会动磁盘的动作都这个规矩）。"""
+    b = _store()
+    st = b.BackupStore(paths.USER_DIR / "backups", _rel_of, _resolve, trash=_trash)
+    gg0 = opt.get("--group") or ""
+    tg, tid = _find_tag(st, str(pos[0])) if pos else (None, None)
+    if tid:
+        bid, g, rest = tid, (gg0 or tg), pos[1:]
+    else:
+        key, rest = _split_id(pos, gg0)
+        bid, g = _pick(b, st, key, gg0)
+    if not bid:
+        out.print_cyan("[错误] 没找到这次快照（moss --snap list 看有哪些）。")
+        return EXIT_NOTHING
+    rel = rest[0] if rest else ""
+    if not rel:
+        cand = _rel_of(Path.cwd())
+        rel = cand if cand.startswith(("user/", "system/")) else ""
+    if not rel:
+        rel = ((st.manifest(bid, g).get("sources") or [""])[0])
+    d = _diff(b, st, bid, g, rel)
+    changed = [r for r in d["rows"] if r["state"] != "same"]
+    print("回退到：%s  %s  ← 现在 vs 快照（%s）" % (d["id"], d["rel"] or "（根）", d["title"]))
+    if not changed:
+        out.print_cyan("和这次快照一模一样，不用回退。")
+        return EXIT_NOTHING
+    for r in changed:
+        mark = {"diff": "≠ ", "snap-only": "- ", "now-only": "+ ", "empty": "· "}[r["state"]]
+        print("  %s%-28s %10s / %10s" % (mark, r["name"] + ("/" if r["dir"] else ""),
+                                          _size(r["now"]), _size(r["snap"])))
+    sync = "--sync" in flag
+    plan = st.plan(bid, None, "changed", sync=True, group=g)
+    pc = plan.get("counts") or {}
+    out.print_cyan("要动的：补 %s · 回退 %s · 跳过 %s%s"
+                   % (pc.get("create", 0), pc.get("overwrite", 0), pc.get("skip", 0),
+                      (" · 挪走 %s（进回收站）" % pc.get("extra", 0)) if sync else ""))
+    if "--yes" not in flag:
+        out.print_cyan("确认就再加一个 --yes（要「一模一样」再加 --sync：多出来的挪进回收站）")
+        return EXIT_USE
+    r = st.restore(bid, None, "changed", sync=sync, group=g)
+    cc = r.get("counts") or {}
+    if "--json" in flag:
+        print(_j({"ok": True, "id": bid, "group": g, "counts": cc, "changed": changed}))
+    else:
+        out.print_cyan("回退完：补 %s · 挪走 %s%s"
+                       % (cc.get("restored", 0), cc.get("trashed", 0),
+                          (" · 出错 %s" % cc.get("errors")) if cc.get("errors") else ""))
+    return EXIT_OK if not cc.get("errors") else EXIT_FAIL
+
+
+def _cmd_grep(pos, opt, flag):
+    """`moss --snap grep <对象> <关键词> [目录]` —— 在**快照里**搜内容（只读）。
+
+    为什么要有：包被改废了，AI 想知道"原来这行是怎么写的" —— 不用把整包拉出来，
+    直接在快照里搜；命中的是"那一次存下来的内容"。"""
+    b = _store()
+    st = b.BackupStore(paths.USER_DIR / "backups", _rel_of, _resolve, trash=_trash)
+    key, rest = _split_id(pos, opt.get("--group") or "")
+    if not rest:
+        out.print_cyan("[错误] 用法：moss --snap grep <对象> <关键词> [目录]")
+        return EXIT_USE
+    want = rest[0]
+    sub = str(rest[1]).replace("\\", "/").strip("/") if len(rest) > 1 else ""
+    pat = str(opt.get("--find") or want).lower()
+    bid, g = _pick(b, st, key, opt.get("--group") or "")
+    if not bid:
+        out.print_cyan("[错误] 没找到这次快照。")
+        return EXIT_NOTHING
+    m = st.manifest(bid, g)
+    hits, scanned, skipped = [], 0, 0
+    for e in (m.get("files") or []):
+        rel = str(e.get("rel") or "")
+        if sub and not rel.startswith(sub + "/") and rel != sub:
+            continue
+        fp = e.get("fp")
+        if not fp:
+            continue
+        r = st.read_blob(fp, group=g)
+        if not r.get("ok") or r.get("binary"):
+            skipped += 1
+            continue
+        scanned += 1
+        for i, line in enumerate((r.get("text") or "").splitlines(), 1):
+            if pat in line.lower():
+                hits.append({"rel": rel, "line": i, "text": line[:400]})
+    if "--json" in flag:
+        print(_j({"ok": True, "id": bid, "group": g, "pattern": want,
+                  "scanned": scanned, "hits": hits}))
+        return EXIT_OK if hits else EXIT_NOTHING
+    for h in hits:
+        print("%s:%d: %s" % (h["rel"], h["line"], h["text"]))
+    out.print_cyan("扫了 %d 个文本文件，命中 %d 行%s"
+                   % (scanned, len(hits), ("（另有 %d 个二进制/读不了，跳过）" % skipped) if skipped else ""))
+    return EXIT_OK if hits else EXIT_NOTHING
+
 USAGE_SNAP = """moss --snap …                版本快照（备份/恢复）—— 给人和 AI 用的一条通道
 
   moss --snap <子命令> [对象] …          对象 = **插件名**（`:md5` / `md5`）或一个路径
   moss --snap list [对象] [--group <包id>]  列出快照（不给对象就是按组汇总）
-  moss --snap save [对象] [路径…] [--title T] [--note N] [--group G]
+  moss --snap save [对象] [路径…] [--title T] [--note N] [--tag 名字] [--group G]\n                                         加 --tag = 钉一个点（revert 时可以按标签回）\n  moss --snap revert <对象> [id|标签] [--sync] [--yes]\n                                         一键「对比 + 回退」：先列「变了什么」，再按只写回对齐\n  moss --snap tags [对象]                看钉过哪些标签\n  moss --snap grep <对象> <关键词> [目录]  在**快照里**搜内容（只读；包改废了就查原来怎么写的）
                                          存一次快照；不给路径 = 当前目录
   moss --snap show <id|latest>           看那一次的清单（有哪些文件）
   moss --snap diff <id|latest> [目录]    和**现在**比：一致/变了/快照有我没了/我有多/空
@@ -657,7 +869,7 @@ USAGE_SNAP = """moss --snap …                版本快照（备份/恢复）�
                                          导出到某个文件夹（原文件不动）
   moss --snap rm <id|latest> [--yes]     删掉一次
   moss --snap rm --group <包id> --all [--yes]   删掉这个包的全部
-  moss --snap ls <对象> [目录]           这次快照里有什么（路径 + 大小）\n  moss --snap cat <对象> <路径> [--save-to <目录> --yes]\n                                         看快照里**某个文件的内容**（包废了就看它原来写了什么）\n                                         ★ 默认只吐内容、**不给可写路径**；要落到磁盘得显式 --save-to --yes\n  moss --snap check [对象]               按**指纹**逐个校验内容块（被改过 / 丢了当场看得见）\n  moss --snap gc [--group G] [--yes]     回收没人引用的内容块
+  moss --snap ls <对象> [目录]           这次快照里有什么（路径 + 大小）\n  moss --snap cat <对象> <路径> [--save-to <目录> --yes]\n                                         看快照里**某个文件的内容**（包废了就看它原来写了什么）\n                                         ★ 默认只吐内容、**不给可写路径**；要落到磁盘得显式 --save-to --yes\n  moss --snap check [对象]               按**指纹**逐个校验内容块（被改过 / 丢了当场看得见）\n  moss --snap ignore                     看过滤规则（哪些文件不会被存进去）—— 规则文件是\n                                         user_data/snapshot.ignore，写法同 .gitignore 的常用那几条\n  moss --snap gc [--group G] [--yes]     回收没人引用的内容块
 
   · 会动磁盘的动作（restore / export / rm / gc）**必须显式 --yes**，否则只打印"会干什么"
   · 加 --json 得到结构化输出（AI 用）；退出码：0 成功 / 2 用法错 / 3 没东西可做 / 4 出错"""
@@ -707,6 +919,14 @@ def cmd_snap(argv, table=None):
             return _cmd_ls(rest, opt, flag)
         if sub in ("check", "verify"):
             return _cmd_check(rest, opt, flag)
+        if sub in ("ignore", "filters"):
+            return _cmd_ignore(opt, flag)
+        if sub in ("revert", "undo"):
+            return _cmd_revert(rest, opt, flag)
+        if sub == "tags":
+            return _cmd_tags(rest, opt, flag)
+        if sub in ("grep", "find"):
+            return _cmd_grep([rest[0]] + rest[1:] if rest else [], opt, flag)
     except Exception as e:                                          # noqa: BLE001
         out.print_cyan("[错误] 快照命令出错：%s" % e)
         return EXIT_FAIL

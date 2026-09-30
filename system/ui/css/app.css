@@ -450,6 +450,10 @@ table.fb tr.row.df-chg td.nmcell span{font-weight:600}
   outline:none;margin-bottom:5px;font-family:inherit}
 .bk-snap .bk-title:focus,.bk-snap .bk-note:focus{background:var(--panel);
   box-shadow:0 0 0 3px var(--field-focus)}
+.bk-snap .bk-ig{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:10.5px;color:var(--dim2);cursor:help;margin-right:4px}
+.bk-snap .bk-ig:hover{color:var(--dim);text-decoration:underline dotted}
+.bk-snap .bk-pre{flex:none;cursor:pointer;padding:0 2px}
 .bk-snap .bk-empty{padding:16px 10px;font-size:12px;color:var(--dim);text-align:center}
 .bk-snap .bk-checkbar{padding:4px 8px;font-size:11px}
 /* ★ 备份页自己的工具条 / 滚动区 / 表格 / 状态行：**类名不和"文件"页共用**
@@ -764,3 +768,30 @@ table.p th{color:var(--dim);font-weight:500}
   background:transparent;color:var(--dim)}
 #statusbar .iconbtn:hover{background:var(--hover);color:var(--fg)}
 #statusbar .iconbtn svg{width:14px;height:14px}
+
+/* ============================================================ 文件对比窗口（`V-109`）
+   整屏浮层当窗口：左边=现在、右边=快照；新增=绿、删掉=红、改动=琥珀。
+   行号在两边各自的窄栏里（等宽小字），正文用等宽字体、超长行横向滚。 */
+#cmpwin{position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.35);
+  display:flex;align-items:center;justify-content:center;padding:3vh 3vw}
+.cmp-card{width:100%;height:100%;display:flex;flex-direction:column;min-height:0;
+  background:var(--panel);border:0;border-radius:14px;overflow:hidden;
+  box-shadow:0 18px 60px rgba(0,0,0,.32)}
+.cmp-head{display:flex;align-items:center;gap:10px;padding:9px 12px;flex:none;
+  border-bottom:1px solid var(--line2);background:var(--panel2)}
+.cmp-title{font-size:13px;font-weight:600}
+.cmp-stat{font-size:11.5px;color:var(--dim);font-family:var(--mono)}
+.cmp-hint{font-size:11.5px;color:var(--dim2)}
+.cmp-body{flex:1;min-height:0;overflow:auto;font-family:var(--mono);font-size:12px;line-height:1.6}
+.cmp-row{display:grid;grid-template-columns:52px minmax(0,1fr) 52px minmax(0,1fr)}
+.cmp-ln{padding:0 8px;text-align:right;color:var(--dim2);background:var(--panel2);
+  border-right:1px solid var(--line2);user-select:none}
+.cmp-tx{padding:0 10px;white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.cmp-row.cmp-hd .cmp-tx{color:var(--dim);font-weight:600;position:sticky;top:0;
+  background:var(--panel);z-index:1}
+.cmp-row.del .cmp-tx:first-of-type{background:color-mix(in srgb,#d64545 12%,transparent);color:#a33}
+.cmp-row.ins .cmp-tx:nth-of-type(2){background:color-mix(in srgb,#1a7f45 12%,transparent);color:#186a3b}
+.cmp-row.chg .cmp-tx:first-of-type{background:color-mix(in srgb,#b26a00 14%,transparent)}
+.cmp-row.chg .cmp-tx:nth-of-type(2){background:color-mix(in srgb,#b26a00 8%,transparent)}
+.cmpbtn{opacity:0;width:20px;height:20px;min-width:20px;padding:0;margin-left:4px}
+table.fb tr.row:hover .cmpbtn{opacity:1}

@@ -214,3 +214,9 @@ function bkDiffWhy(rel){
   if (!d || d.state === "same") return "";
   return "和快照（" + (BKD.title || "选中的那次") + "）比：" + d.why;
 }
+
+/* `V-109`：这个文件有没有快照版本（文件列表里那颗对比图标**只在有得比时才出现**） */
+function bkHasSnap(rel){
+  const d = (typeof BKD !== "undefined" && BKD.diff && BKD.diff.byRel) ? BKD.diff.byRel[rel] : null;
+  return !!(d && d.snap && d.snap.fp);
+}

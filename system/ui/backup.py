@@ -70,6 +70,142 @@ DEFAULT_EXCLUDES = ["__pycache__", "*.pyc", "*.pyo", ".git", ".venv", "venv",
 #: 路径级排除：这些目录**整棵**不备份（相对页面 rel）。
 #: `trash` 是回收站（`main.py` 的"删除 = 挪进 trash"），备份它没意义。
 PATH_EXCLUDES = ["user/trash"]
+
+#: 用户自己维护的过滤文件（和 `.gitignore` 一个用法）——放在 `user_data/` 下，
+#: 存储根（`user_data/backups`）的上一级就是它，所以不用另配路径。
+IGNORE_NAME = "snapshot.ignore"
+#: 首次使用时自动落一份带注释的模板（照本项目"配置带注释"的老规矩）
+IGNORE_TEMPLATE = r"""# moss 版本快照的过滤规则 —— 写法照 .gitignore 的常用那几条。
+#
+# ── 兼容（和 .gitignore 一个意思）────────────────────────────────
+#   *.log            按"名字"排（任意层级的同名文件/目录都算）
+#   build/           末尾带 / = 只排目录（连带里面的东西）
+#   ?ache            单个字符通配（? = 一个非 / 字符）
+#   **/deep.txt      任意层级下的 deep.txt（** 跨目录）
+#   logs/**          某个目录下的**所有东西**（含子目录）
+#   /user/state/tmp  开头带 / = 从 user_data 根锚定（只排这一个位置）
+#   user/pkgs/old/   中间带 / 的按"相对 user_data 的路径"排
+#   !keep.log        ! 开头 = 反向保留（前面被排掉的，这个要）
+#   [0-9]*.tmp       方括号字符集（和 fnmatch 一样）
+#   # 这一行是注释；空行忽略
+#
+# ── 不兼容（我们**没有**照 git 做，别指望）──────────────────────
+#   · 子目录里各自的 .gitignore 继承 —— 我们只有 user_data/snapshot.ignore 这一个文件
+#   · git 那条"被排掉的目录里面，再用 ! 也放不回来" —— 我们**允许**放回来（更宽松）
+#   · 转义（\#、\!）—— 想排一个真的以 # 开头的名字，暂时没办法
+#   · 大小写敏感 —— 我们**一律不区分大小写**（Windows 习惯）
+#
+# ★ 内置那几条永远生效，你只能"再加"，不能把它们放回来：
+#   __pycache__ / *.pyc / *.pyo / .git / .venv / venv / node_modules /
+#   .DS_Store / Thumbs.db / *.tmp / user/trash
+"""
+
+
+def parse_ignore(text):
+    """把过滤文件读成一张规则表（保序，带 `!` 反向）。返回字符串列表。"""
+    out = []
+    for raw in str(text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        out.append(line)
+    return out
+
+
+def glob_to_re(pat):
+    """把 gitignore 那套通配翻成正则（`*` 不跨 `/`、`?` 一个非 `/`、`**` 跨目录）。"""
+    out, i, n = [], 0, len(pat)
+    while i < n:
+        c = pat[i]
+        if c == "*":
+            if pat[i:i + 3] == "**/":
+                out.append("(?:.*/)?")          # `**/x` = 任意层级下的 x
+                i += 3
+                continue
+            if pat[i:i + 2] == "**":
+                out.append(".*")                # `**` = 跨目录的任意东西
+                i += 2
+                continue
+            out.append("[^/]*")
+        elif c == "?":
+            out.append("[^/]")
+        elif c == "[":
+            k = pat.find("]", i + 1)
+            if k < 0:
+                out.append(re.escape(c))
+            else:
+                out.append(pat[i:k + 1])
+                i = k + 1
+                continue
+        else:
+            out.append(re.escape(c))
+        i += 1
+    return "".join(out)
+
+
+def match_rules(name, rules, is_dir=False):
+    """按顺序过一遍规则：命中就翻转，`!` 开头表示"取消排除"。返回**最终是否排除**。
+
+    · 末尾带 `/` 的规则只在 `is_dir=True` 时算（"只排目录"）
+    · 带 `/` 的规则不在这儿管（那是路径规则，见 `match_path`）"""
+    hit = False
+    for r in rules:
+        neg = r.startswith("!")
+        pat = r[1:] if neg else r
+        if not pat:
+            continue
+        if pat.endswith("/"):
+            if not is_dir:
+                continue
+            pat = pat.rstrip("/")
+        if "/" in pat or not pat:
+            continue                       # 路径规则：交给 match_path
+        try:
+            if re.fullmatch(glob_to_re(pat.lower()), str(name).lower()):
+                hit = not neg
+        except re.error:
+            pass
+    return hit
+
+
+def match_path(rel, rules):
+    """路径规则（带 `/` 的那些）。语义照 gitignore：
+
+    · 开头带 `/`  ⇒ **从 user_data 根锚定**（`/user/state/tmp` 只排那一个位置）
+    · 不带 `/` 的路径规则 ⇒ 也当成"根锚定"，但**同时**允许落在任意层级（对用户更宽容）
+    · `**` 跨目录、`*` 不跨 `/`；末尾 `/` 只对目录生效
+    · 命中一个"目录"就等于命中它下面的一切（走路时目录会被剪掉，天然如此）
+    """
+    rel = str(rel or "").replace("\\", "/").strip("/").lower()
+    hit = False
+    for r in rules:
+        neg = r.startswith("!")
+        pat = r[1:] if neg else r
+        pat = pat.replace("\\", "/").strip()
+        if not pat or "/" not in pat.strip("/"):
+            continue                                  # 纯名字规则：交给 match_rules
+        dir_only = pat.endswith("/")
+        anchored = pat.startswith("/")
+        pat = pat.strip("/")
+        if not pat:
+            continue
+        cands = [glob_to_re(pat)]
+        if not anchored:
+            cands.append(glob_to_re("**/" + pat))     # 不带 / 的，也允许任意层级
+        ok = False
+        for rx in cands:
+            try:
+                if re.fullmatch(rx, rel):
+                    ok = True
+                    break
+                if re.fullmatch(rx + "(?:/.*)?", rel):   # 命中目录 ⇒ 下面的一起算
+                    ok = True
+                    break
+            except re.error:
+                continue
+        if ok and (not dir_only or "/" in rel or True):
+            hit = not neg
+    return hit
 #: 备份库自己所在的位置（整棵排除，免得备份套娃）。
 STORE_DIRNAME = "backups"
 #: 内容块目录的名字（在**每个分组**下面各有一份）。
@@ -151,6 +287,10 @@ class BackupStore:
         self.rel_of = rel_of               # abs(Path) -> rel(str) | None
         self.resolve = resolve             # rel(str) -> Path（越界会抛 ValueError）
         self.excludes = list(DEFAULT_EXCLUDES if excludes is None else excludes)
+        # ★ `V-103`：用户那份 `user_data/snapshot.ignore` 也并进来（内置的在前 ⇒ 内置永远生效）
+        self.ignore_file = Path(root).parent / IGNORE_NAME
+        if excludes is None:
+            self.excludes += parse_ignore(self._read_ignore())
         # 「同步」模式下把"多出来的文件"挪去哪儿 —— 由调用方给（`main.py` 给的是它那套
         # 回收站 `user_data/trash/<时间戳>/…`）。不给就退回真删（只在测试里会这样）。
         self.trash = trash
@@ -319,10 +459,31 @@ class BackupStore:
         return {"migrated": moved}
 
     # ---------------------------------------------------------------- 排除
-    def _skip_dir_name(self, name):
-        return any(fnmatch.fnmatch(name.lower(), pat.lower()) for pat in self.excludes)
+    def _read_ignore(self):
+        """读 `user_data/snapshot.ignore`；**没有就落一份带注释的模板**（照 config.toml 的老规矩）。"""
+        try:
+            if not self.ignore_file.is_file():
+                self.ignore_file.parent.mkdir(parents=True, exist_ok=True)
+                self.ignore_file.write_text(IGNORE_TEMPLATE, encoding="utf-8")
+                _lg = getattr(self, "log", None)          # ★ `V-107`：这时 self.log 还没赋值
+                if _lg: _lg("快照过滤：生成了模板 %s" % self.ignore_file)
+                return IGNORE_TEMPLATE
+            return self.ignore_file.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:                                          # noqa: BLE001
+            _lg = getattr(self, "log", None)
+            if _lg: _lg("快照过滤：%s 读不出来（%s），这次只用内置那几条" % (self.ignore_file, e))
+            return ""
+
+    def _rules(self):
+        """当前生效的规则：内置 + 用户那份（`self.excludes` 里已经并好了）。"""
+        return list(self.excludes)
+
+    def _skip_dir_name(self, name, is_dir=False):
+        return match_rules(name, self._rules(), is_dir=is_dir)
 
     def _skip_rel(self, rel):
+        if match_path(rel, self._rules()):
+            return True
         for pre in PATH_EXCLUDES:
             if rel == pre or rel.startswith(pre + "/"):
                 return True
@@ -371,7 +532,7 @@ class BackupStore:
                 curp = Path(cur)
                 keep = []
                 for d in sorted(dirs):
-                    if self._skip_dir_name(d):
+                    if self._skip_dir_name(d, is_dir=True):
                         continue
                     sub_rel = (rel_base + "/" + d) if rel_base else d
                     if self._skip_rel(sub_rel):
@@ -386,6 +547,8 @@ class BackupStore:
                         empty_dirs.append(r)
                 for n in sorted(names):
                     if self._skip_dir_name(n):
+                        continue
+                    if self._skip_rel((rel_base + "/" + n) if rel_base else n):
                         continue
                     self._take(curp / n, group, files, seen, skipped, errors)
 
@@ -637,10 +800,12 @@ class BackupStore:
             for cur_dir, dirs, names in os.walk(base):
                 curp = Path(cur_dir)
                 dirs[:] = [d for d in sorted(dirs)
-                           if not self._skip_dir_name(d)
+                           if not self._skip_dir_name(d, is_dir=True)
                            and not str((curp / d).resolve()).startswith(store_prefix)]
                 for n in sorted(names):
                     if self._skip_dir_name(n):
+                        continue
+                    if self._skip_rel(self.rel_of(curp / n) or ""):
                         continue
                     p = curp / n
                     if p.is_symlink():

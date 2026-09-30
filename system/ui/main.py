@@ -1867,6 +1867,88 @@ class Api:
         except Exception as e:                                      # noqa: BLE001
             return {"ok": False, "msg": str(e)}
 
+    def backup_ignore_save(self, text):
+        """把界面里改过的过滤规则写回 `user_data/snapshot.ignore`（覆盖前先留一份 `.bak`）。
+
+        ★ 为什么给界面这条写权限：过滤规则是"用户自己的东西"，让他不必去开记事本。
+          写坏了也不要紧 —— `.bak` 就在旁边，而且**规则读不出来时只会退回内置那几条**。"""
+        try:
+            import backup as _b
+            st = self._backup_store()
+            f = st.ignore_file
+            f.parent.mkdir(parents=True, exist_ok=True)
+            if f.is_file():
+                try:
+                    (f.with_suffix(f.suffix + ".bak")).write_text(
+                        f.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+                except Exception:                                       # noqa: BLE001
+                    pass
+            f.write_text(str(text or ""), encoding="utf-8")
+            return {"ok": True, "path": str(f), "count": len(_b.parse_ignore(text))}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_preview(self, rels):
+        """**存之前先试算**：按现在的过滤规则，这些来源里会存哪些、排掉哪些（不落盘）。"""
+        try:
+            import backup as _b
+            st = self._backup_store()
+            inc, exc = [], []
+            for rel in (rels or []):
+                try:
+                    base = _resolve(str(rel))[1]
+                except Exception:                                       # noqa: BLE001
+                    continue
+                if base.is_file():
+                    (inc if not (st._skip_rel(str(rel)) or st._skip_dir_name(base.name)) else exc).append(str(rel))
+                    continue
+                if not base.is_dir():
+                    continue
+                for cur, dirs, names in os.walk(base):
+                    cp = Path(cur)
+                    keep = []
+                    for d in sorted(dirs):
+                        sr = st.rel_of(cp / d) or ""
+                        if st._skip_dir_name(d, is_dir=True) or st._skip_rel(sr):
+                            exc.append(sr)
+                        else:
+                            keep.append(d)
+                    dirs[:] = keep
+                    for n in sorted(names):
+                        sr = st.rel_of(cp / n) or ""
+                        if st._skip_dir_name(n) or st._skip_rel(sr):
+                            exc.append(sr)
+                        else:
+                            inc.append(sr)
+            return {"ok": True, "include": inc[:400], "exclude": exc[:400],
+                    "n_in": len(inc), "n_out": len(exc),
+                    "rules": list(_b.parse_ignore(st._read_ignore())),
+                    "builtin": list(_b.DEFAULT_EXCLUDES) + ["/" + p for p in _b.PATH_EXCLUDES]}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_ignore(self):
+        """快照的过滤规则（`V-103`）：文件在哪、现在生效哪些、内置的是哪些。
+
+        界面拿它画"创建快照"那一小块里的提示；命令行 `moss --snap ignore` 也用它。
+        只读，不改任何东西（文件不存在时**不**在这里生成模板 —— 那是存快照时才做的事）。"""
+        try:
+            import backup as _b
+            st = self._backup_store()
+            f = st.ignore_file
+            user = []
+            if f.is_file():
+                try:
+                    user = _b.parse_ignore(f.read_text(encoding="utf-8", errors="replace"))
+                except Exception:                                       # noqa: BLE001
+                    user = []
+            return {"ok": True, "path": str(f), "exists": f.is_file(),
+                    "user": user, "count": len(user),
+                    "builtin": list(_b.DEFAULT_EXCLUDES) + ["/" + p for p in _b.PATH_EXCLUDES],
+                    "name": _b.IGNORE_NAME}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
     def backup_fp(self, rels, dirs=None):
         """差异视图（`V-94`）的"现在这一侧"：**现读磁盘**，不信界面那份缓存。
 

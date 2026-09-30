@@ -642,7 +642,9 @@ const MossFileBrowse = {
         <td class="nmcell" v-html="fileIconHTML(e, false) + '<span>' + esc(e.name) + '</span>'"></td>
         <td class="dim">{{ fmtTime(e.mtime) }}</td>
         <td class="dim">{{ typeLabel(e) }}</td>
-        <td class="num">{{ e.dir ? "" : humanSize(e.size) }}</td>
+        <td class="num">{{ e.dir ? "" : humanSize(e.size) }}<button v-if="!e.dir && bkHasSnap(e.rel)"
+            class="iconbtn cmpbtn" title="和快照里那一份对比（弹出来两栏看）"
+            @click.stop="cmp(e)" v-html='ico("git-branch", "i")'></button></td>
       </tr>
     </tbody></table>
   </div>
@@ -702,6 +704,8 @@ const MossFileBrowse = {
          直接写 `bkDiffRow(e.rel)` 会得到 "bkDiffRow is not a function"（`pkg-file` 场景当场抓到）。 */
     bkDiffRow: rel => bkDiffRow(rel),
     bkDiffWhy: rel => bkDiffWhy(rel),
+    bkHasSnap: rel => bkHasSnap(rel),
+    cmp(e){ bkCompareOpen(e.rel); },
     /* ---- 表头排序 ---- */
     sortBy(k){
       const s = this.s;

@@ -68,7 +68,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "btn-detail", "err-path", "args-clear", "backup", "backup-restore", "backup-sync", "backup-export", "backup-groups",
           "drop-hot", "drop-dir", "drop-file", "console-input", "embed", "pane-resize",
-          "flat-buttons", "backup-diff", "refresh-keep-ctx",
+          "flat-buttons", "backup-diff", "refresh-keep-ctx", "compare",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
           "hist", "hist-console", "hist-file",
@@ -668,6 +668,15 @@ MOCK_JS = r"""
     },
     /* `V-94`：差异视图要知道"现在这份和快照里那份一不一样" —— 假后端按同一个 `bkFp(大小)`
        算（和 `backup_manifest` 里写清单时用的是同一个函数，所以"没动过"的文件必然一致）。 */
+    backup_ignore: async () => ({ok: true, name: "snapshot.ignore",
+      path: "D:\\\\python\\\\two\\\\moss\\\\user_data\\\\snapshot.ignore",
+      exists: true, count: 2, user: ["*.log", "build/"],
+      builtin: ["__pycache__", "*.pyc", ".git", "/user/trash"]}),
+    backup_ignore_save: async (text) => ({ok: true, path: "(预览) snapshot.ignore",
+      count: String(text || "").split("\n").filter(x => x.trim() && x.trim()[0] !== "#").length}),
+    backup_preview: async (rels) => ({ok: true, n_in: 4, n_out: 2, include: [],
+      exclude: ["user/pkgs/md5/x.log", "user/pkgs/md5/build/inner.txt"],
+      rules: ["*.log", "build/"], builtin: ["__pycache__", "*.pyc"]}),
     backup_fp: async (rels, dirs) => {
       const fps = {}, sizes = {}, dsz = {};
       (dirs || []).forEach(d => {
@@ -1099,6 +1108,37 @@ MOCK_JS = r"""
       }
       // ★ 底部状态栏（`V-61`）：真跑一个包（走 clickRun 那条路），看最下面那行字
       //   有没有跟着变 —— 它靠的是 `toast()` 里那一句 `setStatus`，不是场景自己写的。
+      // ★ 文件对比窗口（`V-109`）：文件列表 hover 出对比图标 → 点了弹两栏对比。
+      if (h === "compare"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        setTab("file");
+        await sleep(600);
+        document.querySelector(".bk-snap .b-bknew").click();
+        await sleep(250);
+        bkSet(".bk-snap .bk-title", "对比用");
+        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        await sleep(1300);
+        const rel = (FM.ctx && pkgRel(DATA.packages.find(x => x.id === FM.ctx))) || "system/pkgs/md5";
+        const d = BKD.diff && BKD.diff.byRel ? BKD.diff.byRel : {};
+        const one = Object.keys(d).find(k => d[k] && d[k].snap && !d[k].dir);
+        const btn = document.querySelector("#fm-body tr.row .cmpbtn");
+        const hasBtn = !!btn;
+        await bkCompareOpen(one || (rel + "/AGENT.md"));
+        await sleep(700);
+        const win = document.querySelector("#cmpwin");
+        const rows = document.querySelectorAll("#cmpwin .cmp-row").length;
+        const stat = (document.querySelector("#cmpwin .cmp-stat") || {}).textContent || "";
+        const hd = [].slice.call(document.querySelectorAll("#cmpwin .cmp-row.cmp-hd .cmp-tx"))
+                     .map(x => x.textContent.trim());
+        const shot = rows > 0 && !!win && /一致/.test(stat) && hd.length === 2;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (shot ? "OK" : "FAIL") + " 图标=" + hasBtn + " 窗口=" + !!win +
+          " 行=" + rows + " 统计=" + JSON.stringify(stat) + " 表头=" + JSON.stringify(hd);
+        document.title = shot ? "READY" : "CMP-FAIL";
+        cmpClose();
+        return;
+      }
       // ★ 刷新包列表**不能把文件管理的路径顶掉**（`V-98`，你 2026-09-30 报的）。
       //   那颗 ⟳ 的处理器就是 `init()`，它以前无条件把 ctx 按回 `__all__`、路径按回 `user/`。
       if (h === "refresh-keep-ctx"){
@@ -1465,6 +1505,10 @@ MOCK_JS = r"""
         newBtn.click();
         await sleep(250);
         const formShown = !!document.querySelector(".bk-snap .bk-form");
+        const igShown = (document.querySelector(".bk-snap .bk-ig") || {}).textContent || "";
+        // ★ 这两样只在**表单开着**的时候存在：一定要在这儿抓，别等场景末尾（那时表单已经关了 —— 
+        //   我第一版就写在末尾，结果 pre 永远是 false）。
+        const preShown = !!document.querySelector(".bk-snap .bk-pre");
         bkSet(".bk-snap .bk-title", "预览快照 A");
         bkSet(".bk-snap .bk-note", "第一次");
         document.querySelector(".bk-snap .bk-form .b-bksave").click();
@@ -1504,7 +1548,9 @@ MOCK_JS = r"""
         const nodes3 = document.querySelectorAll(".bk-snap .bk-tl-item").length;
         const tip3 = (document.querySelector(".bk-snap-foot .bk-hint") || {}).title || "";
         const flags = {
-          side: inSide, form: formShown, n1: nodes1 === 2, titleA: /预览快照 A/.test(firstTitle),
+          side: inSide, form: formShown, n1: nodes1 === 2,
+          ig: /snapshot\.ignore/.test(igShown) && /2 条/.test(igShown),
+          pre: preShown, titleA: /预览快照 A/.test(firstTitle),
           rows: fileRows > 0, view: /这一段内容块/.test(viewText),
           cnt1: /快照：1 次/.test(tip1) && /内容块 4 个/.test(tip1),
           n2: nodes2 === 3, cnt2: /快照：2 次/.test(tip2) && /内容块 4 个/.test(tip2),
