@@ -82,7 +82,17 @@ function paintStaticIcons(){
   //   （插了也会被下一次重画盖掉，等于绕开 Vue 去改它管的东西 —— `V-67` 那个教训）。
 }
 $("#q").addEventListener("input", () => { if (side === "hist") renderHist(); else renderList(); });
-$("#btn-refresh").onclick = init;
+/* ⟳ 刷新（`V-101`）：刷完**弹一个回执**——“哪怕没有变化，用户也知道按钮没坏”。
+   数字就从刚读回来的两份数据里数（`DATA.packages` / `HIST`），不另算一遍。 */
+$("#btn-refresh").onclick = async () => {
+  await init();
+  await Vue.nextTick();
+  const np = (DATA && DATA.packages ? DATA.packages.length : 0);
+  const nh = (typeof HIST !== "undefined" && HIST ? HIST.length : 0);
+  notice("已刷新", "插件：<b>" + np + "</b> 个<br>历史记录：<b>" + nh + "</b> 条" +
+         "<br><br>列表已经是最新的了。",
+         {tip: "这一条只是回执：哪怕什么都没变，也说明按钮是好的"});
+};
 $("#sw-pkg").onclick = () => setSide("pkg");
 $("#sw-hist").onclick = () => setSide("hist");
 $("#btn-newpkg").onclick = cmdNewPkg;

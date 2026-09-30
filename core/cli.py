@@ -46,6 +46,8 @@ USAGE = """moss —— 多语言启动器
                                回车进入程序后，程序退出即结束，不会回到列表
   moss --history <条数>        只打印不交互（管道 / 脚本用这种）
   moss --remove <别名>         卸载一个包：包本体 + 它的数据（永久删除，需确认；-y 跳过）
+  moss --snap …                版本快照（备份 / 恢复 / 导出 / 差异）—— 给人和 AI 用；
+                               `moss --snap --help` 看全部子命令（会动磁盘的要 --yes）
   moss --spec                  打印「插件契约」：怎么写一个插件（写插件 / AI 调用前请先读）
   moss --new <id>              生成一个能跑的插件骨架到 user_data/pkgs/<id>/
   moss --rename <旧> <新id>    给一个包改名：包目录 / 数据目录 / 清单里的 id 一起改
@@ -1216,6 +1218,11 @@ def main(argv):
             out.print_cyan("[错误] --remove 需要一个包名（别名或 id）。直接敲 moss 看有哪些。")
             return 1
         return cmd_remove(args[0], table, assume_yes=yes)
+    if first in ("--snap", "--snapshot"):
+        # 版本快照（`V-100`）：备份 / 恢复 / 导出 / 差异 —— 给人和 AI 的一条通道。
+        # 实现在 `core/snap.py`，底层借用界面那份存储（`system/ui/backup.py`）。
+        from . import snap as _snap
+        return _snap.cmd_snap(rest, table)
     if first == "--spec":
         return cmd_spec()
     if first == "--ui-payload":

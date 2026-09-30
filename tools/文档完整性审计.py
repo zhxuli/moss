@@ -175,6 +175,9 @@ DECL_RE = re.compile(r"当前状态：(\d+) 条议题 —— ✅ (\d+) / ❌ (\d
 def check_declared(path):
     """核对文档自己声明的议题数量与实际是否一致。
 
+    ★ `V-100`：编号到三位数了，这条正则原来只认 `\d{2}` —— `V-100` 那一行**数不进去**，
+      于是"实际 352 / 声明 353"报了个假的不一致（先怀疑工具）。改成 `\d{2,3}`。
+
     文档第一部分表头写着"当前状态：N 条议题 —— ✅ a / ❌ b / ⬜ c"。
     任何一次编辑如果把议题弄丢了，这个数就对不上 —— 这是最省事的一道防线。
     """
@@ -194,7 +197,7 @@ def check_declared(path):
     actual = {"✅": 0, "❌": 0, "⬜": 0}
     seen = set()
     for ln in text.splitlines():
-        mm = re.match(r"^\|\s*([A-Z]{1,3}-\d{2})\s*\|.*?\|\s*(✅|❌|⬜)\s*\|", ln)
+        mm = re.match(r"^\|\s*([A-Z]{1,3}-\d{2,3})\s*\|.*?\|\s*(✅|❌|⬜)\s*\|", ln)
         if mm and mm.group(1) not in seen:
             seen.add(mm.group(1))
             actual[mm.group(2)] += 1

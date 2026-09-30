@@ -67,3 +67,15 @@ function toast(text, bad){
   box.appendChild(el);
   setTimeout(() => el.remove(), 2400);
 }
+
+/* 通用"通知"模态框（`V-101`）—— 只有一颗「知道了」，用来告诉用户"刚才那件事**已经做完了**"。
+   ★ 为什么要它（你的原话）："刷新按钮 点了以后 应该出现一个模态框 告知用户插件和历史记录已刷新
+     这样 哪怕没有变化 用户也知道按钮没坏"；"模态框的消息通知 请封装成一个通用函数 方便复用"。
+   ★ 和 `toast` 的分工：toast 是**一闪而过**的状态行（跑起来了 / 已保存），
+     `notice` 是**要你确认看见**的回执（刷新完了、批量操作做完了）—— 它会挡住操作，别滥用。
+   ★ `notice()` 走的是同一个弹框壳（`askConfirm2`），只是第二个动词不传 ⇒ 只有一颗按钮。 */
+function notice(title, text, opts){
+  const o = opts || {};
+  askConfirm2(title, text, {label: o.ok || "知道了", cb: o.cb || null,
+                            danger: false, title: o.tip || ""});
+}
