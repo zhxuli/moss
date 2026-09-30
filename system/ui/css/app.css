@@ -115,6 +115,7 @@ aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--
    它就是个普通按钮，和别处同一套长相（原来这里写死了 --panel2/--line，
    是"填充块"时代的残留，和现在的白底细描边不一致）。 */
 #sideswitch #btn-newpkg{margin-left:auto;padding:4px 7px;min-width:28px}
+#sideswitch #btn-refresh{padding:4px 7px;min-width:28px}
 /* 历史行：**和包列表长得一样** —— 同一套内边距 / 图标尺寸 / hover / 选中态。
    只有第二行不同：包显示"说明"，历史显示"目录 · 时间"。 */
 .hitem,.item{display:flex;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line2);

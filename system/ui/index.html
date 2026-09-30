@@ -16,7 +16,6 @@
   <input id="q" placeholder="搜索包名 / 说明 / 标签…">
   <div class="meta" id="meta"></div>
   <button id="btn-selfcheck" class="iconbtn" title="自检（moss --selfcheck）"></button>
-  <button id="btn-refresh" class="iconbtn" title="刷新包列表"></button>
 </header>
 
 <main>
@@ -26,6 +25,9 @@
       <button id="sw-pkg" class="on" title="已安装的包"></button>
       <button id="sw-hist" title="最近跑过的路径调用（点一下重跑）"></button>
       <button id="btn-newpkg" class="iconbtn" title="新建一个包（moss --new）"></button>
+      <!-- ⟳ 刷新（`V-99`）：挪到「插件 / 历史」这一行的右侧、新建的右边 —— 它刷的就是这两份列表，
+           放在顶栏（那条只管搜索和状态）离得太远。 -->
+      <button id="btn-refresh" class="iconbtn" title="刷新：重新读一遍插件列表和历史"></button>
     </div>
     <!-- 拖动中的一条提示（`V-39`）：只列收得下它的包 -->
     <div id="dragbar" hidden></div>
