@@ -67,7 +67,8 @@ BROWSERS = [
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "btn-detail", "err-path", "args-clear", "backup", "backup-restore", "backup-sync", "backup-export", "backup-groups",
-          "drop-hot", "drop-dir", "drop-file", "console-input", "embed",
+          "drop-hot", "drop-dir", "drop-file", "console-input", "embed", "pane-resize",
+          "flat-buttons", "backup-diff", "refresh-keep-ctx",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
           "hist", "hist-console", "hist-file",
@@ -665,6 +666,22 @@ MOCK_JS = r"""
                             stats: {files: b.files.length}},
                            JSON.parse(JSON.stringify(b)));
     },
+    /* `V-94`：差异视图要知道"现在这份和快照里那份一不一样" —— 假后端按同一个 `bkFp(大小)`
+       算（和 `backup_manifest` 里写清单时用的是同一个函数，所以"没动过"的文件必然一致）。 */
+    backup_fp: async (rels, dirs) => {
+      const fps = {}, sizes = {}, dsz = {};
+      (dirs || []).forEach(d => {
+        dsz[d] = (FS[d] && FS[d].entries || []).reduce((s, e) => s + (e.dir ? 0 : (e.size || 0)), 0);
+      });
+      (rels || []).forEach(r => {
+        const e = (FS[r] && FS[r].entries || []).find(x => x.rel === r) ||
+                  Object.keys(FS).map(k => (FS[k].entries || []).find(x => x.rel === r))
+                        .filter(Boolean)[0] ||
+                  M.bkFlat[r];
+        if (e){ fps[r] = bkFp(e.size); sizes[r] = e.size || 0; }
+      });
+      return {ok: true, fps: fps, sizes: sizes, dirs: dsz};
+    },
     backup_blob: async (fp) => {
       const objs = M.bkObj || {};
       if (!(fp in objs)) return {ok: false, msg: "(预览) 对象缺失：" + fp};
@@ -1082,6 +1099,170 @@ MOCK_JS = r"""
       }
       // ★ 底部状态栏（`V-61`）：真跑一个包（走 clickRun 那条路），看最下面那行字
       //   有没有跟着变 —— 它靠的是 `toast()` 里那一句 `setStatus`，不是场景自己写的。
+      // ★ 刷新包列表**不能把文件管理的路径顶掉**（`V-98`，你 2026-09-30 报的）。
+      //   那颗 ⟳ 的处理器就是 `init()`，它以前无条件把 ctx 按回 `__all__`、路径按回 `user/`。
+      if (h === "refresh-keep-ctx"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        setTab("file");
+        await sleep(600);
+        const before = FM.ctx + "|" + ((FM.st[FM.ctx] || {}).rel || "");
+        const path0 = ((document.querySelector("#fm-body .crumbs") || {}).textContent || "").trim();
+        document.querySelector("#btn-refresh").click();
+        await sleep(1600);
+        const after = FM.ctx + "|" + ((FM.st[FM.ctx] || {}).rel || "");
+        const path1 = ((document.querySelector("#fm-body .crumbs") || {}).textContent || "").trim();
+        const ok = before === after && path0 === path1 && /md5/.test(path0);
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 刷新前=" + JSON.stringify(before) +
+          " 刷新后=" + JSON.stringify(after) + " 路径=" + JSON.stringify([path0, path1]);
+        document.title = ok ? "READY" : "REFRESH-FAIL";
+        return;
+      }
+      // ★ 差异视图（`V-94`）：左边=现在、右边=快照，四种状态四种色；"变了"用同一个琥珀色，
+      //   谁大谁更深（左边大 ⇒ 左深右浅）。这条场景把四种状态**一次全造出来**再逐个查类名。
+      if (h === "backup-diff"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        setTab("file");
+        await sleep(600);
+        const rel = (FM.ctx && pkgRel(DATA.packages.find(x => x.id === FM.ctx))) || "system/pkgs/md5";
+        const es = FS[rel].entries;
+        const big = es.find(e => !e.dir);
+        if (!big){ document.title = "DIFF-NO-FILE"; return; }
+        es.push({name: "空的.txt", rel: rel + "/空的.txt", dir: false, size: 0, mtime: 0, ext: "txt"});
+        // ① 存快照（此时：big 和"空的.txt"都在快照里）
+        document.querySelector(".bk-snap .b-bknew").click();
+        await sleep(250);
+        bkSet(".bk-snap .bk-title", "差异用");
+        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        await sleep(1200);
+        // ② 造四种状态：变大的 / 快照里有现在没了的 / 后加的 / 空的（空的已在快照里）
+        big.size = (big.size || 0) + 4096;
+        const gone = es.find(e => !e.dir && e.name !== big.name && e.name !== "空的.txt");
+        FS[rel].entries = FS[rel].entries.filter(e => e !== gone);
+        FS[rel].entries.push({name: "新加的.txt", rel: rel + "/新加的.txt", dir: false,
+                              size: 12, mtime: 0, ext: "txt"});
+        fmRefresh();
+        await sleep(1500);
+        const q = s => document.querySelector(s);
+        const cls = s => ((q(s) || {}).className || "");
+        const deepLeft = cls('#fm-body tr.row[data-rel$="/' + big.name + '"]');
+        const deepRight = cls('.bk-snap .bk-file[data-rel$="/' + big.name + '"]');
+        const goneRight = cls('.bk-snap .bk-file[data-rel$="/' + gone.name + '"]');
+        const goneLeft = cls('#fm-body tr.row[data-rel$="/' + gone.name + '"]');
+        const newLeft = cls('#fm-body tr.row[data-rel$="/新加的.txt"]');
+        const newRight = cls('.bk-snap .bk-file[data-rel$="/新加的.txt"]');
+        const emptyBoth = cls('.bk-snap .bk-file[data-rel$="/空的.txt"]');
+        const path = (q(".bk-snap .bk-mpath") || {}).textContent || "";
+        const has = (s, c) => (" " + s + " ").indexOf(" " + c + " ") >= 0;
+        const ok = path.indexOf(rel) >= 0 &&
+                   has(deepLeft, "df-chg") && has(deepLeft, "df-deep") &&
+                   has(deepRight, "df-chg") && has(deepRight, "df-soft") &&
+                   has(goneRight, "df-gone") && !goneLeft &&
+                   has(newLeft, "df-new") && !newRight &&
+                   has(emptyBoth, "df-empty");
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 路径=" + JSON.stringify(path) +
+          " 变大(左/右)=" + JSON.stringify([deepLeft, deepRight]) +
+          " 快照独有(右)=" + JSON.stringify(goneRight) +
+          " 后加(左/右)=" + JSON.stringify([newLeft, newRight]) +
+          " 空文件(右)=" + JSON.stringify(emptyBoth);
+        document.title = ok ? "READY" : "DIFF-FAIL";
+        return;
+      }
+      // ★ 「整份界面里的按钮，一个描边都不许有」（`V-92`，你的原话："所有按钮全都带一个外边框"）。
+      //   这条场景是**通用闸**：把设置面板和一个两个动词的确认框都摆出来（那两处的按钮平时看不见），
+      //   然后遍历 document 里**每一个** `<button>` 量 border-width；顺手量所有输入框。
+      //   ★ 硬判据 = 描边必须为 0；底色只报出来（"选中的那一档"还留一层灰底表示选中，
+      //     那是**状态**不是**外观**，要不要也去掉由你定）。
+      if (h === "flat-buttons"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        setTab("file");
+        await sleep(500);
+        document.querySelector("#btn-settings").click();
+        await sleep(800);
+        askConfirm2("量一下", "两个动词的弹框", {label: "只写回", cb: function(){}},
+                    {label: "一模一样", cb: function(){}});
+        await sleep(350);
+        const px = v => parseFloat(v) || 0;
+        const label = b => (b.id || String(b.className || "") || b.tagName);
+        const bordered = [], filled = [], inBordered = [];
+        [].slice.call(document.querySelectorAll("button")).forEach(function(b){
+          const cs = getComputedStyle(b);
+          const w = Math.max(px(cs.borderTopWidth), px(cs.borderBottomWidth),
+                             px(cs.borderLeftWidth), px(cs.borderRightWidth));
+          if (w > 0) bordered.push(label(b) + "=" + cs.borderTopWidth);
+          const bg = cs.backgroundColor;
+          if (bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") filled.push(label(b) + "=" + bg);
+        });
+        [].slice.call(document.querySelectorAll("input,textarea")).forEach(function(i){
+          const cs = getComputedStyle(i);
+          if (px(cs.borderTopWidth) > 0) inBordered.push(label(i) + "=" + cs.borderTopWidth);
+        });
+        // 你点名的两处：弹框里的动词按钮、快照边栏里的按钮
+        const modalBg = [].slice.call(document.querySelectorAll(".card .btns button"))
+          .map(b => getComputedStyle(b).backgroundColor);
+        const modalFlat = modalBg.every(c => c === "rgba(0, 0, 0, 0)" || c === "transparent");
+        const total = document.querySelectorAll("button").length;
+        const inputs = document.querySelectorAll("input").length;
+        closeModal();
+        closeSettings();
+        await sleep(200);
+        const ok = bordered.length === 0 && inBordered.length === 0 && modalFlat && total > 20;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 按钮=" + total + " 有描边的=" + bordered.length +
+          (bordered.length ? ("（" + bordered.slice(0, 6).join(" ") + "）") : "") +
+          " 输入框=" + inputs + " 有描边的=" + inBordered.length +
+          (inBordered.length ? ("（" + inBordered.slice(0, 4).join(" ") + "）") : "") +
+          " 弹框动词无底色=" + modalFlat +
+          " ｜ 还带底色的（选中的那一档）=" + JSON.stringify(filled.slice(0, 8));
+        document.title = ok ? "READY"
+          : ("FLAT-FAIL 描边" + bordered.length + "[" + bordered.slice(0, 3).join(" ") + "]" +
+             " 输入" + inBordered.length + " 弹框" + modalFlat);
+        return;
+      }
+      // ★ 两处"拖着调宽"（`V-92`）：左侧列表 + 版本快照边栏。那条细线 `.grip` 平时是透明的，
+      //   这里直接派发 pointer 事件模拟拖动（合成的 pointerId 下 `setPointerCapture` 会抛，
+      //   代码里已经 try 住了；这条也顺便把"拖完要能继续用"验了）。
+      if (h === "pane-resize"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        setTab("file");
+        await sleep(500);
+        const aside = document.querySelector("main > aside");
+        const snap = document.querySelector(".bk-snap");
+        const gA = document.querySelector("#grip-aside");
+        const gB = document.querySelector(".bk-snap .b-bkgrip");
+        const w = el => Math.round(el.getBoundingClientRect().width);
+        const near = (a, b) => Math.abs(a - b) <= 3;          // 边框/取整留 3px 余量
+        const drag = async (grip, x0, x1) => {
+          const o = {bubbles: true, button: 0, pointerId: 7, isPrimary: true};
+          grip.dispatchEvent(new PointerEvent("pointerdown", Object.assign({clientX: x0}, o)));
+          grip.dispatchEvent(new PointerEvent("pointermove", Object.assign({clientX: x1}, o)));
+          grip.dispatchEvent(new PointerEvent("pointerup", Object.assign({clientX: x1}, o)));
+          await sleep(150);
+        };
+        const a0 = w(aside), s0 = w(snap);
+        await drag(gA, 100, 180);                              // 往右拖 80 ⇒ 左边列变宽
+        const a1 = w(aside);
+        gA.dispatchEvent(new MouseEvent("dblclick", {bubbles: true}));
+        await sleep(150);
+        const a2 = w(aside);
+        await drag(gB, 900, 820);                              // 边栏那条在**左边**：往左拖 ⇒ 变宽
+        const s1 = w(snap);
+        gB.dispatchEvent(new MouseEvent("dblclick", {bubbles: true}));
+        await sleep(150);
+        const s2 = w(snap);
+        const ok = !!gA && !!gB && near(a0, 300) && a1 >= a0 + 70 && near(a2, 300) &&
+                   near(s0, 320) && s1 >= s0 + 70 && near(s2, 320);
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 左列=" + [a0, a1, a2].join("/") +
+          " 边栏=" + [s0, s1, s2].join("/") + " 细线=" + (!!gA) + (!!gB);
+        document.title = ok ? "READY" : "RESIZE-FAIL";
+        return;
+      }
       if (h === "statusbar"){
               const p0 = state.packages.find(x => x.id === "img" && !(x.ui && x.ui.embed))
                    || state.packages.find(x => !(x.ui && x.ui.embed)) || state.packages[0];
@@ -1270,303 +1451,269 @@ MOCK_JS = r"""
       }
       // ★ 备份那一页（`V-87`）：建一次 → 列表/清单出来 → 看内容 → 再来一次（该全去重）
       //   → 删掉一次并回收。判定都落在**能看见的东西**上（DOM 里的文字/条数）。
+      // ★ 版本快照边栏（`V-91`）：建两次 → 展开看文件/内容 → 删一次（去重靠"内容块"不变验证）
       if (h === "backup"){
-              const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
         select(p0.id);
         setTab("file");
         await sleep(500);
-        // 切到「备份」那一页（和「文件」并排的那个常驻子选项卡）
-        const tab = document.querySelector('#fm-bar .fmtab[data-fm="__backup__"]');
-        if (!tab){ document.title = "BK-NO-TAB"; return; }
-        tab.click();
-        await sleep(500);
-        const page = document.querySelector('.fmpage[data-page="__backup__"]');
-        const pageOn = !!page && page.classList.contains("on");
-        // 新建一次备份（范围默认"这个包"）
-        document.querySelector("#fm-body .b-bknew").click();
+        const snap = document.querySelector(".bk-snap");
+        const inSide = !!snap;
+        const newBtn = document.querySelector(".bk-snap .b-bknew");
+        if (!newBtn){ document.title = "SNAP-NO-BTN"; return; }
+        // ① 存第一个快照
+        newBtn.click();
         await sleep(250);
-        const formShown = !!document.querySelector(".bk-form");
-        const scopeText = (document.querySelector(".bk-form .bk-scope") || {}).value || "";
-        bkSet(".bk-title", "预览备份 A");
-        bkSet(".bk-note", "第一次");
-        document.querySelector(".bk-form .btn.primary").click();
-        await sleep(700);
-        const items1 = document.querySelectorAll(".bk-item").length;
-        const first = document.querySelector(".bk-item .bk-it-title");
-        const rows1 = document.querySelectorAll('.fmpage[data-page="__backup__"] table.bk-tbl tbody tr.row').length;
-        const stat1 = (document.querySelector(".bk-stat") || {}).title || "";
-        const gsel = !!document.querySelector('.bk-seg[data-bk-seg="list"] [data-bk-list="all"]');
-        const statTip = (document.querySelector(".bk-stat") || {}).title || "";
-        // ★ `V-88`：指纹那一列不该再有；表格按内容量宽度（别把路径列撑满一整行）
-        const heads = [].slice.call(document.querySelectorAll(
-          '.fmpage[data-page="__backup__"] table.bk-tbl thead th'))
-          .map(th => (th.textContent || "").trim());
-        const noFp = !heads.some(h => /指纹/.test(h));
-        const tbl = document.querySelector('.fmpage[data-page="__backup__"] table.bk-tbl');
-        const wrapEl = document.querySelector('.fmpage[data-page="__backup__"] .bk-scroll');
-        const notStretched = !!tbl && !!wrapEl &&
-          tbl.getBoundingClientRect().width < wrapEl.getBoundingClientRect().width - 8;
-        // 看一个文件的内容
-        const vbtn = document.querySelector('.fmpage[data-page="__backup__"] .b-bkview');
+        const formShown = !!document.querySelector(".bk-snap .bk-form");
+        bkSet(".bk-snap .bk-title", "预览快照 A");
+        bkSet(".bk-snap .bk-note", "第一次");
+        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        await sleep(900);
+        const nodes1 = document.querySelectorAll(".bk-snap .bk-tl-item").length;   // 含"当前工作区"
+        // ★ 时间轴第一条**永远是**「当前工作区」（那张卡没有 `data-bk`），所以标题要挑有 id 的那条
+        const firstTitle = (document.querySelector(".bk-snap .bk-tl-item[data-bk] .bk-card-top b")
+                            || {}).textContent || "";
+        const tip1 = (document.querySelector(".bk-snap-foot .bk-hint") || {}).title || "";
+        // ② 展开它看文件（存完自己就展开了 → 已经开着就别再点，再点一下是"收起"）
+        if (!document.querySelector(".bk-snap .bk-tl-item[data-bk] .bk-files")){
+          document.querySelector(".bk-snap .bk-tl-item[data-bk] .bk-card").click();
+          await sleep(700);
+        }
+        const fileRows = document.querySelectorAll(".bk-snap .bk-file").length;
+        const heads = [].slice.call(document.querySelectorAll(".bk-snap .bk-files .bk-hint"))
+          .map(t => (t.textContent || "").trim());
+        // ③ 看内容
+        const vbtn = document.querySelector(".bk-snap .b-bkview");
         if (vbtn) vbtn.click();
-        await sleep(400);
-        const viewShown = !!document.querySelector(".bk-view");
-        const viewText = (document.querySelector(".bk-view-text") || {}).textContent || "";
-        // 再备一次：应该"全去重"（新增内容块 0）
-        document.querySelector("#fm-body .b-bknew").click();
+        await sleep(600);
+        const viewText = (document.querySelector(".bk-snap .bk-view-text") || {}).textContent || "";
+        // ④ 再存一个（内容全重复 ⇒ 内容块数不该变）
+        document.querySelector(".bk-snap .b-bknew").click();
         await sleep(200);
-        bkSet(".bk-title", "预览备份 B");
-        document.querySelector(".bk-form .btn.primary").click();
-        await sleep(700);
-        const items2 = document.querySelectorAll(".bk-item").length;
-        const stat2 = (document.querySelector(".bk-stat") || {}).title || "";
-        const newest = document.querySelector(".bk-item .bk-it-sub");
-        const newestText = newest ? newest.textContent : "";
-        document.querySelector('.fmpage[data-page="__backup__"] .b-bkdel').click();
-        await sleep(350);
+        bkSet(".bk-snap .bk-title", "预览快照 B");
+        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        await sleep(1000);
+        const nodes2 = document.querySelectorAll(".bk-snap .bk-tl-item").length;
+        const tip2 = (document.querySelector(".bk-snap-foot .bk-hint") || {}).title || "";
+        // ⑤ 删掉最新那个
+        document.querySelector(".bk-snap .b-bkdel").click();
+        await sleep(500);
         const confirmShown = !!document.querySelector("#m-ok");
         document.querySelector("#m-ok").click();
-        await sleep(700);
-        const items3 = document.querySelectorAll(".bk-item").length;
-        const stat3 = (document.querySelector(".bk-stat") || {}).title || "";
-        // ★ 第二次备份是"全重复"的：清单里**不该**出现「新增 N 块」（`v-if="it.new_objects"`），
-        //   而且汇总里的**内容块数量不该变**（这正是去重生效的证据）。
+        await sleep(1100);
+        const nodes3 = document.querySelectorAll(".bk-snap .bk-tl-item").length;
+        const tip3 = (document.querySelector(".bk-snap-foot .bk-hint") || {}).title || "";
         const flags = {
-          pageOn: pageOn, form: formShown, scope: scopeText === "pkg", n1: items1 === 1,
-          titleA: /预览备份 A/.test(first ? first.textContent : ""), rows1: rows1 > 0,
-          noFp: noFp, notStretched: notStretched, gsel: gsel, statTip: /内容块 4 个/.test(statTip),
-          st1: /备份 1 次/.test(stat1),
-          view: viewShown && /这一段内容块/.test(viewText),
-          n2: items2 === 2, noNew: !/新增/.test(newestText),
-          obj4: /内容块 4 个/.test(stat2), confirm: confirmShown,
-          n3: items3 === 1, st3: /备份 1 次/.test(stat3),
+          side: inSide, form: formShown, n1: nodes1 === 2, titleA: /预览快照 A/.test(firstTitle),
+          rows: fileRows > 0, view: /这一段内容块/.test(viewText),
+          cnt1: /快照：1 次/.test(tip1) && /内容块 4 个/.test(tip1),
+          n2: nodes2 === 3, cnt2: /快照：2 次/.test(tip2) && /内容块 4 个/.test(tip2),
+          confirm: confirmShown, n3: nodes3 === 2, cnt3: /快照：1 次/.test(tip3),
         };
         const ok = Object.keys(flags).every(k => flags[k]);
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 页在=" + pageOn + " 表单=" + formShown +
-          " 范围=" + scopeText + " 建后=" + items1 + " 行=" + rows1 +
-          " 看内容=" + viewShown + " 表头=" + JSON.stringify(heads) +
-          " 没指纹列=" + noFp + " 表没撑满=" + notStretched +
-          " 再建后=" + items2 + " 最新=" + JSON.stringify(newestText) +
-          " 删后=" + items3 + " ｜ stat1=" + JSON.stringify(stat1.slice(0, 70)) +
-          " ｜ stat2=" + JSON.stringify(stat2.slice(0, 70)) +
-          " ｜ stat3=" + JSON.stringify(stat3.slice(0, 70));
+          "DIAG " + (ok ? "OK" : "FAIL") + " 边栏=" + inSide + " 表单=" + formShown +
+          " 节点=" + [nodes1, nodes2, nodes3].join("/") + " 行=" + fileRows +
+          " 计数=" + JSON.stringify(heads) + " 看内容=" + /这一段内容块/.test(viewText) +
+          " ｜ tip1=" + JSON.stringify(tip1.slice(0, 60)) +
+          " ｜ tip2=" + JSON.stringify(tip2.slice(0, 60));
         document.title = ok ? "READY"
-          : ("BACKUP-FAIL " + Object.keys(flags).filter(k => !flags[k]).join(","));
+          : ("SNAP-FAIL " + Object.keys(flags).filter(k => !flags[k]).join(","));
         return;
       }
-
-      // ★ 备份 + 恢复（`V-87`）：把盘上的文件改坏 / 删掉，然后"只补缺的 / 不一样的"
-      //   → 文件要回来、覆盖的要留一份 .bak、文件管理那份缓存要作废（重新列一遍）。
+      // ★ 合并恢复（`V-91` 边栏版）：改坏一个、删掉一个 → 「恢复」（合并）
       if (h === "backup-restore"){
-              const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
         select(p0.id);
         setTab("file");
         await sleep(500);
-        document.querySelector('#fm-bar .fmtab[data-fm="__backup__"]').click();
-        await sleep(400);
-        document.querySelector("#fm-body .b-bknew").click();
-        await sleep(200);
-        bkSet(".bk-title", "恢复用");
-        document.querySelector(".bk-form .btn.primary").click();
-        await sleep(700);
-        // 挑文件系统里真有的那个包目录，改坏一个、删掉一个
+        document.querySelector(".bk-snap .b-bknew").click();
+        await sleep(250);
+        bkSet(".bk-snap .bk-title", "恢复用");
+        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        await sleep(1000);
         const rel = (FM.ctx && pkgRel(DATA.packages.find(x => x.id === FM.ctx))) || "system/pkgs/md5";
         const st = FS[rel];
         const files = ((st && st.entries) || []).filter(e => !e.dir);
         if (files.length < 2){ document.title = "BK-NO-FILES"; return; }
         const bad = files[0], gone = files[1];
-        const origSize = bad.size || 0;                                              // ★ 记下原样
-        FS[rel].entries.find(e => e.rel === bad.rel).size = origSize + 999;          // 伪造"内容变了"
-        FS[rel].entries = FS[rel].entries.filter(e => e.rel !== gone.rel);           // 删掉一个
-        const modeBtn = document.querySelector(
-          '.fmpage[data-page="__backup__"] [data-bk-mode="merge"]');
-        const planBtn = document.querySelector(
-          '.fmpage[data-page="__backup__"] .btn[data-bk-act="restore"]');
-        if (!modeBtn || !planBtn){ document.title = "BK-NO-BTN"; return; }
-        modeBtn.click();
-        planBtn.click();
-        await sleep(400);
-        const modalText = (document.querySelector(".card p") || {}).textContent || "";
-        const confirmShown = !!document.querySelector("#m-ok");
+        const origSize = bad.size || 0;
+        FS[rel].entries.find(e => e.rel === bad.rel).size = origSize + 999;   // 伪造"内容变了"
+        FS[rel].entries = FS[rel].entries.filter(e => e.rel !== gone.rel);    // 删掉一个
+        // ★ `V-92`：滑块没了（"向 git 看齐"）—— 这里没有多出来的文件 ⇒ 应该**只有一个动词**，
+        //   第二个按钮（`#m-ok2`）必须是藏着的。
+        const goBtn = document.querySelector(".bk-snap .bk-card [data-bk-act='restore']");
+        if (!goBtn){ document.title = "BK-NO-BTN"; return; }
+        goBtn.click();
+        await sleep(700);
+        const modalText = ((document.querySelector(".card p") || {}).textContent || "")
+          .replace(/\s+/g, " ");
+        const shown = !!document.querySelector("#m-ok");
+        const altHidden = !!document.querySelector("#m-ok2") &&
+                          document.querySelector("#m-ok2").hidden === true;
         document.querySelector("#m-ok").click();
-        await sleep(800);
+        await sleep(1200);
         const backNow = (FS[rel].entries || []).some(e => e.rel === gone.rel);
         const fixed = (FS[rel].entries || []).find(e => e.rel === bad.rel);
         const bakMade = (FS[rel].entries || []).some(e => e.rel === bad.rel + ".bak");
-        const ok = confirmShown && /补/.test(modalText) && /回退/.test(modalText) &&
-                   backNow && fixed && (fixed.size === origSize) && bakMade;
+        const cached = Object.keys(FM.st).every(k => FM.st[k].stale === true);
+        const ok = shown && altHidden && /补/.test(modalText) && /回退/.test(modalText) &&
+                   backNow && fixed && (fixed.size === origSize) && bakMade && cached;
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 框=" + confirmShown +
-          " 删掉的回来了=" + backNow + " 覆盖回来了=" + !!fixed +
-          (fixed ? ("（" + fixed.size + " vs 备份 " + origSize + "）") : "") +
-          " .bak=" + bakMade + " 缓存作废=" + Object.keys(FM.st)
-            .every(k => FM.st[k].stale === true) +
-          " ｜ 框里的话=" + JSON.stringify(modalText.replace(/\s+/g, " ").slice(0, 120));
-        document.title = ok ? "READY" : "BACKUP-RESTORE-FAIL";
+          "DIAG " + (ok ? "OK" : "FAIL") + " 框=" + shown + " 单动词=" + altHidden +
+          " 补的回来了=" + backNow +
+          " 覆盖回来了=" + !!fixed + (fixed ? ("（" + fixed.size + " vs " + origSize + "）") : "") +
+          " .bak=" + bakMade + " 缓存作废=" + cached +
+          " ｜ " + JSON.stringify(modalText.slice(0, 120));
+        document.title = ok ? "READY" : "BK-RESTORE-FAIL";
         return;
       }
-
-      // ★ 分组（`V-89`）：两个包 → 两个组；下拉能切；"删掉这个分组"只动那一组
+      // ★ 两个动词（`V-92`，向 git 看齐）：现在多出来的 → 弹框里两个按钮，
+      //   `#m-ok` =「只写回」（git restore，多出来的留着）、`#m-ok2` =「一模一样」
+      //   （git reset --hard，挪进回收站）。这里点第二个，验"多出来的真被挪走"。
+      if (h === "backup-sync"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        setTab("file");
+        await sleep(500);
+        document.querySelector(".bk-snap .b-bknew").click();
+        await sleep(250);
+        bkSet(".bk-snap .bk-title", "同步用");
+        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        await sleep(1000);
+        const rel = (FM.ctx && pkgRel(DATA.packages.find(x => x.id === FM.ctx))) || "system/pkgs/md5";
+        FS[rel].entries.push({name: "后来加的.txt", rel: rel + "/后来加的.txt", dir: false,
+                              size: 11, mtime: 0, ext: "txt"});
+        const goBtn = document.querySelector(".bk-snap .bk-card [data-bk-act='restore']");
+        const segGone = !document.querySelector(".bk-snap [data-bk-mode]");
+        if (!goBtn){ document.title = "SYNC-NO-BTN"; return; }
+        goBtn.click();
+        await sleep(700);
+        const modalText = ((document.querySelector(".card p") || {}).textContent || "")
+          .replace(/\s+/g, " ");
+        const alt = document.querySelector("#m-ok2");
+        const shown = !!document.querySelector("#m-ok");
+        const two = !!alt && alt.hidden === false && /一模一样/.test(alt.textContent || "");
+        alt.click();                                   // = 一模一样（git reset --hard）
+        await sleep(1300);
+        const gone = !(FS[rel].entries || []).some(e => e.name === "后来加的.txt");
+        const trashed = (M.bkTrashed || []).some(x => /后来加的\.txt$/.test(x));
+        const ok = shown && two && segGone && /回收站/.test(modalText) && gone && trashed;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 框=" + shown + " 两个动词=" + two +
+          " 滑块没了=" + segGone + " 说了回收站=" + /回收站/.test(modalText) +
+          " 挪走了=" + gone + " 走回收站=" + trashed +
+          " ｜ " + JSON.stringify(modalText.slice(0, 130));
+        document.title = ok ? "READY" : "SYNC-FAIL";
+        return;
+      }
+      // ★ 导出（`V-91` 边栏版）：目标用弹窗问；把文件夹"拖"到边栏上也当目标
+      if (h === "backup-export"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        setTab("file");
+        await sleep(500);
+        document.querySelector(".bk-snap .b-bknew").click();
+        await sleep(250);
+        bkSet(".bk-snap .bk-title", "导出用");
+        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        await sleep(1000);
+        // ① 拖文件夹到边栏上（真路径由宿主送来，这里直接叫那个钩子）
+        BK.dropOver = true;
+        const took = window.__mossDropHook([{path: "D:\\\\拖进来的目录", isDir: true,
+                                             dir: "D:\\\\", name: "拖进来的目录"}]);
+        await sleep(200);
+        const dropOk = took === true && /拖进来的目录/.test(String(BK.exportTo));
+        // ② 点「导出」→ 弹窗里把目标接上 /2/
+        const exBtn = document.querySelector(".bk-snap .bk-card [data-bk-act='export']");
+        if (!exBtn){ document.title = "EXPORT-NO-BTN"; return; }
+        exBtn.click();
+        await sleep(600);
+        const inputShown = !!document.querySelector("#m-input");
+        const mi = document.querySelector("#m-input");
+        mi.value = "D:\\\\拖进来的目录/2/";
+        document.querySelector("#m-ok").click();
+        await sleep(700);
+        const modalText = ((document.querySelector(".card p") || {}).textContent || "")
+          .replace(/\s+/g, " ");
+        const shown = !!document.querySelector("#m-ok");
+        document.querySelector("#m-ok").click();
+        await sleep(1200);
+        const ex = M.bkExported || {};
+        const paths = ex.relPaths || [];
+        const ok = dropOk && inputShown && shown && /原文件不动/.test(modalText) &&
+                   String(ex.root || "").replace(/\\\\/g, "/").replace(/\/+$/, "").endsWith("/2") &&
+                   paths.length > 0;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 拖进来=" + dropOk + " 弹窗=" + inputShown +
+          " 落到=" + ex.root + " 文件数=" + paths.length +
+          "（例 " + JSON.stringify(paths.slice(0, 2)) + "）" +
+          " ｜ " + JSON.stringify(modalText.slice(0, 110));
+        document.title = ok ? "READY" : "EXPORT-FAIL";
+        return;
+      }
+      // ★ 边栏跟着"当前选中的对象"走（`V-91`）：换包 = 换一组快照；删整组只动那一组
       if (h === "backup-groups"){
         const pA = state.packages.find(x => x.id === "md5") || state.packages[0];
         const pB = state.packages.find(x => x.id === "bmi") || state.packages[1] || pA;
-        const segBtn = which =>
-          document.querySelector('.bk-seg[data-bk-seg="list"] [data-bk-list="' + which + '"]');
+        // A 存一个
         select(pA.id);
         setTab("file");
         await sleep(500);
-        document.querySelector('#fm-bar .fmtab[data-fm="__backup__"]').click();
-        await sleep(400);
-        document.querySelector("#fm-body .b-bknew").click();
+        document.querySelector(".bk-snap .b-bknew").click();
         await sleep(250);
-        const hintA = ((document.querySelector(".bk-form .bk-tag") || {})
-          .textContent || "").trim();
-        bkSet(".bk-title", "A 的备份");
-        document.querySelector(".bk-form .btn.primary").click();
-        await sleep(800);
-        const rowsPkgA = document.querySelectorAll(".bk-item").length;
+        bkSet(".bk-snap .bk-title", "A 的快照");
+        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        await sleep(1000);
+        const aNodes = document.querySelectorAll(".bk-snap .bk-tl-item").length;
+        const aLabel = (document.querySelector(".bk-snap .bk-card.flat .bk-card-sub") || {})
+          .textContent || "";
+        // 换到 B：边栏该换一组（空）
         select(pB.id);
         setTab("file");
-        await sleep(600);
-        document.querySelector('#fm-bar .fmtab[data-fm="__backup__"]').click();
-        await sleep(400);
-        document.querySelector("#fm-body .b-bknew").click();
-        await sleep(300);
-        const hintB = ((document.querySelector(".bk-form .bk-tag") || {})
-          .textContent || "").trim();
-        bkSet(".bk-title", "B 的备份");
-        document.querySelector(".bk-form .btn.primary").click();
         await sleep(900);
-        segBtn("all").click();
-        await sleep(800);
-        const rows = document.querySelectorAll(".bk-item").length;
-        const tags = [].slice.call(document.querySelectorAll(".bk-item .bk-gtag"))
-          .map(t => (t.textContent || "").trim());
-        const segs = [].slice.call(document.querySelectorAll(
-          '.bk-seg[data-bk-seg="list"] button')).map(t => t.dataset.bkList);
-        const modeSegs = [].slice.call(document.querySelectorAll(
-          '.bk-seg[data-bk-seg="mode"] button')).map(t => t.dataset.bkMode);
-        segBtn("pkg").click();
-        await sleep(700);
-        const rowsB = document.querySelectorAll(".bk-item").length;
-        const onlyB = [].slice.call(document.querySelectorAll(".bk-item .bk-it-title"))
-          .every(t => /B 的备份/.test(t.textContent || ""));
-        document.querySelector("#fm-body .b-bkdropgroup").click();
+        const bNodes = document.querySelectorAll(".bk-snap .bk-tl-item").length;
+        const bLabel = (document.querySelector(".bk-snap .bk-card.flat .bk-card-sub") || {})
+          .textContent || "";
+        // B 存一个
+        document.querySelector(".bk-snap .b-bknew").click();
+        await sleep(250);
+        bkSet(".bk-snap .bk-title", "B 的快照");
+        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        await sleep(1000);
+        const bNodes2 = document.querySelectorAll(".bk-snap .bk-tl-item").length;
+        // 回 A：应该还是 A 那一个
+        select(pA.id);
+        setTab("file");
+        await sleep(900);
+        const aNodes2 = document.querySelectorAll(".bk-snap .bk-tl-item").length;
+        const aTitle = (document.querySelector(".bk-snap .bk-tl-item[data-bk] .bk-card-top b")
+                        || {}).textContent || "";
+        // 删掉 A 这一组（foot 那颗垃圾桶）
+        document.querySelector(".bk-snap .b-bkdropgroup").click();
         await sleep(700);
         const modal = ((document.querySelector(".card p") || {}).textContent || "")
           .replace(/\s+/g, " ");
         const shown = !!document.querySelector("#m-ok");
         document.querySelector("#m-ok").click();
-        await sleep(1000);
-        segBtn("all").click();
-        await sleep(800);
-        const left = [].slice.call(document.querySelectorAll(".bk-item .bk-it-title"))
-          .map(t => (t.textContent || "").trim());
-        const ok = rowsPkgA === 1 && rows === 2 && tags.length === 2 && new Set(tags).size === 2 &&
-                   segs.indexOf("pkg") >= 0 && segs.indexOf("all") >= 0 &&
-                   modeSegs.indexOf("merge") >= 0 && modeSegs.indexOf("mirror") >= 0 &&
-                   hintA === pA.id && hintB === pB.id &&
-                   rowsB === 1 && onlyB && shown && /文件夹/.test(modal) &&
-                   left.length === 1 && /A 的备份/.test(left[0]);
+        await sleep(1100);
+        const aNodes3 = document.querySelectorAll(".bk-snap .bk-tl-item").length;
+        // 切到 B：它那一组还在
+        select(pB.id);
+        setTab("file");
+        await sleep(900);
+        const bLeft = document.querySelectorAll(".bk-snap .bk-tl-item").length;
+        const ok = aNodes === 2 && bNodes === 1 && bNodes2 === 2 && aNodes2 === 2 &&
+                   /A 的快照/.test(aTitle) && shown && /文件夹/.test(modal) &&
+                   aNodes3 === 1 && bLeft === 2;
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 当前包下=" + rowsPkgA + " 全部下=" + rows +
-          " 标签=" + JSON.stringify(tags) + " 范围滑块=" + JSON.stringify(segs) +
-          " 模式滑块=" + JSON.stringify(modeSegs) + " B组=" + rowsB + " 只有B=" + onlyB +
-          " 框=" + shown + " 删完剩=" + JSON.stringify(left) +
-          " ｜ 表单提示=" + JSON.stringify([hintA.slice(-20), hintB.slice(-20)]);
+          "DIAG " + (ok ? "OK" : "FAIL") + " A=" + [aNodes, aNodes2, aNodes3].join("/") +
+          " B=" + [bNodes, bNodes2, bLeft].join("/") + " A标题=" + JSON.stringify(aTitle) +
+          " 框=" + shown + " 标签=" + JSON.stringify([aLabel.trim(), bLabel.trim()]) +
+          " ｜ " + JSON.stringify(modal.slice(0, 90));
         document.title = ok ? "READY" : "GROUPS-FAIL";
         return;
       }
-
-      // ★ 同步模式（`V-88`）：现在有、备份里没有的 → 恢复时**挪进回收站**（不是真删）
-      if (h === "backup-sync"){
-              const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
-        select(p0.id);
-        setTab("file");
-        await sleep(500);
-        document.querySelector('#fm-bar .fmtab[data-fm="__backup__"]').click();
-        await sleep(400);
-        document.querySelector("#fm-body .b-bknew").click();
-        await sleep(200);
-        bkSet(".bk-title", "同步用");
-        document.querySelector(".bk-form .btn.primary").click();
-        await sleep(700);
-        // 备份之后往包目录里塞一个"多出来的"文件
-        const rel = (FM.ctx && pkgRel(DATA.packages.find(x => x.id === FM.ctx))) || "system/pkgs/md5";
-        FS[rel].entries.push({name: "后来加的.txt", rel: rel + "/后来加的.txt", dir: false,
-                              size: 11, mtime: 0, ext: "txt"});
-        const mirrorBtn = document.querySelector(
-          '.fmpage[data-page="__backup__"] [data-bk-mode="mirror"]');
-        const goBtn = document.querySelector(
-          '.fmpage[data-page="__backup__"] .btn[data-bk-act="restore"]');
-        if (!mirrorBtn || !goBtn){ document.title = "SYNC-NO-BTN"; return; }
-        mirrorBtn.click();
-        goBtn.click();
-        await sleep(600);
-        const modalText = ((document.querySelector(".card p") || {}).textContent || "")
-          .replace(/\s+/g, " ");
-        const shown = !!document.querySelector("#m-ok");
-        document.querySelector("#m-ok").click();
-        await sleep(900);
-        const gone = !(FS[rel].entries || []).some(e => e.name === "后来加的.txt");
-        const trashed = (M.bkTrashed || []).some(x => /后来加的\.txt$/.test(x));
-        const ok = shown && /回收站/.test(modalText) && gone && trashed;
-        document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 框=" + shown + " 框里说了回收站=" +
-          /回收站/.test(modalText) + " 挪走了=" + gone + " 走了回收站那条路=" + trashed +
-          " ｜ " + JSON.stringify(modalText.slice(0, 150));
-        document.title = ok ? "READY" : "SYNC-FAIL";
-        return;
-      }
-
-      // ★ 导出到指定文件夹（`V-88`）：拖文件夹进来当目标 + 在框里接 `/2/` + 确认框说清"另存一份"
-      if (h === "backup-export"){
-              const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
-        select(p0.id);
-        setTab("file");
-        await sleep(500);
-        document.querySelector('#fm-bar .fmtab[data-fm="__backup__"]').click();
-        await sleep(400);
-        document.querySelector("#fm-body .b-bknew").click();
-        await sleep(200);
-        bkSet(".bk-title", "导出用");
-        document.querySelector(".bk-form .btn.primary").click();
-        await sleep(700);
-        // ① 把文件夹"拖"到那一行上（真路径是宿主送进来的，这里直接叫那个钩子）
-        BK.dropOver = true;
-        const took = window.__mossDropHook([{path: "D:\\拖进来的目录", isDir: true,
-                                             dir: "D:\\", name: "拖进来的目录"}]);
-        await sleep(200);
-        const dropOk1 = took === true && BK.exportTo === "D:\\拖进来的目录";
-        // ② 在框里接着敲 `/2/`（你要的"恢复到它的子文件夹"）
-        bkSet(".bk-out", "D:\\拖进来的目录/2/");
-        await sleep(150);
-        // ③ 点导出 → 确认框 → 真落到 target/2/…
-        const exBtn = document.querySelector('.fmpage[data-page="__backup__"] .btn[data-bk-act="export"]');
-        if (!exBtn){ document.title = "EXPORT-NO-BTN"; return; }
-        exBtn.click();
-        await sleep(600);
-        const modalText = ((document.querySelector(".card p") || {}).textContent || "")
-          .replace(/\s+/g, " ");
-        const shown = !!document.querySelector("#m-ok");
-        document.querySelector("#m-ok").click();
-        await sleep(900);
-        const info = document.querySelector(".bk-export [data-bk-outinfo]");
-        const infoText = info ? info.textContent.replace(/\s+/g, " ") : "";
-        const ex = M.bkExported || {};
-        const paths = ex.relPaths || [];
-        const ok = dropOk1 && shown && /原文件不动/.test(modalText) &&
-                   String(ex.root || "").replace(/\\/g, "/").replace(/\/+$/, "").endsWith("/2") && paths.length > 0 && /将写/.test(infoText);
-        document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 拖进来收下=" + dropOk1 + " 落到=" + ex.root +
-          " 文件数=" + paths.length + "（例 " + JSON.stringify(paths.slice(0, 2)) + "）" +
-          " 框=" + shown + " 行里的话=" + JSON.stringify(infoText.slice(0, 80)) +
-          " ｜ 框里的话=" + JSON.stringify(modalText.slice(0, 110));
-        document.title = ok ? "READY" : "EXPORT-FAIL";
-        return;
-      }
-
       // ★ 参数框右边那颗"一键清空"（`V-86`）：没内容时**不该出现**，打字后出现，
       //   点一下要清空 + 预览行跟着变 + 光标回到框里。
       if (h === "args-clear"){

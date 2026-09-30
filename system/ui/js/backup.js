@@ -1,73 +1,187 @@
-/* moss 界面 · js/backup.js —— 「备份」那一页（`V-87`，`V-89` 分组，`V-90` 界面收拾）。
+/* moss 界面 · js/backup.js —— 「**版本快照**」边栏（`V-87` 备份 / `V-91` 并进文件管理）。
    ============================================================================
-   一句话：**开发时把数据存一份**。跟 git 一个路子 —— 备份里只记**指纹**（路径 → 指纹），
-   文件内容按指纹单独存一份，所以同一个内容（换了名字、换了目录、跨好几次备份）只占一份。
-   落盘按**包 id 分组**：`user_data/backups/<包id>/{objects/,<备份id>/manifest.json}`
+   一句话：**给当前这个对象（包 / 目录）留版本**，像 Time Machine 那样挂在文件管理右边。
+   底下是"简易版 git"：快照里只记**指纹**（路径 → 指纹），文件内容按指纹存一份，
+   所以同一个内容（换了名字、换了目录、跨好几次快照）只占一份。
+   落盘按**包 id 分组**：`user_data/backups/<包id>/{objects/,<快照id>/manifest.json}`
    —— 改个 id 就改一个文件夹名、删个包就删一个文件夹。
 
-   这一页是**文件管理里的第二个常驻子选项卡**（和「文件」并排、同样不能关），
-   挂载点是 `MossFileManager` 模板里的 `<moss-file-backup>`；那个组件在 `js/files.js` 里
-   （本文件在它**之后**加载），所以这边只做一件事：把组件塞进它的 `components` 里。
-
+   ★ 为什么是**边栏**而不是另一个选项卡（`V-91`，你的稿子）：快照天生是"这个目录的这些
+     版本"，贴着文件列表放，语义不用解释；而且边栏只显示**当前选中对象**的快照，
+     原来那个"分组下拉框"就不需要了（换对象 = 换一组快照）。
    ★ 逻辑全在宿主侧：`system/ui/backup.py`（内容寻址 + 标记-清除回收）。
-     页面这一层只管"点一下 → 调 api → 把结果摆出来"，自己不碰文件系统。
-
-   ★ 界面规矩（`V-90`，你定的）：**按钮两三个字，说明进 hover**。所以：
-     · 恢复 = 一个「恢复」+ 一个两段式滑块「合并 / 镜像」（git 味的名字）
-     · 分组不搞下拉框，就两个小段：`当前包 / 全部`（默认跟着文件管理里选中的包）
-     · 页面上不留大段解释文字，全部塞进 `title`
+   ★ 界面规矩（`V-90`）：**按钮两三个字，说明进 hover**，页面上不留大段文字。
    ============================================================================ */
 
 /* 这一页的状态（自己一份，和文件管理那份 `FM` 无关）。
-   为什么不挂进 `FM.st[ctx]`：备份是**跨上下文**的东西（一次备份可以覆盖好几个目录），
-   不像"当前目录 / 选中 / 打开的文件"那样跟着"现在选的是哪个包"走。 */
+   为什么不挂进 `FM.st[ctx]`：快照是**跨上下文**的东西（一次可以覆盖好几个目录），
+   不像"当前目录 / 选中 / 打开的文件"那样跟着上下文走。 */
 const BK = Vue.reactive({
-  items: [], stat: {}, groups: [], loading: false,
+  items: [], stat: {}, loading: false,
   sel: null, man: null,
   view: null,                          // {rel, fp, binary, text, size, truncated} 或 null
-  formOpen: false, title: "", note: "", scope: "",
   filter: "", busy: "", checkRows: null,
-  exportTo: "", exportBak: false, exportInfo: null, dropOver: false,   // 导出（`V-88`）
-  listOnly: "pkg",                     // 列表看哪些：`pkg` = 当前这个包，`all` = 所有分组
-  mode: "merge",                       // 恢复方式：`merge` 合并 / `mirror` 镜像（`V-90`）
-  groupHint: "",                       // 这次新建会落到哪个分组（按来源算）
+  formOpen: false, title: "", note: "",
+  collapsed: false,                    // 边栏收起（窄窗口时默认收）
+  exportTo: "", exportBak: false, dropOver: false,   // 导出（`V-88`）
+  fps: {}, fresh: {},                   // 现读磁盘：指纹 + 现大小 + 目录子树（`V-94`，不信界面缓存）
+  leftOnly: 0,
 });
 
-/* 「当前包」这个段对应哪一组：文件管理里选中的那个包（`cur`）的 id。
-   不是包（历史条目 / 全部文件）时退回"所有分组"。 */
-function bkListGroup(){
-  if (BK.listOnly !== "pkg") return "";
-  return (cur && cur.id) || "";
-}
-function bkCurGroupName(){ return bkListGroup() || ""; }
+/* ================================================================ 差异视图（`V-94`）
+   你的要求（2026-09-30）：「下面的路径这里 请按照原本的文件 文件夹来展示 并且 时刻保持和左侧同步
+   也就是说 左侧目录切换的时候 当前镜像如果也有这个目录 那么也显示对应的目录」「黑色表示内容一致
+   有变化则高亮 如果是空文件 没内容 则灰色显示」「同样有内容的情况下 高亮 但是左边文件更大和更少
+   使用同样一种高亮色 但是深浅不同 左侧的多 就左侧文字更深 右侧更浅 否则就反过来」「某一边缺失
+   文件 0kb文件等 都需要不同的颜色」。
 
-/* ---- 备份来源的候选（跟着"现在选的是哪个包"走）---- */
-function bkScopes(){
-  const out = [];
+   ⇒ 这一块就是"**当前目录的左右对照**"：
+       左边 = 文件管理里现在这个目录（真文件）
+       右边 = 这个快照里**同一个目录**（时间轴选中的那一次）
+     一条文件一个状态，两种颜色维度拼出来：
+       · 一致            → 正常色（黑/白），不打扰
+       · 两边都有、不一样 → **同一个琥珀色**，谁**大**谁的**文字更深**（左边大 = 左深右浅）
+       · 只有快照里有     → 红（该警惕：可能是你删了/改名了）
+       · 只有现在有       → 绿（后加进去的，一般无害）
+       · 空文件（0 字节） → 灰（有这一格，但里面什么都没有）
+   判定顺序也照你说的："更大/更少"先看**大小**（便宜、也就是你要的语义）；大小一样才去比指纹
+   （`backup_fp` 现算，见 `system/ui/main.py`）。 */
+function bkCurDir(){
+  const s = FM.st[FM.ctx || "__all__"];
+  return (s && s.rel) || "";
+}
+function bkNowEntries(){
+  const s = FM.st[FM.ctx || "__all__"];
+  return (s && s.entries) || [];
+}
+/* 快照里 rel 这一层有什么：文件直接用，目录按"子树字节数"合成一个（好跟现在这一层比大小）。 */
+function bkSnapSlice(rel){
+  const man = BK.man;
+  if (!man) return null;
+  const pfx = rel ? String(rel).replace(/\/+$/, "") + "/" : "";
+  const dirs = {}, files = {};
+  (man.files || []).forEach(e => {
+    const r = String(e.rel || "");
+    if (pfx && r.indexOf(pfx) !== 0) return;
+    const rest = pfx ? r.slice(pfx.length) : r;
+    if (!rest) return;
+    const i = rest.indexOf("/");
+    if (i >= 0){ const d = rest.slice(0, i); dirs[d] = (dirs[d] || 0) + (e.size || 0); }
+    else files[rest] = e;
+  });
+  (man.empty_dirs || []).forEach(d => {
+    const r = String(d || "");
+    if (pfx && r.indexOf(pfx) !== 0) return;
+    const rest = pfx ? r.slice(pfx.length) : r;
+    if (rest && rest.indexOf("/") < 0 && dirs[rest] === undefined) dirs[rest] = 0;
+  });
+  return {dirs: dirs, files: files};
+}
+function bkStateWhy(st, name, deep){
+  if (st === "diff") return "两边都有、内容不一样" + (deep === "now" ? "（现在这份更大）"
+                        : deep === "snap" ? "（快照里那份更大）" : "（大小一样、内容不同）");
+  if (st === "snap-only") return "快照里有、现在没了（被删了还是改名了？）";
+  if (st === "now-only") return "现在有、快照里没有（后加进去的）";
+  if (st === "empty") return "空文件（0 字节）";
+  return "和快照里一样";
+}
+/* 算出这一层每一条的状态（左边=现在，右边=快照） */
+function bkDiffModel(){
+  const rel = bkCurDir();
+  const now = bkNowEntries();
+  const snap = bkSnapSlice(rel);
+  const fps = BK.fps || {};
+  const fr = BK.fresh || {};
+  const freshSize = r => (fr.sizes && (r in fr.sizes)) ? fr.sizes[r] : null;
+  const freshDir = r => (fr.dirs && (r in fr.dirs)) ? fr.dirs[r] : null;
+  const mine = {};
+  now.forEach(e => { mine[e.name] = e; });
+  const names = now.map(e => e.name);
+  if (snap){
+    Object.keys(snap.files).forEach(n => { if (names.indexOf(n) < 0) names.push(n); });
+    Object.keys(snap.dirs).forEach(n => { if (names.indexOf(n) < 0) names.push(n); });
+  }
+  const entries = names.map(n => {
+    const nw = mine[n] || null;
+    const sFile = snap ? snap.files[n] : null;
+    const sDirSize = snap ? snap.dirs[n] : undefined;
+    const inSnap = !!(sFile || sDirSize !== undefined);
+    const nowDir = !!(nw && nw.dir);
+    // ★ 现读磁盘优先（你在外面改了文件、界面那份缓存还是旧的 —— 拿缓存比就"该亮的不亮"）
+    const nowSize = nw ? (nowDir ? freshDir(nw.rel) : (freshSize(nw.rel) !== null
+                                                        ? freshSize(nw.rel) : (nw.size || 0)))
+                       : null;
+    const snapSize = sFile ? (sFile.size || 0) : (sDirSize !== undefined ? sDirSize : null);
+    let st, deep = "", fp = "";
+    if (nw && inSnap){
+      if (sFile && !nowDir){
+        const sfp = sFile.fp || "";
+        const nfp = fps[nw.rel] || "";
+        if (nowSize !== snapSize) { st = "diff"; deep = (nowSize > snapSize) ? "now" : "snap"; }
+        else if (nfp && sfp && nfp !== sfp) { st = "diff"; }      // 大小一样、指纹不同
+        else st = "same";
+        fp = sfp;
+      }else{
+        // 目录：两边都有就是"一致"，只有**子树字节数两边都拿得到**时才比大小
+        //（拿不到就当一致 —— 不能因为"算不出来"就把每个目录都标成变了）
+        if (nowSize === null || snapSize === null) st = "same";
+        else {
+          st = (nowSize === snapSize) ? "same" : "diff";
+          if (st === "diff") deep = (nowSize > snapSize) ? "now" : "snap";
+        }
+      }
+    }
+    else if (nw) st = "now-only";
+    else st = "snap-only";
+    if (st === "same" && !nowDir && nowSize === 0) st = "empty";
+    return {
+      name: n, dir: nowDir || (sDirSize !== undefined), rel: nw ? nw.rel : ((rel ? rel + "/" : "") + n),
+      now: nw ? {size: nowSize, dir: nowDir} : null,
+      snap: inSnap ? {size: snapSize, fp: fp} : null,
+      size: sFile ? (sFile.size || 0) : 0, fp: fp,          // 给"看内容 / 只恢复这一个"用
+      state: st, deep: deep, why: bkStateWhy(st, n, deep),
+    };
+  });
+  entries.sort((a, b) => (a.dir === b.dir) ? a.name.localeCompare(b.name) : (a.dir ? -1 : 1));
+  const byRel = {};
+  entries.forEach(e => { byRel[e.rel] = e; });
+  return {rel: rel, entries: entries, byRel: byRel, snapOk: !!snap};
+}
+
+/* 边栏看的是**当前这个对象**那一组快照：
+     选了包  ⇒ 包 id 那一组（快照就存在 `user_data/backups/<包id>/`）
+     没选包  ⇒ 整个 user_data（`@user`）——"全部文件"那个上下文
+   后端按来源猜组是同一套规则（`backup.py` 的 `group_for_sources`）。 */
+function bkGroupForCtx(){
+  const key = FM.ctx || "__all__";
+  const p = (key !== "__all__" && !isHistKey(key)) ? DATA.packages.find(x => x.id === key) : null;
+  return p ? p.id : "@user";
+}
+function bkCtxLabel(){
+  const key = FM.ctx || "__all__";
+  const p = (key !== "__all__" && !isHistKey(key)) ? DATA.packages.find(x => x.id === key) : null;
+  if (p) return p.name || p.id;
+  if (isHistKey(key)) return "这条调用所在的目录";
+  return "整个 user_data";
+}
+/* 快照的来源：当前对象是什么就备份什么 */
+function bkScopeRels(){
   const key = FM.ctx || "__all__";
   const p = (key !== "__all__" && !isHistKey(key)) ? DATA.packages.find(x => x.id === key) : null;
   if (p){
     const roots = [];
     const rel = pkgRel(p);
     if (rel) roots.push(rel);
-    roots.push("user/state/" + p.id);          // 数据目录（没有也不碍事，备份时按"空的"处理）
-    out.push({id: "pkg", label: "这个包：" + (p.name || p.id), rels: roots,
-              hint: "包目录 + 它的数据目录"});
+    roots.push("user/state/" + p.id);
+    return roots;
   }
-  out.push({id: "user", label: "整个 user_data", rels: ["user"],
-            hint: "所有用户资产（回收站和备份库自己会跳过）"});
-  const s = FM.st[key] || (FM.ctx ? fmState(FM.ctx) : null);
-  if (s && s.rel){
-    out.push({id: "here", label: "当前浏览的目录：" + s.rel, rels: [s.rel],
-              hint: "文件管理里现在站着的那个目录"});
+  if (isHistKey(key)){
+    const it = histByKey(key);
+    const d = it && histDir(it);
+    return d ? [d] : ["user"];
   }
-  return out;
-}
-function bkDefaultScope(){ return (bkScopes()[0] || {}).id || "user"; }
-function bkScopeRels(){
-  const list = bkScopes();
-  const hit = list.find(x => x.id === (BK.scope || bkDefaultScope())) || list[0];
-  return (hit && hit.rels) || [];
+  const s = FM.st[key];
+  return (s && s.rel) ? [s.rel] : ["user"];
 }
 function bkShortFp(fp){ return String(fp || "").slice(0, 10); }
 /* 看内容时的高亮：直接把 hljs 的结果塞进那个 <pre>（只读，不需要文件管理里那套
@@ -80,20 +194,61 @@ function bkHighlightHTML(text, lang){
   return esc(t);
 }
 
-const MossFileBackup = {
-  name: "moss-file-backup",
-  props: {active: {type: Boolean, default: false}},
+const MossFileSnap = {
+  name: "moss-file-snap",
   // ★ 模板里够不着模块级的 BK（Vue 模板只认实例上的东西）—— 显式交出去。
-  data(){ return { BK: BK }; },
+  data(){ return { BK: BK, BKD: BKD }; },   // ★ BKD（差异容器）是 core.js 里的 const，模板看不见它，得这样递进去
   computed: {
-    scopes(){ void FM.rev; void FM.st; return bkScopes(); },
-    scopeRelsText(){ void FM.rev; void FM.st; return bkScopeRels().join("、"); },
-    curGroup(){ void FM.rev; return bkListGroup(); },
-    rows(){
-      const f = (BK.filter || "").trim().toLowerCase();
-      let list = (BK.man && BK.man.files) || [];
-      if (f) list = list.filter(e => String(e.rel || "").toLowerCase().includes(f));
-      return list;
+    ctxKey(){ void FM.rev; void FM.st; return (FM.ctx || "__all__") + "|" + bkScopeRels().join(","); },
+    ctxLabel(){ void FM.rev; void FM.st; return bkCtxLabel(); },
+    /* 盘上那个文件夹叫什么（= 分组名 = 包 id；没选包就是 `@user`）—— 和 `ctxLabel` 分开：
+       一个是给你看的名字，一个是磁盘上的名字（`V-89`：改 id 就改文件夹名）。 */
+    ctxGroup(){ void FM.rev; void FM.st; return bkGroupForCtx(); },
+    /* 目录 / 选中的快照 / 这一层有几个东西 —— 任意一个变了就重算对照（`V-94`） */
+    mirrorKey(){
+      void FM.rev;
+      const s = FM.st[FM.ctx || "__all__"];
+      const es = (s && s.entries) || [];
+      // ★ 键里必须带**每一条的名字 + 大小**（不能只数个数）：你在外面把文件改大了、回来按一下
+      //   刷新，文件数没变、目录没变 —— 只数个数的话这个 watcher 根本不动，差异视图就一直是旧的
+      //   （真机探针当场抓到：刷新完还是 same）。
+      return bkCurDir() + "|" + (BK.sel || "") + "|" + es.length + "|" +
+             es.map(e => e.name + ":" + (e.size || 0) + (e.dir ? "d" : "")).join(",") +
+             "|" + ((s && s.stale) ? 1 : 0);
+    },
+    /* 差异视图（`V-94`）：行 = 当前目录这一层的"左边（现在）+ 右边（快照）" */
+    /* ★ 快照那一列**只列快照里真有的东西**："只有现在有"的那些（绿色）只出现在**左边**那张表里。
+       你 2026-09-30 反馈的第一条就是它 —— 新建一个 `untitled.py`，快照里怎么也冒出来了。 */
+    mirrorRows(){
+      void BKD.diff;
+      return ((BKD.diff && BKD.diff.entries) || []).filter(e => e.state !== "now-only");
+    },
+    mirrorPath(){
+      void FM.rev;
+      const rel = bkCurDir();
+      return rel ? rel : "（根目录）";
+    },
+    mirrorTip(){
+      return "跟着左边的文件管理走：左侧进哪个目录，这里就对照哪个目录\n" +
+             "左边 = 现在的工作区（" + (bkCurDir() || "根目录") + "）\n" +
+             "右边 = 这次快照里的同一个目录\n" +
+             "颜色：一致=正常 · 两边都有但不一样=琥珀（谁大谁更深）· " +
+             "只有快照里有=红 · 只有现在有=绿 · 空文件=灰";
+    },
+    mirrorCount(){
+      void BKD.diff;
+      const es = (BKD.diff && BKD.diff.entries) || [];
+      const n = s => es.filter(e => e.state === s).length;
+      const d = n("diff"), g = n("snap-only"), w = n("now-only");
+      return es.length + " 项" + (d ? " · 变 " + d : "") + (g ? " · 缺 " + g : "") +
+             (w ? " · 多 " + w : "");
+    },
+    mirrorCountTip(){
+      void BKD.diff;
+      const es = (BKD.diff && BKD.diff.entries) || [];
+      const n = s => es.filter(e => e.state === s).length;
+      return "一致 " + n("same") + " · 变了 " + n("diff") + " · 空文件 " + n("empty") +
+             " · 只有快照里有 " + n("snap-only") + " · 只有现在有 " + n("now-only");
     },
     viewLang(){
       if (!BK.view || !BK.view.rel) return "";
@@ -104,190 +259,221 @@ const MossFileBackup = {
       if (!BK.view || BK.view.binary) return "";
       return bkHighlightHTML(BK.view.text, this.viewLang);
     },
-    /* 工具条右边那点字：短，细节进 hover */
     statLine(){
       const s = BK.stat || {};
-      const bits = [(s.backups || 0) + " 次", (s.store_bytes || 0) ? humanSize(s.store_bytes) : "0 B"];
-      if (s.saved) bits.push("省 " + humanSize(s.saved));
-      return bits.join(" · ");
+      return (s.backups || 0) + " 次 · " + humanSize(s.store_bytes || 0) +
+             (s.saved ? (" · 省 " + humanSize(s.saved)) : "");
     },
     statTip(){
       const s = BK.stat || {};
-      return "备份 " + (s.backups || 0) + " 次 · 文件 " + (s.files || 0) + " 个 · 内容块 " +
-             (s.objects || 0) + " 个（占 " + humanSize(s.store_bytes) + "）" +
-             (s.saved ? ("；去重省了 " + humanSize(s.saved)) : "") +
-             "。" + ((s.groups || 0) > 1 ? ("（共 " + s.groups + " 个分组）") : "");
+      return "这个对象的快照：" + (s.backups || 0) + " 次 · 文件 " + (s.files || 0) +
+             " 个 · 内容块 " + (s.objects || 0) + " 个（占 " + humanSize(s.store_bytes) + "）" +
+             (s.saved ? ("；去重省了 " + humanSize(s.saved)) : "");
+    },
+    scopeTip(){
+      return "快照的来源：\n" + bkScopeRels().join("\n") +
+             "\n（按这组来源算出来的分组就是 " + bkGroupForCtx() + "）";
     },
   },
   watch: {
-    active(on){ if (on) this.refresh(); },
+    ctxKey(){ this.switchCtx(); },        // 换了对象 ⇒ 换一组快照
+    mirrorKey(){ this.reloadMirror(); },  // 换了目录 / 换了选中的快照 ⇒ 重算对照
   },
   mounted(){
-    if (this.active) this.refresh();
-    // ★ 拖一个文件夹到「导出到」那一行上 ⇒ 当导出目标。
-    //   真路径只有宿主知道（Chromium 不给页面 `File.path`）—— 宿主从 WebView2 拿到之后
-    //   调 `window.__mossDrop(items)`，`js/drop.js` 会**先问这个钩子**：收下了就返回 true，
-    //   不然还走原来那条"拖着文件跑一个包"的路（互不打架）。
+    this.refresh();
+    /* 边栏宽度能拖（`V-92`）：细线贴在根元素左边缘上，往右拖变窄、往左拖变宽。
+       上限按窗口宽度算（最多占 60%），双击回到 320。 */
+    bindColResize(this.$el.querySelector(".b-bkgrip"), this.$el, -1, 200,
+                  () => Math.round((window.innerWidth || 1200) * 0.6), 320);
+    /* 拖一个文件夹**到边栏上** = 把它设成"导出到"（`V-88` ✅）。
+       ★ 为什么必须走钩子：拖进来的**真实路径**只有宿主知道（Chromium 不给页面 `File.path`），
+         落地口在 `js/drop.js` 的 `window.__mossDrop` 里，这里只是插一脚。
+       ★ 为什么先看 `BK.dropOver`：那个钩子是**全局**的（任何拖入都先问它），
+         要是不加这道判断，"拖文件进来跑包"（`V-35`）就被边栏整个抢走了。 */
     window.__mossDropHook = (items) => {
       if (!BK.dropOver) return false;
-      const it = (items || [])[0];
+      const it = (items || []).find(x => x && x.path && x.isDir !== false);
       if (!it) return false;
-      const p = it.isDir ? it.path : it.dir;          // 拖的是文件 ⇒ 用它所在的目录
-      if (!p) return false;
-      BK.exportTo = p;
-      BK.exportInfo = null;
+      BK.exportTo = String(it.path || "");
       BK.dropOver = false;
-      toast("导出到 " + p);
-      return true;                                    // 这条拖放我们收下了
+      toast("导出目标： " + BK.exportTo + " —— 点快照上的「导出」就用它");
+      return true;
     };
   },
-  unmounted(){ if (window.__mossDropHook) window.__mossDropHook = null; },
+  unmounted(){
+    if (window.__mossDropHook) window.__mossDropHook = null;
+    BK.dropOver = false;
+  },
   methods: {
     humanSize: n => humanSize(n),
+    /* 差异视图（`V-94`）的渲染小工具 —— 侧栏这一列是"右边（快照）"，深浅和左边**反过来**：
+       快照那份更大 ⇒ 这里更深。 */
+    mirrorCls(e){
+      if (e.state === "snap-only") return {"df-gone": true};
+      if (e.state === "now-only") return {"df-new": true};
+      if (e.state === "empty") return {"df-empty": true};
+      if (e.state === "diff") return e.deep === "snap" ? {"df-chg": true, "df-deep": true}
+                                                      : {"df-chg": true, "df-soft": true};
+      return null;
+    },
+    mirrorSize(e){
+      if (e.snap === null) return "—";
+      if (e.dir) return humanSize(e.snap.size);
+      return humanSize(e.snap.size);
+    },
+    mirrorSizeCls(e){
+      if (e.snap === null) return {dim: true};
+      return {dim: e.state === "empty"};
+    },
+    /* 重算"当前目录"的对照：先问一下现在这一层每个文件的指纹（大小不一样就不必问），
+       再拼出模型。选中快照变化、目录切换、盘上变了都会走到这里。 */
+    async reloadMirror(){
+      const now = bkNowEntries();
+      const files = now.filter(e => !e.dir);
+      const subs = now.filter(e => e.dir);
+      if (BK.sel){
+        try{
+          const r = await pywebview.api.backup_fp(files.map(e => e.rel), subs.map(e => e.rel));
+          BK.fps = (r && r.fps) || {};
+          BK.fresh = {sizes: (r && r.sizes) || {}, dirs: (r && r.dirs) || {}};
+        }catch(e){ BK.fps = {}; BK.fresh = {}; }
+      }else{
+        BK.fps = {}; BK.fresh = {};
+      }
+      BKD.title = (BK.man && BK.man.title) || "";
+      BKD.diff = bkDiffModel();
+    },
+    /* 收起 / 展开边栏（`V-91`，`V-92` 补一个坑）。
+       ★ 收起时要**清掉拖出来的行内宽度**：`.mini{width:auto}` 是**类**，压不过行内样式
+         （行内 > 类）—— 不清的话收起后它还是原来那么宽，旁边白留一条；展开时再还给你。 */
+    toggleFold(){
+      const el = this.$el;
+      BK.collapsed = !BK.collapsed;
+      if (!el) return;
+      if (BK.collapsed){ this._w = el.style.width; el.style.width = ""; }
+      else if (this._w){ el.style.width = this._w; }
+    },
     fmtWhen(t){ return t ? fmtTime(t) : ""; },
     shortFp: bkShortFp,
-    isMirror(){ return BK.mode === "mirror"; },
-    setMode(m){ BK.mode = m; },
-    setList(which){ if (BK.listOnly !== which){ BK.listOnly = which; this.switchList(); } },
+    shortTime(t){
+      // 时间轴上一格就那么宽：今天只给时分秒，别的给 月/日
+      const s = String(t || "");
+      const today = new Date().toISOString().slice(0, 10);
+      return s.slice(0, 10) === today ? s.slice(11, 19) : s.slice(5, 16);
+    },
 
     async refresh(){
       BK.loading = true;
       try{
-        const r = await pywebview.api.backup_list(bkListGroup());
-        if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "拿不到备份列表"), true); return; }
+        const r = await pywebview.api.backup_list(bkGroupForCtx());
+        if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "拿不到快照列表"), true); return; }
         BK.items = r.items || [];
         BK.stat = r.stat || {};
-        BK.groups = r.groups || [];
         if (BK.sel && !BK.items.some(x => x.id === BK.sel)){ BK.sel = null; BK.man = null; }
-        if (!BK.sel && BK.items.length) await this.open(BK.items[0].id, BK.items[0].group);
-      }catch(e){ reportError("备份列表读不出来", String((e && e.message) || e)); }
+        // ★ `V-94`：边栏现在是"**和左边当前目录对照**"的一块，没有选中的快照就没得对照 ⇒
+        //   进来就自动选中**最新那一次**（时间轴第一条）。点别的格子照旧换人。
+        if (!BK.sel && BK.items.length){
+          await this.open(BK.items[0].id, BK.items[0].group, false);
+        }else{
+          await this.reloadMirror();
+        }
+      }catch(e){ reportError("快照列表读不出来", String((e && e.message) || e)); }
       finally{ BK.loading = false; }
     },
-    async open(id, group){
+    async switchCtx(){
+      BK.sel = null; BK.man = null; BK.view = null; BK.checkRows = null;
+      BK.formOpen = false;
+      BKD.diff = null; BK.fps = {};
+      await this.refresh();
+    },
+    async open(id, group, toggle){
+      if (toggle !== false && BK.sel === id){ BK.sel = null; BK.man = null; BK.view = null; BKD.diff = null; return; }  // 再点一下收起
       BK.sel = id; BK.view = null; BK.checkRows = null;
       try{
         const m = await pywebview.api.backup_manifest(id, group || "");
         if (!m || !m.ok){ toast("✗ " + ((m && m.msg) || "清单读不出来"), true); BK.man = null; return; }
         BK.man = m;
-      }catch(e){ reportError("备份清单读不出来", String((e && e.message) || e)); }
-    },
-    async switchList(){
-      BK.sel = null; BK.man = null; BK.view = null;
-      await this.refresh();
+        await this.reloadMirror();          // 选中变了 ⇒ 重算对照（`V-94`）
+      }catch(e){ reportError("快照清单读不出来", String((e && e.message) || e)); }
     },
     toggleForm(){
       BK.formOpen = !BK.formOpen;
-      if (BK.formOpen){
-        BK.scope = bkDefaultScope();
-        BK.title = "";
-        BK.note = "";
-        this.hintGroup();
-      }
-    },
-    /* 这次新建会落到哪个分组（按来源算，和后端同一套规则）—— 表单上一小行 */
-    async hintGroup(){
-      try{
-        const r = await pywebview.api.backup_group_hint(bkScopeRels());
-        BK.groupHint = (r && r.ok) ? (r.group || "") : "";
-      }catch(e){ BK.groupHint = ""; }
+      if (BK.formOpen){ BK.title = ""; BK.note = ""; }
     },
     async create(){
       const rels = bkScopeRels();
       if (!rels.length){ toast("✗ 没有要备份的东西", true); return; }
-      BK.busy = "备份中…";
+      BK.busy = "存快照…";
       try{
         const r = await pywebview.api.backup_create(rels, BK.title, BK.note, "");
-        if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "备份失败"), true); return; }
+        if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "失败"), true); return; }
         const st = r.stats || {};
-        toast("已备份 " + (st.files || 0) + " 个文件（新增 " + (st.new_objects || 0) +
-              " 块）→ " + (r.group || ""));
+        toast("快照已存：" + (st.files || 0) + " 项 · 新增 " + (st.new_objects || 0) + " 块");
         BK.formOpen = false;
         await this.refresh();
-        await this.open(r.id, r.group);
-      }catch(e){ reportError("备份失败", String((e && e.message) || e)); }
+        await this.open(r.id, r.group, false);
+      }catch(e){ reportError("存快照失败", String((e && e.message) || e)); }
       finally{ BK.busy = ""; }
     },
-    /* 删掉**这一组**的备份（连它的内容块）。目标 = 现在这份备份所在的分组，
-       没选备份就用"当前包"那一组。 */
-    async dropGroup(){
-      const g = (BK.man && BK.man.group) || bkListGroup();
-      if (!g){ toast("先选一次备份（或者切到「当前包」）", true); return; }
-      const info = await pywebview.api.backup_group_info(g);
-      if (!info || !info.ok){ toast("✗ " + ((info && info.msg) || "拿不到分组信息"), true); return; }
-      if (!info.backups){ toast("这一组还没有备份"); return; }
-      askConfirm("删掉 " + g + " 的备份",
-        "分组 <b>" + esc(g) + "</b> 里 <b>" + info.backups + "</b> 次备份、" +
-        humanSize(info.store_bytes) + "，整个文件夹都会删掉（别的分组不动）。<br>不可撤销。",
-        async () => {
-          BK.busy = "删除中…";
-          try{
-            const r = await pywebview.api.backup_drop_group(g);
-            if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "删不掉"), true); return; }
-            toast(r.msg);
-            BK.sel = null; BK.man = null; BK.view = null;
-            await this.refresh();
-          }catch(e){ reportError("删分组失败", String((e && e.message) || e)); }
-          finally{ BK.busy = ""; }
-        });
-    },
-    async viewFile(e){
-      BK.busy = "读内容…";
-      const g = (BK.man && BK.man.group) || "";
-      try{
-        const r = await pywebview.api.backup_blob(e.fp, g);
-        if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "读不出来"), true); return; }
-        BK.view = Object.assign({rel: e.rel, size: e.size}, r);
-      }catch(err){ reportError("读备份内容失败", String((err && err.message) || err)); }
-      finally{ BK.busy = ""; }
-    },
-    closeView(){ BK.view = null; },
-
-    /* 恢复：**一个按钮 + 一个两段滑块**（`V-90`）。
-         merge（合并）= 把备份里的写回来（缺的补上、不一样的回退 / 覆盖前留 .bak），
-                        **现在多出来的一个都不动** —— 跟 git 的 merge 一个意思。
-         mirror（镜像）= 连"现在多出来的"也挪进回收站，让它和这次备份一模一样
-                        （跟 `rsync --delete` / `git clone --mirror` 一个意思）。
-       两步走：先 `plan` 算清楚，弹确认框把数字摆出来，点了才动手。 */
-    async restore(mode, rels){
-      if (!BK.sel) return;
-      const m = mode || BK.mode || "merge";
-      const sync = (m === "mirror");
-      const g = (BK.man && BK.man.group) || "";
+    /* 恢复（`V-87`；`V-92` 按"向 git 看齐"重做）。
+       ★ 原来这里是**一个常驻的「合并 / 镜像」两段滑块**（`V-90`），你的原话是
+         「似乎没什么效果 …… 还是说这个根本就是画蛇添足呢」。你想对了：它只在
+         "现在比快照**多出来的**文件"存在时才有区别，而它又是个常驻模式 —— 点了它屏幕上
+         什么都不变（状态只写在弹框文字里），新存的快照一点它当然没反应。
+       ★ git 的做法：**两个动作，不是一个模式** ——
+           `git restore`（只把快照里的写回工作区；多出来的**不动**）
+           `git reset --hard` / `git clean`（连多出来的也一起清掉，让工作区**一模一样**）
+         所以现在：滑块去掉，「恢复」点下去先算一份计划（**连多出来的也数出来**，纯读），
+         弹框里把两个动词摆出来给你挑，还会把"多出来几个"写在脸上 —— 数字有了，区别就看得见。
+         没有"多出来的"时候只给一个动词（git 那边也没东西可 clean）。 */
+    async restore(it){
+      const id = (it && it.id) || BK.sel;
+      const group = (it && it.group) || (BK.man && BK.man.group) || "";
+      if (!id){ toast("先选一个快照", true); return; }
       BK.busy = "算计划…";
       let plan = null;
       try{
-        plan = await pywebview.api.backup_plan(BK.sel, rels || null, "changed", sync, g);
+        // `sync=true` 在这里**没有副作用**（只是让计划里多列几个 `extra` 行）——
+        // 就是为了把"多出来的"数出来，好让两个动词各自的代价写在弹框上。
+        plan = await pywebview.api.backup_plan(id, null, "changed", true, group);
         if (!plan || !plan.ok){ toast("✗ " + ((plan && plan.msg) || "计划算不出来"), true); return; }
       }finally{ BK.busy = ""; }
       const c = plan.counts || {};
-      const over = c.overwrite || 0, cre = c.create || 0, same = c.skip || 0, err = c.error || 0;
-      const extra = c.extra || 0;
-      if (!over && !cre && !(sync && extra)){
-        toast("不用恢复：已经和备份里一样了" + (err ? ("（另有 " + err + " 块缺失）") : ""));
+      const over = c.overwrite || 0, cre = c.create || 0, same = c.skip || 0;
+      const err = c.error || 0, extra = c.extra || 0;
+      if (!over && !cre && !extra){
+        toast("不用恢复：已经和快照里一样了" + (err ? ("（另有 " + err + " 块缺失）") : ""));
         return;
       }
-      const one = rels && rels.length === 1;
-      const title = one ? "恢复这一个文件" : (sync ? "镜像到这次备份" : "合并这次备份");
-      askConfirm(title,
-        (one ? ("<b class=\"mono\">" + esc(rels[0]) + "</b><br>") : "") +
-        "补 <b>" + cre + "</b> · 回退 <b>" + over + "</b>" +
-        (sync ? (" · <b>挪走 " + extra + "<\/b>（进回收站）") : "") +
-        " · 跳过 <b>" + same + "</b>" +
-        (err ? ("<br>⚠ " + err + " 块内容缺失，恢复不了") : "") + "<br>继续？",
-        async () => {
-          BK.busy = sync ? "镜像中…" : "合并中…";
-          try{
-            const r = await pywebview.api.backup_restore(BK.sel, rels || null, "changed", sync, g);
-            if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "恢复失败"), true); return; }
-            const cc = r.counts || {};
-            toast("补 " + (cc.restored || 0) + " · 挪走 " + (cc.trashed || 0) +
-                  (cc.errors ? (" · 出错 " + cc.errors) : ""));
-            if (r.errors && r.errors.length) console.warn("恢复出错：", r.errors);
-            this.afterDiskChange(r.restored || []);
-            BK.view = null;
-          }catch(e){ reportError("恢复失败", String((e && e.message) || e)); }
-          finally{ BK.busy = ""; }
-        });
+      const run = (sync) => async () => {
+        BK.busy = sync ? "对齐中…" : "恢复中…";
+        try{
+          const r = await pywebview.api.backup_restore(id, null, "changed", sync, group);
+          if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "恢复失败"), true); return; }
+          const cc = r.counts || {};
+          toast("补 " + (cc.restored || 0) + " · 挪走 " + (cc.trashed || 0) +
+                (cc.errors ? (" · 出错 " + cc.errors) : ""));
+          if (r.errors && r.errors.length) console.warn("恢复出错：", r.errors);
+          this.afterDiskChange(r.restored || []);
+          BK.view = null;
+        }catch(e){ reportError("恢复失败", String((e && e.message) || e)); }
+        finally{ BK.busy = ""; }
+      };
+      const body = "<b>" + esc(plan.title || "") + "</b><br>" +
+        "缺的补上 <b>" + cre + "</b> · 不一样的回退 <b>" + over + "</b> · 已经一样 <b>" + same + "</b>" +
+        (err ? ("<br>⚠ <b>" + err + "</b> 块内容缺失") : "") +
+        (extra ? ("<br>快照里没有的（现在多出来的）<b>" + extra +
+                  "</b> 个：只写回就留着，一模一样就挪进回收站（不真删）") : "");
+      if (!extra){
+        askConfirm("恢复这个快照",
+          body + "<br>没有多出来的文件，两种做法是一样的。<br>开始？", run(false));
+      }else{
+        askConfirm2("恢复这个快照", body,
+          {label: "只写回", title: "只把快照里的写回来（git restore）：多出来的一个不动",
+           cb: run(false)},
+          {label: "一模一样", title: "连多出来的 " + extra + " 个也挪进回收站（git reset --hard / clean），不真删",
+           cb: run(true)});
+      }
     },
     /* 盘上文件变了 ⇒ 文件管理那份缓存得作废（不然双击进去还是旧的清单） */
     afterDiskChange(rels){
@@ -299,54 +485,66 @@ const MossFileBackup = {
         fmRefresh();
       }catch(e){}
     },
-    /* ---- 导出到别的文件夹（`V-88`）------------------------------------------
-       ①「选择」挑一个；②把文件夹从资源管理器**拖到那一行上**；③在框里接着敲子目录
-       （`D:\out` 再敲成 `D:\out\2\` ⇒ 落到 `D:\out\2\…`）。
-       导出是"另存一份"：原来那些文件一个都不动。 */
-    onExportDragOver(){ BK.dropOver = true; },
-    onExportDragLeave(){ BK.dropOver = false; },
-    async pickExportDir(){
-      BK.busy = "挑文件夹…";
+    /* 看某个文件在快照里的内容（只读；文本顺手高亮） */
+    async viewFile(e){
+      BK.busy = "读内容…";
+      const group = (BK.man && BK.man.group) || "";
       try{
-        const r = await pywebview.api.pick_dir(BK.exportTo || "");
-        if (r && r.ok){ BK.exportTo = r.path; BK.exportInfo = null; }
-        else if (r && r.msg && !/取消|超时/.test(r.msg)) toast("✗ " + r.msg, true);
-      }catch(e){ reportError("挑文件夹失败", String((e && e.message) || e)); }
+        const r = await pywebview.api.backup_blob(e.fp, group);
+        if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "读不出来"), true); return; }
+        BK.view = Object.assign({rel: e.rel, size: e.size}, r);
+      }catch(err){ reportError("读快照内容失败", String((err && err.message) || err)); }
       finally{ BK.busy = ""; }
     },
-    async exportTo(rels){
-      if (!BK.man) return;
-      const target = (BK.exportTo || "").trim();
-      if (!target){ toast("✗ 先选目标文件夹（或者把文件夹拖到那一行上）", true); return; }
-      const g = (BK.man && BK.man.group) || "";
-      BK.busy = "算计划…";
-      let plan = null;
-      try{
-        plan = await pywebview.api.backup_export_plan(BK.man.id, target, "", rels || null, g);
-        if (!plan || !plan.ok){ toast("✗ " + ((plan && plan.msg) || "算不出导出计划"), true); return; }
-      }finally{ BK.busy = ""; }
-      BK.exportInfo = plan;
-      const one = rels && rels.length === 1;
-      askConfirm(one ? "导出这一个文件" : "导出这次备份",
-        "写到 <b class=\"mono\">" + esc(plan.root) + "</b><br>新写 <b>" + plan.new +
-        "</b> · 覆盖 <b>" + plan.overwrite + "</b> · 共 " + humanSize(plan.bytes) +
-        "<br>原文件不动。" + (BK.exportBak ? "<br>覆盖前各留一份 <span class=\"mono\">.bak</span>。" : "") +
-        "<br>开始？",
-        async () => {
-          BK.busy = "导出中…";
-          try{
-            const r = await pywebview.api.backup_export(BK.man.id, target, "", rels || null,
-                                                        !!BK.exportBak, g);
-            if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "导出失败"), true); return; }
-            toast("导出 " + ((r.counts || {}).written || 0) + " 个 → " + r.root);
-          }catch(e){ reportError("导出失败", String((e && e.message) || e)); }
-          finally{ BK.busy = ""; }
-        });
+    closeView(){ BK.view = null; },
+    /* 恢复单个文件（快照展开后每行那颗「恢复」） */
+    restoreOne(rel){
+      const group = (BK.man && BK.man.group) || "";
+      if (!BK.sel) return;
+      pywebview.api.backup_restore(BK.sel, [rel], "all", false, group).then(r => {
+        if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "恢复失败"), true); return; }
+        toast("已恢复 " + rel);
+        this.afterDiskChange([rel]);
+      });
+    },
+    /* ---- 导出（`V-88`）----------------------------------------------------
+       目标用**一个弹窗**问（边栏太窄，塞不下输入框）；也可以把文件夹**拖到边栏上**，
+       拖进来就直接当目标（真路径只有宿主知道，见 `js/drop.js` 那个钩子）。 */
+    onExportDragOver(){ BK.dropOver = true; },
+    onExportDragLeave(){ BK.dropOver = false; },
+    exportDialog(it){
+      const id = (it && it.id) || BK.sel;
+      const group = (it && it.group) || (BK.man && BK.man.group) || "";
+      if (!id){ toast("先选一个快照", true); return; }
+      askText("导出到哪个文件夹", BK.exportTo || "", async (v) => {
+        const target = String(v || "").trim();
+        if (!target) return;
+        BK.exportTo = target;
+        BK.busy = "算计划…";
+        let plan = null;
+        try{
+          plan = await pywebview.api.backup_export_plan(id, target, "", null, group);
+          if (!plan || !plan.ok){ toast("✗ " + ((plan && plan.msg) || "算不出来"), true); return; }
+        }finally{ BK.busy = ""; }
+        askConfirm("导出这个快照",
+          "写到 <b class=\"mono\">" + esc(plan.root) + "</b><br>新写 <b>" + plan.new +
+          "</b> · 覆盖 <b>" + plan.overwrite + "</b> · " + humanSize(plan.bytes) +
+          "<br>原文件不动。<br>开始？",
+          async () => {
+            BK.busy = "导出中…";
+            try{
+              const r = await pywebview.api.backup_export(id, target, "", null,
+                                                          !!BK.exportBak, group);
+              if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "导出失败"), true); return; }
+              toast("导出 " + ((r.counts || {}).written || 0) + " 个 → " + r.root);
+            }catch(e){ reportError("导出失败", String((e && e.message) || e)); }
+            finally{ BK.busy = ""; }
+          });
+      });
     },
     async del(id, title){
-      askConfirm("删掉这次备份",
-        "「" + esc(title || id) + "」<br>删完会把没人再引用的内容块一并回收（还有别人引用的留着）。" +
-        "<br>不可撤销。",
+      askConfirm("删掉这个快照",
+        "「" + esc(title || id) + "」<br>删完会把没人再引用的内容块一并回收。<br>不可撤销。",
         async () => {
           BK.busy = "删除中…";
           try{
@@ -355,12 +553,28 @@ const MossFileBackup = {
             toast("已删掉（回收 " + (r.removed || 0) + " 块）");
             if (BK.sel === id){ BK.sel = null; BK.man = null; BK.view = null; }
             await this.refresh();
-          }catch(e){ reportError("删备份失败", String((e && e.message) || e)); }
+          }catch(e){ reportError("删快照失败", String((e && e.message) || e)); }
           finally{ BK.busy = ""; }
         });
     },
+    /* 把**这一组**（当前对象）的快照全删掉 */
+    async dropGroup(){
+      const g = bkGroupForCtx();
+      const info = await pywebview.api.backup_group_info(g);
+      if (!info || !info.ok){ toast("✗ " + ((info && info.msg) || "拿不到信息"), true); return; }
+      if (!info.backups){ toast("还没有快照"); return; }
+      askConfirm("删掉这个对象的全部快照",
+        "<b>" + esc(g) + "</b>：<b>" + info.backups + "</b> 次、" + humanSize(info.store_bytes) +
+        "，整个文件夹都会删掉。<br>不可撤销。",
+        async () => {
+          const r = await pywebview.api.backup_drop_group(g);
+          toast((r && r.msg) || "删完了");
+          BK.sel = null; BK.man = null; BK.view = null;
+          await this.refresh();
+        });
+    },
     async gcNow(){
-      const g = (BK.man && BK.man.group) || "";
+      const g = bkGroupForCtx();
       BK.busy = "算中…";
       let pre = null;
       try{
@@ -369,8 +583,7 @@ const MossFileBackup = {
       }finally{ BK.busy = ""; }
       if (!pre.removed){ toast("没有可回收的内容块"); return; }
       askConfirm("回收内容块",
-        "有 <b>" + pre.removed + "</b> 块没人引用了（约 " + humanSize(pre.freed) +
-        "）。<br>（删备份时会自动回收，这里是手动再扫一遍。）<br>清掉？",
+        "有 <b>" + pre.removed + "</b> 块没人引用了（约 " + humanSize(pre.freed) + "）。清掉？",
         async () => {
           const r = await pywebview.api.backup_gc(false, g);
           toast((r && r.msg) || "清理完了");
@@ -380,190 +593,140 @@ const MossFileBackup = {
     async checkNow(){
       BK.busy = "校验中…";
       try{
-        const r = await pywebview.api.backup_check(null, (BK.man && BK.man.group) || "");
+        const r = await pywebview.api.backup_check(null, bkGroupForCtx());
         if (!r || !r.ok){ toast("✗ 校验失败", true); return; }
         BK.checkRows = r.rows || [];
         const bad = BK.checkRows.filter(x => x.missing || x.broken);
-        toast(bad.length ? ("⚠ " + bad.length + " 次备份缺内容块（看下面那行）")
-                         : "校验通过：内容块都在");
+        toast(bad.length ? ("⚠ " + bad.length + " 次快照缺内容块") : "校验通过：内容块都在");
       }finally{ BK.busy = ""; }
     },
   },
   template: `
-<div class="fmpage" :class="{on: active}" data-page="__backup__">
-  <div class="bk-tools">
-    <button class="iconbtn b-bknew" title="新建一次备份（存一份当前这个包的数据）"
-            v-html='ico("file-plus", "i")' @click="toggleForm()"></button>
-    <button class="iconbtn b-bkrefresh" title="刷新" v-html='ico("refresh-cw", "i")'
-            @click="refresh()"></button>
-    <span class="gap"></span>
-    <div class="bk-seg" data-bk-seg="list">
-      <button :class="{on: BK.listOnly === 'pkg'}" data-bk-list="pkg" @click="setList('pkg')"
-              title="只看**当前这个包**的备份（备份是按包 id 分文件夹存的，改 id 会跟着改）"
-              >当前包</button>
-      <button :class="{on: BK.listOnly === 'all'}" data-bk-list="all" @click="setList('all')"
-              :title="'看所有分组的备份（现在有 ' + (BK.groups || []).length + ' 组）'"
-              >全部</button>
-    </div>
-    <span class="gap"></span>
-    <button class="iconbtn b-bkcheck" title="校验：清单里提到的内容块都还在吗"
-            v-html='ico("check", "i")' @click="checkNow()"></button>
-    <button class="iconbtn b-bkgc" title="回收：把没人引用的内容块删掉（删备份时会自动做）"
-            v-html='ico("eraser", "i")' @click="gcNow()"></button>
-    <button class="iconbtn warn b-bkdropgroup" title="删掉这一组的备份（连它的内容块，别的分组不动）"
-            v-html='ico("trash-2", "i")' @click="dropGroup()"></button>
+<div class="bk-snap" :class="{dover: BK.dropOver, mini: BK.collapsed}"
+     @dragover.prevent.stop="onExportDragOver()" @dragleave="onExportDragLeave()">
+  <!-- 左边那条"拖我调宽"的细线（V-92）：拖它改边栏宽度，双击回到 320。
+       注意：这里是**模板字符串里面**，注释里不能出现反引号（会把模板提前截断）。 -->
+  <div class="grip b-bkgrip" title="拖我调宽（双击复原）"></div>
+  <div class="bk-snap-head">
+    <span class="bk-snap-title" :title="'「' + ctxLabel + '」的版本快照 —— 存在 user_data/backups/' + ctxGroup + '/（按包 id 分文件夹，改 id 就改这个名字）'">
+      <span v-html='ico("history", "i")'></span>版本快照
+    </span>
     <span class="sp"></span>
-    <span class="bk-stat" :title="statTip">{{ statLine }}</span>
-    <span v-if="BK.busy" class="bk-busy">{{ BK.busy }}</span>
+    <button class="iconbtn b-bknew" title="给「{{ ctxLabel }}」创建一个快照"
+            v-html='ico("moss-camera", "i")'
+            @click="toggleForm()"></button>
+    <button class="iconbtn b-bkfold" :title="BK.collapsed ? '展开边栏' : '收起边栏'"
+            v-html='ico("panel-left", "i")' @click="toggleFold()"></button>
   </div>
 
-  <div v-if="BK.formOpen" class="bk-form">
-    <div class="bk-formrow">
-      <select v-model="BK.scope" class="bk-scope" @change="hintGroup()"
-              title="备份哪些东西：当前这个包（包目录 + 数据目录）/ 整个 user_data / 当前浏览的目录">
-        <option v-for="s in scopes" :key="s.id" :value="s.id">{{ s.label }}</option>
-      </select>
-      <span class="bk-tag" :title="'这一组存在 user_data/backups/' + (BK.groupHint || '?')">
-        {{ BK.groupHint || "?" }}</span>
+  <template v-if="!BK.collapsed">
+    <div v-if="BK.formOpen" class="bk-form">
       <input v-model="BK.title" class="bk-title" placeholder="标题（可留空）"
-             title="给这次备份起个名，留空就用时间">
+             title="给这次快照起个名，留空就用时间">
       <input v-model="BK.note" class="bk-note" placeholder="注释（可留空）"
-             title="这次改了什么、为什么要存 —— 以后翻备份时看得懂">
+             title="这次改了什么、为什么要存 —— 以后翻快照时看得懂">
       <span class="sp"></span>
-      <button class="btn" @click="BK.formOpen = false">取消</button>
-      <button class="btn primary" :disabled="!!BK.busy" @click="create()"
-              title="开始备份（内容按指纹去重，重复的只存一份）">备份</button>
-    </div>
-  </div>
-
-  <div class="bk-body">
-    <div class="bk-left">
-      <div v-if="BK.loading" class="bk-empty">读列表…</div>
-      <div v-else-if="!BK.items.length" class="bk-empty">
-        <span v-if="BK.listOnly === 'pkg'">这个包还没有备份</span>
-        <span v-else>还没有备份</span>
-      </div>
-      <div v-for="it in BK.items" :key="it.id" class="bk-item" :class="{on: it.id === BK.sel}"
-           :data-bk="it.id" :title="it.note || it.title" @click="open(it.id, it.group)">
-        <div class="bk-it-title">
-          <span v-if="BK.listOnly === 'all'" class="bk-gtag">{{ it.group }}</span>{{ it.title }}
-        </div>
-        <div class="bk-it-sub">{{ it.created_text }} · {{ it.files }} 个 · {{ humanSize(it.bytes) }}</div>
-        <div v-if="it.broken" class="bk-it-bad">清单读不出来</div>
-      </div>
+      <button class="iconbtn b-bkcancel" title="取消（不存了）" v-html='ico("x", "i")'
+              @click="BK.formOpen = false"></button>
+      <button class="iconbtn b-bksave" :disabled="!!BK.busy"
+              title="存成一次快照（内容按指纹去重，重复的只存一份）"
+              v-html='ico("check", "i")' @click="create()"></button>
     </div>
 
-    <div class="bk-right">
-      <div v-if="!BK.man" class="bk-empty">选一次备份</div>
-      <template v-else>
-        <div class="bk-detail-head">
-          <div class="bk-dh-text">
-            <div class="bk-title-line">{{ BK.man.title }}</div>
-            <div class="bk-it-sub" :title="(BK.man.sources || []).join('、')">
-              <span class="bk-gtag">{{ BK.man.group }}</span>
-              {{ BK.man.created_text }} · {{ (BK.man.files || []).length }} 个文件
-              <span v-if="BK.man.note">· {{ BK.man.note }}</span>
-            </div>
+    <div class="bk-tl">
+      <div class="bk-tl-item active">
+        <div class="bk-tl-dot"></div>
+        <div class="bk-card flat">
+          <div class="bk-card-top"><b>当前工作区</b><span class="bk-time">现在</span></div>
+          <div class="bk-card-sub" :title="scopeTip">{{ ctxLabel }}</div>
+        </div>
+      </div>
+
+      <div v-if="BK.loading" class="bk-empty">读快照…</div>
+      <div v-else-if="!BK.items.length" class="bk-empty">还没有快照 —— 点上面的 ＋</div>
+
+      <div v-for="it in BK.items" :key="it.id" class="bk-tl-item" :class="{on: it.id === BK.sel}"
+           :data-bk="it.id">
+        <div class="bk-tl-dot"></div>
+        <div class="bk-card" @click="open(it.id, it.group)">
+          <div class="bk-card-top">
+            <b :title="it.note || it.title">{{ it.title }}</b>
+            <span class="bk-time">{{ shortTime(it.created_text) }}</span>
           </div>
-          <span class="sp"></span>
-          <div class="bk-seg" data-bk-seg="mode">
-            <button :class="{on: BK.mode === 'merge'}" data-bk-mode="merge" @click="setMode('merge')"
-                    title="合并（merge）：把备份里的写回来 —— 缺的补上、不一样的回退（覆盖前留 .bak）；现在多出来的文件一个都不动"
-                    >合并</button>
-            <button :class="{on: BK.mode === 'mirror'}" data-bk-mode="mirror" @click="setMode('mirror')"
-                    title="镜像（mirror）：让它和这次备份一模一样 —— 缺的补上、不一样的回退，现在多出来的挪进回收站（不真删）"
-                    >镜像</button>
+          <div class="bk-card-sub">{{ it.files }} 项 · {{ humanSize(it.bytes) }}</div>
+          <div class="bk-card-act">
+            <button class="iconbtn b-bkrestore" data-bk-act="restore" @click.stop="restore(it)"
+                    title="恢复（git restore）：把快照里的写回来 —— 缺的补上、不一样的回退（覆盖前留 .bak）；现在多出来的一个都不动"
+                    v-html='ico("moss-history", "i")'></button>
+            <button class="iconbtn b-bkexport" data-bk-act="export" @click.stop="exportDialog(it)"
+                    title="导出到文件夹（另存一份；也可以直接把一个文件夹拖到边栏上）"
+                    v-html='ico("moss-folder-out", "i")'></button>
+            <button class="iconbtn danger b-bkdel" data-bk-act="del"
+                    title="删掉这个快照（没人引用的内容块会自动回收）"
+                    v-html='ico("trash-2", "i")' @click.stop="del(it.id, it.title)"></button>
           </div>
-          <button class="btn primary" data-bk-act="restore" @click="restore()"
-                  :title="BK.mode === 'mirror' ? '按镜像方式恢复这次备份' : '按合并方式恢复这次备份'"
-                  >恢复</button>
-          <button class="iconbtn danger b-bkdel" data-bk-act="del"
-                  title="删掉这次备份（内容块没人引用了会自动回收）"
-                  v-html='ico("trash-2", "i")' @click="del(BK.man.id, BK.man.title)"></button>
         </div>
 
-        <div class="bk-export" :class="{dover: BK.dropOver}"
-             @dragover.prevent.stop="onExportDragOver()" @dragleave="onExportDragLeave()">
-          <span class="bk-hint" title="把这次备份（或某一个文件）另存到别的文件夹；原文件不动">导出</span>
-          <input v-model="BK.exportTo" class="bk-out" data-bk-out
-                 :title="'目标文件夹。可以按「选择」挑，也可以把文件夹拖到这一行上；' +
-                         '后面能接着敲子目录（比如 /2/ 就落到它的子文件夹里）'"
-                 placeholder="目标文件夹（也可以拖一个进来，或敲 /2/ 落到子目录）">
-          <button class="iconbtn b-bkpick" data-bk-act="pick" @click="pickExportDir()"
-                  title="选一个文件夹" v-html='ico("folder-open", "i")'></button>
-          <button class="iconbtn b-bkbak" :class="{on: BK.exportBak}" @click="BK.exportBak = !BK.exportBak"
-                  :title="'覆盖同名文件前，各留一份 .bak（现在是' + (BK.exportBak ? '开' : '关') + '）'"
-                  v-html='ico("save", "i")'></button>
-          <button class="btn" data-bk-act="export" @click="exportTo(null)"
-                  title="按这个目标导出这次备份（另存一份）">导出</button>
-          <span v-if="BK.exportInfo" class="bk-hint mono" data-bk-outinfo
-                :title="BK.exportInfo.root">将写 {{ BK.exportInfo.new }} 个</span>
-        </div>
-
-        <div class="bk-filter">
-          <input v-model="BK.filter" class="bk-q" placeholder="筛路径"
-                 title="按路径筛下面的文件列表（比如 pkg.json / state）">
-          <span class="bk-hint">{{ rows.length }} / {{ (BK.man.files || []).length }}</span>
-          <span v-if="(BK.man.empty_dirs || []).length" class="bk-hint"
-                title="这次备份里还有几个空目录，恢复时会一起建出来">空目录 {{ BK.man.empty_dirs.length }}</span>
-          <span v-if="(BK.man.errors || []).length" class="bk-hint bk-warn"
-                :title="(BK.man.errors || []).slice(0, 3).join('；')">读不了 {{ BK.man.errors.length }}</span>
-        </div>
-
-        <div class="bk-scroll">
-          <table class="bk-tbl">
-            <thead><tr>
-              <th title="备份里的路径（相对 user_data / system）">文件</th>
-              <th class="w-size">大小</th>
-              <th class="w-when">时间</th>
-              <th class="w-act"></th>
-            </tr></thead>
-            <tbody>
-              <tr v-for="e in rows" :key="e.rel" class="row" :data-rel="e.rel">
-                <td class="nmcell" :title="e.rel + '\\n指纹 ' + e.fp"><span class="mono">{{ e.rel }}</span></td>
-                <td class="num">{{ humanSize(e.size) }}</td>
-                <td class="dim">{{ fmtWhen(e.mtime) }}</td>
-                <td>
-                  <button class="iconbtn b-bkview" title="看内容" v-html='ico("eye", "i")'
-                          @click="viewFile(e)"></button>
-                  <button class="iconbtn b-bkone" title="只恢复这一个（合并方式）"
-                          v-html='ico("undo-2", "i")' @click="restore('merge', [e.rel])"></button>
-                  <button class="iconbtn b-bkoutone" title="只导出这一个到上面的目标"
-                          v-html='ico("corner-up-right", "i")' @click="exportTo([e.rel])"></button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div v-if="BK.view" class="bk-view">
-          <div class="bk-view-head">
-            <span class="mono">{{ BK.view.rel }}</span>
-            <span class="bk-hint" :title="'指纹 ' + BK.view.fp">
-              {{ humanSize(BK.view.size) }}
-              <span v-if="BK.view.binary" title="二进制内容，这里只给大小和头部字节">· 二进制</span>
-              <span v-else-if="BK.view.truncated" title="文件太大，这里只给前一段；要看全的请导出/恢复出来">· 截断</span>
-            </span>
+        <div v-if="it.id === BK.sel && BK.man" class="bk-files">
+          <div class="bk-files-top">
+            <span class="bk-hint bk-mpath" :title="mirrorTip">{{ mirrorPath }}</span>
             <span class="sp"></span>
-            <button class="iconbtn b-bkviewclose" title="关掉" v-html='ico("x", "i")'
-                    @click="closeView()"></button>
+            <span class="bk-hint bk-mcount" :title="mirrorCountTip">{{ mirrorCount }}</span>
+            <button class="iconbtn b-bkviewall" title="看整个快照的统计/校验"
+                    v-html='ico("info", "i")' @click="checkNow()"></button>
           </div>
-          <pre v-if="BK.view.binary" class="bk-view-bin">（二进制内容，头部字节：{{ BK.view.head }}）</pre>
-          <pre v-else class="bk-view-text" v-html="viewHTML"></pre>
+          <div v-if="BKD.diff && !BKD.diff.snapOk" class="bk-empty">快照里没有这个目录</div>
+          <div v-for="e in mirrorRows" :key="e.name" class="bk-file" :class="mirrorCls(e)"
+               :data-rel="e.rel" :data-dir="e.dir ? 1 : 0" :data-state="e.state" :title="e.why">
+            <span class="bk-fname" :class="{isdf: e.dir}">{{ e.name }}{{ e.dir ? "/" : "" }}</span>
+            <span class="bk-fsize" :class="mirrorSizeCls(e)">{{ mirrorSize(e) }}</span>
+            <button v-if="e.snap && !e.dir" class="iconbtn b-bkview" title="看快照里这份的内容"
+                    v-html='ico("eye", "i")' @click.stop="viewFile(e)"></button>
+            <button v-if="e.snap && !e.dir" class="iconbtn b-bkone"
+                    title="只恢复这一个（只写回：覆盖前留 .bak）"
+                    v-html='ico("undo-2", "i")' @click.stop="restoreOne(e.rel)"></button>
+          </div>
+          <div v-if="BK.checkRows" class="bk-checkbar">
+            <template v-for="(r, i) in BK.checkRows" :key="i"
+              >{{ i ? " · " : "" }}{{ r.id.slice(-4) }}:
+              <b :class="{bad: r.missing || r.broken}"
+                 >{{ r.broken ? "坏" : (r.missing ? ("缺 " + r.missing) : "好") }}</b
+            ></template>
+          </div>
         </div>
-
-        <div v-if="BK.checkRows" class="bk-checkbar">
-          <template v-for="(r, i) in BK.checkRows" :key="i"
-            >{{ i ? " · " : "" }}{{ r.id.slice(-4) }}:
-            <b :class="{bad: r.missing || r.broken}"
-               >{{ r.broken ? "坏" : (r.missing ? ("缺 " + r.missing) : "好") }}</b
-          ></template>
-        </div>
-      </template>
+      </div>
     </div>
-  </div>
+
+    <div class="bk-view" v-if="BK.view">
+      <div class="bk-view-head">
+        <span class="mono bk-vname">{{ BK.view.rel }}</span>
+        <span class="bk-hint" :title="'指纹 ' + BK.view.fp">
+          {{ humanSize(BK.view.size) }}
+          <span v-if="BK.view.binary" title="二进制内容，这里只给大小和头部字节">· 二进制</span>
+          <span v-else-if="BK.view.truncated" title="文件太大，只给前一段；要看全的请导出/恢复出来">· 截断</span>
+        </span>
+        <span class="sp"></span>
+        <button class="iconbtn b-bkviewclose" title="关掉" v-html='ico("x", "i")'
+                @click="closeView()"></button>
+      </div>
+      <pre v-if="BK.view.binary" class="bk-view-bin">（二进制内容，头部字节：{{ BK.view.head }}）</pre>
+      <pre v-else class="bk-view-text" v-html="viewHTML"></pre>
+    </div>
+
+    <div class="bk-snap-foot">
+      <span class="bk-hint" :title="statTip">{{ statLine }}</span>
+      <span class="sp"></span>
+      <span v-if="BK.busy" class="bk-busy">{{ BK.busy }}</span>
+      <button class="iconbtn b-bkgc" title="回收：把没人引用的内容块删掉（删快照时会自动做）"
+              v-html='ico("eraser", "i")' @click="gcNow()"></button>
+      <button class="iconbtn warn b-bkdropgroup" title="删掉这个对象的全部快照（整个文件夹）"
+              v-html='ico("trash-2", "i")' @click="dropGroup()"></button>
+    </div>
+  </template>
 </div>`,
+  // 边栏收起时那一列只剩标题栏，高度占满
+  beforeMount(){ BK.collapsed = (window.innerWidth || 1200) < 1080; },
 };
 
-/* 把这一页塞进文件管理那个组件里（`js/files.js` 的模板里写着 `<moss-file-backup>`） */
-MossFileManager.components.MossFileBackup = MossFileBackup;
+/* 把边栏塞进文件管理那个组件里（`js/files.js` 的模板里写着 `<moss-file-snap>`） */
+MossFileManager.components.MossFileSnap = MossFileSnap;

@@ -15,6 +15,10 @@
   --mono: ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,monospace;
   --fill:rgba(120,120,128,.10); --fill2:rgba(120,120,128,.18);
   --group:#fff; --hair:rgba(60,60,67,.10);
+  /* 差异视图（`V-94`）的四个状态色：变了=琥珀（谁大谁更深）/ 只有快照里有=红 /
+     只有现在有=绿 / 空文件=灰。深浅两档要**肉眼分得开**，不然"哪边更大"就白标了。 */
+  --df-chg:#a35b00; --df-chg-soft:#c98a3c; --df-gone:#d64545; --df-new:#1a7f45;
+  --df-empty:#a1a1a6;
   /* 语法配色照抄 exec（GitHub 那套浅/深色） */
   --syn-comment:#6e7781; --syn-keyword:#cf222e; --syn-string:#0a3069;
   --syn-number:#0550ae;  --syn-title:#8250df;   --syn-builtin:#953800;
@@ -33,6 +37,8 @@
   --drop-bg:rgba(28,28,30,.94);
          --fill:rgba(120,120,128,.22); --fill2:rgba(120,120,128,.34);
          --group:#1c1c1e; --hair:rgba(255,255,255,.09);
+         --df-chg:#e5a44f; --df-chg-soft:#9c7638; --df-gone:#ff6b6b; --df-new:#54c07d;
+         --df-empty:#7c7c82;
          --syn-comment:#8b949e; --syn-keyword:#ff7b72; --syn-string:#a5d6ff;
          --syn-number:#79c0ff;  --syn-title:#d2a8ff;   --syn-builtin:#ffa657;
          --syn-attr:#79c0ff;    --syn-meta:#8b949e; }
@@ -53,32 +59,46 @@ body{margin:0;height:100vh;display:flex;flex-direction:column;overflow:hidden;
   font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
   color:var(--fg);background:var(--bg)}
 svg.i{width:16px;height:16px;flex:none;display:block}
-/* 按钮：**填充，不描边**。满屏 1px 描边是"网页后台"的味道；
-/* 工具栏按钮：和详情里的 `.btn` **同一套语言** —— 白底 + 1px 细描边，指上去浮一层灰，
-   按下缩一点。整套界面只有一种按钮长相，不做"填充块 / 描边块"两种。 */
+/* 按钮：**无底色、无描边**（`V-92` 你指出的："所有按钮全都带一个外边框……边框以内还设置了
+   背景色"）。指上去浮一层极淡的灰、按下缩一点、图标画大一点（原来 32px 的框里塞 16px 图标 +
+   6px 内边距，看着就"小气"）。
+   ★ 这一条是**全局**的：工具栏、详情、快照边栏、列表里的图标按钮全走这里。 */
 .iconbtn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  padding:6px 10px;min-width:32px;border-radius:8px;
-  background:var(--panel);border:1px solid var(--ctl);color:var(--fg);
+  padding:4px;min-width:30px;min-height:30px;border:0;border-radius:8px;
+  background:transparent;color:var(--fg2);
   cursor:pointer;font:inherit;font-size:13px;
-  transition:background .15s ease-out,transform .10s ease-out,color .15s ease-out}
-.iconbtn:hover{background:var(--hover)}
-.iconbtn:active{transform:scale(.98)}
+  transition:background .13s ease-out,transform .10s ease-out,color .13s ease-out}
+.iconbtn:hover{background:var(--hover);color:var(--fg)}
+.iconbtn:active{transform:scale(.97)}
 .iconbtn:disabled{opacity:.4;cursor:default;transform:none}
+.iconbtn svg.i{width:17px;height:17px}
 .iconbtn.warn{color:#ef4444}
-.iconbtn.warn:hover{background:color-mix(in srgb, #ef4444 10%, var(--panel))}
+.iconbtn.warn:hover{background:color-mix(in srgb, #ef4444 13%, transparent)}
+.iconbtn.danger{color:#ef4444}
+.iconbtn.danger:hover{background:color-mix(in srgb, #ef4444 13%, transparent)}
 header{display:flex;align-items:center;gap:10px;padding:9px 14px;
   border-bottom:1px solid var(--hair);background:var(--panel);flex:none}
 .brand{font-weight:600;display:flex;align-items:center;gap:7px}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--accent)}
-/* 搜索框也走"填充式"：平时没边，聚焦给一圈柔和 accent */
+/* 搜索框也走"填充式"：无描边，一层灰底（`V-92` 统一），聚焦给一圈柔和 accent */
 #q{width:230px;padding:6px 11px;border-radius:8px;
-  border:1px solid var(--ctl-in);background:var(--panel);color:var(--fg);outline:none;
-  transition:border-color .2s ease,box-shadow .2s ease}
-#q:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+  border:0;background:var(--fill);color:var(--fg);outline:none;
+  transition:background .2s ease,box-shadow .2s ease}
+#q:focus{background:var(--panel);box-shadow:0 0 0 3px var(--field-focus)}
 #q::placeholder{color:var(--ph)}
 .meta{flex:1;color:var(--dim2);font-size:11.5px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;text-align:right;letter-spacing:.01em}
 main{flex:1;display:flex;min-height:0}
+/* `V-92`：能拖着调宽的那条细线（左侧列表 / 版本快照边栏各一条，见 `core.js` 的 `bindColResize`）。
+   故意做得"看不见"：只有一个光标 + hover 时极淡的一层底色，不占视觉。 */
+.grip{position:absolute;top:0;bottom:0;width:7px;z-index:60;cursor:col-resize;
+  background:transparent;transition:background .12s ease-out}
+.grip:hover,.grip.on{background:var(--field-focus)}
+#grip-aside{right:-4px}
+.bk-snap .b-bkgrip{left:-4px}
+.bk-snap.mini .b-bkgrip{display:none}
+body.colres{cursor:col-resize;user-select:none}
+aside{position:relative}
 aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--panel);
   display:flex;flex-direction:column;min-height:0}
 #list{flex:1;overflow:auto;min-height:0}
@@ -87,10 +107,10 @@ aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--
 #sideswitch{display:flex;gap:4px;align-items:center;padding:7px 10px;flex:none;
   border-bottom:1px solid var(--line2)}
 #sideswitch button{display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  padding:5px 10px;border-radius:8px;border:1px solid transparent;background:transparent;
+  padding:5px 10px;border-radius:8px;border:0;background:transparent;
   color:var(--dim);cursor:pointer;font:inherit;font-size:13px}
 #sideswitch button:hover{background:var(--hover)}
-#sideswitch button.on{background:var(--panel2);border-color:var(--line);color:var(--fg);font-weight:500}
+#sideswitch button.on{background:var(--fill);border-color:transparent;color:var(--fg);font-weight:500}
 /* 右边那个「新建包」：靠 margin-left:auto 顶到最右。**不再自己改底色和描边** ——
    它就是个普通按钮，和别处同一套长相（原来这里写死了 --panel2/--line，
    是"填充块"时代的残留，和现在的白底细描边不一致）。 */
@@ -162,7 +182,9 @@ body.dragging .item{border-style:dashed}          /* 拖动时可选的那些包
 /* ★ 别写 `#pane-x{display:none}`：ID 选择器优先级高于 `.pane.on`，面板会永远 0×0 */
 #pane-detail.on{display:block}
 #pane-console.on{display:flex;flex-direction:column}
-#pane-file.on{display:flex;flex-direction:column}
+/* `V-91`：文件管理那一页现在是"**左文件 + 右版本快照**"横排（快照边栏见下） */
+#pane-file.on{display:flex;flex-direction:row}
+.fm-main{display:flex;flex-direction:column;flex:1;min-width:0}
 /* 第四个选项卡（包的界面，`V-48`）：顶上一小条工具行 + 下面整块 iframe。
    ★ iframe **不随切换卸载** —— 切走只是这一页 `.on` 掉了，里面照旧在跑。 */
 #pane-embed.on{display:flex;flex-direction:column}
@@ -232,10 +254,10 @@ body.dragging .item{border-style:dashed}          /* 拖动时可选的那些包
 #fm-bar{display:flex;gap:4px;align-items:flex-end;padding:6px 10px 0;flex:none;
   border-bottom:1px solid var(--line);background:var(--panel);overflow-x:auto;overflow-y:hidden}
 .fmtab{display:inline-flex;align-items:center;gap:7px;padding:5px 10px;border-radius:8px 8px 0 0;
-  border:1px solid transparent;border-bottom:none;background:transparent;color:var(--dim);
+  border:0;border-bottom:none;background:transparent;color:var(--dim);
   cursor:pointer;font-size:13px;white-space:nowrap;max-width:240px}
 .fmtab:hover{background:var(--hover)}
-.fmtab.on{background:var(--bg);border-color:var(--line);color:var(--fg);font-weight:500}
+.fmtab.on{background:var(--fill);color:var(--fg);font-weight:500}
 .fmtab .fname{overflow:hidden;text-overflow:ellipsis}
 .fmtab .x{margin-left:2px;color:var(--dim);border-radius:4px;padding:0 3px;line-height:1}
 .fmtab .x:hover{background:#d64545;color:#fff}
@@ -252,7 +274,7 @@ body.dragging .item{border-style:dashed}          /* 拖动时可选的那些包
    滚动条本身不用显示（能拖/能滚就行）。 */
 .crumbs{flex:1;display:flex;align-items:center;gap:2px;min-width:0;overflow-x:auto;
   overflow-y:hidden;scrollbar-width:none;
-  padding:3px 8px;border:1px solid var(--ctl);border-radius:8px;background:var(--panel);
+  padding:3px 8px;border:0;border-radius:8px;background:var(--fill);
   font-size:12.5px;white-space:nowrap}
 .crumbs::-webkit-scrollbar{height:0}
 .crumbs span.seg{padding:1px 5px;border-radius:5px;cursor:pointer}
@@ -332,6 +354,103 @@ table.fb td.dim{color:var(--dim)}
 /* 详情头：标题块 + 右边那组控件，窄窗口整颗换行（`V-88` 修过一次，这里跟着新版调） */
 .bk-detail-head .b-bkdel{padding:4px 6px;min-width:28px}
 .bk-left .bk-item .bk-it-title{display:flex;align-items:center;gap:2px}
+
+/* ============================================================ 版本快照边栏（`V-91`）
+   挂在文件管理右边：一列时间轴（当前工作区 + 每次快照），点一格展开它的文件列表。
+   配色全用这套令牌，不引任何外部 CSS/图标字体（离线 + 一致性）。 */
+.bk-snap{width:320px;flex:none;display:flex;flex-direction:column;min-height:0;
+  border-left:1px solid var(--line);background:var(--panel);position:relative}
+.bk-snap.mini{width:auto}
+.bk-snap.dover{box-shadow:inset 0 0 0 2px var(--accent)}
+/* `V-92`：边栏里的按钮**不带底色、不带描边**（你的要求），hover 才浮一点底色。
+   能换成图标的一律换成图标（取消 = ×、存 = ✓）—— 字少了，眼睛才落在内容上。 */
+.bk-snap .btn{background:none;border:0;padding:0 7px;height:23px;border-radius:6px;
+  font-size:11.5px;color:var(--fg2);gap:4px}
+.bk-snap .btn:hover{background:var(--hover);color:var(--fg)}
+.bk-snap .btn:active{transform:none}
+.bk-snap .btn.primary{color:var(--accent)}
+.bk-snap .iconbtn.b-bksave{color:var(--accent)}
+.bk-snap-head{display:flex;gap:6px;align-items:center;padding:6px 10px;flex:none;
+  border-bottom:1px solid var(--line);background:var(--panel2);min-height:36px}
+.bk-snap-title{display:flex;gap:6px;align-items:center;font-size:12.5px;font-weight:600;
+  color:var(--fg);white-space:nowrap}
+.bk-snap-title svg{width:15px;height:15px;color:var(--accent)}
+.bk-snap-head .iconbtn{padding:3px 5px;min-width:26px}
+.bk-snap.mini .bk-snap-head{flex-direction:column;align-items:center;padding:6px 4px}
+.bk-snap.mini .bk-snap-title span:last-child{display:none}
+.bk-tl{flex:1;min-height:0;overflow:auto;padding:10px 10px 4px 20px;position:relative}
+.bk-tl::before{content:"";position:absolute;left:9px;top:14px;bottom:10px;width:2px;
+  background:var(--line2)}
+.bk-tl-item{position:relative;margin-bottom:10px}
+.bk-tl-dot{position:absolute;left:-15px;top:9px;width:9px;height:9px;border-radius:50%;
+  background:var(--panel);border:2px solid var(--line);z-index:1}
+.bk-tl-item.on .bk-tl-dot,.bk-tl-item.active .bk-tl-dot{border-color:var(--accent);
+  background:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+.bk-card{border:1px solid var(--line);border-radius:9px;padding:7px 9px;background:var(--bg);
+  cursor:pointer;transition:border-color .12s,box-shadow .12s}
+.bk-card:hover{border-color:var(--accent)}
+.bk-card.flat{cursor:default;background:transparent;border-style:dashed}
+.bk-tl-item.on .bk-card{border-color:var(--accent);box-shadow:0 2px 10px rgba(0,113,227,.10)}
+.bk-card-top{display:flex;gap:6px;align-items:baseline;justify-content:space-between}
+.bk-card-top b{font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.bk-time{font-size:10.5px;color:var(--dim);font-family:var(--mono);flex:none}
+.bk-card-sub{font-size:11px;color:var(--dim);margin-top:3px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.bk-card-act{display:flex;gap:4px;margin-top:6px}
+.bk-card-act .btn{height:22px;padding:0 8px;font-size:11.5px}
+.bk-card-act .iconbtn{padding:2px 5px;min-width:24px}
+/* 展开的文件列表 */
+.bk-files{margin:6px 0 2px;border:1px solid var(--line2);border-radius:8px;overflow:hidden;
+  background:var(--panel2)}
+.bk-files-top{display:flex;gap:6px;align-items:center;padding:5px 7px;
+  border-bottom:1px solid var(--line2)}
+.bk-files-top .bk-q{flex:1;min-width:0;padding:3px 7px;border-radius:6px;border:0;
+  background:var(--fill);color:var(--fg);font-size:11.5px;outline:none}
+.bk-files-top .bk-q:focus{background:var(--panel);box-shadow:0 0 0 3px var(--field-focus)}
+.bk-file{display:flex;gap:4px;align-items:center;padding:3px 7px;font-size:11.5px}
+.bk-file:hover{background:var(--hover)}
+.bk-fname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bk-fsize{color:var(--dim);font-size:10.5px;flex:none}
+.bk-file .iconbtn{padding:1px 4px;min-width:22px}
+/* 差异视图（`V-94`）：左边（文件管理那张表）和右边（快照边栏）共用这四组状态色。
+   `.df-deep` / `.df-soft` 是"同一个琥珀色的深浅两档" —— 谁大谁更深，两侧由 JS 分配。 */
+.df-chg{color:var(--df-chg)}
+.df-chg.df-soft{color:var(--df-chg-soft)}
+.df-gone{color:var(--df-gone)}
+.df-new{color:var(--df-new)}
+.df-empty{color:var(--df-empty)}
+.bk-file .bk-fsize.dim{color:var(--df-empty)}
+/* 左边那张表：整行上色（名字/时间/类型/大小一起），一眼能扫出哪几行变了 */
+table.fb tr.row.df-chg td{color:var(--df-chg)}
+table.fb tr.row.df-chg.df-soft td{color:var(--df-chg-soft)}
+table.fb tr.row.df-gone td{color:var(--df-gone)}
+table.fb tr.row.df-new td{color:var(--df-new)}
+table.fb tr.row.df-empty td{color:var(--df-empty)}
+table.fb tr.row.df-chg td.nmcell span{font-weight:600}
+.bk-files-top .bk-mpath{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:var(--mono);font-size:11px}
+.bk-view{max-height:38%;flex:none;display:flex;flex-direction:column;
+  border-top:1px solid var(--line);background:var(--panel2)}
+.bk-view-head{display:flex;gap:6px;align-items:center;padding:4px 8px;flex:none;font-size:11.5px;
+  border-bottom:1px solid var(--line2)}
+.bk-vname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.bk-view-text,.bk-view-bin{margin:0;padding:8px 10px;overflow:auto;flex:1;min-height:0;
+  font-family:var(--mono);font-size:11.5px;line-height:1.5;white-space:pre-wrap;
+  word-break:break-word;background:var(--code-bg);color:var(--out-fg)}
+.bk-view-bin{color:var(--dim)}
+.bk-snap-foot{display:flex;gap:6px;align-items:center;padding:5px 10px;flex:none;
+  border-top:1px solid var(--line2);background:var(--panel2)}
+.bk-snap-foot .iconbtn{padding:3px 5px;min-width:26px}
+.bk-snap .bk-form{padding:8px 10px;border-bottom:1px solid var(--line);background:var(--panel2)}
+.bk-snap .bk-formrow{margin-bottom:6px}
+.bk-snap .bk-title,.bk-snap .bk-note{width:100%;padding:5px 8px;border-radius:7px;
+  border:0;background:var(--fill);color:var(--fg);font-size:12px;
+  outline:none;margin-bottom:5px;font-family:inherit}
+.bk-snap .bk-title:focus,.bk-snap .bk-note:focus{background:var(--panel);
+  box-shadow:0 0 0 3px var(--field-focus)}
+.bk-snap .bk-empty{padding:16px 10px;font-size:12px;color:var(--dim);text-align:center}
+.bk-snap .bk-checkbar{padding:4px 8px;font-size:11px}
 /* ★ 备份页自己的工具条 / 滚动区 / 表格 / 状态行：**类名不和"文件"页共用**
    （`.fbtools` / `.fbwrap` / `table.fb` / `.fbstatus` 归那一页）—— 两页同时在 DOM 里，
    共用一个类名的话，任何 `#fm-body .fbtools .iconbtn` 这种数法都会把两边一起数上
@@ -370,13 +489,13 @@ table.bk-tbl td.dim{color:var(--dim)}
 .bk-formrow:last-child{margin-bottom:0}
 .bk-formrow label{width:44px;flex:none;font-size:12px;color:var(--dim)}
 .bk-formrow .bk-scope,.bk-formrow .bk-title,.bk-formrow .bk-note{
-  padding:6px 9px;border-radius:8px;border:1px solid var(--line);background:var(--panel);
+  padding:6px 9px;border-radius:8px;border:0;background:var(--fill);
   color:var(--fg);font-size:12.5px;outline:none}
 .bk-formrow .bk-title,.bk-formrow .bk-note{flex:1;min-width:0}
 .bk-filter{display:flex;gap:10px;align-items:center;padding:6px 12px;flex:none;flex-wrap:wrap;
   border-bottom:1px solid var(--line2);background:var(--panel)}
-.bk-filter .bk-q{padding:5px 9px;border-radius:8px;border:1px solid var(--line);
-  background:var(--panel2);color:var(--fg);font-size:12.5px;outline:none;min-width:180px}
+.bk-filter .bk-q{padding:5px 9px;border-radius:8px;border:0;
+  background:var(--fill);color:var(--fg);font-size:12.5px;outline:none;min-width:180px}
 .bk-hint{font-size:11.5px;color:var(--dim);white-space:nowrap}
 .bk-hint.bk-warn{color:#a05a00}
 /* ★ 窄窗口（实测 900×660）下这三颗按钮会被挤成"一个字一行" —— 所以：
@@ -452,10 +571,11 @@ table.bk-tbl td.dim{color:var(--dim)}
      行标签、输入框 + 运行按钮、红色的删除按钮），去掉不影响使用；
    · 外边距 40 → 24、块内边距 22/24 → 16/20、块间距 20 → 14、属性行距 16 → 11。 */
 #pane-detail{overflow:auto;padding:0}
-/* 内容坐在一张白卡上：浅灰的图标块和浅灰的小节卡都要靠它当对照面 */
+/* 内容坐在一张白卡上：浅灰的图标块和浅灰的小节卡都要靠它当对照面。
+   `V-93`：卡本身的 1px 描边也去掉 —— 靠阴影和底色跟背景分开就够了。 */
 .dwrap{max-width:760px;margin:20px auto;padding:24px 28px;background:var(--panel);
-  border:1px solid var(--line);border-radius:16px;
-  box-shadow:0 4px 24px rgba(0,0,0,.03)}
+  border:0;border-radius:16px;
+  box-shadow:0 4px 24px rgba(0,0,0,.05)}
 
 /* ---------- 头部：**3 行网格** ----------
    ┌──────────┬──────────────────────────────┐
@@ -485,12 +605,17 @@ h1.dtitle{grid-area:3 / 1 / 4 / 2;align-self:baseline;text-align:center;font-siz
 .dmeta{grid-area:3 / 2 / 4 / 3;align-self:baseline;font-size:12.5px;color:var(--dim);
   font-family:var(--mono);line-height:1.5;word-break:break-all}
 
-/* ---------- 小节卡 ---------- */
-.dsec{background:var(--panel2);border:1px solid var(--line);border-radius:12px;
-  padding:16px 20px;margin-bottom:14px}
-.dsec:last-child{margin-bottom:0}
-.dsec.danger{background:color-mix(in srgb, #ef4444 5%, var(--panel2));
-  border-color:color-mix(in srgb, #ef4444 22%, var(--line));
+/* ---------- 小节（`V-93`：去掉灰底和描边）----------
+   原来是"浅灰底 + 1px 描边的小节卡"，一屏能数出五六个框 —— 和"按钮不许有描边"是同一个毛病。
+   现在把一节压成一段：**只用一条极淡的分隔线**分开上一节，节内留白；危险那一节仍留一层
+   红晕（那是**语义**，不是外观），圆角回来一点把它和普通段落区分开。 */
+.dsec{background:transparent;border:0;border-top:1px solid var(--hair);border-radius:0;
+  padding:15px 2px;margin-bottom:0}
+.dsec:first-child{border-top:0;padding-top:0}
+.dsec:last-child{padding-bottom:0}
+.dsec.danger{background:color-mix(in srgb, #ef4444 5%, transparent);
+  border-top:1px solid color-mix(in srgb, #ef4444 18%, var(--hair));
+  border-radius:10px;padding:14px 16px;margin-top:14px;
   display:flex;justify-content:space-between;align-items:center;gap:16px}
 .danger-text{font-size:13px;color:var(--dim);line-height:1.6;word-break:break-word}
 
@@ -518,26 +643,29 @@ h1.dtitle{grid-area:3 / 1 / 4 / 2;align-self:baseline;text-align:center;font-siz
 .chip:hover{background:var(--fill2)}
 .chip:active{transform:scale(.97)}
 
-/* ---------- 控件：白底 + 细描边 ---------- */
+/* ---------- 控件：一层灰底，不描边（`V-92` 统一成"填充式"） ---------- */
 .runrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-#args,#hargs{flex:1;min-width:200px;padding:8px 14px;background:var(--panel);
-  border:1px solid var(--ctl-in);border-radius:8px;font-size:13.5px;color:var(--fg);
+#args,#hargs{flex:1;min-width:200px;padding:8px 14px;background:var(--fill);
+  border:0;border-radius:8px;font-size:13.5px;color:var(--fg);
   font-family:var(--mono);outline:none;
-  transition:border-color .2s ease,box-shadow .2s ease}
+  transition:background .2s ease,box-shadow .2s ease}
 #args::placeholder,#hargs::placeholder{color:var(--ph)}
-#args:focus,#hargs:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+#args:focus,#hargs:focus{background:var(--panel);box-shadow:0 0 0 3px var(--field-focus)}
 #args:disabled,#hargs:disabled{opacity:.5;cursor:default}
 
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 16px;
-  border-radius:8px;font-size:13.5px;font-weight:500;font-family:inherit;cursor:pointer;
-  background:var(--panel);border:1px solid var(--ctl);color:var(--fg);
-  transition:background .15s ease-out,transform .1s ease-out,border-color .15s ease-out}
-.btn:hover{background:var(--hover)}
+/* 详情里那些"整词"按钮（`.btn`）：和图标按钮**同一套语言** —— 无底色、无描边（`V-92`），
+   靠文字颜色和 hover 的一层淡灰区分主次；`primary` 用强调色，`danger` 用红，都不铺底。 */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:6px 11px;
+  border-radius:8px;font-size:13px;font-weight:500;font-family:inherit;cursor:pointer;
+  background:transparent;border:0;color:var(--fg2);
+  transition:background .13s ease-out,transform .1s ease-out,color .13s ease-out}
+.btn:hover{background:var(--hover);color:var(--fg)}
 .btn:active{transform:scale(.98)}
 .btn:disabled{opacity:.4;cursor:default;transform:none}
-.btn.danger{background:color-mix(in srgb, #ef4444 7%, var(--panel));
-  border-color:color-mix(in srgb, #ef4444 28%, var(--ctl));color:#ef4444}
-.btn.danger:hover{background:color-mix(in srgb, #ef4444 13%, var(--panel))}
+.btn.primary{color:var(--accent)}
+.btn.primary:hover{background:color-mix(in srgb, var(--accent) 12%, transparent)}
+.btn.danger{background:transparent;border:0;color:#ef4444}
+.btn.danger:hover{background:color-mix(in srgb, #ef4444 13%, transparent)}
 
 .runhint{font-size:12px;color:var(--dim);margin-top:10px;line-height:1.7;word-break:break-all}
 .runhint .mono{font-family:var(--mono);background:var(--tag);color:var(--fg2);
@@ -563,10 +691,10 @@ table.p th{color:var(--dim);font-weight:500}
    原来只写了 `#args` ⇒ 历史那边的输入框是**浏览器默认样式**（细边、字被挤），
    一眼就跟旁边不是一套东西 —— 以前就是漏了这一条。 */
 #args,#hargs{flex:1;min-width:180px;max-width:620px;padding:8px 11px;border-radius:9px;
-  border:1px solid var(--line);
-  background:var(--panel2);color:var(--fg);font-family:var(--mono);font-size:12.5px;
-  outline:none;transition:border-color .12s,box-shadow .12s}
-#args:focus,#hargs:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+  border:0;
+  background:var(--fill);color:var(--fg);font-family:var(--mono);font-size:12.5px;
+  outline:none;transition:background .12s,box-shadow .12s}
+#args:focus,#hargs:focus{background:var(--panel);box-shadow:0 0 0 3px var(--field-focus)}
 #args::placeholder,#hargs::placeholder{color:var(--dim)}
 /* ★ 参数框右边那颗"一键清空"（`V-86`）：`#args` / `#hargs` 外面套一层 `.argbox` 定位，
    按钮悬浮在框内右侧；**只在框里有内容时**才出现（`hidden` 由 `wireDetail()` 管）。
@@ -592,14 +720,25 @@ table.p th{color:var(--dim);font-weight:500}
   padding:16px 18px;min-width:340px;max-width:520px;box-shadow:0 18px 50px rgba(0,0,0,.28)}
 .card h3{margin:0 0 10px;font-size:15px}
 .card p{margin:0 0 12px;color:var(--dim);font-size:13px;line-height:1.6;word-break:break-all}
-.card input{width:100%;padding:8px 11px;border-radius:8px;border:1px solid var(--line);
-  background:var(--panel2);color:var(--fg);font-family:var(--mono);outline:none}
-.card input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
-.card .btns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
-.card .btns button{padding:6px 14px;border-radius:8px;border:1px solid var(--line);
-  background:var(--panel2);color:var(--fg);cursor:pointer;font:inherit}
-.card .btns button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
-.card .btns button.danger{background:#d64545;border-color:#d64545;color:#fff}
+.card input{width:100%;padding:8px 11px;border-radius:8px;border:0;
+  background:var(--fill);color:var(--fg);font-family:var(--mono);outline:none}
+.card input:focus{background:var(--panel);box-shadow:0 0 0 3px var(--field-focus)}
+.card .btns{display:flex;justify-content:flex-end;gap:6px;margin-top:14px}
+/* 弹框里的按钮（`V-92`）：你说"测试镜像功能这里的按钮就是有背景色有边框" —— 现在一律无底色无描边，
+   主/危险/当心三个动词只靠**文字颜色** + hover 的一层淡底区分。 */
+.card .btns button{padding:6px 12px;border-radius:8px;border:0;
+  background:transparent;color:var(--fg2);cursor:pointer;font:inherit;font-weight:500;
+  transition:background .13s ease-out,color .13s ease-out,transform .1s ease-out}
+.card .btns button:hover{background:var(--hover);color:var(--fg)}
+.card .btns button:active{transform:scale(.97)}
+.card .btns button.primary{background:transparent;color:var(--accent)}
+.card .btns button.primary:hover{background:color-mix(in srgb, var(--accent) 12%, transparent)}
+.card .btns button.danger{background:transparent;color:#d64545}
+.card .btns button.danger:hover{background:color-mix(in srgb, #d64545 13%, transparent)}
+/* 第二个动词（`V-92`）：琥珀 = "当心"（会动文件，但挪进回收站、能捞回来） */
+.card .btns button.warn{background:transparent;
+  color:color-mix(in srgb, #d97706 88%, var(--fg))}
+.card .btns button.warn:hover{background:color-mix(in srgb, #d97706 14%, transparent)}
 #toasts{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);
   display:flex;flex-direction:column;gap:6px;align-items:center;z-index:90;pointer-events:none}
 .toast{background:var(--panel);border:1px solid var(--line);border-radius:9px;

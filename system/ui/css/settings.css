@@ -80,23 +80,23 @@
 /* ★ 控件（`V-63` 的教训：这几条**必须带 `#settings ` 前缀** —— 全局那条
    `.card input{width:100%}`（确认框用的）是"一个类 + 一个元素"，优先级高过单类选择器） */
 #settings .inp{width:100%;height:32px;padding:0 11px;border-radius:8px;
-  border:1px solid var(--ctl-in);background:var(--panel2);color:var(--fg);
+  border:0;background:var(--fill);color:var(--fg);
   font-family:var(--mono);font-size:12.5px;outline:none;
-  transition:border-color .12s,box-shadow .12s}
+  transition:background .12s,box-shadow .12s}
 #settings .inp::placeholder{color:var(--ph);font-family:inherit}
-#settings .inp:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
-/* 开关 */
-.sw{width:38px;height:22px;border-radius:99px;border:1px solid var(--ctl);background:var(--panel2);
-  position:relative;cursor:pointer;flex:none;padding:0;transition:background .16s,border-color .16s}
+#settings .inp:focus{background:var(--panel);box-shadow:0 0 0 3px var(--field-focus)}
+/* 开关（`V-92`：去掉描边，轨道用一层灰；开着就是强调色） */
+.sw{width:38px;height:22px;border-radius:99px;border:0;background:var(--fill2);
+  position:relative;cursor:pointer;flex:none;padding:0;transition:background .16s}
 .sw::after{content:"";position:absolute;top:1px;left:1px;width:18px;height:18px;border-radius:50%;
   background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);
   transition:transform .16s cubic-bezier(.4,0,.2,1)}
-.sw[aria-checked="true"]{background:var(--accent);border-color:var(--accent)}
+.sw[aria-checked="true"]{background:var(--accent);border-color:transparent}
 .sw[aria-checked="true"]::after{transform:translateX(16px)}
 .sw:focus-visible{outline:none;box-shadow:0 0 0 3px var(--field-focus)}
-/* 步进器 */
-#settings .step{display:inline-flex;align-items:center;border:1px solid var(--ctl-in);
-  border-radius:8px;overflow:hidden;background:var(--panel2);height:32px;flex:none}
+/* 步进器（`V-92`：外壳也去掉描边，用一层灰底；里面那两颗 ± 本来就无底色） */
+#settings .step{display:inline-flex;align-items:center;border:0;
+  border-radius:8px;overflow:hidden;background:var(--fill);height:32px;flex:none}
 #settings .step button{width:30px;height:100%;border:0;background:transparent;color:var(--fg2);
   cursor:pointer;font-size:15px;line-height:1;padding:0;transition:background .12s,color .12s}
 #settings .step button:hover:not(:disabled){background:var(--hover);color:var(--fg)}
@@ -122,14 +122,15 @@
   white-space:nowrap;flex:1;min-width:0}
 .set-state.moved{color:var(--accent)}
 .set-state.bad{color:#d64545}
-.set-foot .btn{padding:7px 15px;border-radius:8px;border:1px solid var(--ctl);
-  background:var(--panel);color:var(--fg);cursor:pointer;font:inherit;font-size:13px}
-.set-foot .btn:hover{background:var(--hover)}
-.set-foot .btn.primary{background:var(--accent);border-color:var(--accent);
-  color:var(--accent-fg)}
-.set-foot .btn.primary:hover{filter:brightness(1.06)}
+.set-foot .btn{padding:6px 12px;border-radius:8px;border:0;
+  background:transparent;color:var(--fg2);cursor:pointer;font:inherit;font-size:13px;font-weight:500;
+  transition:background .13s ease-out,color .13s ease-out,transform .1s ease-out}
+.set-foot .btn:hover{background:var(--hover);color:var(--fg)}
+.set-foot .btn:active{transform:scale(.97)}
+.set-foot .btn.primary{background:transparent;border:0;color:var(--accent)}
+.set-foot .btn.primary:hover{background:color-mix(in srgb, var(--accent) 12%, transparent)}
 .set-foot .btn:disabled{opacity:.45;cursor:default;filter:none}
-.set-foot .btn-quiet{padding:7px 12px;border-radius:8px;border:1px solid transparent;
+.set-foot .btn-quiet{padding:6px 11px;border-radius:8px;border:0;
   background:transparent;color:var(--dim);cursor:pointer;font:inherit;font-size:13px}
 .set-foot .btn-quiet:hover{background:var(--hover);color:var(--fg)}
 

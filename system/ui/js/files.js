@@ -634,8 +634,9 @@ const MossFileBrowse = {
     </tr></thead><tbody>
       <tr v-if="!rows.length"><td colspan="4" class="dim"
           style="padding:22px;text-align:center">这个文件夹是空的</td></tr>
-      <tr v-for="(e, idx) in rows" :key="e.rel" class="row" :class="{sel: s.sel.has(e.rel)}"
-          :data-rel="e.rel" :data-dir="e.dir ? 1 : 0"
+      <tr v-for="(e, idx) in rows" :key="e.rel" class="row"
+          :class="[{sel: s.sel.has(e.rel)}, bkDiffRow(e.rel)]"
+          :data-rel="e.rel" :data-dir="e.dir ? 1 : 0" :title="bkDiffWhy(e.rel)"
           @click="rowClick(e, idx, $event)" @dblclick="rowDbl(e)"
           @contextmenu="rowCtx(e, idx, $event)">
         <td class="nmcell" v-html="fileIconHTML(e, false) + '<span>' + esc(e.name) + '</span>'"></td>
@@ -695,6 +696,12 @@ const MossFileBrowse = {
     },
   },
   methods: {
+    /* ★ `V-94`：这两条是**给模板用的**（行上色 + hover 说明）。
+       ★ 为什么还要在这儿转一手：这个 Vue 构建的模板是"带前缀"编译的（`_ctx.xxx`），
+         **看不见**脚本里的全局函数（`humanSize` 那几条也是这么递的，见下面 `data()`）——
+         直接写 `bkDiffRow(e.rel)` 会得到 "bkDiffRow is not a function"（`pkg-file` 场景当场抓到）。 */
+    bkDiffRow: rel => bkDiffRow(rel),
+    bkDiffWhy: rel => bkDiffWhy(rel),
     /* ---- 表头排序 ---- */
     sortBy(k){
       const s = this.s;
@@ -736,34 +743,35 @@ const MossFileBrowse = {
 
 const MossFileManager = {
   name: "moss-file-manager",
-  // ★ `MossFileBackup` 在 `js/backup.js` 里（那个文件在**本文件之后**加载）：
-  //   这边模板里直接写 `<moss-file-backup>`，那边 `MossFileManager.components.MossFileBackup
-  //   = MossFileBackup` 把组件补进来。挂载是懒的（第一次 `fmRender()` 才挂），来得及。
+  // ★ 「版本快照」边栏（`MossFileSnap`）在 `js/backup.js` 里（那个文件在**本文件之后**
+  //   加载）：这边模板里直接写 `<moss-file-snap>`，那边
+  //   `MossFileManager.components.MossFileSnap = MossFileSnap` 把组件补进来。
+  //   挂载是懒的（第一次 `fmRender()` 才挂），来得及。
+  //   `V-91`：它从"另一个子选项卡"变成**右边一条边栏** —— 快照天生是"这个目录的这些版本"，
+  //   贴着文件列表放最直观，而且边栏只看**当前选中对象**的快照，"分组"下拉就不需要了。
   components: {MossFileBrowse: MossFileBrowse, MossFilePage: MossFilePage},
   template: `
-<div id="fm-bar">
-  <button class="fmtab" :class="{on: s.active === '__browse__'}" data-fm="__browse__"
-          title="目录浏览（这一页不能关）" @click="s.active = '__browse__'">
-    <span v-html='ico("folder", "i")'></span><span class="fname">{{ tabLabel }}</span>
-  </button>
-  <button class="fmtab" :class="{on: s.active === '__backup__'}" data-fm="__backup__"
-          title="备份（开发时存一份数据；这一页也不能关）" @click="s.active = '__backup__'">
-    <span v-html='ico("file-archive", "i")'></span><span class="fname">备份</span>
-  </button>
-  <button v-for="t in s.tabs" :key="t.rel" class="fmtab" :class="{on: s.active === t.rel}"
-          :data-fm="t.rel" :title="t.rel" @click="s.active = t.rel">
-    <span :style="'color:' + tabIcon(t).c + ';display:flex'" v-html='ico(tabIcon(t).i, "i")'></span>
-    <span class="fname">{{ t.name }}</span>
-    <span v-if="isDirty(t)" class="fdot" title="有未保存的改动"></span>
-    <span class="x" :data-close="t.rel" title="关闭" @click.stop="fmClosePage(t.rel)">×</span>
-  </button>
+<div class="fm-main">
+  <div id="fm-bar">
+    <button class="fmtab" :class="{on: s.active === '__browse__'}" data-fm="__browse__"
+            title="目录浏览（这一页不能关）" @click="s.active = '__browse__'">
+      <span v-html='ico("folder", "i")'></span><span class="fname">{{ tabLabel }}</span>
+    </button>
+    <button v-for="t in s.tabs" :key="t.rel" class="fmtab" :class="{on: s.active === t.rel}"
+            :data-fm="t.rel" :title="t.rel" @click="s.active = t.rel">
+      <span :style="'color:' + tabIcon(t).c + ';display:flex'" v-html='ico(tabIcon(t).i, "i")'></span>
+      <span class="fname">{{ t.name }}</span>
+      <span v-if="isDirty(t)" class="fdot" title="有未保存的改动"></span>
+      <span class="x" :data-close="t.rel" title="关闭" @click.stop="fmClosePage(t.rel)">×</span>
+    </button>
+  </div>
+  <div class="fmwrap" id="fm-body">
+    <moss-file-browse :s="s" :active="s.active === '__browse__'"></moss-file-browse>
+    <moss-file-page v-for="t in s.tabs" :key="t.rel" :t="t"
+                    :active="s.active === t.rel"></moss-file-page>
+  </div>
 </div>
-<div class="fmwrap" id="fm-body">
-  <moss-file-browse :s="s" :active="s.active === '__browse__'"></moss-file-browse>
-  <moss-file-backup :active="s.active === '__backup__'"></moss-file-backup>
-  <moss-file-page v-for="t in s.tabs" :key="t.rel" :t="t"
-                  :active="s.active === t.rel"></moss-file-page>
-</div>`,
+<moss-file-snap></moss-file-snap>`,
   computed: {
     s(){ return FM.st[FM.ctx || "__all__"] || fmState(FM.ctx); },
     tabLabel(){

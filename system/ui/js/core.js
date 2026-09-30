@@ -155,3 +155,62 @@ function escapeHtml(s){
     .replace(/[&<>"]/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
 }
 const esc = escapeHtml;
+
+/* ---------------------------------------------------------------- 拖着调宽（`V-92`）
+   左侧列表和「版本快照」边栏都得能调宽（你的原话：「应该允许调节尺寸 防止显示的内容不全」）。
+   一条 7px 宽的细线（`.grip`，绝对定位贴在元素边上），按住横拖改那个元素的 `width`。
+     grip = 那条线；el = 要改宽度的元素；sign = +1（线在元素**右边**，如左侧列表）/
+            -1（线在元素**左边**，如快照边栏）；min/max/def = 上下限 + 双击复原值。
+   ★ 宽度只活在这一会话里（页面是从 `127.0.0.1:<随机端口>` 现起现发的，`localStorage`
+     按"源"隔离、每次端口都变 ⇒ 存进去也读不回来）；不改磁盘、不动任何状态。
+   ★ 用 pointer 事件 + `setPointerCapture`：鼠标划出那条 7px 也能继续拖（不然一快就掉）。 */
+function bindColResize(grip, el, sign, min, max, def){
+  if (!grip || !el) return;
+  const hi = () => (typeof max === "function" ? max() : max);
+  const clamp = w => Math.max(min, Math.min(hi(), Math.round(w)));
+  grip.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const x0 = e.clientX, w0 = el.getBoundingClientRect().width;
+    try{ grip.setPointerCapture(e.pointerId); }catch(err){}
+    grip.classList.add("on");
+    document.body.classList.add("colres");
+    const move = ev => { el.style.width = clamp(w0 + sign * (ev.clientX - x0)) + "px"; };
+    const done = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", done);
+      grip.removeEventListener("pointercancel", done);
+      grip.classList.remove("on");
+      document.body.classList.remove("colres");
+      try{ grip.releasePointerCapture(e.pointerId); }catch(err){}
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", done);
+    grip.addEventListener("pointercancel", done);
+  });
+  grip.addEventListener("dblclick", () => { el.style.width = clamp(def) + "px"; });
+}
+
+/* ---------------------------------------------------------------- 差异视图（`V-94`）
+   「快照 vs 现在」的左右对照：状态容器 + 两个**给模板用**的助手。
+   ★ 为什么放在这里（`core.js`）而不是 `js/backup.js`：文件管理那张表是**在自己脚本末尾**
+     挂载的（`files.js`），比 `backup.js` 早 —— 模板里 `bkDiffRow(e.rel)` 要是一开始不存在，
+     整张表渲染就失败（症状：文件列表空白、还什么都不报）。函数声明在这儿就万无一失。
+   ★ 容器用 `Vue.reactive`：边栏那几个 computed 直接读它，值一填就自动重画。 */
+const BKD = Vue.reactive({diff: null, title: ""});
+/* 左边（文件管理那张表）该怎么上色：**左边大就左边更深**（你的原话"左侧的多 就左侧文字更深"）。 */
+function bkDiffRow(rel){
+  const d = BKD.diff && BKD.diff.byRel ? BKD.diff.byRel[rel] : null;
+  if (!d) return null;
+  if (d.state === "now-only") return {"df-new": true};
+  if (d.state === "diff") return d.deep === "now" ? {"df-chg": true, "df-deep": true}
+                                                  : {"df-chg": true, "df-soft": true};
+  if (d.state === "empty") return {"df-empty": true};
+  if (d.state === "gone") return {"df-gone": true};
+  return null;                                  // 一致 → 正常色，不打扰
+}
+function bkDiffWhy(rel){
+  const d = BKD.diff && BKD.diff.byRel ? BKD.diff.byRel[rel] : null;
+  if (!d || d.state === "same") return "";
+  return "和快照（" + (BKD.title || "选中的那次") + "）比：" + d.why;
+}

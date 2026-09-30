@@ -36,11 +36,23 @@ async function init(){
   consoleKey = "__host__";
   paintConsole();
   pkgPollStart();          // 每 2.5 秒把所有包的状态对一次（列表 + 按钮都要）
-  // 默认上下文：不选包时给一个"全部文件"（根 = user_data），能自己往上走到 system
-  FM.ctx = "__all__";
-  const s = fmState("__all__");
-  const r = await pywebview.api.fs_list("user");
-  if (r.ok){ s.rel = r.rel; s.entries = r.entries || []; s.hist = [s.rel]; s.hpos = 0; }
+  // 默认上下文：不选包时给一个"全部文件"（根 = user_data），能自己往上走到 system。
+  // ★ `V-98` 修一个真 bug（你 2026-09-30 报的"点了刷新包列表，文件管理的路径就变错"）：
+  //   这一段以前是**无条件**把上下文和路径按回 `__all__` + `user/`；而"刷新包列表"那颗 ⟳
+  //   的处理器**就是 `init`**（`$("#btn-refresh").onclick = init`）⇒ 你在 `system/pkgs/xxx`
+  //   里点一下刷新，路径被顶回 `user_data`、上下文被顶回"全部文件"（快照边栏也跟着换了一组）。
+  //   现在：**头一次**进来才给默认值；之后只把**当前那个目录**重列一遍（目录没了才退回 user）。
+  const first = !FM.ctx;
+  if (first) FM.ctx = "__all__";
+  const s = fmState(FM.ctx || "__all__");
+  const keep = (s.rel && !first) ? s.rel : "user";
+  let r = await pywebview.api.fs_list(keep);
+  if (!r || !r.ok) r = await pywebview.api.fs_list("user");
+  if (r.ok){
+    s.rel = r.rel; s.entries = r.entries || [];
+    if (first){ s.hist = [s.rel]; s.hpos = 0; }
+    else if (s.hist && s.hist.length){ s.hist[s.hpos] = s.rel; }   // 目录没了才会换人，历史照旧保留
+  }
   fmRender();
   bindDropZone();          // 拖文件进来（`V-35`）：高亮 + 收宿主送来的真实路径
 }
@@ -94,6 +106,8 @@ $("#btn-settings").onclick = openSettings;
 $("#m-cancel").onclick = closeModal;
 $("#m-x").onclick = closeModal;   // `V-63`：确认框的 × = 取消
 $("#m-ok").onclick = () => { const cb = modalCb; closeModal(); if (cb) cb(); };
+/* 第二个动词（`V-92`）：和 `#m-ok` 同款，先取出回调再关（`closeModal` 会把两个都清掉）。 */
+$("#m-ok2").onclick = () => { const cb = modalCb2; closeModal(); if (cb) cb(); };
 $("#m-input").addEventListener("keydown", e => {
   if (e.key === "Enter"){ e.preventDefault(); $("#m-ok").click(); }
   if (e.key === "Escape") closeModal();
@@ -164,6 +178,11 @@ $("#btn-selfcheck").onclick = async () => {
 };
 
 paintStaticIcons();
+
+/* 左侧那一列也能拖宽（`V-92`）：细线在它右边缘上（`index.html` 里的 `#grip-aside`），
+   往右拖变宽；双击回到 300。上限按窗口宽度算（最多占一半）。 */
+bindColResize($("#grip-aside"), $("main > aside"), +1, 200,
+              () => Math.round((window.innerWidth || 1200) * 0.5), 300);
 
 /* ---------------------------------------------------------------- 启动（`V-68` 修过一次）
    ★ 这里原来只有一句 `window.addEventListener("pywebviewready", init)`。

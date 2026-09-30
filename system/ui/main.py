@@ -1867,6 +1867,59 @@ class Api:
         except Exception as e:                                      # noqa: BLE001
             return {"ok": False, "msg": str(e)}
 
+    def backup_fp(self, rels, dirs=None):
+        """差异视图（`V-94`）的"现在这一侧"：**现读磁盘**，不信界面那份缓存。
+
+        ★ 为什么必须现读（你 2026-09-30 反馈的第 3 条）：你在外面把 `pkg.json` 加了两个字符，
+          可文件管理那份列表还是旧的（界面不会盯着磁盘看）⇒ 拿缓存的大小去比，两边"一样大"，
+          于是**该高亮的没高亮**。
+        ★ 返回三样：每个文件的**指纹**（大小一样时才需要它）、每个文件的**现大小**、
+          每个**目录的子树字节数**（目录也得能比"谁多谁少"，不然每个目录都会被误判成"变了"）。
+          目录那一侧用**和备份同一套排除规则**（`__pycache__`/`.git`/备份库自己…），
+          不然磁盘比快照多出几个被排除的文件，目录就永远是"变了"。"""
+        fps, sizes, dsz = {}, {}, {}
+        try:
+            st = self._backup_store()
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": str(e), "fps": {}, "sizes": {}, "dirs": {}}
+        for rel in (rels or []):
+            try:
+                p = _resolve(str(rel))[1]
+                if p.is_file():
+                    sizes[str(rel)] = p.stat().st_size
+                    fps[str(rel)] = _bk.hash_file(p)[0]
+            except Exception:                                           # noqa: BLE001
+                pass
+        for rel in (dirs or []):
+            rel = str(rel)
+            try:
+                base = _resolve(rel)[1]
+            except Exception:                                           # noqa: BLE001
+                continue
+            if not base.is_dir():
+                continue
+            store = str(st.root.resolve())
+            total = 0
+            for cur, subs, names in os.walk(base):
+                cp = Path(cur)
+                subs[:] = [d for d in subs
+                           if not st._skip_dir_name(d)                            # noqa: SLF001
+                           and not str((cp / d).resolve()).startswith(store)]
+                for n in names:
+                    if st._skip_dir_name(n):                                  # noqa: SLF001
+                        continue
+                    try:
+                        f = cp / n
+                        if f.is_symlink():
+                            continue
+                        if st._skip_rel(st.rel_of(f) or ""):                 # noqa: SLF001
+                            continue
+                        total += f.stat().st_size
+                    except Exception:                                         # noqa: BLE001
+                        pass
+            dsz[rel] = total
+        return {"ok": True, "fps": fps, "sizes": sizes, "dirs": dsz}
+
     def backup_blob(self, fp, group=""):
         """看一个对象的内容（文本给文本；二进制只给大小和头部）。"""
         try:

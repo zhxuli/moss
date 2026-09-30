@@ -69,6 +69,7 @@ chk('$("#id") 都能找到', not missing, ("找不到：%s" % missing) if missin
 # ---------------- 4. 图标名都在 lucide 表里 ----------------
 lucide = (UI / "vendor" / "lucide.js").read_text(encoding="utf-8")
 have = set(re.findall(r'^"([a-z0-9\-]+)":\s*"', lucide, re.M))
+have |= set(re.findall(r'^"([a-z0-9\-]+)":\s*\{', lucide, re.M))   # 实心那族（`V-96`）
 want = set(re.findall(r'\bico\(\s*"([a-z0-9\-]+)"', js))
 bad = sorted(want - have)
 chk("ico() 的图标名都存在", not bad,
