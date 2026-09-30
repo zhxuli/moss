@@ -294,7 +294,7 @@ table.fb{width:100%;border-collapse:collapse;font-size:13px;user-select:none}
 table.fb th{position:sticky;top:0;z-index:1;text-align:left;font-weight:500;color:var(--dim);
   background:var(--panel);border-bottom:1px solid var(--line);padding:6px 10px;cursor:pointer;
   white-space:nowrap}
-table.fb th .arrow{color:var(--accent);margin-left:4px}
+table.fb th .arrow{color:inherit;font-size:10px;margin-left:3px}   /* `V-111`：和标题同色（灰），不再用强调蓝 */
 table.fb td{padding:4px 10px;border-bottom:1px solid var(--line2);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis}
 table.fb td.nmcell{display:flex;align-items:center;gap:8px;max-width:420px}

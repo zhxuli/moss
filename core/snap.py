@@ -175,6 +175,14 @@ def _diff(b, st, bid, group, rel=""):
     now = {}
     if base is not None and base.is_dir():
         for c in sorted(base.iterdir()):
+            # ★ `V-110`：**这里也要套过滤规则** —— 不套的话，被排除的东西（`__pycache__`、
+            #   `*.tmp`、`venv/`…）会被当成"现在多出来的"显示出来（你实测那条 `+ __pycache__/`）。
+            #   配 `--sync` 更糟：会把它当"多的"挪进回收站。和存储那边的 `_extras` 同一个坑。
+            try:
+                if st._skip_dir_name(c.name, is_dir=c.is_dir()) or st._skip_rel(_rel_of(c)):
+                    continue
+            except Exception:                                       # noqa: BLE001
+                pass
             now[c.name] = c
     rows = []
     names = sorted(set(list(now.keys()) + list(snap_files.keys()) + list(snap_dirs.keys())))
@@ -268,7 +276,7 @@ def _cmd_save(pos, opt, flag, subj_srcs=()):
                        "要真存就加 --yes，或者换个目录 / 用 `moss --snap save :<包名>`。"
                        % MAX_SCAN_FILES)
         return EXIT_USE
-    out.print_cyan("开始存快照（约 %d 个文件）…" % n_files)
+    out.print_cyan("开始存快照（扫到 %d 个文件，按过滤规则挑着存）…" % n_files)
     rels = [_rel_of(Path(s)) for s in srcs]
     g = _group_of(rels, opt)
     try:
@@ -385,8 +393,9 @@ def _cmd_diff(pos, opt, flag):
     for r in d["rows"]:
         mark = {"same": "  ", "diff": "≠ ", "snap-only": "- ", "now-only": "+ ",
                 "empty": "· "}[r["state"]]
+        nowtxt = "—" if r["now"] is None else _size(r["now"])
         print("  %s%-28s %10s / %10s" % (mark, r["name"] + ("/" if r["dir"] else ""),
-                                          _size(r["now"]), _size(r["snap"])))
+                                          nowtxt, _size(r["snap"])))
     c = d["counts"]
     out.print_cyan("一致 %d · 变了 %d · 快照有我没了 %d · 我有多 %d · 空 %d"
                    % (c["same"], c["diff"], c["snap-only"], c["now-only"], c["empty"]))

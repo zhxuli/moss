@@ -103,9 +103,9 @@ const BODY_CAMERA = "<path d='M501.76 758.784c-119.296 0-213.504-93.696-213.504-
 const SOLID = {
 // `s` = 视觉缩放（1024 格里的"看起来多大"，治"这颗比旁边大/小"）；`line` = 按**描边**画，
 //   和 lucide 那族一路（不然实心块夹在描边图标里明显重一档）。
-"moss-history":    {vb: "0 0 1024 1024", s: 0.88, line: true, body: BODY_HISTORY},
-"moss-folder-out": {vb: "0 0 1024 1024", s: 0.74, line: true, body: BODY_FOLDER},
-"moss-camera":     {vb: "0 0 1024 1024", s: 0.88, line: true, body: BODY_CAMERA},
+"moss-history":    {vb: "0 0 1024 1024", s: 0.86, body: BODY_HISTORY},
+"moss-folder-out": {vb: "0 0 1024 1024", s: 0.72, body: BODY_FOLDER},
+"moss-camera":     {vb: "0 0 1024 1024", s: 0.86, body: BODY_CAMERA},
 };
 
 function ico(name, cls) {
