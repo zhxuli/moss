@@ -123,10 +123,21 @@ async function cmdNewPkg(){
 
 async function cmdRemovePkg(p){
   const st = ico("alert-triangle", "i");
+  // ★ `V-89`：先问一下它在备份库里有几次备份（**不自动删** —— 卸载就是卸载，
+  //   备份是另一件事；但界面上得让你知道它还占着多少，别不知不觉留一堆）。
+  let bkLine = "";
+  try{
+    const b = await pywebview.api.backup_group_info(p.id);
+    if (b && b.ok && b.backups)
+      bkLine = "<br>· 备份库里还有它的 <b>" + b.backups + "</b> 次备份（占 " +
+               humanSize(b.store_bytes) + "，<b>不会跟着删</b>；要清就去「文件管理 → 备份」里" +
+               "选中这个分组点垃圾桶）";
+  }catch(e){}
   askConfirm("卸载这个包",
     "将<b>永久删除</b>（不进回收站）：<br>· 包本体 " + p.dir + "<br>" +
     "· 它的数据 user_data/state/" + p.id + "（如果有）<br><br>" +
     "层：" + p.layer + (p.layer === "system" ? "（出厂件 —— 删了升级时会回来）" : "") +
+    bkLine +
     "<br>确定吗？",
     async () => {
       consoleKey = "__host__";

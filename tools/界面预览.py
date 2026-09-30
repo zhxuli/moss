@@ -66,7 +66,7 @@ BROWSERS = [
 
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
-          "btn-detail", "err-path", "args-clear",
+          "btn-detail", "err-path", "args-clear", "backup", "backup-restore", "backup-sync", "backup-export", "backup-groups",
           "drop-hot", "drop-dir", "drop-file", "console-input", "embed",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
@@ -138,6 +138,7 @@ def mock_data():
 
     fs = {}
     samples = [("system/pkgs/md5", ROOT / "system/pkgs/md5"),
+               ("system/pkgs/bmi", ROOT / "system/pkgs/bmi"),
                ("user", ROOT / "user_data"),
                ("abs/D:/python/wwwroot/ZeEn", Path(r"D:\python\wwwroot\ZeEn"))]
     # ★ 用户层每个包的目录也当样本（改名 / 对齐目录名那两个场景要在里面找文件）。
@@ -187,6 +188,8 @@ def mock_data():
              "size": 210, "mtime": 0, "ext": "py"}]}
 
     return {"payload": payload, "hist": hist, "fs": fs, "settings": settings,
+            # 工具自己的场景清单：页面拿它对一下"这个场景名到底有没有实现"。
+            "scenes": SCENES,
             # `--early-ready`：让 mock 在 js/*.js 之前就发 ready（`V-68` 的竞态场景）
             "earlyReady": ("--early-ready" in sys.argv[1:]),
             # 拖文件那个场景要的样本：故意用**带空格**的文件名，顺便验引号
@@ -206,6 +209,128 @@ MOCK_JS = r"""
   //   "pywebview 的 ready 早于 `js/app.js` 挂监听"那条竞态（`V-68`）。
   if (M.earlyReady) window.dispatchEvent(new Event("pywebviewready"));
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // ★ 场景名对不上任何分支就别装没事（`V-88`）：每个分支都会标记 `_sceneMatched`，
+  //   跑完还是 false 就在标题里报 `SCENE-NAME-ERR`（不然"加了个工具里没有的场景名"会假通过）。
+  let _sceneMatched = false;
+
+  /* ---- 备份（`V-87`）的假后端 ------------------------------------------------
+     ★ 真后端是"内容寻址"（`system/ui/backup.py`）：指纹 = 内容哈希，内容按指纹存一份。
+       预览里没有文件**内容**（假文件系统只有名字 / 大小 / 时间），所以指纹按**大小**造一个
+       稳定的假指纹 —— 够用来验"同样的内容不再存第二份"、"删了要回收"、"恢复要算
+       覆盖 / 新建"这些**逻辑**，以及整个界面。真机那条路由真后端探针兜着。 */
+  const bkFp = size => ("f" + String(size | 0).padStart(8, "0") + "0".repeat(31)).slice(0, 40);
+  function bkWalk(rel, out, seen){
+    const hit = FS[rel];
+    if (!hit) return;
+    (hit.entries || []).forEach(e => {
+      if (/__pycache__|\.pyc$|\/\.git\//.test(e.rel)) return;
+      if (e.dir){ bkWalk(e.rel, out, seen); return; }
+      if (seen.has(e.rel)) return;
+      seen.add(e.rel);
+      out.push({rel: e.rel, fp: bkFp(e.size), size: e.size || 0, mtime: e.mtime || 0});
+    });
+  }
+  function bkEntry(rel){
+    const parent = rel.split("/").slice(0, -1).join("/");
+    const nm = rel.split("/").pop();
+    const hit = FS[parent];
+    return hit ? ((hit.entries || []).find(e => e.name === nm) || null) : null;
+  }
+  function bkPlan(id, rels, only, sync){
+    const b = (M.bk || []).find(x => x.id === id);
+    if (!b) return {ok: false, msg: "(预览) 没有这次备份"};
+    const want = rels ? new Set(rels) : null;
+    const rows = [];
+    b.files.forEach(e => {
+      if (want && !want.has(e.rel)) return;
+      const now = bkEntry(e.rel);
+      let action, why = "";
+      if (!now){ action = "create"; }
+      else if ((now.size || 0) === e.size){ action = "same"; why = "和备份里一模一样"; }
+      else { action = "overwrite"; why = "现在的内容和备份里不一样"; }
+      if (only === "missing" && action === "overwrite"){ action = "skip"; why = "这次只补缺的"; }
+      if (only === "changed" && action === "same"){ action = "skip"; why = "已经一样"; }
+      rows.push({rel: e.rel, action: action, why: why, fp: e.fp, size: e.size});
+    });
+    // ★ 同步模式：现在有、备份里没有的 ⇒ extra（恢复时"挪进回收站"）
+    if (sync && !want){
+      const known = new Set(b.files.map(e => e.rel));
+      (b.sources || []).forEach(src => {
+        const walk = rel => {
+          const hit = FS[rel];
+          if (!hit) return;
+          (hit.entries || []).forEach(e => {
+            if (/__pycache__|\.pyc$/.test(e.rel)) return;
+            if (e.dir){ walk(e.rel); return; }
+            if (known.has(e.rel) || rows.some(r => r.rel === e.rel)) return;
+            rows.push({rel: e.rel, action: "extra", why: "现在多出来的（同步模式会挪进回收站）",
+                       fp: "", size: e.size || 0});
+          });
+        };
+        walk(src);
+      });
+    }
+    const counts = {};
+    rows.forEach(r => { counts[r.action] = (counts[r.action] || 0) + 1; });
+    return {ok: true, id: id, title: b.title, rows: rows, counts: counts, empty_dirs: [],
+            sources: b.sources || []};
+  }
+  /* 导出：预览里没有"真写文件"，只把"要写到哪儿、写几个"算出来记在 M 上，供场景断言。 */
+  function bkExportRel(b, rel){
+    const srcs = b.sources || [];
+    const hits = srcs.filter(x => rel === x || rel.indexOf(String(x).replace(/\/+$/, "") + "/") === 0);
+    const s0 = hits.sort((a, c) => c.length - a.length)[0];
+    if (!s0) return rel.split("/").pop();
+    const tail = rel.slice(s0.length).replace(/^\/+/, "");
+    if (srcs.length > 1){
+      const head = String(s0).replace(/\/+$/, "").split("/").pop();
+      return tail ? head + "/" + tail : head;
+    }
+    return tail || rel.split("/").pop();
+  }
+  function bkExportPlan(id, target, subpath, rels){
+    const b = (M.bk || []).find(x => x.id === id);
+    if (!b) return {ok: false, msg: "(预览) 没有这次备份"};
+    const want = rels ? new Set(rels) : null;
+    const sub = String(subpath || "").replace(/^[\/\\]+|[\/\\]+$/g, "");
+    const root = String(target || "").replace(/[\/\\]+$/, "") + (sub ? ("/" + sub) : "");
+    const mine = b.files.filter(e => !want || want.has(e.rel));
+    const done = (M.bkExported && M.bkExported.root === root && M.bkExported.relPaths) || [];
+    const over = mine.filter(e => done.indexOf(bkExportRel(b, e.rel)) >= 0).length;
+    return {ok: true, root: root, new: mine.length - over, overwrite: over,
+            files: mine.length, samples: [], bytes: mine.reduce((s, e) => s + e.size, 0)};
+  }
+  /* 按来源猜分组（和真后端 group_for_sources 一个规则，够预览用） */
+  function bkGroupOf(rels){
+    const srcs = (rels || []).map(String);
+    for (const s0 of srcs){
+      const parts = s0.replace(/\\/g, "/").split("/");
+      if (parts.length >= 3 && (parts[1] === "pkgs" || parts[1] === "state")) return parts[2];
+    }
+    for (const s0 of srcs) if (s0 === "user" || s0 === "system") return "@" + s0;
+    if (srcs.length){
+      const f = srcs[0].replace(/\/+$/, "");
+      const tail = f.split("/").pop() || "misc";
+      return (f.indexOf("abs/") === 0 ? "@abs-" : "@dir-") + tail;
+    }
+    return "@misc";
+  }
+  function bkSweep(dryRun, group){
+    const refs = new Set();
+    (M.bk || []).forEach(b => b.files.forEach(e => refs.add(e.fp)));
+    M.bkObj = M.bkObj || {};
+    let removed = 0, freed = 0, kept = 0;
+    Object.keys(M.bkObj).forEach(fp => {
+      if (refs.has(fp)){ kept++; return; }
+      const sz = M.bkObj[fp] || 0;
+      if (!dryRun) delete M.bkObj[fp];
+      removed++; freed += sz;
+    });
+    return {ok: true, dry_run: !!dryRun, removed: removed, freed: freed, kept: kept,
+            referenced: refs.size,
+            msg: (dryRun ? "能回收 " : "回收了 ") + removed + " 个对象"};
+  }
+
   window.pywebview = { api: {
     state: async () => state,
     hist_list: async () => ({ok: true, items: HIST}),
@@ -472,10 +597,208 @@ MOCK_JS = r"""
     fs_open_default: async () => ({ok: true, msg: "(预览) 已打开"}),
     fs_reveal: async () => ({ok: true, msg: "(预览) 已定位"}),
     fs_roots: async () => ({roots: []}),
+    // ---- 备份（`V-87`）-----------------------------------------------------
+    backup_list: async (group) => {
+      const gwant = String(group || "");
+      const all = (M.bk || []).filter(b => !gwant || (b.group || "@misc") === gwant);
+      const items = all.map(b => ({
+        id: b.id, group: b.group || "@misc", title: b.title, note: b.note, created: b.created,
+        created_text: b.created_text, sources: b.sources,
+        files: b.files.length, bytes: b.files.reduce((s, e) => s + e.size, 0),
+        new_objects: b.new_objects, new_bytes: b.new_bytes, skipped: 0, errors: 0}));
+      const allBytes = items.reduce((s, i) => s + i.bytes, 0);
+      const objs = M.bkObj || {};
+      const storeBytes = Object.keys(objs).reduce((s, fp) => s + (objs[fp] || 0), 0);
+      const byGroup = {};
+      (M.bk || []).forEach(b => {
+        const g = b.group || "@misc";
+        byGroup[g] = byGroup[g] || {group: g, backups: 0, files: 0, bytes: 0,
+                                    objects: 0, store_bytes: 0, saved: 0, last: ""};
+        byGroup[g].backups++;
+        byGroup[g].files += b.files.length;
+        byGroup[g].bytes += b.files.reduce((s, e) => s + e.size, 0);
+        byGroup[g].last = b.created_text;
+      });
+      Object.keys(byGroup).forEach(g => {
+        byGroup[g].store_bytes = byGroup[g].bytes;
+        byGroup[g].objects = byGroup[g].files;
+      });
+      return {ok: true, items: items.slice().reverse(), groups: Object.keys(byGroup)
+                .map(g => byGroup[g]),
+              stat: {ok: true, backups: items.length,
+                     files: items.reduce((s, i) => s + i.files, 0), all_bytes: allBytes,
+                     objects: Object.keys(objs).length, store_bytes: storeBytes,
+                     saved: Math.max(0, allBytes - storeBytes),
+                     groups: Object.keys(byGroup).length,
+                     root: "(预览) user_data/backups"}};
+    },
+    backup_create: async (rels, title, note) => {
+      M.bk = M.bk || [];
+      M.bkObj = M.bkObj || {};
+      const files = [], seen = new Set();
+      (rels || []).forEach(r => bkWalk(r, files, seen));
+      const before = Object.keys(M.bkObj).length;
+      let newBytes = 0;
+      files.forEach(e => {
+        if (!(e.fp in M.bkObj)){ M.bkObj[e.fp] = e.size; newBytes += e.size; }
+      });
+      const n = M.bk.length + 1;
+      const b = {id: "20260930-0000" + String(n).padStart(2, "0") + "-bk" + n,
+                 group: bkGroupOf(rels || []),
+                 title: title || ("(预览) 备份 " + n), note: note || "",
+                 created: Date.now() / 1000,
+                 created_text: "(预览) " + new Date().toTimeString().slice(0, 8),
+                 sources: rels || [], files: files,
+                 new_objects: Object.keys(M.bkObj).length - before, new_bytes: newBytes};
+      M.bk.push(b);
+      return {ok: true, id: b.id, group: b.group, created_text: b.created_text,
+              stats: {files: files.length, bytes: files.reduce((s, e) => s + e.size, 0),
+                      new_objects: b.new_objects, new_bytes: newBytes,
+                      empty_dirs: 0, skipped: 0, errors: 0},
+              msg: "(预览) 备份好了：" + files.length + " 个文件"};
+    },
+    backup_manifest: async (id) => {
+      const b = (M.bk || []).find(x => x.id === id);
+      if (!b) return {ok: false, msg: "(预览) 没有这次备份：" + id};
+      return Object.assign({ok: true, spec: 1, hash: "fake(预览)", exclude: [],
+                            empty_dirs: [], skipped: [], errors: [],
+                            stats: {files: b.files.length}},
+                           JSON.parse(JSON.stringify(b)));
+    },
+    backup_blob: async (fp) => {
+      const objs = M.bkObj || {};
+      if (!(fp in objs)) return {ok: false, msg: "(预览) 对象缺失：" + fp};
+      const size = objs[fp] || 0;
+      if (size > 200000)
+        return {ok: true, binary: false, size: size, truncated: true, fp: fp, text: "(预览) 太大\n"};
+      return {ok: true, binary: false, size: size, truncated: false, fp: fp,
+              text: "(预览) 这一段内容块（指纹 " + String(fp).slice(0, 10) + "、大小 " +
+                    size + " 字节）\\n\\n同一个内容只存这一份。\\n"};
+    },
+    backup_plan: async (id, rels, only, sync) => bkPlan(id, rels, only || "all", !!sync),
+    backup_restore: async (id, rels, only, sync) => {
+      const plan = bkPlan(id, rels, only || "all", !!sync);
+      if (!plan.ok) return plan;
+      const b = (M.bk || []).find(x => x.id === id);
+      const restored = [], skipped = [], errors = [];
+      const trashed = [];
+      plan.rows.forEach(r => {
+        if (r.action === "same" || r.action === "skip"){ skipped.push(r.rel); return; }
+        if (r.action === "extra"){
+          // "挪进回收站"：预览里就从假文件系统里挪走，并记账（真后端是挪进 user_data/trash）
+          (M.bkTrashed = M.bkTrashed || []).push(r.rel);
+          const par = r.rel.split("/").slice(0, -1).join("/");
+          const nm = r.rel.split("/").pop();
+          const h = FS[par];
+          if (h) h.entries = (h.entries || []).filter(e => e.name !== nm);
+          trashed.push(r.rel);
+          return;
+        }
+        if (r.action === "error"){ errors.push(r.rel); return; }
+        const parent = r.rel.split("/").slice(0, -1).join("/");
+        const nm = r.rel.split("/").pop();
+        const hit = FS[parent];
+        if (!hit){ errors.push(r.rel); return; }
+        hit.entries = hit.entries || [];
+        const at = hit.entries.findIndex(e => e.name === nm);
+        if (r.action === "overwrite" && at >= 0){
+          // 覆盖前留一份 `.bak`（真后端也这么干）
+          const bak = nm + ".bak";
+          if (!hit.entries.some(e => e.name === bak))
+            hit.entries.push({name: bak, rel: parent + "/" + bak, dir: false,
+                              size: hit.entries[at].size || 0, mtime: 0,
+                              ext: (bak.split(".").pop() || "").toLowerCase()});
+        }
+        const e = {name: nm, rel: r.rel, dir: false, size: r.size, mtime: 0,
+                   ext: (nm.split(".").pop() || "").toLowerCase()};
+        if (at >= 0) hit.entries[at] = e; else hit.entries.push(e);
+        restored.push(r.rel);
+      });
+      return {ok: true, id: id, restored: restored, skipped: skipped, errors: errors,
+              dirs: [], trashed: trashed,
+              counts: {restored: restored.length, skipped: skipped.length,
+                       errors: errors.length, dirs: 0, trashed: trashed.length},
+              msg: "(预览) 恢复 " + restored.length + " 个、跳过 " + skipped.length +
+                   " 个、挪走 " + trashed.length + " 个"};
+    },
+    backup_group_hint: async (rels) => ({ok: true, group: bkGroupOf(rels || [])}),
+    backup_group_info: async (group) => {
+      const mine = (M.bk || []).filter(b => (b.group || "@misc") === String(group || ""));
+      const bytes = mine.reduce((s, b) => s + b.files.reduce((x, e) => x + e.size, 0), 0);
+      return {ok: true, group: String(group || ""), backups: mine.length, bytes: bytes,
+              store_bytes: bytes, last: (mine[0] || {}).created_text || ""};
+    },
+    backup_rename_group: async (oldG, newG) => {
+      let n = 0;
+      (M.bk || []).forEach(b => {
+        if ((b.group || "@misc") === String(oldG || "")){ b.group = String(newG || ""); n++; }
+      });
+      return {ok: true, renamed: n, msg: "(预览) 分组改名 " + oldG + " → " + newG};
+    },
+    backup_drop_group: async (group) => {
+      const g = String(group || "");
+      const before = (M.bk || []).length;
+      M.bk = (M.bk || []).filter(b => (b.group || "@misc") !== g);
+      return {ok: true, removed: before - M.bk.length, freed: 0,
+              msg: "(预览) 已删掉分组「" + g + "」"};
+    },
+    backup_export_plan: async (id, target, subpath, rels) =>
+      bkExportPlan(id, target, subpath, rels),
+    backup_export: async (id, target, subpath, rels, keepBak) => {
+      const b = (M.bk || []).find(x => x.id === id);
+      if (!b) return {ok: false, msg: "(预览) 没有这次备份"};
+      const plan = bkExportPlan(id, target, subpath, rels);
+      const want = rels ? new Set(rels) : null;
+      const mine = b.files.filter(e => !want || want.has(e.rel));
+      const relPaths = mine.map(e => bkExportRel(b, e.rel));
+      M.bkExported = {root: plan.root, relPaths: relPaths, keepBak: !!keepBak,
+                      files: mine.length};
+      return {ok: true, id: id, root: plan.root, written: relPaths, bytes: plan.bytes,
+              bak: keepBak ? relPaths.map(x => x + ".bak") : [], errors: [],
+              counts: {written: relPaths.length, errors: 0, bak: keepBak ? relPaths.length : 0},
+              msg: "(预览) 导出 " + relPaths.length + " 个到 " + plan.root};
+    },
+    pick_dir: async () => ({ok: true, path: "D:\\预览选的目录"}),
+    backup_delete: async (id) => {
+      M.bk = M.bk || [];
+      const at = M.bk.findIndex(x => x.id === id);
+      if (at < 0) return {ok: false, msg: "(预览) 没有这次备份：" + id};
+      M.bk.splice(at, 1);
+      const r = bkSweep(false);
+      r.deleted = id;
+      return r;
+    },
+    backup_gc: async (dryRun) => bkSweep(!!dryRun),
+    backup_check: async (id) => {
+      const objs = M.bkObj || {};
+      const rows = (M.bk || []).filter(b => !id || b.id === id).map(b => {
+        const miss = b.files.filter(e => !(e.fp in objs)).map(e => e.rel);
+        return {id: b.id, missing: miss.length, sample: miss.slice(0, 5)};
+      });
+      return {ok: true, rows: rows};
+    },
     quit: async () => ({ok: true}),
   }};
   async function scenario(){
     const h = (location.hash || "#pkg").slice(1);
+    // ★ 场景名对不上工具里那份清单 ⇒ 直接判错（`V-88`）。为什么要有这一条：我加个
+    //   "工具里还没有的场景名"跑一下，所有 if 都不匹配、标题停在初值，`--check` 会
+    //   报 OK/READY —— **假通过**比报错更坏。（第一版按"每个分支打标记"做，漏掉了
+    //   `h.startsWith(...)` / `if (a || b){` / 单行 if 那几种写法，一片假失败，撤了。）
+    if ((M.scenes || []).length && (M.scenes || []).indexOf(h) < 0){
+      document.title = "SCENE-NAME-ERR " + h;
+      const _m0 = document.querySelector("#meta");
+      if (_m0) _m0.textContent = "SCENE-NAME-ERR —— 工具里没有这个场景：" + h +
+        "（清单里的前几个：" + (M.scenes || []).slice(0, 6).join(", ") + "）";
+      return;
+    }
+    // 设输入框的值并派发 `input`（`v-model` 只认事件，直接改 .value 它不知道）
+    const bkSet = (sel, val) => {
+      const el = document.querySelector(sel);
+      if (!el) throw new Error("找不到输入框：" + sel);
+      el.value = val;
+      el.dispatchEvent(new Event("input", {bubbles: true}));
+    };
     try {
       if (h.startsWith("hist")){
         setSide("hist");
@@ -494,7 +817,7 @@ MOCK_JS = r"""
         select(p.id);
         if (h === "pkg-file") setTab("file");
         if (h === "pkg-file-open"){
-          setTab("file");
+                  setTab("file");
           await sleep(350);
           await fmOpenPage("system/pkgs/md5/run.py");
         }
@@ -522,7 +845,7 @@ MOCK_JS = r"""
         const baseOf = x => String(x.dir || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop();
         let p0;
         if (h === "pkg-align-file"){
-          // 仓库里那个真例子（my-first / id=first）已经被对齐过了 —— 预览里**现造一个**
+                  // 仓库里那个真例子（my-first / id=first）已经被对齐过了 —— 预览里**现造一个**
           // 「目录名 != id」的包，否则这条分支没得试。（只改这份临时副本里的假 payload。）
           p0 = state.packages.find(x => baseOf(x) && baseOf(x) !== x.id) || null;
           if (!p0){
@@ -546,7 +869,7 @@ MOCK_JS = r"""
         await sleep(400);
         const want = h === "pkg-align-file" ? p0.id : "first2";
         if (h === "pkg-align-file"){
-          cmdAlignPkgDir(p0);                       // 对齐目录名：不弹模态，直接跑
+                  cmdAlignPkgDir(p0);                       // 对齐目录名：不弹模态，直接跑
         } else {
           cmdRenamePkg(p0);                         // 改名：弹模态，替用户填好再点确定
           await sleep(150);
@@ -589,7 +912,7 @@ MOCK_JS = r"""
       //   期望：界面重新解析、**发现不配套就问一句**、点"统一"之后目录名跟着改、
       //   旧数据目录一起搬、文件管理里的路径也换成新的（双击还能编辑）。
       if (h === "pkg-edit-id"){
-        // 出错了要看得见：场景里的异常 / Promise 拒绝都收进来（否则只能瞎猜）
+              // 出错了要看得见：场景里的异常 / Promise 拒绝都收进来（否则只能瞎猜）
         M.errs = [];
         window.addEventListener("error", e => M.errs.push("ERR " + e.message));
         window.addEventListener("unhandledrejection",
@@ -674,7 +997,7 @@ MOCK_JS = r"""
       //   （它从列表里消失），界面**说清楚为什么**，而不是默默让它不见、更不是
       //   傻乎乎地"统一"成一个非法目录名。
       if (h === "pkg-edit-bad-id"){
-        const baseOf = x => String(x.dir || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+              const baseOf = x => String(x.dir || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop();
         const usable = p => { try{ return !!FS[pkgRel(p)]; }catch(e){ return false; } };
         const p0 = state.packages.find(x => x.layer === "user" && usable(x)) ||
                    state.packages.find(usable) || null;
@@ -727,7 +1050,7 @@ MOCK_JS = r"""
       //   走一遍完整回路 —— Vue3 应用 + 垫片 + postMessage + 壳的转发 + （假）后端。
       //   验的正是"标题栏多出第四个选项卡、里面真的能算、切走再回来还在"。
       if (h === "embed"){
-        const p0 = state.packages.find(x => x.ui && x.ui.embed) || null;
+              const p0 = state.packages.find(x => x.ui && x.ui.embed) || null;
         if (!p0){ document.title = "NO-EMBED-PKG";
                   document.querySelector("#meta").textContent = "SCENARIO-ERR 没有带 ui 声明的包";
                   return; }
@@ -760,7 +1083,7 @@ MOCK_JS = r"""
       // ★ 底部状态栏（`V-61`）：真跑一个包（走 clickRun 那条路），看最下面那行字
       //   有没有跟着变 —— 它靠的是 `toast()` 里那一句 `setStatus`，不是场景自己写的。
       if (h === "statusbar"){
-        const p0 = state.packages.find(x => x.id === "img" && !(x.ui && x.ui.embed))
+              const p0 = state.packages.find(x => x.id === "img" && !(x.ui && x.ui.embed))
                    || state.packages.find(x => !(x.ui && x.ui.embed)) || state.packages[0];
         select(p0.id);
         setTab("detail");
@@ -794,7 +1117,7 @@ MOCK_JS = r"""
       //   打开 → 看结构（分类 4 个、输入是两列带标签的格子）→ 切到"执行提示"看开关 →
       //   改一项 → 保存该能点 → 存了 → 再打开留给截图。
       if (h === "settings"){
-        await openSettings();
+              await openSettings();
         await sleep(700);
         const navs = document.querySelectorAll("#set-nav .set-navitem").length;
         const panes = document.querySelectorAll("#set-body .set-pane").length;
@@ -866,7 +1189,7 @@ MOCK_JS = r"""
       // ★ 冲突那一路（`V-63` / `V-66`）：把「跑包」的前缀清空 ⇒ 和「路径调用」同时留空。
       //   期望：那两项飘红 + 导航上"快捷命令"点一个小红点 + 脚上一句话 + **保存禁用**。
       if (h === "settings-bad"){
-        await openSettings();
+              await openSettings();
         await sleep(700);
         const inp = document.querySelector(
           '#set-body .set-pane.on .set-field[data-key="symbols.plugin_mode"] .inp');
@@ -896,7 +1219,7 @@ MOCK_JS = r"""
       }
       // ★ 提醒那一路（`V-63`）：只提醒、**不拦保存**（黄的不是红的）。
       if (h === "settings-warn"){
-        await openSettings();
+              await openSettings();
         await sleep(600);
         setActive("高级设置");
         await sleep(300);
@@ -919,7 +1242,7 @@ MOCK_JS = r"""
       }
       // ★ 说明挂在 `?` 上（`V-66`）：把鼠标放到"向上查找层数"那个 `?` 上，看提示弹不弹。
       if (h === "settings-tip"){
-        await openSettings();
+              await openSettings();
         await sleep(600);
         setActive("高级设置");
         await sleep(300);
@@ -945,10 +1268,309 @@ MOCK_JS = r"""
         document.title = ok ? "READY" : ("TIP-FAIL 显示=" + shown + " hover=" + byHover +
           " ?=" + !!q + " 错=" + (M.tipErr || "无"));
       }
+      // ★ 备份那一页（`V-87`）：建一次 → 列表/清单出来 → 看内容 → 再来一次（该全去重）
+      //   → 删掉一次并回收。判定都落在**能看见的东西**上（DOM 里的文字/条数）。
+      if (h === "backup"){
+              const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        setTab("file");
+        await sleep(500);
+        // 切到「备份」那一页（和「文件」并排的那个常驻子选项卡）
+        const tab = document.querySelector('#fm-bar .fmtab[data-fm="__backup__"]');
+        if (!tab){ document.title = "BK-NO-TAB"; return; }
+        tab.click();
+        await sleep(500);
+        const page = document.querySelector('.fmpage[data-page="__backup__"]');
+        const pageOn = !!page && page.classList.contains("on");
+        // 新建一次备份（范围默认"这个包"）
+        document.querySelector("#fm-body .b-bknew").click();
+        await sleep(250);
+        const formShown = !!document.querySelector(".bk-form");
+        const scopeText = (document.querySelector(".bk-form .bk-scope") || {}).value || "";
+        bkSet(".bk-title", "预览备份 A");
+        bkSet(".bk-note", "第一次");
+        document.querySelector(".bk-form .btn.primary").click();
+        await sleep(700);
+        const items1 = document.querySelectorAll(".bk-item").length;
+        const first = document.querySelector(".bk-item .bk-it-title");
+        const rows1 = document.querySelectorAll('.fmpage[data-page="__backup__"] table.bk-tbl tbody tr.row').length;
+        const stat1 = (document.querySelector(".bk-stat") || {}).title || "";
+        const gsel = !!document.querySelector('.bk-seg[data-bk-seg="list"] [data-bk-list="all"]');
+        const statTip = (document.querySelector(".bk-stat") || {}).title || "";
+        // ★ `V-88`：指纹那一列不该再有；表格按内容量宽度（别把路径列撑满一整行）
+        const heads = [].slice.call(document.querySelectorAll(
+          '.fmpage[data-page="__backup__"] table.bk-tbl thead th'))
+          .map(th => (th.textContent || "").trim());
+        const noFp = !heads.some(h => /指纹/.test(h));
+        const tbl = document.querySelector('.fmpage[data-page="__backup__"] table.bk-tbl');
+        const wrapEl = document.querySelector('.fmpage[data-page="__backup__"] .bk-scroll');
+        const notStretched = !!tbl && !!wrapEl &&
+          tbl.getBoundingClientRect().width < wrapEl.getBoundingClientRect().width - 8;
+        // 看一个文件的内容
+        const vbtn = document.querySelector('.fmpage[data-page="__backup__"] .b-bkview');
+        if (vbtn) vbtn.click();
+        await sleep(400);
+        const viewShown = !!document.querySelector(".bk-view");
+        const viewText = (document.querySelector(".bk-view-text") || {}).textContent || "";
+        // 再备一次：应该"全去重"（新增内容块 0）
+        document.querySelector("#fm-body .b-bknew").click();
+        await sleep(200);
+        bkSet(".bk-title", "预览备份 B");
+        document.querySelector(".bk-form .btn.primary").click();
+        await sleep(700);
+        const items2 = document.querySelectorAll(".bk-item").length;
+        const stat2 = (document.querySelector(".bk-stat") || {}).title || "";
+        const newest = document.querySelector(".bk-item .bk-it-sub");
+        const newestText = newest ? newest.textContent : "";
+        document.querySelector('.fmpage[data-page="__backup__"] .b-bkdel').click();
+        await sleep(350);
+        const confirmShown = !!document.querySelector("#m-ok");
+        document.querySelector("#m-ok").click();
+        await sleep(700);
+        const items3 = document.querySelectorAll(".bk-item").length;
+        const stat3 = (document.querySelector(".bk-stat") || {}).title || "";
+        // ★ 第二次备份是"全重复"的：清单里**不该**出现「新增 N 块」（`v-if="it.new_objects"`），
+        //   而且汇总里的**内容块数量不该变**（这正是去重生效的证据）。
+        const flags = {
+          pageOn: pageOn, form: formShown, scope: scopeText === "pkg", n1: items1 === 1,
+          titleA: /预览备份 A/.test(first ? first.textContent : ""), rows1: rows1 > 0,
+          noFp: noFp, notStretched: notStretched, gsel: gsel, statTip: /内容块 4 个/.test(statTip),
+          st1: /备份 1 次/.test(stat1),
+          view: viewShown && /这一段内容块/.test(viewText),
+          n2: items2 === 2, noNew: !/新增/.test(newestText),
+          obj4: /内容块 4 个/.test(stat2), confirm: confirmShown,
+          n3: items3 === 1, st3: /备份 1 次/.test(stat3),
+        };
+        const ok = Object.keys(flags).every(k => flags[k]);
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 页在=" + pageOn + " 表单=" + formShown +
+          " 范围=" + scopeText + " 建后=" + items1 + " 行=" + rows1 +
+          " 看内容=" + viewShown + " 表头=" + JSON.stringify(heads) +
+          " 没指纹列=" + noFp + " 表没撑满=" + notStretched +
+          " 再建后=" + items2 + " 最新=" + JSON.stringify(newestText) +
+          " 删后=" + items3 + " ｜ stat1=" + JSON.stringify(stat1.slice(0, 70)) +
+          " ｜ stat2=" + JSON.stringify(stat2.slice(0, 70)) +
+          " ｜ stat3=" + JSON.stringify(stat3.slice(0, 70));
+        document.title = ok ? "READY"
+          : ("BACKUP-FAIL " + Object.keys(flags).filter(k => !flags[k]).join(","));
+        return;
+      }
+
+      // ★ 备份 + 恢复（`V-87`）：把盘上的文件改坏 / 删掉，然后"只补缺的 / 不一样的"
+      //   → 文件要回来、覆盖的要留一份 .bak、文件管理那份缓存要作废（重新列一遍）。
+      if (h === "backup-restore"){
+              const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        setTab("file");
+        await sleep(500);
+        document.querySelector('#fm-bar .fmtab[data-fm="__backup__"]').click();
+        await sleep(400);
+        document.querySelector("#fm-body .b-bknew").click();
+        await sleep(200);
+        bkSet(".bk-title", "恢复用");
+        document.querySelector(".bk-form .btn.primary").click();
+        await sleep(700);
+        // 挑文件系统里真有的那个包目录，改坏一个、删掉一个
+        const rel = (FM.ctx && pkgRel(DATA.packages.find(x => x.id === FM.ctx))) || "system/pkgs/md5";
+        const st = FS[rel];
+        const files = ((st && st.entries) || []).filter(e => !e.dir);
+        if (files.length < 2){ document.title = "BK-NO-FILES"; return; }
+        const bad = files[0], gone = files[1];
+        const origSize = bad.size || 0;                                              // ★ 记下原样
+        FS[rel].entries.find(e => e.rel === bad.rel).size = origSize + 999;          // 伪造"内容变了"
+        FS[rel].entries = FS[rel].entries.filter(e => e.rel !== gone.rel);           // 删掉一个
+        const modeBtn = document.querySelector(
+          '.fmpage[data-page="__backup__"] [data-bk-mode="merge"]');
+        const planBtn = document.querySelector(
+          '.fmpage[data-page="__backup__"] .btn[data-bk-act="restore"]');
+        if (!modeBtn || !planBtn){ document.title = "BK-NO-BTN"; return; }
+        modeBtn.click();
+        planBtn.click();
+        await sleep(400);
+        const modalText = (document.querySelector(".card p") || {}).textContent || "";
+        const confirmShown = !!document.querySelector("#m-ok");
+        document.querySelector("#m-ok").click();
+        await sleep(800);
+        const backNow = (FS[rel].entries || []).some(e => e.rel === gone.rel);
+        const fixed = (FS[rel].entries || []).find(e => e.rel === bad.rel);
+        const bakMade = (FS[rel].entries || []).some(e => e.rel === bad.rel + ".bak");
+        const ok = confirmShown && /补/.test(modalText) && /回退/.test(modalText) &&
+                   backNow && fixed && (fixed.size === origSize) && bakMade;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 框=" + confirmShown +
+          " 删掉的回来了=" + backNow + " 覆盖回来了=" + !!fixed +
+          (fixed ? ("（" + fixed.size + " vs 备份 " + origSize + "）") : "") +
+          " .bak=" + bakMade + " 缓存作废=" + Object.keys(FM.st)
+            .every(k => FM.st[k].stale === true) +
+          " ｜ 框里的话=" + JSON.stringify(modalText.replace(/\s+/g, " ").slice(0, 120));
+        document.title = ok ? "READY" : "BACKUP-RESTORE-FAIL";
+        return;
+      }
+
+      // ★ 分组（`V-89`）：两个包 → 两个组；下拉能切；"删掉这个分组"只动那一组
+      if (h === "backup-groups"){
+        const pA = state.packages.find(x => x.id === "md5") || state.packages[0];
+        const pB = state.packages.find(x => x.id === "bmi") || state.packages[1] || pA;
+        const segBtn = which =>
+          document.querySelector('.bk-seg[data-bk-seg="list"] [data-bk-list="' + which + '"]');
+        select(pA.id);
+        setTab("file");
+        await sleep(500);
+        document.querySelector('#fm-bar .fmtab[data-fm="__backup__"]').click();
+        await sleep(400);
+        document.querySelector("#fm-body .b-bknew").click();
+        await sleep(250);
+        const hintA = ((document.querySelector(".bk-form .bk-tag") || {})
+          .textContent || "").trim();
+        bkSet(".bk-title", "A 的备份");
+        document.querySelector(".bk-form .btn.primary").click();
+        await sleep(800);
+        const rowsPkgA = document.querySelectorAll(".bk-item").length;
+        select(pB.id);
+        setTab("file");
+        await sleep(600);
+        document.querySelector('#fm-bar .fmtab[data-fm="__backup__"]').click();
+        await sleep(400);
+        document.querySelector("#fm-body .b-bknew").click();
+        await sleep(300);
+        const hintB = ((document.querySelector(".bk-form .bk-tag") || {})
+          .textContent || "").trim();
+        bkSet(".bk-title", "B 的备份");
+        document.querySelector(".bk-form .btn.primary").click();
+        await sleep(900);
+        segBtn("all").click();
+        await sleep(800);
+        const rows = document.querySelectorAll(".bk-item").length;
+        const tags = [].slice.call(document.querySelectorAll(".bk-item .bk-gtag"))
+          .map(t => (t.textContent || "").trim());
+        const segs = [].slice.call(document.querySelectorAll(
+          '.bk-seg[data-bk-seg="list"] button')).map(t => t.dataset.bkList);
+        const modeSegs = [].slice.call(document.querySelectorAll(
+          '.bk-seg[data-bk-seg="mode"] button')).map(t => t.dataset.bkMode);
+        segBtn("pkg").click();
+        await sleep(700);
+        const rowsB = document.querySelectorAll(".bk-item").length;
+        const onlyB = [].slice.call(document.querySelectorAll(".bk-item .bk-it-title"))
+          .every(t => /B 的备份/.test(t.textContent || ""));
+        document.querySelector("#fm-body .b-bkdropgroup").click();
+        await sleep(700);
+        const modal = ((document.querySelector(".card p") || {}).textContent || "")
+          .replace(/\s+/g, " ");
+        const shown = !!document.querySelector("#m-ok");
+        document.querySelector("#m-ok").click();
+        await sleep(1000);
+        segBtn("all").click();
+        await sleep(800);
+        const left = [].slice.call(document.querySelectorAll(".bk-item .bk-it-title"))
+          .map(t => (t.textContent || "").trim());
+        const ok = rowsPkgA === 1 && rows === 2 && tags.length === 2 && new Set(tags).size === 2 &&
+                   segs.indexOf("pkg") >= 0 && segs.indexOf("all") >= 0 &&
+                   modeSegs.indexOf("merge") >= 0 && modeSegs.indexOf("mirror") >= 0 &&
+                   hintA === pA.id && hintB === pB.id &&
+                   rowsB === 1 && onlyB && shown && /文件夹/.test(modal) &&
+                   left.length === 1 && /A 的备份/.test(left[0]);
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 当前包下=" + rowsPkgA + " 全部下=" + rows +
+          " 标签=" + JSON.stringify(tags) + " 范围滑块=" + JSON.stringify(segs) +
+          " 模式滑块=" + JSON.stringify(modeSegs) + " B组=" + rowsB + " 只有B=" + onlyB +
+          " 框=" + shown + " 删完剩=" + JSON.stringify(left) +
+          " ｜ 表单提示=" + JSON.stringify([hintA.slice(-20), hintB.slice(-20)]);
+        document.title = ok ? "READY" : "GROUPS-FAIL";
+        return;
+      }
+
+      // ★ 同步模式（`V-88`）：现在有、备份里没有的 → 恢复时**挪进回收站**（不是真删）
+      if (h === "backup-sync"){
+              const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        setTab("file");
+        await sleep(500);
+        document.querySelector('#fm-bar .fmtab[data-fm="__backup__"]').click();
+        await sleep(400);
+        document.querySelector("#fm-body .b-bknew").click();
+        await sleep(200);
+        bkSet(".bk-title", "同步用");
+        document.querySelector(".bk-form .btn.primary").click();
+        await sleep(700);
+        // 备份之后往包目录里塞一个"多出来的"文件
+        const rel = (FM.ctx && pkgRel(DATA.packages.find(x => x.id === FM.ctx))) || "system/pkgs/md5";
+        FS[rel].entries.push({name: "后来加的.txt", rel: rel + "/后来加的.txt", dir: false,
+                              size: 11, mtime: 0, ext: "txt"});
+        const mirrorBtn = document.querySelector(
+          '.fmpage[data-page="__backup__"] [data-bk-mode="mirror"]');
+        const goBtn = document.querySelector(
+          '.fmpage[data-page="__backup__"] .btn[data-bk-act="restore"]');
+        if (!mirrorBtn || !goBtn){ document.title = "SYNC-NO-BTN"; return; }
+        mirrorBtn.click();
+        goBtn.click();
+        await sleep(600);
+        const modalText = ((document.querySelector(".card p") || {}).textContent || "")
+          .replace(/\s+/g, " ");
+        const shown = !!document.querySelector("#m-ok");
+        document.querySelector("#m-ok").click();
+        await sleep(900);
+        const gone = !(FS[rel].entries || []).some(e => e.name === "后来加的.txt");
+        const trashed = (M.bkTrashed || []).some(x => /后来加的\.txt$/.test(x));
+        const ok = shown && /回收站/.test(modalText) && gone && trashed;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 框=" + shown + " 框里说了回收站=" +
+          /回收站/.test(modalText) + " 挪走了=" + gone + " 走了回收站那条路=" + trashed +
+          " ｜ " + JSON.stringify(modalText.slice(0, 150));
+        document.title = ok ? "READY" : "SYNC-FAIL";
+        return;
+      }
+
+      // ★ 导出到指定文件夹（`V-88`）：拖文件夹进来当目标 + 在框里接 `/2/` + 确认框说清"另存一份"
+      if (h === "backup-export"){
+              const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        setTab("file");
+        await sleep(500);
+        document.querySelector('#fm-bar .fmtab[data-fm="__backup__"]').click();
+        await sleep(400);
+        document.querySelector("#fm-body .b-bknew").click();
+        await sleep(200);
+        bkSet(".bk-title", "导出用");
+        document.querySelector(".bk-form .btn.primary").click();
+        await sleep(700);
+        // ① 把文件夹"拖"到那一行上（真路径是宿主送进来的，这里直接叫那个钩子）
+        BK.dropOver = true;
+        const took = window.__mossDropHook([{path: "D:\\拖进来的目录", isDir: true,
+                                             dir: "D:\\", name: "拖进来的目录"}]);
+        await sleep(200);
+        const dropOk1 = took === true && BK.exportTo === "D:\\拖进来的目录";
+        // ② 在框里接着敲 `/2/`（你要的"恢复到它的子文件夹"）
+        bkSet(".bk-out", "D:\\拖进来的目录/2/");
+        await sleep(150);
+        // ③ 点导出 → 确认框 → 真落到 target/2/…
+        const exBtn = document.querySelector('.fmpage[data-page="__backup__"] .btn[data-bk-act="export"]');
+        if (!exBtn){ document.title = "EXPORT-NO-BTN"; return; }
+        exBtn.click();
+        await sleep(600);
+        const modalText = ((document.querySelector(".card p") || {}).textContent || "")
+          .replace(/\s+/g, " ");
+        const shown = !!document.querySelector("#m-ok");
+        document.querySelector("#m-ok").click();
+        await sleep(900);
+        const info = document.querySelector(".bk-export [data-bk-outinfo]");
+        const infoText = info ? info.textContent.replace(/\s+/g, " ") : "";
+        const ex = M.bkExported || {};
+        const paths = ex.relPaths || [];
+        const ok = dropOk1 && shown && /原文件不动/.test(modalText) &&
+                   String(ex.root || "").replace(/\\/g, "/").replace(/\/+$/, "").endsWith("/2") && paths.length > 0 && /将写/.test(infoText);
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 拖进来收下=" + dropOk1 + " 落到=" + ex.root +
+          " 文件数=" + paths.length + "（例 " + JSON.stringify(paths.slice(0, 2)) + "）" +
+          " 框=" + shown + " 行里的话=" + JSON.stringify(infoText.slice(0, 80)) +
+          " ｜ 框里的话=" + JSON.stringify(modalText.slice(0, 110));
+        document.title = ok ? "READY" : "EXPORT-FAIL";
+        return;
+      }
+
       // ★ 参数框右边那颗"一键清空"（`V-86`）：没内容时**不该出现**，打字后出现，
       //   点一下要清空 + 预览行跟着变 + 光标回到框里。
       if (h === "args-clear"){
-        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+              const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
         select(p0.id);
         await sleep(400);
         const inp = document.querySelector("#args");
@@ -985,7 +1607,7 @@ MOCK_JS = r"""
       //   真的 stdin 那条链由宿主侧测试证明；这里只验界面这半：
       //   在跑 → 输入行可用；发一行 → 回显进输出 + 调了 run_input；跑完 → 又禁用。
       if (h === "console-input"){
-        const p0 = state.packages.find(x => x.id === "img") || state.packages[0];
+              const p0 = state.packages.find(x => x.id === "img") || state.packages[0];
         select(p0.id);
         setTab("console");
         await sleep(300);
@@ -1028,7 +1650,8 @@ MOCK_JS = r"""
       }
 
       if (h === "drop-hot"){
-        // 只看"拖上来时"长什么样（不松手）：列表只列收得下的 + 详情页浮出投放框
+
+              // 只看"拖上来时"长什么样（不松手）：列表只列收得下的 + 详情页浮出投放框
         const dragEv = isDir => {
           const e = new Event("dragenter", {bubbles: true});
           e.dataTransfer = {types: ["Files"], dropEffect: "",
@@ -1149,7 +1772,7 @@ MOCK_JS = r"""
       //   为什么要这条：那道"有错就判 PAGE-ERR"的闸要是本身收不到错，坏代码照样过 ——
       //   我更怕这个（你正是从 devtools 里看到一条我这边"零错误"的报错）。
       if (h === "err-path"){
-        const before = (window.__errors || []).length;
+              const before = (window.__errors || []).length;
         const div = document.createElement("div");
         document.body.appendChild(div);
         // 用**界面自己那条路**（`mountVue`）建一个"computed 里抛错"的组件 —— 和
@@ -1177,7 +1800,7 @@ MOCK_JS = r"""
       //   表现就是"更名和卸载坏了"。这条场景把"每个按钮都绑上了没有 + 点了到底有没有
       //   把命令交给宿主"变成一次判定（以前只判"截图生成了没有"，全死也是 OK）。
       if (h === "btn-detail"){
-        const p0 = state.packages.find(x => x.id === "first") ||
+              const p0 = state.packages.find(x => x.id === "first") ||
                    state.packages.find(x => x.layer === "user") || state.packages[0];
         const oldId = p0.id, newId = oldId + "9";
         select(oldId);
@@ -1267,7 +1890,7 @@ def dom_title(exe, url, size, dark):
     cmd = [exe, "--headless=new", "--disable-gpu", "--hide-scrollbars",
            "--no-first-run", "--no-default-browser-check",
            "--user-data-dir=" + str(PRE / "_profile_dom"), "--allow-file-access-from-files",
-           "--window-size=" + size, "--virtual-time-budget=6000", "--dump-dom", url]
+           "--window-size=" + size, "--virtual-time-budget=12000", "--dump-dom", url]
     if dark:
         cmd.insert(2, "--force-dark-mode")
     try:
@@ -1340,7 +1963,7 @@ def main():
         cmd = [exe, "--headless=new", "--disable-gpu", "--hide-scrollbars",
                "--no-first-run", "--no-default-browser-check",
                "--user-data-dir=" + str(prof), "--allow-file-access-from-files",
-               "--window-size=" + size, "--virtual-time-budget=6000",
+               "--window-size=" + size, "--virtual-time-budget=12000",
                "--screenshot=" + str(out), url + "#" + sc]
         if dark:
             cmd.insert(2, "--force-dark-mode")

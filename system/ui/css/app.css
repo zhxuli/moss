@@ -281,6 +281,120 @@ table.fb td.num{text-align:right;color:var(--dim);font-variant-numeric:tabular-n
 table.fb td.dim{color:var(--dim)}
 .fbstatus{padding:5px 12px;font-size:12px;color:var(--dim);border-top:1px solid var(--line2);
   background:var(--panel);flex:none;display:flex;gap:12px;align-items:center}
+.fbstatus b.bad{color:#d64545}
+/* ---- 备份那一页（`V-87`）--------------------------------------------------
+   左边是备份列表（固定宽），右边是选中那次的清单；两个 `.fbwrap` 各自滚动。
+   `.sp` 是"把后面推到最右边"的弹簧（别处也这么用）。 */
+.sp{flex:1}
+.bk-body{flex:1;min-height:0;display:flex}
+.bk-left{width:320px;flex:none;overflow:auto;border-right:1px solid var(--line2);
+  background:var(--panel)}
+.bk-right{flex:1;min-width:0;display:flex;flex-direction:column}
+.bk-empty{padding:22px 16px;color:var(--dim);font-size:13px;line-height:1.8}
+.bk-item{padding:9px 12px;border-bottom:1px solid var(--line2);cursor:pointer}
+.bk-item:hover{background:var(--hover)}
+.bk-item.on{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}
+.bk-it-title{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.bk-it-sub{font-size:11.5px;color:var(--dim);margin-top:2px;line-height:1.6}
+.bk-it-note{font-size:11.5px;color:var(--fg2);margin-top:4px;line-height:1.6;
+  white-space:pre-wrap;word-break:break-word}
+.bk-it-bad{font-size:11.5px;color:#d64545;margin-top:4px}
+.bk-stat{font-size:12px;color:var(--dim);white-space:nowrap}
+.bk-stat b{color:var(--fg);font-weight:600}
+/* ★ 两段式小滑块（`V-90`）：恢复方式「合并 / 镜像」、列表范围「当前包 / 全部」都用它。
+   为什么不用原生 <select>：原生下拉在 WebView2 里就是系统那副样子（框粗、字挤、跟这套
+   令牌完全不搭），看着很原始。两段按钮跟别的工具条是一套。 */
+.bk-seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;
+  background:var(--panel2);flex:none}
+.bk-seg > button{border:0;background:transparent;color:var(--dim);font-size:12.5px;
+  padding:5px 11px;cursor:pointer;line-height:1.35;font-family:inherit}
+.bk-seg > button + button{border-left:1px solid var(--line)}
+.bk-seg > button:hover{background:var(--hover);color:var(--fg)}
+.bk-seg > button.on{background:var(--sel);color:var(--accent);font-weight:600}
+/* 分组小标签（列表行 / 详情头） */
+.bk-gtag{display:inline-block;margin-right:6px;padding:0 6px;border-radius:6px;
+  background:var(--tag);color:var(--fg2);font-size:11px;font-family:var(--mono);
+  vertical-align:1px}
+.bk-tag{font-size:12px;font-family:var(--mono);color:var(--fg2);background:var(--tag);
+  padding:2px 7px;border-radius:7px;white-space:nowrap}
+/* 导出那一行：标题 + 目标框 + 三颗按钮，一行放下，尽量少字 */
+.bk-export{display:flex;gap:6px;align-items:center;padding:6px 12px;flex:none;
+  border-bottom:1px solid var(--line2);background:var(--panel2)}
+.bk-export .bk-out{flex:1;min-width:160px;padding:5px 9px;border-radius:8px;
+  border:1px solid var(--line);background:var(--panel);color:var(--fg);font-size:12.5px;
+  font-family:var(--mono);outline:none}
+.bk-export .bk-out:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+.bk-export .b-bkbak.on{background:var(--sel);border-color:var(--accent);color:var(--accent)}
+.bk-export .b-bkpick,.bk-export .b-bkbak{padding:4px 6px;min-width:28px}
+.bk-export .bk-hint{flex:none}
+.bk-export.dover{box-shadow:inset 0 0 0 2px var(--accent)}
+/* 详情头：标题块 + 右边那组控件，窄窗口整颗换行（`V-88` 修过一次，这里跟着新版调） */
+.bk-detail-head .b-bkdel{padding:4px 6px;min-width:28px}
+.bk-left .bk-item .bk-it-title{display:flex;align-items:center;gap:2px}
+/* ★ 备份页自己的工具条 / 滚动区 / 表格 / 状态行：**类名不和"文件"页共用**
+   （`.fbtools` / `.fbwrap` / `table.fb` / `.fbstatus` 归那一页）—— 两页同时在 DOM 里，
+   共用一个类名的话，任何 `#fm-body .fbtools .iconbtn` 这种数法都会把两边一起数上
+   （`V-87` 的 A/B 当场抓到：工具栏 9 颗 → 13 颗）。样式照"文件"页那套抄。 */
+.bk-tools{display:flex;gap:4px;align-items:center;padding:5px 10px;flex:none;flex-wrap:wrap;
+  border-bottom:1px solid var(--line);background:var(--panel)}
+.bk-tools .iconbtn{padding:4px 6px;min-width:28px}
+.bk-tools .gap{width:8px}
+.bk-scroll{flex:1;overflow:auto;min-height:0}
+/* ★ 路径列**不撑满**（`V-88` 你指出的：路径没那么长时右边一大片空白）——
+   `width:auto` 让整张表按内容量宽度，长路径在这一列里截断（`title` 里给全路径），
+   后面的"大小 / 修改时间"就紧跟着，不再被甩到最右边。 */
+table.bk-tbl{width:auto;border-collapse:collapse;font-size:13px;user-select:none}
+table.bk-tbl th{position:sticky;top:0;z-index:1;text-align:left;font-weight:500;color:var(--dim);
+  background:var(--panel);border-bottom:1px solid var(--line);padding:6px 10px;white-space:nowrap}
+table.bk-tbl td{padding:4px 10px;border-bottom:1px solid var(--line2);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+table.bk-tbl td.nmcell{display:flex;align-items:center;gap:8px;max-width:58vw}
+table.bk-tbl th.w-size,table.bk-tbl td.num{text-align:right}
+table.bk-tbl th.w-when,table.bk-tbl th.w-act{font-weight:500}
+table.bk-tbl tr.row:hover{background:var(--hover)}
+table.bk-tbl td.dim{color:var(--dim)}
+/* 导出那一行（`V-88`）：可编辑目标 + 选择 + 拖进来的落点 */
+.bk-export{display:flex;gap:8px;align-items:center;padding:7px 12px;flex:none;flex-wrap:wrap;
+  border-bottom:1px solid var(--line2);background:var(--panel2)}
+.bk-export.dover{box-shadow:inset 0 0 0 2px var(--accent)}
+.bk-export .bk-out{flex:1;min-width:220px;padding:6px 9px;border-radius:8px;
+  border:1px solid var(--line);background:var(--panel);color:var(--fg);font-size:12.5px;
+  font-family:var(--mono);outline:none}
+.bk-checkbar{padding:5px 12px;font-size:12px;color:var(--dim);border-top:1px solid var(--line2);
+  background:var(--panel);flex:none}
+.bk-saved{color:#2f8f4e}
+.bk-busy{font-size:12px;color:var(--accent)}
+.bk-form{padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel2);flex:none}
+.bk-formrow{display:flex;gap:8px;align-items:center;margin-bottom:7px}
+.bk-formrow:last-child{margin-bottom:0}
+.bk-formrow label{width:44px;flex:none;font-size:12px;color:var(--dim)}
+.bk-formrow .bk-scope,.bk-formrow .bk-title,.bk-formrow .bk-note{
+  padding:6px 9px;border-radius:8px;border:1px solid var(--line);background:var(--panel);
+  color:var(--fg);font-size:12.5px;outline:none}
+.bk-formrow .bk-title,.bk-formrow .bk-note{flex:1;min-width:0}
+.bk-filter{display:flex;gap:10px;align-items:center;padding:6px 12px;flex:none;flex-wrap:wrap;
+  border-bottom:1px solid var(--line2);background:var(--panel)}
+.bk-filter .bk-q{padding:5px 9px;border-radius:8px;border:1px solid var(--line);
+  background:var(--panel2);color:var(--fg);font-size:12.5px;outline:none;min-width:180px}
+.bk-hint{font-size:11.5px;color:var(--dim);white-space:nowrap}
+.bk-hint.bk-warn{color:#a05a00}
+/* ★ 窄窗口（实测 900×660）下这三颗按钮会被挤成"一个字一行" —— 所以：
+   文字不许折行（`nowrap`）、按钮不许被压扁（`flex:none`）、整排放不下就**整颗换行**。 */
+.bk-detail-head{display:flex;gap:8px;align-items:flex-start;padding:10px 12px;flex:none;
+  border-bottom:1px solid var(--line2);background:var(--panel);flex-wrap:wrap}
+.bk-detail-head .btn{flex:none;white-space:nowrap}
+.bk-dh-text{flex:1;min-width:180px;max-width:100%}
+.bk-title-line{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.bk-view{flex:none;max-height:42%;display:flex;flex-direction:column;
+  border-top:1px solid var(--line);background:var(--panel2)}
+.bk-view-head{display:flex;gap:8px;align-items:center;padding:5px 10px;flex:none;
+  font-size:12px;border-bottom:1px solid var(--line2)}
+.bk-view-text,.bk-view-bin{margin:0;padding:10px 12px;overflow:auto;flex:1;min-height:0;
+  font-family:var(--mono);font-size:12.5px;line-height:1.55;white-space:pre-wrap;
+  word-break:break-word;background:var(--code-bg);color:var(--out-fg)}
+.bk-view-bin{color:var(--dim)}
 /* ---- 编辑器（子选项卡里的那页）---- */
 .editor{position:relative;flex:1;min-height:0;margin:10px 12px 12px;overflow:hidden;
   background:var(--code-bg);border:1px solid var(--line);border-radius:8px}

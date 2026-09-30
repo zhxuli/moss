@@ -736,12 +736,19 @@ const MossFileBrowse = {
 
 const MossFileManager = {
   name: "moss-file-manager",
+  // ★ `MossFileBackup` 在 `js/backup.js` 里（那个文件在**本文件之后**加载）：
+  //   这边模板里直接写 `<moss-file-backup>`，那边 `MossFileManager.components.MossFileBackup
+  //   = MossFileBackup` 把组件补进来。挂载是懒的（第一次 `fmRender()` 才挂），来得及。
   components: {MossFileBrowse: MossFileBrowse, MossFilePage: MossFilePage},
   template: `
 <div id="fm-bar">
   <button class="fmtab" :class="{on: s.active === '__browse__'}" data-fm="__browse__"
           title="目录浏览（这一页不能关）" @click="s.active = '__browse__'">
     <span v-html='ico("folder", "i")'></span><span class="fname">{{ tabLabel }}</span>
+  </button>
+  <button class="fmtab" :class="{on: s.active === '__backup__'}" data-fm="__backup__"
+          title="备份（开发时存一份数据；这一页也不能关）" @click="s.active = '__backup__'">
+    <span v-html='ico("file-archive", "i")'></span><span class="fname">备份</span>
   </button>
   <button v-for="t in s.tabs" :key="t.rel" class="fmtab" :class="{on: s.active === t.rel}"
           :data-fm="t.rel" :title="t.rel" @click="s.active = t.rel">
@@ -753,6 +760,7 @@ const MossFileManager = {
 </div>
 <div class="fmwrap" id="fm-body">
   <moss-file-browse :s="s" :active="s.active === '__browse__'"></moss-file-browse>
+  <moss-file-backup :active="s.active === '__backup__'"></moss-file-backup>
   <moss-file-page v-for="t in s.tabs" :key="t.rel" :t="t"
                   :active="s.active === t.rel"></moss-file-page>
 </div>`,

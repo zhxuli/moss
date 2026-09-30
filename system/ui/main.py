@@ -36,6 +36,18 @@ from pathlib import Path
 import webview
 
 HERE = Path(__file__).resolve().parent
+
+# ★ 把**本文件所在目录**塞进 `sys.path`（`V-87` 修，血泪）：
+#   自带运行时那份 Python（`system/runtimes/python/3.12/`）是**便携/嵌入**版 ——
+#   它的 `sys.path` 来自 `python312._pth`，**不会**像常规 Python 那样把"脚本所在目录"
+#   放进 `sys.path`（实测：`sys.path[0]` 是 `python312.zip`）。于是这里 `import backup`
+#   （同目录下的兄弟模块）会报 `No module named 'backup'` —— 用户备份时就撞上了。
+#   ⚠️ 为什么我的探针一直没暴露：探针是用 `runpy` 跑的，而且**自己插过**
+#   `sys.path.insert(0, system/ui)`（venv 那份 Python 也会自动带上脚本目录）
+#   ⇒ 又一次"我的验证环境和真启动不是一个世界"（`V-76` 第②条）。
+#   这一行让两种跑法都成立。
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 NO_WINDOW = 0x08000000          # CREATE_NO_WINDOW
 DETACHED = 0x00000008           # DETACHED_PROCESS
 DEVNULL = subprocess.DEVNULL
@@ -236,6 +248,19 @@ def _rel_page(path):
     if rel:
         return rel
     return ABS_KEY + "/" + Path(path).resolve().as_posix()
+
+
+def _human(n):
+    """字节数说成人话（备份那边报"省了多少/回收了多少"用）。"""
+    try:
+        n = float(n or 0)
+    except (TypeError, ValueError):
+        return "0 B"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return ("%d %s" % (n, unit)) if unit == "B" else ("%.1f %s" % (n, unit))
+        n /= 1024.0
+    return "%.1f TB" % n
 
 
 def _trash(path):
@@ -1734,6 +1759,273 @@ class Api:
         """界面写一行日志（拖放这条线在用，见 `drop_log`）。出问题能一次看清。"""
         drop_log("page: " + str(text or ""))
         return {"ok": True}
+
+    # ------------------------------------------------ 备份（`V-87`）
+    # ★ 逻辑全在 `system/ui/backup.py`（内容寻址那套：指纹当文件名、内容只存一份、
+    #   删备份后按"标记-清除"回收没人引用的对象）。这里只干两件事：
+    #   ① 把**页面口径的 rel** 和**绝对路径**互相换（它自己不认识我们这几个根）；
+    #   ② 把结果包成页面能直接用的形状。
+    # ★ 放在界面层（不是 `core/`）⇒ **不用重打包 exe**；以后要 `moss --backup` 命令行，
+    #   把 `backup.py` 挪进 `core/` 再补一条 CLI 就行（那时候要重打包）。
+    def _backup_store(self):
+        import backup as _bk
+        # `rel_of` 用 `_rel_page`：三个根里算不出来就落成 `abs/<绝对路径>` ——
+        # 那正是"外部目录"那个根能表达的东西，恢复时照样认得。
+        # ★ `resolve` 要包一层：`_resolve()` 回的是 `(root, Path)` 一对，
+        #   而备份库要的是"rel → 绝对路径"（这里第一版忘了拆，报
+        #   `'tuple' object has no attribute 'exists'`）。
+        # ★ `trash`：同步模式下"现在多出来的"文件挪进回收站（`_trash`，和文件管理里
+        #   那个"删除"是同一条路 —— 不真删，随时能捡回来）。
+        return _bk.BackupStore(USER_DATA / _bk.STORE_DIRNAME, _rel_page,
+                               lambda rel: _resolve(rel)[1],
+                               trash=lambda p: _trash(Path(p)),
+                               log=drop_log)
+
+    def backup_list(self, group=""):
+        """备份列表 + 汇总 + **分组**（`V-89`：按包 id 分文件夹）。
+
+        `group` 给了就只看那一组；不给 = 所有组（列表里每行带 `group`）。
+        `groups` 是每个分组一行的汇总，界面那个"分组"下拉用它。
+        """
+        try:
+            st = self._backup_store()
+            g = str(group or "") or None
+            return {"ok": True, "items": st.list_backups(g), "stat": st.stat(g),
+                    "groups": st.groups_summary()}
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": "备份库读不出来：%s" % e, "items": [],
+                    "stat": {}, "groups": []}
+
+    def backup_group_hint(self, rels):
+        """按来源告诉界面"这次会落到哪个分组"（新建表单上显示一行）。"""
+        try:
+            import backup as _bk
+            rels = [str(r) for r in (rels or [])]
+            return {"ok": True, "group": _bk.group_for_sources(rels)}
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_group_info(self, group):
+        """一个分组的概况（几次备份、占多少）—— 卸载包的时候用来提示一句。"""
+        try:
+            st = self._backup_store()
+            info = st.stat(group)
+            items = st.list_backups(group)
+            return {"ok": True, "group": str(group or ""), "backups": info.get("backups", 0),
+                    "bytes": info.get("all_bytes", 0), "store_bytes": info.get("store_bytes", 0),
+                    "last": (items[0].get("created_text") if items else "")}
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_rename_group(self, old, new):
+        """分组改名（改包 id 时跟着改；目标已存在就合过去）。"""
+        try:
+            return self._backup_store().rename_group(old, new)
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_drop_group(self, group):
+        """把整个分组删掉（连它的内容块）—— "这个包不要了，备份也一起清掉"。"""
+        try:
+            return self._backup_store().drop_group(group)
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_create(self, rels, title="", note="", group=""):
+        """备份一批 rel（页面给的是 `user/...` / `system/...` / `abs/...`）。
+
+        落到哪个**分组**（`user_data/backups/<分组>/`）：不传就按来源猜（包 ⇒ 包 id，
+        整个 user_data ⇒ `@user`，某个目录 ⇒ `@dir-<名字>`）。
+        """
+        try:
+            st = self._backup_store()
+            srcs = []
+            for rel in (rels or []):
+                try:
+                    srcs.append(_resolve(rel)[1])
+                except ValueError as e:
+                    return {"ok": False, "msg": str(e)}
+            if not srcs:
+                return {"ok": False, "msg": "没有要备份的东西"}
+            man = st.create(srcs, title=title, note=note, group=(str(group or "") or None))
+            return {"ok": True, "id": man["id"], "group": man.get("group"),
+                    "stats": man["stats"], "created_text": man["created_text"],
+                    "msg": "备份好了（分组 %s）：%s 个文件、%s" % (
+                        man.get("group"), man["stats"]["files"],
+                        _human(man["stats"]["bytes"]))}
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": "备份失败：%s" % e}
+
+    def backup_manifest(self, bid, group=""):
+        """一次备份的清单（含文件列表）。"""
+        try:
+            st = self._backup_store()
+            m = st.manifest(bid, (str(group or "") or None))
+            m = dict(m)
+            m["ok"] = True
+            return m
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_blob(self, fp, group=""):
+        """看一个对象的内容（文本给文本；二进制只给大小和头部）。"""
+        try:
+            st = self._backup_store()
+            return st.read_blob(fp, group=(str(group or "") or None))
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_plan(self, bid, rels=None, only="all", sync=False, group=""):
+        """先算一遍恢复会发生什么（不落盘）—— 界面拿它弹确认框。
+
+        `sync=True`：**同步模式**，多算一类 `extra`（现在有、备份里没有的文件，
+        恢复时会挪进回收站）。默认 False = 只补不删。
+        """
+        try:
+            st = self._backup_store()
+            return st.plan(bid, rels=rels, only=only, sync=bool(sync),
+                           group=(str(group or "") or None))
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_restore(self, bid, rels=None, only="all", sync=False, group=""):
+        """真恢复（覆盖前会自动留一份 `.bak`；`sync=True` 时多出来的挪进回收站）。"""
+        try:
+            st = self._backup_store()
+            r = st.restore(bid, rels=rels, only=only, sync=bool(sync),
+                           group=(str(group or "") or None))
+            c = r.get("counts") or {}
+            r["msg"] = "恢复 %s 个、跳过 %s 个、挪走 %s 个、出错 %s 个" % (
+                c.get("restored", 0), c.get("skipped", 0), c.get("trashed", 0),
+                c.get("errors", 0))
+            # ★ 恢复动的是盘上的文件 ⇒ 界面那边"文件列表缓存"得跟着重问
+            return r
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    # ------------------------------------------------ 导出到别的目录（`V-88`）
+    # ★ 这是**唯一**一处界面能往"两个根"外面写的地方 —— 用户明确挑了/拖了一个目标
+    #   文件夹，动作也明确（导出/恢复到那儿）。所以这里按"绝对路径"收，但要挡三样：
+    #   不是绝对路径、指向备份库自己、指向一个文件（而不是目录）。
+    def _export_target(self, target, subpath=""):
+        """把界面给的那串"目标"拆成 `(存在的那个目录, 后面的子路径)`。
+
+        ★ 为什么要拆：你可以直接在里面接着写子目录 —— 比如拖进来 `D:\\out` 之后再敲成
+          `D:\\out\\2\\`（`V-88` 你要的"恢复到它的子文件夹"）。那就从右往左找到**第一个
+          真实存在的目录**当目标，剩下的当子路径（不存在没关系，导出时建出来）。
+
+        挡三样：不是绝对路径、指向备份库自己、指向一个文件（而不是目录）。
+        """
+        raw = str(target or "").strip().strip('"')
+        if not raw:
+            raise ValueError("先选一个目标文件夹（或者把文件夹拖到那一行上）")
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            raise ValueError("目标要是一个**绝对路径**：%s" % raw)
+        try:
+            p = p.resolve()
+        except OSError as e:
+            raise ValueError("这个路径解析不了：%s" % e)
+        tail = []
+        while not p.exists() and p.parent != p:
+            tail.insert(0, p.name)
+            p = p.parent
+        store = (USER_DATA / "backups").resolve()
+        if p == store or store in p.parents:
+            raise ValueError("别往备份库自己里面导（换一个文件夹）")
+        if p.exists() and not p.is_dir():
+            raise ValueError("这个路径是个文件，不是文件夹：%s" % p)
+        extra = str(subpath or "").strip().strip("/\\").replace("\\", "/")
+        joined = "/".join([x for x in (["/".join(tail)] if tail else []) + ([extra] if extra else []) if x])
+        return p, joined
+
+    def backup_export_plan(self, bid, target, subpath="", rels=None, group=""):
+        """导出前算一遍：会写出几个、几个会盖掉同名文件、最终落到哪儿。"""
+        try:
+            st = self._backup_store()
+            base, sub = self._export_target(target, subpath)
+            return st.export_plan(bid, base, subpath=sub, rels=rels,
+                                  group=(str(group or "") or None))
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_export(self, bid, target, subpath="", rels=None, keep_bak=False, group=""):
+        """把这次备份（或选中的几个文件）导出到指定文件夹。
+
+        `target` 里可以直接带子目录（`D:\\out\\2` ⇒ 落到 `D:\\out\\2\\…`）；
+        `subpath` 是另一条路（程序里拼的时候用），两边都有就接起来。
+        """
+        try:
+            st = self._backup_store()
+            base, sub = self._export_target(target, subpath)
+            r = st.export(bid, base, subpath=sub, rels=rels, keep_bak=bool(keep_bak),
+                          group=(str(group or "") or None))
+            c = r.get("counts") or {}
+            r["msg"] = "导出 %s 个到 %s%s" % (c.get("written", 0), r.get("root"),
+                                            ("（%s 个出错）" % c["errors"]) if c.get("errors") else "")
+            return r
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def pick_dir(self, start=""):
+        """弹系统对话框让用户挑一个文件夹（导出目标用）。取消 ⇒ ok=False。"""
+        try:
+            import webview as _wv
+            wins = list(getattr(_wv, "windows", None) or [])
+            if not wins:
+                return {"ok": False, "msg": "窗口还没准备好，稍一下再试"}
+            kind = None
+            fd = getattr(_wv, "FileDialog", None)
+            if fd is not None:
+                kind = getattr(fd, "FOLDER", None)
+            if kind is None:
+                kind = _wv.FOLDER_DIALOG()          # 老版本：那是个函数
+            pick = getattr(_wv, "FOLDER_DIALOG", None)
+            if not kind and callable(pick):
+                kind = pick()
+            start_dir = str(start or "").strip() or str(HOME)
+            try:
+                res = wins[0].create_file_dialog(kind, directory=start_dir)
+            except TypeError:
+                res = wins[0].create_file_dialog(kind, start_dir)
+            if not res:
+                return {"ok": False, "msg": "没有选（取消）"}
+            p = res[0] if isinstance(res, (list, tuple)) else res
+            return {"ok": True, "path": str(p)}
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": "挑文件夹失败：%s" % e}
+
+    def backup_delete(self, bid, group=""):
+        """删掉一次备份，然后**在这一组里**回收没人引用的对象。"""
+        try:
+            st = self._backup_store()
+            r = st.delete(bid, group=(str(group or "") or None))
+            r["msg"] = "删掉了，顺手回收了 %s 个没人引用的对象（%s）" % (
+                r.get("removed", 0), _human(r.get("freed", 0)))
+            return r
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_gc(self, dry_run=False, group=""):
+        """标记-清除：把没人引用的对象删掉（`dry_run` 只算不删）。
+
+        `group` 给了就只扫那一组（默认所有组各扫各的）。
+        """
+        try:
+            st = self._backup_store()
+            r = st.gc(dry_run=dry_run, group=(str(group or "") or None))
+            r["msg"] = ("能回收 %s 个对象（%s）" if dry_run else "回收了 %s 个对象（%s）") % (
+                r.get("removed", 0), _human(r.get("freed", 0)))
+            return r
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_check(self, bid=None, group=""):
+        """校验：清单里提到的对象都还在吗。"""
+        try:
+            return self._backup_store().check(bid, group=(str(group or "") or None))
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
 
     # ------------------------------------------------ 内嵌界面（`V-48` ✅）
     # 「界面」选项卡里那个 iframe 的另一头，就是这个包的后端进程。

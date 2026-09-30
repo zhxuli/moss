@@ -802,6 +802,8 @@ table.p th{color:var(--dim);font-weight:500}
      js/embed.js     包自己的界面（内嵌那一帧）
      js/list.js      包列表 + 历史 + 详情
      js/files.js     文件管理（资源管理器 + 编辑器）
+     js/backup.js    ★ 备份那一页（`V-87`，**Vue 3 组件**；塞进文件管理那个组件的
+                      `components` 里，所以必须排在 files.js **之后**）
      js/modal.js     模态框 / toast / 状态栏
      js/settings.js  ★ 设置面板（**Vue 3 组件**，自己带模板和状态）
      js/app.js       启动 + 新建/卸载包
@@ -820,6 +822,7 @@ table.p th{color:var(--dim);font-weight:500}
 <script src="js/embed.js"></script>
 <script src="js/list.js"></script>
 <script src="js/files.js"></script>
+<script src="js/backup.js"></script>
 <script src="js/modal.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/app.js"></script>

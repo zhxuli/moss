@@ -418,6 +418,13 @@ async function cmdRenamePkg(p){
       return;
     }
     toast("已改名为 :" + newId);
+    // ★ `V-89`：备份库里那个**分组文件夹**跟着改名（不然"改个 id 就一起改"这件事
+    //   在备份那侧就断了）。改名失败不影响主流程，只在状态栏/日志里说一声。
+    try{
+      const br = await pywebview.api.backup_rename_group(p.id, newId);
+      if (br && br.ok && br.renamed) console.info("备份分组已改名：" + (br.msg || ""));
+      else if (br && !br.ok) console.warn("备份分组没改成：" + (br.msg || ""));
+    }catch(e){ console.warn("备份分组没改成：", e); }
     // ★ 目录整个换了地方，文件管理里缓存的路径（当前目录 / 历史 / 打开的文件）
     //   必须跟着搬 —— 否则双击一个文件去编辑，宿主会说「不是文件」。
     await refreshPkgs(newId);            // 包表重问一遍（旧 id 没了、新 id 出现）

@@ -229,6 +229,15 @@ window.__mossDrop = function(items){
   const cmdIdx = DRAG.cmd;
   dragEnd();
   if (!items || !items.length){ uiLog("host drop: 没有路径（WebView2 没给）"); return; }
+  // ★ `V-88`：拖进来的路径**先问一下有没有"别人更想要"**（比如备份那一页的「导出到」
+  //   那一行：把文件夹拖上去 = 导出目标）。钩子收下了就到此为止，别再去跑包。
+  //   真路径只有宿主知道（Chromium 不给 `File.path`），所以这条"落地口"必须留个插口。
+  try{
+    if (typeof window.__mossDropHook === "function" && window.__mossDropHook(items)){
+      uiLog("host drop: 被页面钩子收下了（备份导出目标之类）");
+      return;
+    }
+  }catch(e){ uiLog("host drop: 钩子抛了 " + e); }
   const p = cur;
   const it = items[0];
   uiLog("host drop: " + JSON.stringify(items));
