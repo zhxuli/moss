@@ -145,8 +145,13 @@ SETUP_PORT = 8788
 
 # ---- 数据目录：宿主 moss 注入的插件专属目录 (user_data/state/<包id>)；
 #      PA_ 是老 pa 的变量，保留兜底；都没有时（独立运行/调试）退回脚本目录 ----
-DATA_DIR = os.environ.get("MOSS_PLUGIN_DATA_DIR") or os.environ.get("PA_PLUGIN_DATA_DIR") or (
-    os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd())
+# ★ `V-133`：兜底**不再用"脚本自己所在目录"** —— 那样独立跑（或被 pa 跑）时会把
+#   `dsh.pid` / `dsh3080.log` 写进 **包目录**（仓库里！实测已经发生了）。按 moss 的数据方案：
+#   优先宿主注入的插件专属目录，其次老 pa，最后退到**用户目录**（永远不往代码目录里写）。
+DATA_DIR = (os.environ.get("MOSS_PLUGIN_DATA_DIR")
+            or os.environ.get("PA_PLUGIN_DATA_DIR")
+            or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
+                            "user_data", "state", "dsh"))
 
 CONFIG_PATH = Path(DATA_DIR) / "dsh_bridge.json"
 

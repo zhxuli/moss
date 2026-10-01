@@ -36,3 +36,7 @@ system/runtimes/*/
 # `unwx`（微信小程序反编译）不放发行版/仓库里 —— 它带一个 36 MB 的第三方 exe（KillWxapkg），
 # 属于"绕过技术保护措施"的工具；按 `H-08` 放**用户层** `user_data/pkgs/unwx/`（不进仓库、不进发行版）。
 /system/pkgs/unwx/
+
+# 运行期产物（`V-133`）：pid / 日志这类东西**属于用户目录**（`user_data/state/<包id>/`），不该出现在包目录里 —— 也不该被提交。
+system/pkgs/**/*.pid
+system/pkgs/**/*.log
