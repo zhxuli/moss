@@ -2425,7 +2425,9 @@ class Api:
                                         % (r.get("code"), (" —— " + tail) if tail else "")}
         return {"ok": True, "active": data.get("active") or "",
                 "name": data.get("profile") or "", "params": data.get("params") or {},
-                "profiles": data.get("profiles") or []}
+                "profiles": data.get("profiles") or [],
+                # ★ `V-140`：列表那一屏要的摘要（每组一行：地址 / 模型 / key 填没填）
+                "summary": data.get("summary") or {}}
 
     def ai_presets(self):
         """常见服务商的**预制参数**（`V-139`）—— 面板上那排「常用」按钮读的就是它。

@@ -835,9 +835,23 @@ def cmd_ai_config(kv, reveal=False):
         name = want
         prof = dict(p2) if reveal else _ai_mask(p2)
     print(_json.dumps({"ok": True, "active": config.ai_active_name(), "profile": name,
-                       "params": prof, "profiles": sorted(config.ai_profiles())},
+                       "params": prof, "profiles": sorted(config.ai_profiles()),
+                       # ★ `V-140`：**列表**要用的摘要（每组一行：地址 / 模型 / key 填没填）。
+                       #   `reveal` 也不影响这里 —— 摘要是给列表看的，key 永远只给打码那串。
+                       "summary": _ai_summary()},
                       ensure_ascii=False, indent=2))
     return 0
+
+
+def _ai_summary():
+    """每组一行摘要：接口地址 / 模型 / key 填没填（**永远打码**）。"""
+    out = {}
+    for nm, pr in config.ai_profiles().items():
+        out[nm] = {"base_url": str(pr.get("base_url") or ""),
+                   "model": config.ai_models(pr),
+                   "key": _ai_mask(pr).get("api_key") or "",
+                   "has_key": bool(str(pr.get("api_key") or ""))}
+    return out
 
 
 def cmd_ai_presets():
