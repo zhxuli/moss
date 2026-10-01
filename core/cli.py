@@ -890,7 +890,9 @@ def cmd_ai_test(argv):
     if not base or not model:
         out.print_cyan("[错误] 这一组还没填 base_url / model。")
         return 1
-    body = _json.dumps({"model": model, "stream": True, "max_tokens": 8,
+    # `stream` 没写就按 true（`V-137` 定的调子：要流式）；写了 false 就老老实实非流式。
+    stream = True if p.get("stream") is None else bool(p.get("stream"))
+    body = _json.dumps({"model": model, "stream": stream, "max_tokens": 8,
                         "messages": [{"role": "user", "content": "只回两个字：收到"}]},
                        ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(base + "/chat/completions", data=body,
@@ -898,13 +900,27 @@ def cmd_ai_test(argv):
                                           "Authorization": "Bearer " + str(p.get("api_key") or "")})
     try:
         with urllib.request.urlopen(req, timeout=float(p.get("timeout") or 60)) as r:
-            code, first = r.status, ""
-            for raw in r:
-                line = raw.decode("utf-8", "replace").strip()
-                if line.startswith("data:"):
-                    first = line[5:].strip()
-                    break
-        out.print_cyan("连上了：HTTP %s · 流式第一个增量 = %s" % (code, (first or "（空）")[:200]))
+            code = r.status
+            # ★ 按这一组的 `stream` 说话（`V-138`）：开着就证明"流式真的能回来"（读第一个
+            #   增量就停），关着就把整段读完再报回话 —— 两种都测到，才叫"这一组能用"。
+            if stream:
+                first = ""
+                for raw in r:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if line.startswith("data:"):
+                        first = line[5:].strip()
+                        break
+                out.print_cyan("连上了：HTTP %s · 流式第一个增量 = %s" % (code, (first or "（空）")[:200]))
+            else:
+                raw = r.read().decode("utf-8", "replace")
+                text = ""
+                try:
+                    j = _json.loads(raw)
+                    text = str((((j.get("choices") or [{}])[0].get("message") or {})
+                                .get("content")) or "")
+                except ValueError:
+                    text = raw
+                out.print_cyan("连上了：HTTP %s · 非流式回话 = %s" % (code, (text or "（空）")[:200]))
         return 0
     except Exception as e:                                              # noqa: BLE001
         out.print_cyan("[错误] 没连上 / 报错：%s" % e)

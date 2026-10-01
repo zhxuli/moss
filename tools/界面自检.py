@@ -55,7 +55,10 @@ try:
 except Exception as e:
     out["sibling_import"] = "FAIL %r" % (e,)
 api = main.Api()
-for name in ("backup_list", "fs_roots"):
+# ★ 只挑**只读**接口点一点（`V-138` 加了 `ai_config`：它要壳到 exe 跑一条
+#   `--ai-config`，正好验证"界面进程不许 import core、只能叫宿主"这条路上
+#   新加的几个 AI 接口通不通）。
+for name in ("backup_list", "fs_roots", "ai_config"):
     try:
         r = getattr(api, name)()
         out[name] = ("ok=%s" % r.get("ok")) if isinstance(r, dict) else str(type(r))
@@ -138,8 +141,12 @@ def main():
     print("兄弟模块 import             : %s" % info.get("sibling_import"))
     print("backup_list()               : %s" % info.get("backup_list"))
     print("fs_roots()                  : %s" % info.get("fs_roots"))
+    print("ai_config()                 : %s" % info.get("ai_config"))
     ok = (str(info.get("sibling_import", "")).startswith("OK")
           and info.get("backup_list") == "ok=True"
+          # ★ `V-138`：AI 那几个接口要能**壳到 exe**（界面进程不许 import core）——
+          #   `ai_config` 回了 ok=True 就说明 `--ai-config` 这条路是通的。
+          and info.get("ai_config") == "ok=True"
           and str(UI) in [str(p) for p in (info.get("path_after") or [])])
     print("=" * 64)
     print("✅ 真启动环境下界面后端可用" if ok else "✗ 有问题：看上面几行")

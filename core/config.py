@@ -145,17 +145,6 @@ active = ""
 # ★ `settings_problems()` 会核对这份清单和 `DEFAULT_CONFIG` 对不对得上（键、类型、
 #   以及每条该有的说明有没有写），挂在 `moss --selfcheck` 上。
 SETTINGS_GROUPS = [
-    # `V-137`：AI 参数（多组）。`ai.active` 是普通文本（组名）；`ai.profiles` 是**表**，
-    # 面板里只显示一行说明、不能手改（改它走 `moss --ai-profile-set`，见 `set_values` 里的路由）。
-    {"name": "AI", "icon": "cpu", "blurb": "AI 参数（可以配多组）：一组一份，明文存在 user_data/config.toml；"
-                            "跑包时会把当前那组注入成 MOSS_AI_* 环境变量",
-     "items": [
-         {"key": "ai.active", "label": "当前组", "type": "text",
-          "hint": "现在用哪一组；组名要和 [ai.profiles.<组名>] 对上（改名请用 moss --ai-profile-set）"},
-         {"key": "ai.profiles", "label": "各组", "type": "text",
-          "hint": "加/改组请用命令行：moss --ai-profile-set <组名> base_url=… model=… api_key=…；"
-                  "moss --ai-active <组名> 切当前组；moss --ai-test 测连接。"},
-     ]},
     {"name": "快捷命令", "icon": "hash", "live": True,
      "blurb": "行首那个符号决定这条命令是什么意思。四项都能换成你顺手的字符"
               "（moss 会先去掉前缀，再判断这条命令属于哪一类）。"
@@ -211,6 +200,20 @@ SETTINGS_GROUPS = [
          {"key": "ctrl_c.force_kill", "label": "第一次按 Ctrl+C 就强杀整棵树", "type": "bool",
           "hint": "在终端里按 Ctrl+C 时，第一次就强杀整棵进程树。关掉之后：第一次只温和地"
                   "请它退出，再按一次才强杀 —— 有收尾工作的包适合关掉。"},
+     ]},
+    # ★ `V-137` / `V-138`：AI 参数（多组），**放在最后** —— 前面那四组是「配置项」，
+    #   这一组是「账号 / 通道」，性质不同；而且它的界面是专门画的一块（选组 + 一串动作），
+    #   不是「一个键一行」。这两个键留着是为了让「面板清单和 DEFAULT_CONFIG 对得上」
+    #   那条自检能过；真正在面板上渲染的是 `js/settings.js` 里那块 `.set-ai`。
+    {"name": "AI", "icon": "cpu",
+     "blurb": "AI 参数（可以配多组）：一组一份，明文存在 user_data/config.toml；"
+              "跑包时把当前那组注入成 MOSS_AI_* 环境变量",
+     "items": [
+         {"key": "ai.active", "label": "当前组", "type": "text",
+          "hint": "现在用哪一组 —— 面板上那颗「设为当前」改的就是它。"},
+         {"key": "ai.profiles", "label": "各组", "type": "text",
+          "hint": "每一组的字段（接口地址 / 密钥 / 模型 …）由面板上那一块直接管；"
+                  "命令行同样可以：moss --ai-profile-set <组名> base_url=… model=… api_key=…"},
      ]},
 ]
 
@@ -686,7 +689,10 @@ def _ai_section_text(profiles, active):
     out = ['[ai]', 'active = %s' % _toml_str(active or ""), '']
     for name in sorted(profiles or {}):
         pr = profiles[name] or {}
-        out.append('[ai.profiles.%s]' % name)
+        # ★ 组名不是"裸键"（中文 / 空格 / @ 之类）就得加引号 —— TOML 的
+        #   `[ai.profiles.深度求索]` 是不合法的，必须是 `[ai.profiles."深度求索"]`。
+        key = name if re.fullmatch(r"[A-Za-z0-9_-]+", str(name)) else _toml_str(name)
+        out.append('[ai.profiles.%s]' % key)
         for k in AI_FIELDS:
             if k not in pr:
                 continue
@@ -753,7 +759,11 @@ def ai_active_profile(path=None):
 
 def ai_profile_set(name, fields, path=None):
     """加/改组（给了哪几个字段就写哪几个；其它字段保持）。"""
-    name = re.sub(r"[^A-Za-z0-9_.@-]", "_", str(name or "").strip())[:40] or "default"
+    # ★ 组名允许中文（`V-138`：面板上让人自己起名，"深度求索" 是最自然的一种）。
+    #   只挡掉会把 TOML 表名写坏的那几个字符；写文件时非 ASCII 的表名会加引号
+    #   （见 `_ai_section_text`）。**点也要挡**：`[ai.profiles.a.b]` 在 TOML 里是
+    #   **嵌套表**，组名会被拆成两层，读回来就是一个空组。
+    name = re.sub(r'["\\\[\]\.\r\n\t]', "_", str(name or "").strip())[:40].strip() or "default"
     profs = ai_profiles(path)
     cur = dict(profs.get(name) or {})
     for k, v in (fields or {}).items():

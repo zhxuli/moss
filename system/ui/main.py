@@ -80,6 +80,18 @@ def _split(text):
         return text.split()
 
 
+def _ai_arg(v):
+    """把界面递来的一个字段值变成 `k=v` 里那个 v（`V-138`）。
+
+    ★ 开关必须写成 `true`/`false`：宿主那边认这两个词才当布尔，写成 `1`/`0`
+      就会存成整数 —— 配置文件里 `stream = 1` 读回来是 int，`if stream` 照样
+      能跑，但类型就悄悄变了（这种"能用但不对"最难查）。
+    """
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return str(v)
+
+
 def _run_capture(argv):
     """跑一条宿主命令并把输出抓回来（合并 stdout+stderr，按 UTF-8 解）。"""
     try:
@@ -2388,6 +2400,83 @@ class Api:
         return {"ok": bool(data.get("ok")), "problems": data.get("problems") or [],
                 "notes": data.get("notes") or {}, "live": data.get("live") or "",
                 "msg": ""}
+
+    # ------------------------------------------------------------ AI 那几组参数（`V-138`）
+    #   ★ 为什么这几条**不走**上面那套「设置项」：`[ai.profiles.<组名>]` 是**表套表**，
+    #     组名是用户自己起的 —— 面板那种"一个键一行"的渲染摆不下
+    #     「选组 / 加组 / 删组 / 设为当前 / 测连接」。存储和规则仍然只有 `core/config.py`
+    #     那一份，这里只是把宿主的几条命令包一层（界面不自己解析 TOML）。
+    def ai_config(self, name="", reveal=False):
+        """读一组 AI 参数（`name` 空 = 当前那组）。**key 默认打码**，`reveal=True` 才给全文。"""
+        if not HOST:
+            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+        flag = "--ai-config-reveal" if reveal else "--ai-config"
+        argv = HOST + [flag] + (["--profile=" + str(name)] if str(name or "").strip() else [])
+        r = _run_capture_split(argv)
+        data = _json_from_host(r.get("out"))
+        if not isinstance(data, dict) or not data.get("ok"):
+            # 出错时宿主可能把话打在 stdout（`[错误] 没有这一组`）也可能打在 stderr，
+            # 两股都看一眼 —— 只说"退出码 1"等于没说。
+            tail = ((r.get("err") or "").strip().splitlines() or [""])[-1] \
+                or ((r.get("out") or "").strip().splitlines() or [""])[-1]
+            return {"ok": False, "msg": "读 AI 参数失败：退出码 %s%s"
+                                        % (r.get("code"), (" —— " + tail) if tail else "")}
+        return {"ok": True, "active": data.get("active") or "",
+                "name": data.get("profile") or "", "params": data.get("params") or {},
+                "profiles": data.get("profiles") or []}
+
+    def ai_save(self, name, fields):
+        """加/改一组（**明文**写 `config.toml`）—— 只送用户真改过的那几个字段。
+
+        回 `{"ok", "name", "msg"}`；`msg` 是宿主那句「已存：X（字段 …）」，直接显示。
+        """
+        if not HOST:
+            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+        name = str(name or "").strip()
+        if not name:
+            return {"ok": False, "msg": "先给这一组起个名字"}
+        if not isinstance(fields, dict) or not fields:
+            return {"ok": False, "msg": "这一组没有改动"}
+        argv = HOST + ["--ai-profile-set", name]
+        for k in sorted(fields):
+            argv.append("%s=%s" % (k, _ai_arg(fields[k])))
+        r = _run_capture(argv)
+        out = (r.get("out") or "").strip()
+        return {"ok": r.get("code") == 0, "name": name,
+                "msg": out or ("保存失败：退出码 %s" % r.get("code"))}
+
+    def ai_delete(self, name):
+        """删一组（当前那组被删掉时，宿主会自动把当前挪到剩下的第一组）。"""
+        if not HOST:
+            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+        name = str(name or "").strip()
+        if not name:
+            return {"ok": False, "msg": "没说到底删哪一组"}
+        r = _run_capture(HOST + ["--ai-profile-del", name])
+        return {"ok": r.get("code") == 0, "msg": (r.get("out") or "").strip()}
+
+    def ai_set_active(self, name):
+        """选当前用哪一组（就是「设为当前」，以后跑包注入的就是这一组）。"""
+        if not HOST:
+            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+        name = str(name or "").strip()
+        if not name:
+            return {"ok": False, "msg": "没说到底切哪一组"}
+        r = _run_capture(HOST + ["--ai-active", name])
+        return {"ok": r.get("code") == 0, "msg": (r.get("out") or "").strip()}
+
+    def ai_test(self, name=""):
+        """**测试连接**：宿主按这一组的 `stream` 真发一个最小请求，把结果原样带回来。
+
+        ★ 这里必须让**宿主**去发：key 和 url 都只存在宿主那边读得到的配置里，
+          界面不该为了测一下就把明文 key 拿过来再自己发一遍（多一处明文、多一处出错）。
+        """
+        if not HOST:
+            return {"ok": False, "code": -1, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+        argv = HOST + ["--ai-test"] + ([str(name)] if str(name or "").strip() else [])
+        r = _run_capture(argv)
+        return {"ok": r.get("code") == 0, "code": r.get("code"),
+                "msg": (r.get("out") or "").strip() or "（宿主没说什么）"}
 
     def quit(self):
         window.destroy()

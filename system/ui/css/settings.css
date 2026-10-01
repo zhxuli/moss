@@ -145,3 +145,45 @@
 #tip .tip-prob{margin-top:5px}
 #tip .tip-prob.bad{color:#d64545}
 #tip .tip-prob.warn{color:#a86400}
+
+/* ---------------------------------------------------------------- AI 那一组（V-138）
+   组名是用户自己起的、一组一份参数 —— 通用那种"一个键一行"摆不下，所以单独一块：
+   顶上一排（选组 + 新增/复制/删除/设为当前），底下仍然用那套 .set-fields 两列网格。 */
+.set-ai{display:flex;flex-direction:column;gap:14px}
+.ai-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ai-lbl{font-size:12.5px;color:var(--dim);flex:none}
+.ai-sel{min-width:180px;max-width:290px;padding:6px 9px;border-radius:8px;
+  border:1px solid var(--line2);background:var(--panel);color:var(--fg);
+  font:inherit;font-size:13px;cursor:pointer}
+.ai-sel:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
+.ai-bar .btn-quiet{padding:6px 10px;border-radius:8px;border:0;background:transparent;
+  color:var(--fg2);cursor:pointer;font:inherit;font-size:12.5px;
+  transition:background .13s ease-out,color .13s ease-out}
+.ai-bar .btn-quiet:hover{background:var(--hover);color:var(--fg)}
+.ai-bar .btn-quiet:disabled{opacity:.42;cursor:default}
+.ai-none{margin:0;padding:10px 12px;border-radius:10px;background:var(--tile);
+  font-size:12.5px;color:var(--dim)}
+.ai-fields{grid-template-columns:1fr 1fr}
+.ai-keyrow{display:flex;align-items:center;gap:6px}
+.ai-keyrow .inp{flex:1;min-width:0}
+.ai-keyrow .btn-quiet{flex:none;padding:5px 9px;border-radius:8px;border:0;
+  background:var(--tile);color:var(--fg2);cursor:pointer;font:inherit;font-size:12px}
+.ai-keyrow .btn-quiet:hover{background:var(--hover);color:var(--fg)}
+.ai-swbox{display:flex;align-items:center;gap:9px;min-height:32px}
+.ai-swtxt{font-size:12px;color:var(--dim)}
+/* 动作行：保存这一组 / 测试连接 / 结果（摆在字段**上面**，不用滚动就看得见） */
+.ai-acts{gap:10px}
+.ai-bar .btn,.ai-bar .btn-quiet{padding:6px 11px;border-radius:8px;border:0;
+  background:transparent;color:var(--fg2);cursor:pointer;font:inherit;font-size:13px;
+  font-weight:500;transition:background .13s ease-out,color .13s ease-out,transform .1s ease-out}
+.ai-bar .btn:hover,.ai-bar .btn-quiet:hover{background:var(--hover);color:var(--fg)}
+.ai-bar .btn:active{transform:scale(.97)}
+.ai-bar .btn.primary{background:transparent;border:0;color:var(--accent)}
+.ai-bar .btn.primary:hover{background:color-mix(in srgb, var(--accent) 12%, transparent)}
+.ai-bar .btn:disabled{opacity:.45;cursor:default;filter:none}
+.ai-state{font-size:12px;line-height:1.6;min-width:0;word-break:break-all;flex:1}
+.ai-state.ok{color:#1a7f45}
+.ai-state.bad{color:#d64545}
+.ai-tip{font-size:12px;color:var(--dim2);line-height:1.6;flex:1}
+.ai-tip code{font-family:var(--mono);font-size:11.5px;background:var(--tile);
+  padding:1px 4px;border-radius:4px}

@@ -70,7 +70,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "drop-hot", "drop-dir", "drop-file", "console-input", "embed", "pane-resize",
           "flat-buttons", "backup-diff", "refresh-keep-ctx", "compare", "hist-snap", "modal-kinds", "snap-modal",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
-          "settings-bad", "settings-warn", "settings-tip",
+          "settings-bad", "settings-warn", "settings-tip", "settings-ai",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail"]
 
@@ -121,6 +121,23 @@ def mock_data():
     # ★ 「设置」面板那份数据**用真的**（宿主怎么给，预览就怎么给）：这样截图里
     #   看到的分组 / 标签 / 控件类型就是真界面上会看到的，不是这里编的。
     settings = core_config.settings_payload()
+
+    # ★ AI 那几组（`V-138`）：存储/规则在 `core/config.py`，预览里只给一份**假的多组数据**
+    #   （三组：正常一组 / 本机一组测"连不上" / 关掉流式的一组），并且让 mock 真的改它 ——
+    #   这样新增 / 复制 / 删除 / 设为当前 / 保存 / 测连接都能在截图里看见效果。
+    ai = {"active": "深度求索", "profiles": [
+        {"name": "深度求索", "params": {"base_url": "https://api.deepseek.com/v1",
+                                       "api_key": "sk-abcdef1234567890",
+                                       "model": "deepseek-chat", "temperature": 0.7,
+                                       "max_tokens": 2048, "timeout": 60, "stream": True,
+                                       "note": "主力"}},
+        {"name": "本地 ollama", "params": {"base_url": "http://127.0.0.1:11434/v1",
+                                          "model": "qwen2.5:7b", "timeout": 120,
+                                          "stream": True}},
+        {"name": "备用中转", "params": {"base_url": "https://api.apifast.tech/v1",
+                                       "api_key": "sk-zzzzzzzzzzzzzzzz",
+                                       "model": "gemini-2.0-flash", "stream": False,
+                                       "note": "国外那家的中转"}}]}
 
     hist = []
     for r in core_history.recent_unique():
@@ -188,7 +205,7 @@ def mock_data():
             {"name": "run.py", "rel": "user/pkgs/preview-my-first/run.py", "dir": False,
              "size": 210, "mtime": 0, "ext": "py"}]}
 
-    return {"payload": payload, "hist": hist, "fs": fs, "settings": settings,
+    return {"payload": payload, "hist": hist, "fs": fs, "settings": settings, "ai": ai,
             # 工具自己的场景清单：页面拿它对一下"这个场景名到底有没有实现"。
             "scenes": SCENES,
             # `--early-ready`：让 mock 在 js/*.js 之前就发 ready（`V-68` 的竞态场景）
@@ -494,6 +511,58 @@ MOCK_JS = r"""
       const merged = Object.assign({}, M.values || {}, pairs);
       const ck = await window.pywebview.api.settings_check(merged);
       return {ok: ck.ok, problems: ck.problems, notes: ck.notes, live: ck.live, msg: ""};
+    },
+    // ---- AI 那几组（`V-138`）：真后端去叫宿主 `--ai-config` / `--ai-profile-set` /
+    //      `--ai-active` / `--ai-profile-del` / `--ai-test`。预览里给一份**假的多组数据**，
+    //      并且让这几个 mock **真的改它** —— 于是"新增 / 复制 / 删除 / 设为当前 / 保存"
+    //      在截图和断言里都能看见效果（不然只能看个壳）。
+    ai_config: async (name, reveal) => {
+      const A = M.ai;
+      const want = String(name || "");
+      const nm = want || A.active || ((A.profiles[0] || {}).name || "");
+      const hit = A.profiles.filter(x => x.name === nm)[0] || {name: "", params: {}};
+      const params = Object.assign({}, hit.params);
+      const k = String(params.api_key || "");
+      if (!reveal && k){                     // 照真宿主：默认打码
+        params.api_key = k.length > 10 ? (k.slice(0, 4) + "…" + k.slice(-4))
+                                       : "（已设置）";
+      }
+      return {ok: true, active: A.active, name: hit.name, params: params,
+              profiles: A.profiles.map(x => x.name).sort()};
+    },
+    ai_save: async (name, fields) => {
+      const A = M.ai;
+      let hit = A.profiles.filter(x => x.name === name)[0];
+      if (!hit){ hit = {name: name, params: {}}; A.profiles.push(hit); }
+      Object.keys(fields || {}).forEach(k => { hit.params[k] = fields[k]; });
+      if (!A.active) A.active = name;
+      return {ok: true, name: name,
+              msg: "已存：" + name + "（字段 " + Object.keys(hit.params).sort().join(" ") + "）"};
+    },
+    ai_delete: async (name) => {
+      const A = M.ai;
+      A.profiles = A.profiles.filter(x => x.name !== name);
+      if (A.active === name) A.active = ((A.profiles[0] || {}).name || "");
+      return {ok: true, msg: "删了「" + name + "」；剩下的组：" +
+                             (A.profiles.map(x => x.name).join(" / ") || "（没有）")};
+    },
+    ai_set_active: async (name) => {
+      M.ai.active = String(name || "");
+      return {ok: true, msg: "当前那组 = " + M.ai.active};
+    },
+    ai_test: async (name) => {
+      M.aiTested = String(name || "");
+      const hit = M.ai.profiles.filter(x => x.name === name)[0] || {params: {}};
+      const p = hit.params || {};
+      if (!p.base_url || !p.model)
+        return {ok: false, code: 1, msg: "[错误] 这一组还没填 base_url / model。"};
+      if (String(p.base_url).indexOf("127.0.0.1") >= 0)     // 本机那组：假装连不上
+        return {ok: false, code: 4,
+                msg: "[错误] 没连上 / 报错：<urlopen error [WinError 10061] 由于目标计算机" +
+                     "积极拒绝，无法连接。>"};
+      return {ok: true, code: 0,
+              msg: '连上了：HTTP 200 · 流式第一个增量 = data: {"id":"chatcmpl-1",' +
+                   '"choices":[{"delta":{"content":"收到"}}]}'};
     },
     open_ui: async () => ({ok: true, msg: "(预览) 已打开"}),
     pkg_stop: async () => ({ok: true, msg: "(预览) 已停止"}),
@@ -1500,7 +1569,7 @@ MOCK_JS = r"""
         await openSettings();                     // 再打开：留给截图看个完整的
         await sleep(700);
         const opened = document.querySelector("#settings").classList.contains("on");
-        const ok = navs === 4 && panes === 4 && activePane.group === "快捷命令" &&
+        const ok = navs === 5 && panes === 5 && activePane.group === "快捷命令" &&
                    pane2.group === "执行提示" && switches === 7 && inputs === 4 &&
                    labels === 4 && infos === 4 && liveBox && hasX && disabledAtStart &&
                    enabledAfter && /改了 1 项/.test(stateMoved) && closedAfterSave && opened &&
@@ -1516,6 +1585,107 @@ MOCK_JS = r"""
           " ×=" + hasX + " 起灰=" + disabledAtStart + " 改亮=" + enabledAfter +
           " 挪=" + /改了 1 项/.test(stateMoved) + " 关=" + closedAfterSave + " 开=" + opened +
           " 存=" + Object.keys(saved).length + " 值=" + saved["symbols.no_chdir_mode"]);
+      }
+      // ---- AI 那一组（`V-138`）：选组 / 看得到字段 / key 打码 / 露出来 / 测连接 /
+      //      改一项保存 / 新增 / 设为当前 / 删除，一条链走完。
+      if (h === "settings-ai"){
+        await openSettings();
+        await sleep(700);
+        const navs = document.querySelectorAll("#set-nav .set-navitem").length;
+        const aiNav = Array.prototype.filter.call(
+          document.querySelectorAll("#set-nav .set-navitem"),
+          b => (b.dataset.group || "") === "AI")[0];
+        if (aiNav) aiNav.click();
+        await sleep(700);
+        const pane = (document.querySelector("#set-body .set-pane.on") || {}).dataset || {};
+        const box = !!document.querySelector("#set-body .set-pane.on .set-ai");
+        // 通用那种"一个键一行"不能再重复渲染（ai.active / ai.profiles 那两行让开了）
+        const generic = !!document.querySelector(
+          '#set-body .set-pane.on .set-field[data-key="ai.active"]');
+        const sel = document.querySelector("#ai-sel");
+        const opts0 = sel ? sel.options.length : 0;
+        const picked0 = sel ? sel.value : "";
+        const fieldsN = document.querySelectorAll("#set-body .set-pane.on .ai-fields .set-field").length;
+        const inputsN = document.querySelectorAll("#set-body .set-pane.on .ai-fields input").length;
+        const swsN = document.querySelectorAll("#set-body .set-pane.on .ai-fields .sw").length;
+        // 密钥：默认打码（占位提示里那串），**框里是空的**（免得把打码串存回去）
+        const keyBox = () => document.querySelector(
+          '.ai-fields .set-field[data-ai="api_key"] input');
+        const k0 = keyBox();
+        const keyPh0 = k0 ? k0.placeholder : "";
+        const keyVal0 = k0 ? k0.value : "";
+        const eye = document.querySelector("#ai-eye");
+        if (eye) eye.click();
+        await sleep(500);
+        const k1 = keyBox();
+        const keyType1 = k1 ? k1.type : "";
+        const keyVal1 = k1 ? k1.value : "";
+        // 测试连接：这一组的 url 是假的真 url ⇒ 假后端回"连上了"
+        const tBtn = document.querySelector("#ai-test");
+        if (tBtn) tBtn.click();
+        await sleep(600);
+        const stEl = document.querySelector("#ai-state");
+        const stOk = stEl ? /(^|\s)ok(\s|$)/.test(stEl.className) : false;
+        const stTxt = stEl ? stEl.textContent : "";
+        // 改一项 ⇒「保存这一组」亮；存下去 ⇒ 再灰回来，而且值真进了假存储
+        const urlBox = document.querySelector('.ai-fields .set-field[data-ai="base_url"] input');
+        if (urlBox){ urlBox.value = "https://api.deepseek.com/v2";
+                     urlBox.dispatchEvent(new Event("input", {bubbles: true})); }
+        await sleep(300);
+        const sBtn = document.querySelector("#ai-save");
+        const saveOn = sBtn ? !sBtn.disabled : false;
+        if (sBtn) sBtn.click();
+        await sleep(800);
+        const savedUrl = ((M.ai.profiles.filter(x => x.name === "深度求索")[0] || {}).params || {}).base_url;
+        const saveOff = sBtn ? sBtn.disabled : false;
+        // 新增一组（走 askText 那个框）
+        const nBtn = document.querySelector("#ai-new");
+        if (nBtn) nBtn.click();
+        await sleep(400);
+        const mi = document.querySelector("#m-input");
+        if (mi) mi.value = "临时组";
+        const mok1 = document.querySelector("#m-ok");
+        if (mok1) mok1.click();
+        await sleep(900);
+        const optsNew = document.querySelector("#ai-sel").options.length;
+        const pickedNew = document.querySelector("#ai-sel").value;
+        // 设为当前
+        const uBtn = document.querySelector("#ai-use");
+        const useOn = uBtn ? !uBtn.disabled : false;
+        if (uBtn) uBtn.click();
+        await sleep(700);
+        const activeMock = (M.ai || {}).active || "";
+        const actOpt = document.querySelector('#ai-sel option[data-active="1"]');
+        const actLabel = actOpt ? actOpt.value : "";
+        // 删除这一组（确认框主按钮）
+        const dBtn = document.querySelector("#ai-del");
+        if (dBtn) dBtn.click();
+        await sleep(400);
+        const mok2 = document.querySelector("#m-ok");
+        if (mok2) mok2.click();
+        await sleep(900);
+        const optsEnd = document.querySelector("#ai-sel").options.length;
+        const ok = navs === 5 && pane.group === "AI" && box && !generic &&
+                   opts0 === 3 && picked0 === "深度求索" &&
+                   fieldsN === 9 && inputsN === 8 && swsN === 1 &&
+                   /sk-a…/.test(keyPh0) && keyVal0 === "" &&
+                   keyType1 === "text" && keyVal1 === "sk-abcdef1234567890" &&
+                   stOk && /HTTP 200/.test(stTxt) &&
+                   saveOn && savedUrl === "https://api.deepseek.com/v2" && saveOff &&
+                   optsNew === 4 && pickedNew === "临时组" &&
+                   useOn && activeMock === "临时组" && actLabel === "临时组" &&
+                   optsEnd === 3 && (M.aiTested || "") === "深度求索";
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 分类=" + navs + " 页=" + pane.group +
+          " 块=" + (box ? 1 : 0) + " 通用行=" + (generic ? 1 : 0) + " 组=" + opts0 +
+          " 选中=" + picked0 + " 字段=" + fieldsN + "/" + inputsN + "/" + swsN +
+          " 打码=" + keyPh0 + " 空=" + (keyVal0 === "" ? 1 : 0) +
+          " 露=" + keyType1 + " 明文=" + (keyVal1 ? keyVal1.slice(0, 4) + "…" : "（空）") +
+          " 测=" + stOk + " [" + stTxt.slice(0, 28) + "] 亮=" + saveOn +
+          " 存=" + savedUrl + " 灰=" + saveOff + " 新组=" + optsNew + "/" + pickedNew +
+          " 可切=" + useOn + " 当前=" + activeMock + "/" + actLabel + " 删后=" + optsEnd;
+        document.title = ok ? "READY" : ("SETTINGS-AI-FAIL " +
+          document.querySelector("#meta").textContent);
       }
       // 三个分类各留一张图（`V-66`：一次只看一组，得分别看一眼长什么样）
       if (h === "settings-exec" || h === "settings-format" || h === "settings-adv"){
