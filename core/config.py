@@ -252,14 +252,12 @@ SETTINGS_GROUPS = [
     #   不是「一个键一行」。这两个键留着是为了让「面板清单和 DEFAULT_CONFIG 对得上」
     #   那条自检能过；真正在面板上渲染的是 `js/settings.js` 里那块 `.set-ai`。
     {"name": "AI", "icon": "cpu",
-     "blurb": "AI 就四样：一组一个名字 + 接口地址 + 密钥 + 模型（可以多个）。"
-              "明文存在 user_data/config.toml；跑包时把当前那组注入成 MOSS_AI_* 环境变量",
+     "blurb": "配置 AI 服务的地址和密钥（可以多组）",
      "items": [
          {"key": "ai.active", "label": "当前组", "type": "text",
-          "hint": "现在用哪一组 —— 面板上那颗「设为当前」改的就是它。"},
+          "hint": "跑包时用哪一组。"},
          {"key": "ai.profiles", "label": "各组", "type": "text",
-          "hint": "每一组的内容（接口地址 / 密钥 / 模型）由面板上那一块直接管；"
-                  "命令行同样可以：moss --ai-profile-set <组名> base_url=… model=a,b api_key=…"},
+          "hint": "每组：接口地址 / 密钥 / 模型；在面板上点「新建」或某行的「编辑」改。"},
      ]},
 ]
 

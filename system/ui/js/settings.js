@@ -42,22 +42,22 @@ const MossSettings = {
           <h3 class="set-ptitle">{{ g.name }}</h3>
           <p class="set-pdesc" v-if="g.blurb">{{ g.blurb }}</p>
 
-          <!-- ★ AI 那一组（V-139 / V-140）：**两张脸** ——
-               ① 列表态（默认）：一组一行（名字 / 地址 / 模型 / key 填没填）+ 编辑 / 设为当前 / 删除；
-                  一组都没有时就一句「还没配过 AI」+ 一颗「新建一组」（不是一上来就摊开一堆输入框）。
-               ② 编辑态：点「新建一组」或某一行「编辑」才进来 —— 常用预制 + 四个字段 + 保存 / 测试连接。 -->
+          <!-- ★ AI 那一组（V-139 / V-140 / V-141）：**两张脸**，字尽量少 ——
+               ① 列表态（默认）：一组一行（名字 / 地址 / 模型，缺什么就挂一颗**高亮**的小标签），
+                  一组都没有时就一句「还没有配置」+ 一颗「新建」。
+               ② 编辑态：点「新建」或某行「编辑」才进来 —— 常用预制 + 四个字段 + 保存 / 测试连接 / 返回。
+               说明都收进字段右边的 ⓘ（悬停才看），不摊在界面上。 -->
           <div class="set-ai" v-if="isAi(g)">
             <template v-if="ai.mode === 'list'">
-              <p class="ai-empty" id="ai-empty" v-if="!ai.profiles.length">
-                还没有配过 AI。点下面的「新建一组」，挑一家常见服务（DeepSeek / Gemini / OpenAI …）
-                或者选「自定义」，把 key 粘进去就能用了。
-              </p>
+              <p class="ai-empty" id="ai-empty" v-if="!ai.profiles.length">还没有配置</p>
               <div class="ai-list" id="ai-list" v-else>
                 <div v-for="n in ai.profiles" :key="n" class="ai-row" :data-group="n"
                      :class="{on: n === ai.active}">
                   <span class="ai-dot"></span>
                   <span class="ai-name">{{ n }}</span>
                   <span class="ai-sub">{{ aiSummary(n) }}</span>
+                  <span class="ai-warn" v-for="w in aiWarns(n)" :key="w"
+                        :data-warn="w">{{ w }}</span>
                   <span class="ai-tag" v-if="n === ai.active">当前</span>
                   <button class="btn-quiet sm" type="button" :data-use="n" v-else
                           @click="aiUse(n)">设为当前</button>
@@ -68,19 +68,15 @@ const MossSettings = {
                 </div>
               </div>
               <div class="ai-bar">
-                <button class="btn primary" id="ai-new" type="button" @click="aiCreate()">新建一组</button>
-                <span class="ai-tip">
-                  参数明文存在 <code>user_data/config.toml</code>；跑包时按当前这一组注入
-                  <code>MOSS_AI_*</code>（地址 / 钥匙 / 模型清单）。
-                </span>
+                <button class="btn primary" id="ai-new" type="button" @click="aiCreate()">新建</button>
               </div>
             </template>
 
             <template v-else>
               <div class="ai-bar">
-                <span class="ai-ttl" id="ai-ttl">{{ ai.creating ? "新建一组"
+                <span class="ai-ttl" id="ai-ttl">{{ ai.creating ? "新建"
                   : ("编辑「" + ai.name + "」") }}</span>
-                <button class="btn-quiet sm" id="ai-back" type="button" @click="aiBack()">返回列表</button>
+                <button class="btn-quiet sm" id="ai-back" type="button" @click="aiBack()">返回</button>
               </div>
 
               <div class="ai-pre" v-if="ai.creating">
@@ -105,7 +101,7 @@ const MossSettings = {
                     <button class="btn-quiet sm" id="ai-eye" type="button" @click="aiEye()"
                             :disabled="ai.creating"
                             :title="ai.creating ? '还没保存，直接填就行'
-                                                : (ai.revealed ? '点一下藏起来' : '点一下看明文（要向宿主读一次）')">
+                                                : (ai.revealed ? '藏起来' : '看明文')">
                       {{ ai.revealed ? "藏起来" : "露出来" }}
                     </button>
                   </div>
@@ -121,16 +117,14 @@ const MossSettings = {
               <div class="ai-bar ai-acts">
                 <button class="btn primary" id="ai-save" type="button"
                         :disabled="!aiDirty() || ai.busy" @click="aiSave()">
-                  {{ ai.busy ? "正在存…" : "保存这一组" }}
+                  {{ ai.busy ? "保存中…" : "保存" }}
                 </button>
                 <button class="btn-quiet" id="ai-test" type="button"
                         :disabled="ai.busy || ai.creating || aiDirty() || !ai.name"
-                        :title="ai.creating ? '先把这一组存下来才能测'
-                                            : '真发一个最小请求，看流式能不能回来'"
+                        :title="ai.creating ? '先保存' : (aiDirty() ? '先保存改过的' : '发一个最小请求试试')"
                         @click="aiTest()">测试连接</button>
                 <span class="ai-state" id="ai-state" :class="ai.statusOk ? 'ok' : 'bad'"
                       v-if="ai.status">{{ ai.status }}</span>
-                <span class="ai-tip" v-else>改完点左边「保存这一组」；存下来之后才测得动连接。</span>
               </div>
             </template>
           </div>
@@ -191,9 +185,7 @@ const MossSettings = {
 
     <div class="set-foot">
       <span class="set-state" id="set-state" :class="footClass">{{ aiPane
-        ? (ai.mode === "list"
-           ? "AI 那一组就在左边那个列表里管（新建 / 编辑 / 设为当前 / 删除）—— 这一页不动 config.toml 的其它段"
-           : "改完点「保存这一组」；这一页不动 config.toml 的其它段")
+        ? (ai.mode === "list" ? "AI 参数在左边列表里管" : "改完点「保存」")
         : footText }}</span>
       <button class="btn-quiet" id="set-cancel" @click="close">取消</button>
       <!-- ★ AI 那一页**不摆**全局那颗「保存」（V-138）：AI 的参数走上面那条自己的保存，
@@ -295,16 +287,14 @@ const MossSettings = {
     //   `v-for` —— 函数没有可枚举属性，那一块一个字段都不渲染（第一版这么写的，踩过）。
     aiFields(){
       return [
-        {k: "name", label: "名字", ph: "比如 DeepSeek（随便起）",
-         hint: "这一组叫什么，只给自己看。改了名字 = 换一组（保存时会把旧的删掉）。"},
+        {k: "name", label: "名字", ph: "DeepSeek",
+         hint: "只给自己看。"},
         {k: "base_url", label: "接口地址", ph: "https://api.deepseek.com/v1",
-         hint: "OpenAI 兼容的地址，填到 /v1 为止 —— 后面那截 /chat/completions 由 moss 拼。"},
+         hint: "OpenAI 兼容，填到 /v1 为止。"},
         {k: "api_key", label: "密钥", type: "key",
-         hint: "明文存在 user_data/config.toml。留空 = 不改原来那串。"},
-        {k: "model", label: "模型（一行一个）", type: "lines",
-         ph: "deepseek-chat\ndeepseek-reasoner",
-         hint: "这个服务里你打算用的模型名，一行一个（第一个当默认）。跑包时注入 " +
-               "MOSS_AI_MODEL（第一个）和 MOSS_AI_MODELS（全部）—— 具体用哪个由代码当场挑。"},
+         hint: "明文存在 user_data/config.toml；留空 = 不修改。"},
+        {k: "model", label: "模型", type: "lines", ph: "deepseek-chat\ndeepseek-reasoner",
+         hint: "一行一个，第一个当默认；跑包时注入 MOSS_AI_MODEL / MOSS_AI_MODELS。"},
       ];
     },
     // 现在这一页是不是 AI 那一组（是的话底部那颗全局「保存」就不摆 —— 见模板里的注释）
@@ -336,25 +326,34 @@ const MossSettings = {
         .map(s => s.trim()).filter(Boolean);
     },
     aiKeyPh(){
-      if (this.ai.revealed) return "明文已经读出来了，不动它就不会改";
-      const m = this.ai.params.api_key;
-      return m ? (m + "（留空不改）") : "把 key 粘到这里";
+      if (this.ai.revealed) return "";
+      // ★ 新建的时候**没有"已保存的密钥"这回事**（`ai.params` 还留着上一组读出来的东西）
+      if (this.ai.creating) return "sk-…";
+      return this.ai.params.api_key ? "已保存，留空不改" : "sk-…";
     },
     aiSet(k, v){
       this.ai.draft[k] = v;
       this.ai.status = "";            // 改了参数，上次那个测试结果就不算数了
     },
     aiDirty(){ return Object.keys(this.ai.draft).length > 0; },
-    // 列表里那一行的小字：地址 · 模型… · key 填没填（一眼看出哪组还没配好）
+    // 列表里那一行的小字：地址 · 第一个模型（+N）—— 就这些，别的交给高亮标签
     aiSummary(n){
       const s = (this.ai.summary || {})[n] || {};
+      const url = String(s.base_url || "").replace(/^https?:\/\//, "");
+      const ms = s.model || [];
       const bits = [];
-      bits.push(s.base_url ? String(s.base_url).replace(/^https?:\/\//, "") : "还没填地址");
-      const ms = (s.model || []);
-      bits.push(ms.length ? (ms.length === 1 ? ms[0] : (ms[0] + " 等 " + ms.length + " 个"))
-                          : "还没填模型");
-      bits.push(s.has_key ? "key 已填" : "⚠ key 没填");
+      if (url) bits.push(url);
+      if (ms.length) bits.push(ms.length > 1 ? (ms[0] + " +" + (ms.length - 1)) : ms[0]);
       return bits.join(" · ");
+    },
+    // 缺什么就挂一颗**高亮**的小标签（比在字里写"⚠ key 没填"清楚，也更短）
+    aiWarns(n){
+      const s = (this.ai.summary || {})[n] || {};
+      const out = [];
+      if (!String(s.base_url || "")) out.push("缺地址");
+      if (!(s.model || []).length) out.push("缺模型");
+      if (!s.has_key) out.push("缺密钥");
+      return out;
     },
     aiNewName(base){
       // 名字撞了就在后面加 -2 / -3…（点预制参数时用）
@@ -364,7 +363,7 @@ const MossSettings = {
     },
     async aiLoad(name){
       const r = await pywebview.api.ai_config(name || "", false);
-      if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "读 AI 参数失败"), true); return false; }
+      if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "读不到"), true); return false; }
       this.ai.loaded = true;
       this.ai.active = r.active || "";
       this.ai.profiles = r.profiles || [];
@@ -414,7 +413,7 @@ const MossSettings = {
         this.ai.status = "";
         this.aiLoad("");
       };
-      if (this.aiDirty()) askConfirm("刚改的还没保存", "返回列表会把刚改的丢掉。", go);
+      if (this.aiDirty()) askConfirm("改动还没保存", "返回就会丢掉。", go);
       else go();
     },
     // 编辑态里点「常用」那一家：把名字 / 地址 / 模型填进表单，只等你粘 key（**不写盘**）
@@ -445,7 +444,7 @@ const MossSettings = {
     },
     async aiSave(){
       const name = this.aiNameNow();
-      if (!name){ toast("先给这一组起个名字", true); return; }
+      if (!name){ toast("先起个名字", true); return; }
       let old = this.ai.name;
       const d = this.ai.draft;
       // 新建（点了预制参数 / 自定义）⇒ 全新一组；否则才可能是在给**当前这组改名**
@@ -475,14 +474,13 @@ const MossSettings = {
       this.ai.busy = false;
       if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "没存上"), true); return; }
       await this.aiLoad(name);
-      toast("已保存「" + name + "」—— 点「测试连接」试试");
+      toast("已保存「" + name + "」");
     },
     // ---- 列表里那三颗（都带组名：列表一屏好几行，不能只认"当前那组"）----
     aiDel(name){
       name = name || this.ai.name;
       if (!name) return;
-      askConfirm("删除这一组？",
-                 "「" + name + "」会从 config.toml 里删掉（只是配置，别的东西不动）。",
+      askConfirm("删除这一组？", "只删配置，不影响别的东西。",
                  async () => {
         const r = await pywebview.api.ai_delete(name);
         if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "没删掉"), true); return; }
@@ -498,7 +496,7 @@ const MossSettings = {
       const r = await pywebview.api.ai_set_active(name);
       if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "没切成"), true); return; }
       this.ai.active = name;
-      toast("当前那组 = " + name + "（下次跑包注入的就是它）");
+      toast("当前：" + name);
     },
     async aiEye(){
       if (this.ai.revealed){ this.ai.revealed = false; this.ai.draft = {}; return; }
@@ -512,7 +510,7 @@ const MossSettings = {
     async aiTest(){
       const name = this.ai.name;
       if (!name) return;
-      if (this.aiDirty()){ toast("先把改的存了再测 —— 测的是存下来的那一组", true); return; }
+      if (this.aiDirty()){ toast("先保存再测", true); return; }
       this.ai.busy = true;
       this.ai.status = "正在连…"; this.ai.statusOk = false;
       const r = await pywebview.api.ai_test(name);

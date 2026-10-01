@@ -163,9 +163,9 @@
 .ai-bar .btn-quiet:disabled{opacity:.42;cursor:default}
 .ai-none{margin:0;padding:10px 12px;border-radius:10px;background:var(--tile);
   font-size:12.5px;color:var(--dim)}
-/* 列表态（V-140）：没配过就是一句提示 + 一颗「新建一组」；配过了就是一组一行 */
-.ai-empty{margin:0;padding:14px 14px;border-radius:12px;background:var(--tile);
-  font-size:13px;line-height:1.8;color:var(--fg2)}
+/* 列表态（V-140 / V-141）：没配过就一句「还没有配置」+ 一颗「新建」；配过了就是一组一行。
+   ★ 缺什么用**高亮小标签**说（`缺密钥` 那种），不要写在正文里 —— 短、而且一眼看得见。 */
+.ai-empty{margin:0;padding:0 0 12px;font-size:13.5px;color:var(--dim)}
 .ai-list{display:flex;flex-direction:column;gap:6px}
 .ai-row{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:11px;
   background:var(--tile);transition:background .13s ease-out}
@@ -177,6 +177,9 @@
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ai-sub{font-size:12px;color:var(--dim);flex:1;min-width:0;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
+/* ★ 高亮的小标签：缺东西（`缺密钥` 等）和「当前」都用它这一族 */
+.ai-warn{font-size:11.5px;flex:none;color:#a86400;
+  background:rgba(255,159,10,.16);padding:2px 8px;border-radius:999px}
 .ai-tag{font-size:11.5px;color:var(--accent);flex:none;
   background:color-mix(in srgb, var(--accent) 12%, transparent);
   padding:2px 8px;border-radius:999px}
