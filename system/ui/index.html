@@ -89,6 +89,8 @@
     <button class="set-x" id="m-x" title="关闭（Esc）" aria-label="关闭"></button></div>
   <p id="m-text"></p>
   <input id="m-input" autocomplete="off" spellcheck="false">
+  <!-- 多行输入（`V-113`）：过滤规则那种"每行一条"的东西，单行 input 写不了 -->
+  <textarea id="m-textarea" rows="8" spellcheck="false" hidden></textarea>
   <div class="btns">
     <button id="m-cancel">取消</button>
     <!-- 第二个动词（`V-92`）：像 git 那样"写回"和"强制对齐"分成两个动作。

@@ -1,17 +1,20 @@
 /* moss 界面 · modal.js —— 从 index.html 拆出来的（`V-67`），内容与拆分前一致。 */
 /* ---------------------------------------------------------------- 模态 / 提示 */
 let modalCb = null, modalCb2 = null;
-function askText(title, value, cb){
+/* `opts.multiline` = 用多行框（过滤规则那种每行一条的）。`V-113`：单行 input 根本写不了多行。 */
+function askText(title, value, cb, opts){
   $("#m-title").textContent = title;
   $("#m-text").textContent = "";
-  const inp = $("#m-input");
-  inp.hidden = false; inp.value = value || "";
+  const inp = $("#m-input"), ta = $("#m-textarea");
+  const multi = !!(opts && opts.multiline);
+  inp.hidden = multi; ta.hidden = !multi;
+  (multi ? ta : inp).value = value || "";
   const ok = $("#m-ok");
   ok.textContent = "确定"; ok.className = "primary"; ok.title = "";
   $("#m-ok2").hidden = true;
   $("#modal").classList.add("on");
-  setTimeout(() => { inp.focus(); inp.select(); }, 30);
-  modalCb = () => cb(inp.value.trim());
+  setTimeout(() => { (multi ? ta : inp).focus(); (multi ? ta : inp).select(); }, 30);
+  modalCb = () => cb((multi ? ta.value : inp.value).replace(/\r\n/g, "\n"));
   modalCb2 = null;
 }
 function askConfirm(title, text, cb){
@@ -26,7 +29,12 @@ function askConfirm2(title, text, a, b){
   // 用 innerHTML：确认框里要换行（`<br>`）。文案是自己拼的（包 id / 目录），
   // 而 Windows 路径里不可能有 `<`，所以这里没有注入面。
   $("#m-text").innerHTML = String(text || "").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  // ★ `V-119`：确认框要**把两个输入框都藏起来** —— 以前只藏了单行 `#m-input`，
+  //   于是开过一次"过滤规则"那个多行框之后，**后来每个确认框（删文件…）都会把那个多行框
+  //   连着显示出来**（里面还留着上次的规则）。两种编辑框不是一类东西，不能只藏一半。
   $("#m-input").hidden = true;
+  const _ta = $("#m-textarea");
+  if (_ta){ _ta.hidden = true; }
   const ok = $("#m-ok"), alt = $("#m-ok2");
   ok.textContent = (a && a.label) || "确定";
   ok.className = (b ? "primary" : (a && a.danger ? "danger" : "primary"));
@@ -46,6 +54,10 @@ function askConfirm2(title, text, a, b){
 }
 function closeModal(){
   $("#modal").classList.remove("on");
+  // 关掉时两个都藏好，下一次打开从干净状态开始（`V-119`）
+  const i = $("#m-input"), t = $("#m-textarea");
+  if (i) i.hidden = true;
+  if (t){ t.hidden = true; t.value = ""; }
   modalCb = null; modalCb2 = null;
 }
 /* ---------------------------------------------------------------- 状态栏（`V-61` ✅）

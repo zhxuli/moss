@@ -68,7 +68,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "btn-detail", "err-path", "args-clear", "backup", "backup-restore", "backup-sync", "backup-export", "backup-groups",
           "drop-hot", "drop-dir", "drop-file", "console-input", "embed", "pane-resize",
-          "flat-buttons", "backup-diff", "refresh-keep-ctx", "compare",
+          "flat-buttons", "backup-diff", "refresh-keep-ctx", "compare", "hist-snap", "modal-kinds", "snap-modal",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
           "hist", "hist-console", "hist-file",
@@ -747,6 +747,12 @@ MOCK_JS = r"""
               msg: "(预览) 恢复 " + restored.length + " 个、跳过 " + skipped.length +
                    " 个、挪走 " + trashed.length + " 个"};
     },
+    backup_presets: async (rels) => ({ok: true, presets: [
+      {id: "media", label: "视频 / 音频", pat: ["*.mp4", "*.mov"], hit: 2, why: "又大又不常改", sample: ["a.mp4", "b.mov"]},
+      {id: "logs", label: "日志", pat: ["*.log"], hit: 1, why: "跑起来才产生", sample: ["run.log"]},
+      {id: "venv", label: "虚拟环境", pat: ["venv"], hit: 0, why: "能重建", sample: []}],
+      group: "md5"}),
+    backup_group_ignore: async (g) => ({ok: true, group: g, path: "(预览)", rules: []}),
     backup_group_hint: async (rels) => ({ok: true, group: bkGroupOf(rels || [])}),
     backup_group_info: async (group) => {
       const mine = (M.bk || []).filter(b => (b.group || "@misc") === String(group || ""));
@@ -900,7 +906,7 @@ MOCK_JS = r"""
           cmdRenamePkg(p0);                         // 改名：弹模态，替用户填好再点确定
           await sleep(150);
           const inp = document.querySelector("#m-input");
-          if (inp){ inp.value = want; document.querySelector("#m-ok").click(); }
+          if (inp){ inp.value = want; (document.querySelector("#m-ok") || {click(){}}).click(); }
         }
         await sleep(1200);
         setTab("file");
@@ -985,7 +991,7 @@ MOCK_JS = r"""
         const asked = !!(modal && modal.classList.contains("on"));
         const box = document.querySelector("#m-text");
         const askText = box ? String(box.textContent || "") : "";
-        if (asked) document.querySelector("#m-ok").click();   // 点"确定" = 统一
+        if (asked) (document.querySelector("#m-ok") || {click(){}}).click();   // 点"确定" = 统一
         await sleep(1600);
         const np = state.packages.find(x => x.id === "zzz9");
         const newDir = baseOf(np || {});
@@ -1108,16 +1114,125 @@ MOCK_JS = r"""
       }
       // ★ 底部状态栏（`V-61`）：真跑一个包（走 clickRun 那条路），看最下面那行字
       //   有没有跟着变 —— 它靠的是 `toast()` 里那一句 `setStatus`，不是场景自己写的。
+      // ★ 历史上下文里的快照分组（`V-112`）：该是 @dir-xxx / @abs-xxx，不是 @user
+      if (h === "hist-snap"){
+        setSide("hist");
+        await sleep(500);
+        const it = (HIST || []).find(x => x.cwd || x.target) || (HIST || [])[0];
+        if (!it){ document.title = "HIST-NONE"; return; }
+        select(null, it);
+        await sleep(400);
+        setTab("file");
+        await sleep(600);
+        const title = (document.querySelector(".bk-snap .bk-snap-title") || {}).title || "";
+        const g = bkGroupForCtx();
+        const okGroup = /^@(dir|abs)-/.test(g) || g === "@user" || g === "@misc";
+        const notUser = g !== "@user" || /^user$/.test(bkScopeRels()[0] || "");
+        document.querySelector("#meta").textContent =
+          "DIAG " + (okGroup && notUser ? "OK" : "FAIL") + " 分组=" + JSON.stringify(g) +
+          " 来源=" + JSON.stringify(bkScopeRels()) + " 悬浮提示=" + JSON.stringify(title.slice(0, 120));
+        document.title = (okGroup && notUser) ? "READY" : "HISTGROUP-FAIL";
+        return;
+      }
+      // ★ 创建快照的模态框 + 文件列表收起/展开（`V-122`）
+      if (h === "snap-modal"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id); setTab("file"); await sleep(600);
+        // V-126：预设现在是前端拿当前这一层算的 ⇒ 先在这一层造两个能命中的东西
+        const rel0 = (FM.ctx && pkgRel(DATA.packages.find(x => x.id === FM.ctx))) || "system/pkgs/md5";
+        FS[rel0].entries.push({name: "run.log", rel: rel0 + "/run.log", dir: false, size: 12, mtime: 0, ext: "log"});
+        FS[rel0].entries.push({name: "venv", rel: rel0 + "/venv", dir: true, size: 0, mtime: 0, ext: ""});
+        fmRefresh();
+        await sleep(1200);
+        (document.querySelector(".bk-snap .b-bknew") || {click(){}}).click();
+        await sleep(800);
+        const win = document.querySelector("#snapwin");
+        const chips0 = document.querySelectorAll("#snapwin .snap-chip").length;   // 默认**只该有命中的**
+        const hot = document.querySelectorAll("#snapwin .snap-chip.hot").length;
+        const more = document.querySelector("#snapwin #snap-more");
+        if (more) more.click();                      // 点「更多」把没匹配到的展开
+        await sleep(150);
+        const chips = document.querySelectorAll("#snapwin .snap-chip").length;
+        const keep = !document.querySelector("#snapwin #snap-keep");   // V-129：勾选已删，这里该是"不存在"
+        // V-127：两颗按钮要在、且真的管用
+        const fillBtn = document.querySelector("#snapwin #snap-fill");
+        const clrBtn = document.querySelector("#snapwin #snap-clear");
+        if (fillBtn) fillBtn.click();
+        await sleep(150);
+        const filledVal = ((document.querySelector("#snapwin #snap-rules") || {}).value || "");
+        const filled = filledVal.length > 0;
+        // V-128：只该写"检测到的" —— 场景里放了 run.log + venv/ ⇒ 只该有 *.log 和 venv
+        // 按行精确比（别用 indexOf：`venv` 里就含着 `env` 三个字母，第一版断言就是这么写错的）
+        const filledLines = filledVal.split("\n").map(x => x.trim()).filter(Boolean).sort().join(",");
+        const noRedundant = filledLines === "*.log,venv";
+        if (clrBtn) clrBtn.click();
+        await sleep(150);
+        const cleared = ((document.querySelector("#snapwin #snap-rules") || {}).value || "") === "";
+        const rules0 = (document.querySelector("#snapwin #snap-rules") || {}).value || "";
+        const c0 = document.querySelector("#snapwin .snap-chip");
+        if (c0) c0.click();
+        await sleep(150);
+        const rules1 = (document.querySelector("#snapwin #snap-rules") || {}).value || "";
+        (document.querySelector("#snapwin #snap-cancel") || {click(){}}).click();
+        await sleep(200);
+        const closed = !document.querySelector("#snapwin");
+        // 折叠：先存一条，再收起、展开
+        (document.querySelector(".bk-snap .b-bknew") || {click(){}}).click();
+        await sleep(700);
+        (document.querySelector("#snapwin #snap-save") || {click(){}}).click();
+        await sleep(1500);
+        const rows1 = document.querySelectorAll(".bk-snap .bk-file").length;
+        (document.querySelector(".bk-snap .b-bkfoldfiles") || {click(){}}).click();
+        await sleep(300);
+        const rows2 = document.querySelectorAll(".bk-snap .bk-file").length;
+        const foldedHint = !!document.querySelector(".bk-snap .bk-folded");
+        (document.querySelector(".bk-snap .b-bkfoldfiles") || {click(){}}).click();
+        await sleep(300);
+        const rows3 = document.querySelectorAll(".bk-snap .bk-file").length;
+        const ok = !!win && chips0 === hot && hot >= 2 && chips > chips0 && keep &&
+                   !!fillBtn && !!clrBtn && filled && noRedundant && cleared &&
+                   rules0 === "" && rules1.length > 0 && closed &&
+                   rows1 > 0 && rows2 === 0 && foldedHint && rows3 === rows1;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 窗口=" + !!win + " 预设=" + chips + " 命中项=" + hot +
+          " 记住勾=" + keep + " 点选后规则=" + JSON.stringify(rules1.slice(0, 24)) +
+          " 关掉=" + closed + " 行数=" + [rows1, rows2, rows3].join("/") + " 收起提示=" + foldedHint;
+        document.title = ok ? "READY" : "SNAPMODAL-FAIL";
+        snapClose();
+        return;
+      }
+      // ★ 两种编辑框不能串（`V-119`）：开过"多行"（过滤规则）之后，普通确认框不该把它带出来
+      if (h === "modal-kinds"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id); setTab("file"); await sleep(400);
+        askText("过滤规则（多行）", "*.log\nbuild/", function(){}, {multiline: true});
+        await sleep(250);
+        const ta1 = document.querySelector("#m-textarea");
+        const shownMulti = !!ta1 && ta1.hidden === false && ta1.value.indexOf("*.log") >= 0;
+        closeModal();
+        await sleep(200);
+        askConfirm("删除", "确定吗？", function(){});
+        await sleep(250);
+        const ta2 = document.querySelector("#m-textarea");
+        const in2 = document.querySelector("#m-input");
+        const confirmClean = !!ta2 && ta2.hidden === true && !!in2 && in2.hidden === true;
+        closeModal();
+        document.querySelector("#meta").textContent =
+          "DIAG " + (shownMulti && confirmClean ? "OK" : "FAIL") +
+          " 多行框出现=" + shownMulti + " 确认框里多行框藏好=" + confirmClean;
+        document.title = (shownMulti && confirmClean) ? "READY" : "MODAL-FAIL";
+        return;
+      }
       // ★ 文件对比窗口（`V-109`）：文件列表 hover 出对比图标 → 点了弹两栏对比。
       if (h === "compare"){
         const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
         select(p0.id);
         setTab("file");
         await sleep(600);
-        document.querySelector(".bk-snap .b-bknew").click();
-        await sleep(250);
-        bkSet(".bk-snap .bk-title", "对比用");
-        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        (document.querySelector(".bk-snap .b-bknew") || {click(){}}).click();
+        await sleep(900);
+        bkSet("#snapwin #snap-title", "对比用");
+        (document.querySelector("#snapwin #snap-save") || {click(){}}).click();
         await sleep(1300);
         const rel = (FM.ctx && pkgRel(DATA.packages.find(x => x.id === FM.ctx))) || "system/pkgs/md5";
         const d = BKD.diff && BKD.diff.byRel ? BKD.diff.byRel : {};
@@ -1148,7 +1263,7 @@ MOCK_JS = r"""
         await sleep(600);
         const before = FM.ctx + "|" + ((FM.st[FM.ctx] || {}).rel || "");
         const path0 = ((document.querySelector("#fm-body .crumbs") || {}).textContent || "").trim();
-        document.querySelector("#btn-refresh").click();
+        (document.querySelector("#btn-refresh") || {click(){}}).click();
         await sleep(1600);
         const after = FM.ctx + "|" + ((FM.st[FM.ctx] || {}).rel || "");
         const path1 = ((document.querySelector("#fm-body .crumbs") || {}).textContent || "").trim();
@@ -1172,10 +1287,10 @@ MOCK_JS = r"""
         if (!big){ document.title = "DIFF-NO-FILE"; return; }
         es.push({name: "空的.txt", rel: rel + "/空的.txt", dir: false, size: 0, mtime: 0, ext: "txt"});
         // ① 存快照（此时：big 和"空的.txt"都在快照里）
-        document.querySelector(".bk-snap .b-bknew").click();
-        await sleep(250);
-        bkSet(".bk-snap .bk-title", "差异用");
-        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        (document.querySelector(".bk-snap .b-bknew") || {click(){}}).click();
+        await sleep(900);
+        bkSet("#snapwin #snap-title", "差异用");
+        (document.querySelector("#snapwin #snap-save") || {click(){}}).click();
         await sleep(1200);
         // ② 造四种状态：变大的 / 快照里有现在没了的 / 后加的 / 空的（空的已在快照里）
         big.size = (big.size || 0) + 4096;
@@ -1221,7 +1336,7 @@ MOCK_JS = r"""
         select(p0.id);
         setTab("file");
         await sleep(500);
-        document.querySelector("#btn-settings").click();
+        (document.querySelector("#btn-settings") || {click(){}}).click();
         await sleep(800);
         askConfirm2("量一下", "两个动词的弹框", {label: "只写回", cb: function(){}},
                     {label: "一模一样", cb: function(){}});
@@ -1503,15 +1618,15 @@ MOCK_JS = r"""
         if (!newBtn){ document.title = "SNAP-NO-BTN"; return; }
         // ① 存第一个快照
         newBtn.click();
-        await sleep(250);
-        const formShown = !!document.querySelector(".bk-snap .bk-form");
-        const igShown = (document.querySelector(".bk-snap .bk-ig") || {}).textContent || "";
+        await sleep(900);
+        const formShown = !!document.querySelector("#snapwin");
+        const igShown = (document.querySelector("#snapwin #snap-hint") || {}).textContent || "";
         // ★ 这两样只在**表单开着**的时候存在：一定要在这儿抓，别等场景末尾（那时表单已经关了 —— 
         //   我第一版就写在末尾，结果 pre 永远是 false）。
-        const preShown = !!document.querySelector(".bk-snap .bk-pre");
-        bkSet(".bk-snap .bk-title", "预览快照 A");
-        bkSet(".bk-snap .bk-note", "第一次");
-        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        const preShown = !!document.querySelector("#snapwin .snap-pres");
+        bkSet("#snapwin #snap-title", "预览快照 A");
+        bkSet("#snapwin #snap-note", "第一次");
+        (document.querySelector("#snapwin #snap-save") || {click(){}}).click();
         await sleep(900);
         const nodes1 = document.querySelectorAll(".bk-snap .bk-tl-item").length;   // 含"当前工作区"
         // ★ 时间轴第一条**永远是**「当前工作区」（那张卡没有 `data-bk`），所以标题要挑有 id 的那条
@@ -1520,7 +1635,7 @@ MOCK_JS = r"""
         const tip1 = (document.querySelector(".bk-snap-foot .bk-hint") || {}).title || "";
         // ② 展开它看文件（存完自己就展开了 → 已经开着就别再点，再点一下是"收起"）
         if (!document.querySelector(".bk-snap .bk-tl-item[data-bk] .bk-files")){
-          document.querySelector(".bk-snap .bk-tl-item[data-bk] .bk-card").click();
+          (document.querySelector(".bk-snap .bk-tl-item[data-bk] .bk-card") || {click(){}}).click();
           await sleep(700);
         }
         const fileRows = document.querySelectorAll(".bk-snap .bk-file").length;
@@ -1532,24 +1647,24 @@ MOCK_JS = r"""
         await sleep(600);
         const viewText = (document.querySelector(".bk-snap .bk-view-text") || {}).textContent || "";
         // ④ 再存一个（内容全重复 ⇒ 内容块数不该变）
-        document.querySelector(".bk-snap .b-bknew").click();
-        await sleep(200);
-        bkSet(".bk-snap .bk-title", "预览快照 B");
-        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        (document.querySelector(".bk-snap .b-bknew") || {click(){}}).click();
+        await sleep(900);
+        bkSet("#snapwin #snap-title", "预览快照 B");
+        (document.querySelector("#snapwin #snap-save") || {click(){}}).click();
         await sleep(1000);
         const nodes2 = document.querySelectorAll(".bk-snap .bk-tl-item").length;
         const tip2 = (document.querySelector(".bk-snap-foot .bk-hint") || {}).title || "";
         // ⑤ 删掉最新那个
-        document.querySelector(".bk-snap .b-bkdel").click();
+        (document.querySelector(".bk-snap .b-bkdel") || {click(){}}).click();
         await sleep(500);
         const confirmShown = !!document.querySelector("#m-ok");
-        document.querySelector("#m-ok").click();
+        (document.querySelector("#m-ok") || {click(){}}).click();
         await sleep(1100);
         const nodes3 = document.querySelectorAll(".bk-snap .bk-tl-item").length;
         const tip3 = (document.querySelector(".bk-snap-foot .bk-hint") || {}).title || "";
         const flags = {
           side: inSide, form: formShown, n1: nodes1 === 2,
-          ig: /snapshot\.ignore/.test(igShown) && /2 条/.test(igShown),
+          ig: /分组/.test(igShown),
           pre: preShown, titleA: /预览快照 A/.test(firstTitle),
           rows: fileRows > 0, view: /这一段内容块/.test(viewText),
           cnt1: /快照：1 次/.test(tip1) && /内容块 4 个/.test(tip1),
@@ -1573,10 +1688,10 @@ MOCK_JS = r"""
         select(p0.id);
         setTab("file");
         await sleep(500);
-        document.querySelector(".bk-snap .b-bknew").click();
-        await sleep(250);
-        bkSet(".bk-snap .bk-title", "恢复用");
-        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        (document.querySelector(".bk-snap .b-bknew") || {click(){}}).click();
+        await sleep(900);
+        bkSet("#snapwin #snap-title", "恢复用");
+        (document.querySelector("#snapwin #snap-save") || {click(){}}).click();
         await sleep(1000);
         const rel = (FM.ctx && pkgRel(DATA.packages.find(x => x.id === FM.ctx))) || "system/pkgs/md5";
         const st = FS[rel];
@@ -1597,7 +1712,7 @@ MOCK_JS = r"""
         const shown = !!document.querySelector("#m-ok");
         const altHidden = !!document.querySelector("#m-ok2") &&
                           document.querySelector("#m-ok2").hidden === true;
-        document.querySelector("#m-ok").click();
+        (document.querySelector("#m-ok") || {click(){}}).click();
         await sleep(1200);
         const backNow = (FS[rel].entries || []).some(e => e.rel === gone.rel);
         const fixed = (FS[rel].entries || []).find(e => e.rel === bad.rel);
@@ -1622,10 +1737,10 @@ MOCK_JS = r"""
         select(p0.id);
         setTab("file");
         await sleep(500);
-        document.querySelector(".bk-snap .b-bknew").click();
-        await sleep(250);
-        bkSet(".bk-snap .bk-title", "同步用");
-        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        (document.querySelector(".bk-snap .b-bknew") || {click(){}}).click();
+        await sleep(900);
+        bkSet("#snapwin #snap-title", "同步用");
+        (document.querySelector("#snapwin #snap-save") || {click(){}}).click();
         await sleep(1000);
         const rel = (FM.ctx && pkgRel(DATA.packages.find(x => x.id === FM.ctx))) || "system/pkgs/md5";
         FS[rel].entries.push({name: "后来加的.txt", rel: rel + "/后来加的.txt", dir: false,
@@ -1659,10 +1774,10 @@ MOCK_JS = r"""
         select(p0.id);
         setTab("file");
         await sleep(500);
-        document.querySelector(".bk-snap .b-bknew").click();
-        await sleep(250);
-        bkSet(".bk-snap .bk-title", "导出用");
-        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        (document.querySelector(".bk-snap .b-bknew") || {click(){}}).click();
+        await sleep(900);
+        bkSet("#snapwin #snap-title", "导出用");
+        (document.querySelector("#snapwin #snap-save") || {click(){}}).click();
         await sleep(1000);
         // ① 拖文件夹到边栏上（真路径由宿主送来，这里直接叫那个钩子）
         BK.dropOver = true;
@@ -1678,12 +1793,12 @@ MOCK_JS = r"""
         const inputShown = !!document.querySelector("#m-input");
         const mi = document.querySelector("#m-input");
         mi.value = "D:\\\\拖进来的目录/2/";
-        document.querySelector("#m-ok").click();
+        (document.querySelector("#m-ok") || {click(){}}).click();
         await sleep(700);
         const modalText = ((document.querySelector(".card p") || {}).textContent || "")
           .replace(/\s+/g, " ");
         const shown = !!document.querySelector("#m-ok");
-        document.querySelector("#m-ok").click();
+        (document.querySelector("#m-ok") || {click(){}}).click();
         await sleep(1200);
         const ex = M.bkExported || {};
         const paths = ex.relPaths || [];
@@ -1706,10 +1821,10 @@ MOCK_JS = r"""
         select(pA.id);
         setTab("file");
         await sleep(500);
-        document.querySelector(".bk-snap .b-bknew").click();
-        await sleep(250);
-        bkSet(".bk-snap .bk-title", "A 的快照");
-        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        (document.querySelector(".bk-snap .b-bknew") || {click(){}}).click();
+        await sleep(900);
+        bkSet("#snapwin #snap-title", "A 的快照");
+        (document.querySelector("#snapwin #snap-save") || {click(){}}).click();
         await sleep(1000);
         const aNodes = document.querySelectorAll(".bk-snap .bk-tl-item").length;
         const aLabel = (document.querySelector(".bk-snap .bk-card.flat .bk-card-sub") || {})
@@ -1722,10 +1837,10 @@ MOCK_JS = r"""
         const bLabel = (document.querySelector(".bk-snap .bk-card.flat .bk-card-sub") || {})
           .textContent || "";
         // B 存一个
-        document.querySelector(".bk-snap .b-bknew").click();
-        await sleep(250);
-        bkSet(".bk-snap .bk-title", "B 的快照");
-        document.querySelector(".bk-snap .bk-form .b-bksave").click();
+        (document.querySelector(".bk-snap .b-bknew") || {click(){}}).click();
+        await sleep(900);
+        bkSet("#snapwin #snap-title", "B 的快照");
+        (document.querySelector("#snapwin #snap-save") || {click(){}}).click();
         await sleep(1000);
         const bNodes2 = document.querySelectorAll(".bk-snap .bk-tl-item").length;
         // 回 A：应该还是 A 那一个
@@ -1736,12 +1851,12 @@ MOCK_JS = r"""
         const aTitle = (document.querySelector(".bk-snap .bk-tl-item[data-bk] .bk-card-top b")
                         || {}).textContent || "";
         // 删掉 A 这一组（foot 那颗垃圾桶）
-        document.querySelector(".bk-snap .b-bkdropgroup").click();
+        (document.querySelector(".bk-snap .b-bkdropgroup") || {click(){}}).click();
         await sleep(700);
         const modal = ((document.querySelector(".card p") || {}).textContent || "")
           .replace(/\s+/g, " ");
         const shown = !!document.querySelector("#m-ok");
-        document.querySelector("#m-ok").click();
+        (document.querySelector("#m-ok") || {click(){}}).click();
         await sleep(1100);
         const aNodes3 = document.querySelectorAll(".bk-snap .bk-tl-item").length;
         // 切到 B：它那一组还在
@@ -1814,7 +1929,7 @@ MOCK_JS = r"""
         await sleep(200);
         const liveOk = !inp.disabled && !btn.disabled;
         inp.value = "3";
-        document.querySelector("#btn-send").click();
+        (document.querySelector("#btn-send") || {click(){}}).click();
         await sleep(400);
         const sent = (M.inputs || [])[0] || {};
         const echoed = (document.querySelector("#out").textContent || "").includes("3");

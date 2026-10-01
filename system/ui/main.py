@@ -1831,7 +1831,7 @@ class Api:
         except Exception as e:                                      # noqa: BLE001
             return {"ok": False, "msg": str(e)}
 
-    def backup_create(self, rels, title="", note="", group=""):
+    def backup_create(self, rels, title="", note="", group="", excludes=None):
         """备份一批 rel（页面给的是 `user/...` / `system/...` / `abs/...`）。
 
         落到哪个**分组**（`user_data/backups/<分组>/`）：不传就按来源猜（包 ⇒ 包 id，
@@ -1847,7 +1847,8 @@ class Api:
                     return {"ok": False, "msg": str(e)}
             if not srcs:
                 return {"ok": False, "msg": "没有要备份的东西"}
-            man = st.create(srcs, title=title, note=note, group=(str(group or "") or None))
+            man = st.create(srcs, title=title, note=note, excludes=excludes,
+                            group=(str(group or "") or None))
             return {"ok": True, "id": man["id"], "group": man.get("group"),
                     "stats": man["stats"], "created_text": man["created_text"],
                     "msg": "备份好了（分组 %s）：%s 个文件、%s" % (
@@ -1867,7 +1868,7 @@ class Api:
         except Exception as e:                                      # noqa: BLE001
             return {"ok": False, "msg": str(e)}
 
-    def backup_ignore_save(self, text):
+    def backup_ignore_save(self, text, group=""):
         """把界面里改过的过滤规则写回 `user_data/snapshot.ignore`（覆盖前先留一份 `.bak`）。
 
         ★ 为什么给界面这条写权限：过滤规则是"用户自己的东西"，让他不必去开记事本。
@@ -1875,7 +1876,10 @@ class Api:
         try:
             import backup as _b
             st = self._backup_store()
-            f = st.ignore_file
+            g = str(group or "")
+            # ★ `V-120`：给了 group 就写**这个对象自己那份**（`backups/<组>/ignore`）——
+            #   你定的粒度：记住只对这个包/目录生效，不碰全局。
+            f = st.group_ignore_file(g) if g else st.ignore_file
             f.parent.mkdir(parents=True, exist_ok=True)
             if f.is_file():
                 try:
@@ -1884,7 +1888,8 @@ class Api:
                 except Exception:                                       # noqa: BLE001
                     pass
             f.write_text(str(text or ""), encoding="utf-8")
-            return {"ok": True, "path": str(f), "count": len(_b.parse_ignore(text))}
+            return {"ok": True, "path": str(f), "group": g,
+                    "count": len(_b.parse_ignore(text))}
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": str(e)}
 
@@ -1924,6 +1929,46 @@ class Api:
                     "n_in": len(inc), "n_out": len(exc),
                     "rules": list(_b.parse_ignore(st._read_ignore())),
                     "builtin": list(_b.DEFAULT_EXCLUDES) + ["/" + p for p in _b.PATH_EXCLUDES]}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_presets(self, rels):
+        """预设过滤规则 + 按目标目录自动匹配的命中数（`V-121`）。只读。"""
+        try:
+            st = self._backup_store()
+            srcs = []
+            for rel in (rels or []):
+                try:
+                    srcs.append(str(_resolve(str(rel))[1]))
+                except Exception:                                       # noqa: BLE001
+                    pass
+            return {"ok": True, "presets": st.presets(srcs)}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def backup_group_ignore(self, group):
+        """**这个对象**自己那份过滤规则（`V-120`）：文件在哪、现在生效哪些。只读。"""
+        try:
+            import backup as _b
+            st = self._backup_store()
+            g = str(group or "")
+            f = st.group_ignore_file(g) if g else None
+            rules = st.group_ignore(g) if g else []
+            # ★ `V-127`：还要告诉界面"**上一次实际用了哪些**" —— 清单里记着 `exclude`。
+            #   把内置/全局/本对象那几层减掉，剩下的就是"上次临时选的那些"。
+            last = []
+            try:
+                ids = st.ids(g) if g else []
+                if ids:
+                    m = st.manifest(ids[0], g)
+                    # 内置 + 全局那份 + 本对象固定 —— 这三层都不算"上次临时选的"
+                    drop = (set(_b.DEFAULT_EXCLUDES) | set(_b.PATH_EXCLUDES) | set(rules)
+                            | set(_b.parse_ignore(st._read_ignore())))
+                    last = [x for x in list(m.get("exclude") or []) if x not in drop]
+            except Exception:                                           # noqa: BLE001
+                last = []
+            return {"ok": True, "group": g, "path": (str(f) if f else ""),
+                    "rules": rules, "last": last}
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": str(e)}
 

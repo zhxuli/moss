@@ -346,7 +346,13 @@ def _pick(b, st, key, group):
             g = _group_of([_rel_of(Path.cwd())], {})
         except Exception:                                           # noqa: BLE001
             g = None
-    if not g:
+    if not g or not st.ids(g):
+        # ★ `V-115`：**不给 `--group` 也能用 `latest`** —— 全库按时间找最新那一条。
+        #   原来只有"当前目录能猜出组"时才认 latest，于是在别处敲 `moss --snap ls latest`
+        #   会说"没找到"（我测的时候自己就踩了一下）。
+        items = st.list_backups(None)
+        if items:
+            return items[0].get("id"), items[0].get("group")
         return None, None
     ids = st.ids(g)
     return (ids[0] if ids else None), g
@@ -782,10 +788,12 @@ def _cmd_revert(pos, opt, flag):
     if not bid:
         out.print_cyan("[错误] 没找到这次快照（moss --snap list 看有哪些）。")
         return EXIT_NOTHING
-    rel = rest[0] if rest else ""
+    # ★ `V-117`：这里以前直接 `rel = rest[0]` —— 那是**文件系统路径**（`D:\python\…`），
+    #   不是 rel，于是 `revert 标签 D:\…` 会报"不认识的根 'D:'"。得转一道。
+    rel = _rel_of(Path(rest[0])) if rest else ""
     if not rel:
         cand = _rel_of(Path.cwd())
-        rel = cand if cand.startswith(("user/", "system/")) else ""
+        rel = cand if cand.startswith(("user/", "system/", "abs/")) else ""
     if not rel:
         rel = ((st.manifest(bid, g).get("sources") or [""])[0])
     d = _diff(b, st, bid, g, rel)
@@ -863,9 +871,60 @@ def _cmd_grep(pos, opt, flag):
                    % (scanned, len(hits), ("（另有 %d 个二进制/读不了，跳过）" % skipped) if skipped else ""))
     return EXIT_OK if hits else EXIT_NOTHING
 
+
+def _cmd_group(pos, opt, flag):
+    """`moss --snap group <路径|插件名>` —— **只算不算存**：这个东西会落到哪个分组。
+
+    为什么要有：目录（尤其**外部目录**、**中文名目录**）算出来的组名不是肉眼能猜的
+    （`D:\\python\\game\\pygame图片处理测试` → `@abs-<8位哈希>`）。AI 想"先问清楚再动手"，
+    人和脚本也不想为了看一眼组名就先存一次快照。"""
+    if not pos:
+        out.print_cyan("[错误] 用法：moss --snap group <路径|插件名>")
+        return EXIT_USE
+    b = _store()
+    tail = pos[-1]
+    g0, srcs = _subject(tail, None)
+    rels = [_rel_of(Path(s)) for s in srcs] if srcs else []
+    g = g0 or b.group_for_sources([r for r in rels if r])
+    if "--json" in flag:
+        print(_j({"ok": True, "arg": tail, "group": g, "sources": rels}))
+    else:
+        print("对象：%s" % tail)
+        print("  来源：%s" % " / ".join(rels) if rels else "  （认不出来）")
+        print("  分组：%s" % g)
+        print("  （分组 = 盘上 `user_data/backups/<这个>/`；存/看/回退都用它）")
+    return EXIT_OK
+
+
+def _cmd_presets(pos, opt, flag):
+    """`moss --snap presets <对象>` —— 看预设过滤规则在这个目录里各命中多少（只读，界面用的同一套）。"""
+    if not pos:
+        out.print_cyan("[错误] 用法：moss --snap presets <路径|插件名>")
+        return EXIT_USE
+    b = _store()
+    tail = pos[-1]
+    g0, srcs = _subject(tail, None)
+    if not srcs:
+        out.print_cyan("[错误] 认不出这个对象。")
+        return EXIT_USE
+    st = b.BackupStore(paths.USER_DIR / "backups", _rel_of, _resolve, trash=_trash)
+    rows = st.presets(srcs)
+    if "--json" in flag:
+        print(_j({"ok": True, "sources": [_rel_of(Path(x)) for x in srcs], "presets": rows}))
+        return EXIT_OK
+    print("对象：%s" % tail)
+    for r in rows:
+        if r["hit"]:
+            print("  %4d  %-16s %s" % (r["hit"], r["label"], r["pat"]))
+    hot = [r for r in rows if r["hit"]]
+    print("  命中 %d 条（界面默认就显示这些，点一下就把规则写进框里）；其它 %d 条折在「更多」后面"
+          % (len(hot), len(rows) - len(hot)))
+    return EXIT_OK
+
 USAGE_SNAP = """moss --snap …                版本快照（备份/恢复）—— 给人和 AI 用的一条通道
 
-  moss --snap <子命令> [对象] …          对象 = **插件名**（`:md5` / `md5`）或一个路径
+  moss --snap <子命令> [对象] …          对象 = **插件名**（`:md5` / `md5`）或一个路径\n                                         路径也可以是**外部目录**（D:\\proj\\x）；\n                                         它落在 `@abs-<8位>` 那个组里（中文名一律这样，免得撞名）\n  moss --snap group <路径|插件名>        **只算不算存**：这个对象会落到哪个分组
+  moss --snap presets <路径|插件名>      看预设过滤规则在这个目录里各命中多少（界面用的是同一套）
   moss --snap list [对象] [--group <包id>]  列出快照（不给对象就是按组汇总）
   moss --snap save [对象] [路径…] [--title T] [--note N] [--tag 名字] [--group G]\n                                         加 --tag = 钉一个点（revert 时可以按标签回）\n  moss --snap revert <对象> [id|标签] [--sync] [--yes]\n                                         一键「对比 + 回退」：先列「变了什么」，再按只写回对齐\n  moss --snap tags [对象]                看钉过哪些标签\n  moss --snap grep <对象> <关键词> [目录]  在**快照里**搜内容（只读；包改废了就查原来怎么写的）
                                          存一次快照；不给路径 = 当前目录
@@ -900,6 +959,11 @@ def cmd_snap(argv, table=None):
     # ★ `V-101`：第一个位置参数先当"对象"认一下（`:md5` 这种插件名）—— 认出来就记进 `--group`，
     #   并把它自己的来源交给 `save`；剩下的位置参数才是 id / 目录。
     subj_group, subj_srcs = None, []
+    # ★ `V-117`：`@` 开头的**就是组名**（你实测 `moss --snap ls @abs-ee683c9f` 说"没有东西"——
+    #   因为那串被当成了"路径前缀"）。认出来直接当 `--group`，后面照旧。
+    if rest and str(rest[0]).startswith("@"):
+        opt["--group"] = str(rest[0])
+        rest = rest[1:]
     if rest:
         subj_group, subj_srcs = _subject(rest[0], table)
         if subj_group:
@@ -934,6 +998,10 @@ def cmd_snap(argv, table=None):
             return _cmd_revert(rest, opt, flag)
         if sub == "tags":
             return _cmd_tags(rest, opt, flag)
+        if sub in ("presets", "preset"):
+            return _cmd_presets(rest, opt, flag)
+        if sub in ("group", "which"):
+            return _cmd_group(rest, opt, flag)
         if sub in ("grep", "find"):
             return _cmd_grep([rest[0]] + rest[1:] if rest else [], opt, flag)
     except Exception as e:                                          # noqa: BLE001

@@ -64,7 +64,7 @@ CHUNK = 1024 * 1024
 #: 默认不备份的东西（按**名字**匹配；目录名匹配上就整棵跳过）。
 #: `__pycache__` / `*.pyc` 是纯垃圾；`.git` 一定要排除（不然一个仓库能备份出几十万个
 #: 小对象，而且是我们自己那套"内容寻址"在备份 git 的"内容寻址"，纯浪费）。
-DEFAULT_EXCLUDES = ["__pycache__", "*.pyc", "*.pyo", ".git", ".venv", "venv",
+DEFAULT_EXCLUDES = [".*", "__pycache__", "*.pyc", "*.pyo", ".git", ".venv", "venv",
                     "node_modules", ".DS_Store", "Thumbs.db", "*.tmp"]
 
 #: 路径级排除：这些目录**整棵**不备份（相对页面 rel）。
@@ -100,6 +100,40 @@ IGNORE_TEMPLATE = r"""# moss 版本快照的过滤规则 —— 写法照 .gitig
 #   .DS_Store / Thumbs.db / *.tmp / user/trash
 """
 
+
+
+#: 常见过滤规则（`V-121`）：界面把它们列出来、**按目标目录自动匹配**，用户点选就写进规则框。
+#: 每条 = 一个中文标签 + 一组 glob。`care` 是"这条要小心"的提示（点在界面上 hover 显示）。
+PRESET_FILTERS = [
+    {"id": "logs",     "label": "日志",          "pat": ["*.log"],
+     "why": "跑起来才产生的日志，通常不用留版本"},
+    {"id": "media",    "label": "视频 / 音频",    "pat": ["*.mp4", "*.mov", "*.avi", "*.mkv", "*.mp3", "*.wav"],
+     "why": "又大又不常改 —— 快照会很占地方"},
+    {"id": "design",   "label": "设计稿 / 大图",  "pat": ["*.psd", "*.ai", "*.sketch", "*.xcf"],
+     "why": "源文件很大，通常另有备份"},
+    {"id": "cache",    "label": "缓存 / 编译产物", "pat": ["__pycache__", "*.pyc", "*.pyo", "*.class", "*.o"],
+     "why": "每次跑都会变，留了全是噪音（内置已经有了）"},
+    {"id": "venv",     "label": "虚拟环境",       "pat": ["venv", ".venv", "env", "site-packages"],
+     "why": "几千个文件、随时能重建（内置已有 venv / .venv）"},
+    {"id": "deps",     "label": "依赖 / 构建",    "pat": ["node_modules", "dist", "build", "target", ".next"],
+     "why": "能一键重装/重编，占地方"},
+    {"id": "temp",     "label": "临时 / 备份文件", "pat": ["*.tmp", "*.bak", "*.old", "*~", "*.swp"],
+     "why": "临时产物（内置已有 *.tmp）"},
+    {"id": "archive",  "label": "压缩包",         "pat": ["*.zip", "*.7z", "*.rar", "*.tar.gz"],
+     "why": "大且通常别处也有"},
+    {"id": "db",       "label": "数据库文件",      "pat": ["*.db", "*.sqlite", "*.sqlite3", "*.mdb"],
+     "why": "二进制、每次都变；要留就留导出脚本"},
+    {"id": "dot",      "label": "点开头的隐藏项",  "pat": [".*"],
+     "why": "含 .git / .env / .idea —— 勾了会连 .env 一起排掉（内置已经有 .*）"},
+]
+
+
+def glob_hit(name, pats):
+    """这个名字命中这组 glob 吗（大小写不敏感，和过滤规则同一套）。"""
+    for p in pats:
+        if match_rules(name, [p], is_dir=True) or match_rules(name, [p]):
+            return True
+    return False
 
 def parse_ignore(text):
     """把过滤文件读成一张规则表（保序，带 `!` 反向）。返回字符串列表。"""
@@ -245,7 +279,16 @@ def group_for_sources(sources):
         first = srcs[0].rstrip("/")
         tail = first.split("/")[-1] or "misc"
         pre = "@abs-" if first.startswith("abs/") else "@dir-"
-        return safe_group(pre + tail)
+        # ★ `V-118`（你点出来的）：组名只用**最后一段**时，同名目录会撞车 ——
+        #   `D:\\a\\proj` 和 `D:\\b\\proj` 都是 `@abs-proj`；中文名更只剩哈希。
+        #   后果：两个目录的快照混进同一个组（列表混、`--tag` 互相覆盖、diff 里出现别人的文件）。
+        #   ⇒ 一律再补一段**按完整来源算**的 8 位哈希：可读的名字留着，唯一性靠哈希。
+        #   （恢复本身仍然按清单里记的 `sources` 走，所以从来没写错过文件 —— 混的是"账"。）
+        import hashlib
+        h = hashlib.blake2b(first.lower().encode("utf-8"), digest_size=4).hexdigest()
+        head = safe_group(pre.rstrip("-"))          # `@dir` / `@abs`
+        nice = safe_group(tail)                     # 能留的字符（中文会被削成空）
+        return (head + ("-" + nice if nice else "") + "-" + h)[:64]
     return "@misc"
 
 
@@ -459,6 +502,79 @@ class BackupStore:
         return {"migrated": moved}
 
     # ---------------------------------------------------------------- 排除
+    def presets(self, sources, cap=20000):
+        """`V-121`：把 `PRESET_FILTERS` 拿**这次要备份的目录**过一遍，数每条各命中多少。
+
+        界面拿它做"点选式"的过滤设置：命中多的排前面、能点一下就写进规则框。
+        只读、只数（走目录时**跳过内置与用户规则已经排掉的**，免得把已经排掉的东西再数一遍）。"""
+        counts = {p["id"]: 0 for p in PRESET_FILTERS}
+        samples = {p["id"]: [] for p in PRESET_FILTERS}
+        seen = 0
+        for src in (sources or []):
+            # ★ `V-125`（真凶）：`presets()` 收的来源**可能是绝对路径、也可能是 rel**（页面 rel）
+            #   —— 界面走 main.py 递的是绝对路径，CLI 递的是原始参数。以前一律 self.resolve(src)
+            #   （当 rel 解）⇒ 绝对路径直接抛「不认识的根」被吃掉 ⇒ 一条都不数，
+            #   界面上就永远显示没匹配到（而手动点那颗 chip 照样能加规则）。
+            base = Path(str(src))
+            if not base.exists():
+                try:
+                    base = self.resolve(src)
+                except Exception:                                       # noqa: BLE001
+                    continue
+            if not base.is_dir():
+                base = base.parent if base.is_file() else None
+            if base is None:
+                continue
+            for cur, dirs, names in os.walk(base):
+                cp = Path(cur)
+                keep = []
+                for d in sorted(dirs):
+                    # ★ `V-124`（你实测出来的）：**先数再跳** —— 命中的目录哪怕已经被内置规则排掉，
+                    #   也要让用户看见。以前是"先跳再数"，于是 `venv`（内置排除项）永远显示"没匹配到"，
+                    #   那颗可点的 chip 就白给了（点一下照样能加规则，但用户根本不知道这儿有 venv）。
+                    for pr in PRESET_FILTERS:
+                        if glob_hit(d, pr["pat"]):
+                            counts[pr["id"]] += 1
+                            if len(samples[pr["id"]]) < 3:
+                                samples[pr["id"]].append(self.rel_of(cp / d) or d)
+                    if self._skip_dir_name(d, is_dir=True) or self._skip_rel(self.rel_of(cp / d) or ""):
+                        continue
+                    keep.append(d)
+                dirs[:] = keep
+                for n in sorted(names):
+                    seen += 1
+                    if seen > cap:
+                        break
+                    for pr in PRESET_FILTERS:
+                        if glob_hit(n, pr["pat"]):
+                            counts[pr["id"]] += 1
+                            if len(samples[pr["id"]]) < 3:
+                                samples[pr["id"]].append(self.rel_of(cp / n) or n)
+                if seen > cap:
+                    break
+        out = []
+        for pr in PRESET_FILTERS:
+            it = dict(pr)
+            it["hit"] = counts[pr["id"]]
+            it["sample"] = samples[pr["id"]]
+            out.append(it)
+        out.sort(key=lambda x: (-x["hit"], x["id"]))
+        return out
+
+    def group_ignore_file(self, group):
+        """这个对象自己那份过滤规则（`V-120`）：`user_data/backups/<组>/ignore`。
+
+        ★ 为什么放这儿而不是项目里的 `.snapignore`：**不往你的项目目录里写文件**（目录可能只读、
+          也可能你不想被工具塞东西），而且和"备份库都在 user_data"这条一致；粒度 = 这个包/目录。"""
+        return self.group_dir(group) / "ignore"
+
+    def group_ignore(self, group):
+        try:
+            f = self.group_ignore_file(group)
+            return parse_ignore(f.read_text(encoding="utf-8", errors="replace")) if f.is_file() else []
+        except Exception:                                               # noqa: BLE001
+            return []
+
     def _read_ignore(self):
         """读 `user_data/snapshot.ignore`；**没有就落一份带注释的模板**（照 config.toml 的老规矩）。"""
         try:
@@ -508,7 +624,9 @@ class BackupStore:
                 srcs_rel.append(r)
         g = safe_group(group) if group else group_for_sources(srcs_rel)
         self.ensure(g)
-        ex = list(self.excludes if excludes is None else excludes)
+        # ★ `V-120`：生效的规则 = 内置 + 全局那份 + **这个对象自己那份** + 这次临时的。
+        #   `excludes` 现在是**追加**语义（以前是"替换"，会把内置/全局丢掉 —— 界面要用追加）。
+        ex = list(self.excludes) + self.group_ignore(g) + list(excludes or [])
         saved_ex = self.excludes
         self.excludes = ex
         try:
@@ -787,6 +905,10 @@ class BackupStore:
           被排除的东西（`__pycache__`、`*.pyc`、`.git`、回收站、备份库自己）不算"多出来"，
           同步不会去动它们。
         """
+        # ★ `V-120`：按**那次快照清单里记的 exclude** 走 —— 否则"按对象排掉的文件"
+        #   会被当成"现在多出来的"，配 `--sync` 还会被挪进回收站。
+        _saved_ex = self.excludes
+        self.excludes = list(m.get("exclude") or self.excludes)
         known = set(e.get("rel") for e in (m.get("files") or []))
         out = []
         store_prefix = str(self.root.resolve())
@@ -819,6 +941,7 @@ class BackupStore:
                         size = 0
                     out.append({"rel": rel, "action": "extra", "fp": "", "size": size,
                                 "why": "现在多出来的（同步模式会挪进回收站）"})
+        self.excludes = _saved_ex
         return out
 
     def restore(self, bid, rels=None, only="all", sync=False, group=None):

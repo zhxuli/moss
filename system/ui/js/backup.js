@@ -26,7 +26,10 @@ const BK = Vue.reactive({
   exportTo: "", exportBak: false, dropOver: false,   // 导出（`V-88`）
   fps: {}, fresh: {},                   // 现读磁盘：指纹 + 现大小 + 目录子树（`V-94`，不信界面缓存）
   leftOnly: 0,
-  ig: null,                            // 过滤规则（`V-105`）：文件在哪、现在生效哪些
+  ig: null,                            // 过滤规则（`V-105`）
+  igGroup: null,                       // 这个对象自己那份规则（`V-120`）
+  folded: {},                          // 哪些快照的文件列表被收起了（`V-122`）
+  presets: null,                       // 预设过滤规则 + 命中数（`V-121`）                            // 过滤规则（`V-105`）：文件在哪、现在生效哪些
 });
 
 /* ================================================================ 差异视图（`V-94`）
@@ -156,7 +159,31 @@ function bkDiffModel(){
 function bkGroupForCtx(){
   const key = FM.ctx || "__all__";
   const p = (key !== "__all__" && !isHistKey(key)) ? DATA.packages.find(x => x.id === key) : null;
-  return p ? p.id : "@user";
+  // ★ `V-113`：**分组以宿主为准** —— 界面自己算的那套（包 id / @dir-… / @abs-…）只能当兜底，
+  //   两边一旦算得不一样，就会出现你遇到的"提示存了 54 项、右边列表却是空的"。
+  //   宿主那边是唯一真相（`backup_group_hint` → 存储的 `group_for_sources`），每次刷新前问一次。
+  if (BK.group) return BK.group;
+  return p ? p.id : bkHistGroup();
+}
+/* `V-112`：**历史那边原来是坏的** —— 界面只会算"包 id，否则 @user"，而存储的 `group_for_sources()`
+   是按来源命名的（包 → id；整个 user/system → @user/@system；别的目录 → **@dir-<尾段> / @abs-<尾段>**）。
+   于是历史里选一条：列表读 `@user`（空的），点 ＋ 存的时候 group 传空、存储自己算成 `@dir-xxx`
+   ⇒ **存成功了但列表里看不见**，diff/restore 也摸不到。这里把存储那三条规则**照着实现一遍**（就三行）。 */
+function bkHistGroup(){
+  const rels = bkScopeRels().map(x => String(x || "").replace(/\\/g, "/"));
+  for (const r of rels){
+    const parts = r.split("/");
+    if (parts.length >= 3 && (parts[1] === "pkgs" || parts[1] === "state")) return parts[2];
+  }
+  for (const r of rels){
+    if (r === "user" || r === "system") return "@" + r;
+  }
+  if (rels.length){
+    const first = rels[0].replace(/\/+$/, "");
+    const tail = first.split("/").filter(Boolean).pop() || "misc";
+    return (first.startsWith("abs/") ? "@abs-" : "@dir-") + tail.replace(/[^A-Za-z0-9_.@-]/g, "_");
+  }
+  return "@misc";
 }
 function bkCtxLabel(){
   const key = FM.ctx || "__all__";
@@ -235,8 +262,10 @@ const MossFileSnap = {
     /* 差异视图（`V-94`）：行 = 当前目录这一层的"左边（现在）+ 右边（快照）" */
     /* ★ 快照那一列**只列快照里真有的东西**："只有现在有"的那些（绿色）只出现在**左边**那张表里。
        你 2026-09-30 反馈的第一条就是它 —— 新建一个 `untitled.py`，快照里怎么也冒出来了。 */
+    foldedNow(){ void BK.folded; return !!BK.folded[BK.sel || ""]; },
     mirrorRows(){
       void BKD.diff;
+      if (this.foldedNow) return [];
       return ((BKD.diff && BKD.diff.entries) || []).filter(e => e.state !== "now-only");
     },
     mirrorPath(){
@@ -350,6 +379,161 @@ const MossFileSnap = {
       }catch(e){ BK.ig = {ok: false}; }
     },
     /* 点那行淡字：弹一个**说明**（不是编辑器 —— 在界面里改过滤规则是 `V-104 E` 那一条，还没做） */
+    /* 收起/展开这个快照的文件列表（`V-122`）：卡片还在、只把行藏起来，方便一屏扫多次快照 */
+    toggleFoldFiles(){
+      const k = BK.sel || "";
+      BK.folded = Object.assign({}, BK.folded, {[k]: !BK.folded[k]});
+    },
+    /* 创建快照 = 一个模态框（`V-122`）：标题/注释 + **常驻**规则框 + 预设点选 + 记住（只对这个对象） */
+    async snapModalOpen(){
+      const rels = bkScopeRels();
+      const group = bkGroupForCtx();
+      snapClose();
+      const w = document.createElement("div");
+      w.id = "snapwin";
+      w.innerHTML =
+        '<div class="snap-card">' +
+          '<div class="snap-head"><b>创建快照</b><span class="sp"></span>' +
+            '<button class="iconbtn snap-x" title="关掉（Esc）"></button></div>' +
+          '<div class="snap-body">' +
+            '<div class="snap-row"><span>标题</span><input id="snap-title" placeholder="可留空（留空就用时间）"></div>' +
+            '<div class="snap-row"><span>注释</span><input id="snap-note" placeholder="这次改了什么"></div>' +
+            '<div class="snap-sub">过滤规则 —— 这次要排掉的东西（下面是我们**发现的东西**，点一下加/去；也能自己改）</div>' +
+            '<div class="snap-pres" id="snap-pres">读预设…</div>' +
+            '<div class="snap-rules-top"><span class="snap-hint" id="snap-rt">规则（一行一条）</span>' +
+              '<span class="sp"></span>' +
+              '<button class="btn snap-fill" id="snap-fill" title="把上面命中的规则一次全写进来">' +
+                '<span class="snap-ico"></span>一键填入</button>' +
+              '<button class="btn" id="snap-clear" title="清空规则框">' +
+                '<span class="snap-ico"></span>清空</button>' +
+            '</div>' +
+            '<textarea id="snap-rules" rows="7" spellcheck="false" placeholder="一行一条：*.log / build/ / !keep.log"></textarea>' +
+
+            '<div class="snap-hint" id="snap-hint"></div>' +
+          '</div>' +
+          '<div class="snap-foot"><span class="sp"></span>' +
+            '<button class="btn" id="snap-cancel">取消</button>' +
+            '<button class="btn primary" id="snap-save">存快照</button></div>' +
+        '</div>';
+      document.body.appendChild(w);
+      w.querySelector(".snap-x").innerHTML = ico("x", "i");
+      w.querySelector(".snap-x").onclick = snapClose;
+      w.querySelector("#snap-cancel").onclick = snapClose;
+      w.addEventListener("click", ev => { if (ev.target === w) snapClose(); });
+      w.tabIndex = -1;
+      w.addEventListener("keydown", ev => { if (ev.key === "Escape") snapClose(); });
+      w.focus();
+      const rulesOf = () => String(w.querySelector("#snap-rules").value || "")
+        .split("\n").map(x => x.trim()).filter(Boolean);
+      w.querySelector("#snap-save").onclick = async () => {
+        const btn = w.querySelector("#snap-save");
+        const ex = rulesOf();
+        btn.disabled = true; btn.textContent = "存…";
+        try{
+          BK.busy = "存快照…";
+          const r = await pywebview.api.backup_create(rels, w.querySelector("#snap-title").value,
+                                                       w.querySelector("#snap-note").value, "", ex);
+          if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "失败"), true); btn.disabled = false; btn.textContent = "存快照"; return; }
+          const st = r.stats || {};
+          toast("快照已存：" + (st.files || 0) + " 项 · 新增 " + (st.new_objects || 0) + " 块"
+                + (ex.length ? (" · 按 " + ex.length + " 条规则排掉一些") : ""));
+          snapClose();
+          await this.refresh();
+          await this.open(r.id, r.group, false);
+        }catch(e){ reportError("存快照失败", String((e && e.message) || e)); }
+        finally{ BK.busy = ""; }
+      };
+      try{
+        const h = await pywebview.api.backup_group_hint(rels);
+        if (h && h.ok) w.querySelector("#snap-hint").textContent = "会存到分组：" + h.group;
+      }catch(e){}
+      try{
+        // ★ `V-126`：**先用前端算**（当前这一层已经在内存里，即时出结果、不用问宿主）；
+        //   这一层还没加载（比如范围不是正看着的目录）才回退问宿主。
+        let list = snapPresetLocal();
+        const gi = await pywebview.api.backup_group_ignore(group);
+        if (!list){
+          try{
+            const pv = await pywebview.api.backup_presets(rels);
+            list = (pv && pv.presets) || [];
+          }catch(e){ list = []; }
+        }
+        const ta = w.querySelector("#snap-rules");
+        // ★ `V-127`：**默认规则取上次的**（本对象记住的 + 上一次快照实际用的），不是每次从空开始。
+        const base = [];
+        [].concat((gi && gi.rules) || [], (gi && gi.last) || [], ta.value.split("\n")).forEach(x => {
+          const v = String(x || "").trim();
+          if (v && base.indexOf(v) < 0) base.push(v);
+        });
+        ta.value = base.join("\n");
+        w.querySelector("#snap-hint").textContent +=
+          (gi && gi.ok && gi.rules && gi.rules.length) ? ("　·　这个对象已记住 " + gi.rules.length + " 条") : "";
+        const box = w.querySelector("#snap-pres");
+        /* 新加进去的规则**插在最上面**（你说点了以后掉到下面很难受） */
+        const addRules = (pats) => {
+          const cur = ta.value.split("\n").map(x => x.trim()).filter(Boolean);
+          const add = (pats || []).filter(x => cur.indexOf(x) < 0);
+          ta.value = add.concat(cur).join("\n");
+        };
+        const dropRules = (pats) => {
+          const cur = ta.value.split("\n").map(x => x.trim()).filter(Boolean);
+          ta.value = cur.filter(x => (pats || []).indexOf(x) < 0).join("\n");
+        };
+        const fill = w.querySelector("#snap-fill"), clr = w.querySelector("#snap-clear");
+        if (fill){
+          fill.querySelector(".snap-ico").innerHTML = ico("check", "i");
+          fill.onclick = (ev) => {
+            ev.stopPropagation();
+            let pats = [];
+            // ★ 只填"检测到的"（`V-128`）：命中的组按 `patsOf` 只给命中的模式
+            hotL.forEach(p => { pats = pats.concat(patsOf(p)); });
+            addRules(pats);
+            toast("已填入 " + pats.length + " 条规则");
+          };
+        }
+        if (clr){
+          clr.querySelector(".snap-ico").innerHTML = ico("eraser", "i");
+          clr.onclick = (ev) => { ev.stopPropagation(); ta.value = ""; ta.focus(); };
+        }
+        /* `V-128`：一条预设该写哪些模式 —— 命中的组只写**命中的那些**；
+           没命中的组（在「更多」里、用户主动点的）才写整组（那时无从"只写命中的"）。 */
+        const patsOf = (p) => (p.hit > 0 && p.matched && p.matched.length) ? p.matched : (p.pat || []);
+        const chip = (p) =>
+          '<span class="snap-chip' + (p.hit ? " hot" : "") + '" data-id="' + esc(p.id) + '"' +
+          ' title="' + esc(p.hit ? (p.why || "") : ("这次没匹配到（" + (p.why || "") + "）")) + '">' +
+          esc(p.label) + (p.hit ? (' <b>' + p.hit + '</b>') : '') +
+          ((p.sample && p.sample.length) ? ('<i>' + esc(String(p.sample[0]).split('/').pop()) + '</i>') : '') +
+          '</span>';
+        // ★ `V-123`（你点明的）：**默认只显示"匹配上的"** —— 这个目录里没有压缩包/数据库，
+        //   那两条就不该出现（否则一排 0 看着莫名其妙）；没匹配到的折在「更多（N）」后面。
+        // ★ `V-127`：已有规则（本对象记住的 + 上次实际用的）里出现过的模式，就不再当"新建议"推给你
+        const cur0 = ta.value.split("\n").map(x => x.trim()).filter(Boolean);
+        const covered = (p) => p.pat.every(x => cur0.indexOf(x) >= 0);
+        const hotL = list.filter(p => p.hit > 0 && !covered(p));
+        const coldL = list.filter(p => p.hit <= 0 || covered(p));
+        box.innerHTML =
+          (hotL.length ? hotL.map(chip).join("")
+                       : '<span class="snap-hint">这个目录里没匹配到常见规则</span>') +
+          (coldL.length ? ('<span class="snap-more" id="snap-more" title="看全部预设（这些这次没匹配到）">更多（' + coldL.length + '）</span>') : "");
+        const more = box.querySelector("#snap-more");
+        if (more) more.onclick = (ev) => {
+          ev.stopPropagation();
+          more.insertAdjacentHTML("beforebegin", coldL.map(chip).join(""));
+          more.remove();
+        };
+        box.onclick = (ev) => {
+          const c = ev.target.closest ? ev.target.closest(".snap-chip") : null;
+          if (!c) return;
+          const pr = list.find(x => x.id === c.dataset.id);
+          if (!pr) return;
+          const cur = rulesOf();
+          const allIn = pr.pat.every(x => cur.indexOf(x) >= 0);
+          const pp = patsOf(pr);
+          if (allIn) dropRules(pp); else addRules(pp);
+          c.classList.toggle("on", !allIn);
+        };
+      }catch(e){ w.querySelector("#snap-pres").textContent = "（读不到预设）"; }
+    },
     async editIgnore(){
       await this.loadIgnore();
       const g = BK.ig || {};
@@ -358,7 +542,7 @@ const MossFileSnap = {
         if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "存不下"), true); return; }
         await this.loadIgnore();
         notice("过滤规则已保存", "现在生效 <b>" + (r.count || 0) + "</b> 条（覆盖前留了一份 .bak）<br>下次存快照就按新规则。");
-      });
+      }, {multiline: true});
     },
     async preview(){
       BK.busy = "试算…";
@@ -432,6 +616,10 @@ const MossFileSnap = {
     async refresh(){
       BK.loading = true;
       try{
+        try{
+          const h = await pywebview.api.backup_group_hint(bkScopeRels());
+          if (h && h.ok && h.group) BK.group = h.group;
+        }catch(e){ /* 宿主不给就退回本地那套规则 */ }
         const r = await pywebview.api.backup_list(bkGroupForCtx());
         if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "拿不到快照列表"), true); return; }
         BK.items = r.items || [];
@@ -450,7 +638,7 @@ const MossFileSnap = {
     async switchCtx(){
       BK.sel = null; BK.man = null; BK.view = null; BK.checkRows = null;
       BK.formOpen = false;
-      BKD.diff = null; BK.fps = {};
+      BKD.diff = null; BK.fps = {}; BK.group = null;
       await this.refresh();
     },
     async open(id, group, toggle){
@@ -681,7 +869,7 @@ const MossFileSnap = {
     <span class="sp"></span>
     <button class="iconbtn b-bknew" title="给「{{ ctxLabel }}」创建一个快照"
             v-html='ico("moss-camera", "i")'
-            @click="toggleForm()"></button>
+            @click="snapModalOpen()"></button>
     <button class="iconbtn b-bkfold" :title="BK.collapsed ? '展开边栏' : '收起边栏'"
             v-html='ico("panel-left", "i")' @click="toggleFold()"></button>
   </div>
@@ -744,10 +932,16 @@ const MossFileSnap = {
             <span class="bk-hint bk-mpath" :title="mirrorTip">{{ mirrorPath }}</span>
             <span class="sp"></span>
             <span class="bk-hint bk-mcount" :title="mirrorCountTip">{{ mirrorCount }}</span>
+            <button class="iconbtn b-bkfoldfiles" :title="foldedNow ? '展开文件列表' : '收起文件列表'"
+                    :class="{folded: foldedNow}" v-html='ico("chevron-right", "i")'
+                    @click.stop="toggleFoldFiles()"></button>
             <button class="iconbtn b-bkviewall" title="看整个快照的统计/校验"
                     v-html='ico("info", "i")' @click="checkNow()"></button>
           </div>
           <div v-if="BKD.diff && !BKD.diff.snapOk" class="bk-empty">快照里没有这个目录</div>
+          <div v-if="foldedNow" class="bk-empty bk-folded" @click="toggleFoldFiles()">
+            文件列表已收起（{{ mirrorCount }}）—— 点这里展开
+          </div>
           <div v-for="e in mirrorRows" :key="e.name" class="bk-file" :class="mirrorCls(e)"
                :data-rel="e.rel" :data-dir="e.dir ? 1 : 0" :data-state="e.state" :title="e.why">
             <span class="bk-fname" :class="{isdf: e.dir}">{{ e.name }}{{ e.dir ? "/" : "" }}</span>
