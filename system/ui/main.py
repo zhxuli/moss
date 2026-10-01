@@ -81,14 +81,16 @@ def _split(text):
 
 
 def _ai_arg(v):
-    """把界面递来的一个字段值变成 `k=v` 里那个 v（`V-138`）。
+    """把界面递来的一个字段值变成 `k=v` 里那个 v（`V-138` / `V-139`）。
 
-    ★ 开关必须写成 `true`/`false`：宿主那边认这两个词才当布尔，写成 `1`/`0`
-      就会存成整数 —— 配置文件里 `stream = 1` 读回来是 int，`if stream` 照样
-      能跑，但类型就悄悄变了（这种"能用但不对"最难查）。
+    ★ 列表（现在只有 `model` 会多个）要拼成 `a,b`：宿主那边按逗号拆回列表。
+    ★ 开关必须写成 `true`/`false`（`V-138` 留下的规矩）—— 现在 AI 那几个字段里没有开关了，
+      但这条留着：以后再加 bool 字段时不会再踩一次"存成整数"。
     """
     if isinstance(v, bool):
         return "true" if v else "false"
+    if isinstance(v, (list, tuple)):
+        return ",".join(str(x).strip() for x in v if str(x).strip())
     return str(v)
 
 
@@ -2425,6 +2427,24 @@ class Api:
                 "name": data.get("profile") or "", "params": data.get("params") or {},
                 "profiles": data.get("profiles") or []}
 
+    def ai_presets(self):
+        """常见服务商的**预制参数**（`V-139`）—— 面板上那排「常用」按钮读的就是它。
+
+        ★ 表在 `core/config.py` 的 `AI_PRESETS` 里（只有一份真相）：面板只是照它画按钮，
+          点一下把「名字 / 接口地址 / 模型」填进表单，用户只需要再粘一把 key。
+        """
+        if not HOST:
+            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+        r = _run_capture_split(HOST + ["--ai-presets"])
+        data = _json_from_host(r.get("out"))
+        if not isinstance(data, dict) or not data.get("presets"):
+            tail = ((r.get("err") or "").strip().splitlines() or [""])[-1] \
+                or ((r.get("out") or "").strip().splitlines() or [""])[-1]
+            return {"ok": False, "presets": [],
+                    "msg": "读预制参数失败：退出码 %s%s"
+                           % (r.get("code"), (" —— " + tail) if tail else "")}
+        return {"ok": True, "presets": data.get("presets") or []}
+
     def ai_save(self, name, fields):
         """加/改一组（**明文**写 `config.toml`）—— 只送用户真改过的那几个字段。
 
@@ -2454,6 +2474,23 @@ class Api:
             return {"ok": False, "msg": "没说到底删哪一组"}
         r = _run_capture(HOST + ["--ai-profile-del", name])
         return {"ok": r.get("code") == 0, "msg": (r.get("out") or "").strip()}
+
+    def ai_rename(self, old, new):
+        """给一组改名（`V-139`）：面板上「名字」改完保存走这条。
+
+        ★ 为什么不"按新名字再存一遍"：那样得把明文 key 从宿主读回界面再送回去，
+          多一次明文往返、还容易把 key 弄丢（面板上只有打码那串）—— 宿主整块搬最稳。
+        """
+        if not HOST:
+            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+        old, new = str(old or "").strip(), str(new or "").strip()
+        if not old or not new:
+            return {"ok": False, "msg": "没说清改哪一组 / 改成什么"}
+        r = _run_capture(HOST + ["--ai-rename", old, new])
+        if r.get("code") != 0:
+            return {"ok": False, "name": "", "msg": (r.get("out") or "").strip()
+                                                   or "没改成（名字被占用了？）"}
+        return {"ok": True, "name": new, "msg": (r.get("out") or "").strip()}
 
     def ai_set_active(self, name):
         """选当前用哪一组（就是「设为当前」，以后跑包注入的就是这一组）。"""

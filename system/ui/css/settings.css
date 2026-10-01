@@ -163,7 +163,15 @@
 .ai-bar .btn-quiet:disabled{opacity:.42;cursor:default}
 .ai-none{margin:0;padding:10px 12px;border-radius:10px;background:var(--tile);
   font-size:12.5px;color:var(--dim)}
+/* 「常用」那排预制参数（点一下就把名字/地址/模型填好，只剩粘 key 这件事） */
+.ai-pre{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.ai-chip{padding:4px 11px;border-radius:999px;border:0;background:var(--tag);
+  color:var(--fg2);cursor:pointer;font:inherit;font-size:12px;
+  transition:background .13s ease-out,color .13s ease-out}
+.ai-chip:hover{background:color-mix(in srgb, var(--accent) 14%, transparent);color:var(--accent)}
 .ai-fields{grid-template-columns:1fr 1fr}
+.ai-lines{resize:vertical;min-height:58px;font-family:var(--mono);font-size:12.5px;
+  line-height:1.7}
 .ai-keyrow{display:flex;align-items:center;gap:6px}
 .ai-keyrow .inp{flex:1;min-width:0}
 .ai-keyrow .btn-quiet{flex:none;padding:5px 9px;border-radius:8px;border:0;
@@ -171,8 +179,6 @@
 .ai-keyrow .btn-quiet:hover{background:var(--hover);color:var(--fg)}
 .ai-swbox{display:flex;align-items:center;gap:9px;min-height:32px}
 .ai-swtxt{font-size:12px;color:var(--dim)}
-/* 动作行：保存这一组 / 测试连接 / 结果（摆在字段**上面**，不用滚动就看得见） */
-.ai-acts{gap:10px}
 .ai-bar .btn,.ai-bar .btn-quiet{padding:6px 11px;border-radius:8px;border:0;
   background:transparent;color:var(--fg2);cursor:pointer;font:inherit;font-size:13px;
   font-weight:500;transition:background .13s ease-out,color .13s ease-out,transform .1s ease-out}
@@ -181,6 +187,10 @@
 .ai-bar .btn.primary{background:transparent;border:0;color:var(--accent)}
 .ai-bar .btn.primary:hover{background:color-mix(in srgb, var(--accent) 12%, transparent)}
 .ai-bar .btn:disabled{opacity:.45;cursor:default;filter:none}
+/* 动作行：保存这一组 / 测试连接 / 结果 —— **贴着可视区底边**（sticky）：
+   字段万一比一屏高，滚的只是字段，主操作永远看得见。 */
+.ai-acts{gap:10px;position:sticky;bottom:-2px;z-index:2;background:var(--panel);
+  padding:8px 0 2px;border-top:1px solid var(--hair)}
 .ai-state{font-size:12px;line-height:1.6;min-width:0;word-break:break-all;flex:1}
 .ai-state.ok{color:#1a7f45}
 .ai-state.bad{color:#d64545}

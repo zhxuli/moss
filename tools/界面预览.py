@@ -122,22 +122,21 @@ def mock_data():
     #   看到的分组 / 标签 / 控件类型就是真界面上会看到的，不是这里编的。
     settings = core_config.settings_payload()
 
-    # ★ AI 那几组（`V-138`）：存储/规则在 `core/config.py`，预览里只给一份**假的多组数据**
-    #   （三组：正常一组 / 本机一组测"连不上" / 关掉流式的一组），并且让 mock 真的改它 ——
-    #   这样新增 / 复制 / 删除 / 设为当前 / 保存 / 测连接都能在截图里看见效果。
+    # ★ AI 那几组（`V-138` / `V-139`）：存储/规则在 `core/config.py`，预览里只给一份**假的多组数据**
+    #   （三组：正常一组 / 本机一组测"连不上" / 只有地址的一组），并且让 mock 真的改它 ——
+    #   这样预制参数 / 改名 / 保存 / 删除 / 设为当前 / 测连接都能在截图和断言里看见效果。
+    #   ★ 「常用」那排按钮用的是**真的** `AI_PRESETS`（跟命令行同一份），不是这里编的。
     ai = {"active": "深度求索", "profiles": [
         {"name": "深度求索", "params": {"base_url": "https://api.deepseek.com/v1",
                                        "api_key": "sk-abcdef1234567890",
-                                       "model": "deepseek-chat", "temperature": 0.7,
-                                       "max_tokens": 2048, "timeout": 60, "stream": True,
-                                       "note": "主力"}},
+                                       "model": ["deepseek-chat", "deepseek-reasoner"]}},
         {"name": "本地 ollama", "params": {"base_url": "http://127.0.0.1:11434/v1",
-                                          "model": "qwen2.5:7b", "timeout": 120,
-                                          "stream": True}},
+                                          # ★ 故意留一个**老写法**（字符串，`V-139` 之前存的）
+                                          "model": "qwen2.5:7b"}},
         {"name": "备用中转", "params": {"base_url": "https://api.apifast.tech/v1",
                                        "api_key": "sk-zzzzzzzzzzzzzzzz",
-                                       "model": "gemini-2.0-flash", "stream": False,
-                                       "note": "国外那家的中转"}}]}
+                                       "model": ["gemini-2.0-flash"]}}]}
+    ai_presets = core_config.AI_PRESETS
 
     hist = []
     for r in core_history.recent_unique():
@@ -206,6 +205,7 @@ def mock_data():
              "size": 210, "mtime": 0, "ext": "py"}]}
 
     return {"payload": payload, "hist": hist, "fs": fs, "settings": settings, "ai": ai,
+            "aiPresets": ai_presets,
             # 工具自己的场景清单：页面拿它对一下"这个场景名到底有没有实现"。
             "scenes": SCENES,
             # `--early-ready`：让 mock 在 js/*.js 之前就发 ready（`V-68` 的竞态场景）
@@ -530,14 +530,22 @@ MOCK_JS = r"""
       return {ok: true, active: A.active, name: hit.name, params: params,
               profiles: A.profiles.map(x => x.name).sort()};
     },
+    ai_presets: async () => ({ok: true, presets: M.aiPresets}),
     ai_save: async (name, fields) => {
       const A = M.ai;
       let hit = A.profiles.filter(x => x.name === name)[0];
       if (!hit){ hit = {name: name, params: {}}; A.profiles.push(hit); }
       Object.keys(fields || {}).forEach(k => { hit.params[k] = fields[k]; });
       if (!A.active) A.active = name;
-      return {ok: true, name: name,
-              msg: "已存：" + name + "（字段 " + Object.keys(hit.params).sort().join(" ") + "）"};
+      return {ok: true, name: name, msg: "已存：" + name};
+    },
+    ai_rename: async (old, nm) => {
+      const A = M.ai;
+      const i = A.profiles.findIndex(x => x.name === old);
+      if (i < 0 || A.profiles.some(x => x.name === nm)) return {ok: false, msg: "没改成"};
+      A.profiles[i].name = nm;                       // 整块搬：参数一个都不动
+      if (A.active === old) A.active = nm;
+      return {ok: true, name: nm, msg: "改名完成：" + old + " → " + nm};
     },
     ai_delete: async (name) => {
       const A = M.ai;
@@ -554,14 +562,17 @@ MOCK_JS = r"""
       M.aiTested = String(name || "");
       const hit = M.ai.profiles.filter(x => x.name === name)[0] || {params: {}};
       const p = hit.params || {};
-      if (!p.base_url || !p.model)
-        return {ok: false, code: 1, msg: "[错误] 这一组还没填 base_url / model。"};
+      const models = Array.isArray(p.model) ? p.model : (p.model ? [p.model] : []);
+      if (!p.base_url || !models.length)
+        return {ok: false, code: 1,
+                msg: "[错误] 这一组还没填 base_url / model（model 可以写多个，逗号隔开）。"};
       if (String(p.base_url).indexOf("127.0.0.1") >= 0)     // 本机那组：假装连不上
         return {ok: false, code: 4,
                 msg: "[错误] 没连上 / 报错：<urlopen error [WinError 10061] 由于目标计算机" +
                      "积极拒绝，无法连接。>"};
       return {ok: true, code: 0,
-              msg: '连上了：HTTP 200 · 流式第一个增量 = data: {"id":"chatcmpl-1",' +
+              msg: '连上了：HTTP 200（模型 ' + models[0] +
+                   '）· 流式第一个增量 = data: {"id":"chatcmpl-1",' +
                    '"choices":[{"delta":{"content":"收到"}}]}'};
     },
     open_ui: async () => ({ok: true, msg: "(预览) 已打开"}),
@@ -1586,8 +1597,10 @@ MOCK_JS = r"""
           " 挪=" + /改了 1 项/.test(stateMoved) + " 关=" + closedAfterSave + " 开=" + opened +
           " 存=" + Object.keys(saved).length + " 值=" + saved["symbols.no_chdir_mode"]);
       }
-      // ---- AI 那一组（`V-138`）：选组 / 看得到字段 / key 打码 / 露出来 / 测连接 /
-      //      改一项保存 / 新增 / 设为当前 / 删除，一条链走完。
+      // ---- AI 那一组（V-139 精简版）：四个字段 + 「常用」预制参数。走一遍：
+      //      选组 → 打码的密钥 / 老写法（字符串）的模型也要显示对 → 点预制参数填表 →
+      //      粘 key → 保存（新组）→ 测连接 → 改名保存（旧组要没、**key 不能丢**）→
+      //      设为当前 → 删除。最后再确认主操作在视野里（不能藏在折叠线下面）。
       if (h === "settings-ai"){
         await openSettings();
         await sleep(700);
@@ -1596,94 +1609,127 @@ MOCK_JS = r"""
           document.querySelectorAll("#set-nav .set-navitem"),
           b => (b.dataset.group || "") === "AI")[0];
         if (aiNav) aiNav.click();
-        await sleep(700);
+        await sleep(900);
         const pane = (document.querySelector("#set-body .set-pane.on") || {}).dataset || {};
         const box = !!document.querySelector("#set-body .set-pane.on .set-ai");
-        // 通用那种"一个键一行"不能再重复渲染（ai.active / ai.profiles 那两行让开了）
         const generic = !!document.querySelector(
           '#set-body .set-pane.on .set-field[data-key="ai.active"]');
         const sel = document.querySelector("#ai-sel");
         const opts0 = sel ? sel.options.length : 0;
         const picked0 = sel ? sel.value : "";
-        const fieldsN = document.querySelectorAll("#set-body .set-pane.on .ai-fields .set-field").length;
-        const inputsN = document.querySelectorAll("#set-body .set-pane.on .ai-fields input").length;
-        const swsN = document.querySelectorAll("#set-body .set-pane.on .ai-fields .sw").length;
-        // 密钥：默认打码（占位提示里那串），**框里是空的**（免得把打码串存回去）
-        const keyBox = () => document.querySelector(
-          '.ai-fields .set-field[data-ai="api_key"] input');
-        const k0 = keyBox();
-        const keyPh0 = k0 ? k0.placeholder : "";
-        const keyVal0 = k0 ? k0.value : "";
-        const eye = document.querySelector("#ai-eye");
-        if (eye) eye.click();
-        await sleep(500);
-        const k1 = keyBox();
-        const keyType1 = k1 ? k1.type : "";
-        const keyVal1 = k1 ? k1.value : "";
-        // 测试连接：这一组的 url 是假的真 url ⇒ 假后端回"连上了"
+        const scope = "#set-body .set-pane.on .ai-fields";
+        const fieldN = document.querySelectorAll(scope + " .set-field").length;
+        const boxOf = k => document.querySelector(
+          scope + ' .set-field[data-ai="' + k + '"] input,' +
+          scope + ' .set-field[data-ai="' + k + '"] textarea');
+        const chips = document.querySelectorAll(".ai-pre .ai-chip").length;
+        const chipsBlank = Array.prototype.some.call(
+          document.querySelectorAll(".ai-pre .ai-chip"),
+          b => (b.dataset.preset || "") === "自定义");
+        // 老字段真的没了（温度 / 上限 / 流式 / 超时 / 备注）
+        const olds = document.querySelectorAll(
+          scope + ' .set-field[data-ai="temperature"],' + scope + ' .set-field[data-ai="stream"],' +
+          scope + ' .set-field[data-ai="max_tokens"],' + scope + ' .set-field[data-ai="timeout"],' +
+          scope + ' .set-field[data-ai="note"]').length;
+        // 密钥：默认打码（框里空着，占位提示给打码串）
+        const key0 = boxOf("api_key");
+        const keyPh0 = key0 ? key0.placeholder : "";
+        const keyVal0 = key0 ? key0.value : "";
+        // 模型是「一行一个」的 textarea（老写法：字符串也该显示成一行）
+        const modelBox0 = boxOf("model");
+        const modelTag0 = modelBox0 ? modelBox0.tagName : "";
+        const modelTxt0 = modelBox0 ? modelBox0.value : "";
+        // 点「DeepSeek」那颗预制参数：名字 / 地址 / 模型都替你填好
+        const chip = Array.prototype.filter.call(
+          document.querySelectorAll(".ai-pre .ai-chip"),
+          b => (b.dataset.preset || "") === "DeepSeek")[0];
+        if (chip) chip.click();
+        await sleep(400);
+        const nameIn = boxOf("name"), urlIn = boxOf("base_url"), modelIn = boxOf("model");
+        const preName = nameIn ? nameIn.value : "";
+        const preUrl = urlIn ? urlIn.value : "";
+        const preModel = modelIn ? modelIn.value : "";
+        // 粘 key + 保存（新的一组）
+        const key1 = boxOf("api_key");
+        if (key1){ key1.value = "sk-preset-1234567890";
+                   key1.dispatchEvent(new Event("input", {bubbles: true})); }
+        await sleep(250);
+        const sBtn = document.querySelector("#ai-save");
+        const saveOn = sBtn ? !sBtn.disabled : false;
+        const bodyEl = document.querySelector("#set-body");
+        const vis = !!(sBtn && bodyEl &&
+          sBtn.getBoundingClientRect().bottom <= bodyEl.getBoundingClientRect().bottom + 1);
+        if (sBtn) sBtn.click();
+        await sleep(900);
+        const made = (M.ai.profiles.filter(x => x.name === "DeepSeek")[0] || {}).params || {};
+        const opts1 = document.querySelector("#ai-sel").options.length;
+        const names1 = Array.prototype.map.call(
+          document.querySelectorAll("#ai-sel option"), o => o.value).join("/");
+        const mockNames = M.ai.profiles.map(x => x.name).join("/");
+        // 测试连接（假后端：这一组是成功）
         const tBtn = document.querySelector("#ai-test");
         if (tBtn) tBtn.click();
-        await sleep(600);
+        await sleep(700);
         const stEl = document.querySelector("#ai-state");
         const stOk = stEl ? /(^|\s)ok(\s|$)/.test(stEl.className) : false;
         const stTxt = stEl ? stEl.textContent : "";
-        // 改一项 ⇒「保存这一组」亮；存下去 ⇒ 再灰回来，而且值真进了假存储
-        const urlBox = document.querySelector('.ai-fields .set-field[data-ai="base_url"] input');
-        if (urlBox){ urlBox.value = "https://api.deepseek.com/v2";
-                     urlBox.dispatchEvent(new Event("input", {bubbles: true})); }
-        await sleep(300);
-        const sBtn = document.querySelector("#ai-save");
-        const saveOn = sBtn ? !sBtn.disabled : false;
-        if (sBtn) sBtn.click();
-        await sleep(800);
-        const savedUrl = ((M.ai.profiles.filter(x => x.name === "深度求索")[0] || {}).params || {}).base_url;
-        const saveOff = sBtn ? sBtn.disabled : false;
-        // 新增一组（走 askText 那个框）
-        const nBtn = document.querySelector("#ai-new");
-        if (nBtn) nBtn.click();
-        await sleep(400);
-        const mi = document.querySelector("#m-input");
-        if (mi) mi.value = "临时组";
-        const mok1 = document.querySelector("#m-ok");
-        if (mok1) mok1.click();
-        await sleep(900);
-        const optsNew = document.querySelector("#ai-sel").options.length;
-        const pickedNew = document.querySelector("#ai-sel").value;
+        // 改名保存：旧组要没、新组要在、**key 不能丢**（最容易写错的一条）
+        const nameIn2 = boxOf("name");
+        if (nameIn2){ nameIn2.value = "DeepSeek-备用";
+                      nameIn2.dispatchEvent(new Event("input", {bubbles: true})); }
+        await sleep(250);
+        const sBtn2 = document.querySelector("#ai-save");
+        if (sBtn2) sBtn2.click();
+        await sleep(1000);
+        const renamed = M.ai.profiles.filter(x => x.name === "DeepSeek-备用")[0] || null;
+        const oldGone = !M.ai.profiles.some(x => x.name === "DeepSeek");
+        const opts2 = document.querySelector("#ai-sel").options.length;
+        const keptKey = renamed ? (renamed.params.api_key || "") : "";
         // 设为当前
         const uBtn = document.querySelector("#ai-use");
         const useOn = uBtn ? !uBtn.disabled : false;
         if (uBtn) uBtn.click();
         await sleep(700);
         const activeMock = (M.ai || {}).active || "";
-        const actOpt = document.querySelector('#ai-sel option[data-active="1"]');
-        const actLabel = actOpt ? actOpt.value : "";
         // 删除这一组（确认框主按钮）
         const dBtn = document.querySelector("#ai-del");
         if (dBtn) dBtn.click();
         await sleep(400);
-        const mok2 = document.querySelector("#m-ok");
-        if (mok2) mok2.click();
+        const mok = document.querySelector("#m-ok");
+        if (mok) mok.click();
         await sleep(900);
         const optsEnd = document.querySelector("#ai-sel").options.length;
         const ok = navs === 5 && pane.group === "AI" && box && !generic &&
+                   fieldN === 4 && olds === 0 &&
+                   chips === M.aiPresets.length + 1 && chipsBlank &&
                    opts0 === 3 && picked0 === "深度求索" &&
-                   fieldsN === 9 && inputsN === 8 && swsN === 1 &&
                    /sk-a…/.test(keyPh0) && keyVal0 === "" &&
-                   keyType1 === "text" && keyVal1 === "sk-abcdef1234567890" &&
+                   modelTag0 === "TEXTAREA" &&
+                   modelTxt0 === "deepseek-chat\ndeepseek-reasoner" &&
+                   preName === "DeepSeek" && preUrl === "https://api.deepseek.com/v1" &&
+                   preModel === "deepseek-chat\ndeepseek-reasoner" &&
+                   saveOn && vis &&
+                   opts1 === 4 && made.api_key === "sk-preset-1234567890" &&
+                   Array.isArray(made.model) && made.model.length === 2 &&
                    stOk && /HTTP 200/.test(stTxt) &&
-                   saveOn && savedUrl === "https://api.deepseek.com/v2" && saveOff &&
-                   optsNew === 4 && pickedNew === "临时组" &&
-                   useOn && activeMock === "临时组" && actLabel === "临时组" &&
-                   optsEnd === 3 && (M.aiTested || "") === "深度求索";
+                   !!renamed && oldGone && opts2 === 4 &&
+                   keptKey === "sk-preset-1234567890" && useOn &&
+                   activeMock === "DeepSeek-备用" && optsEnd === 3 &&
+                   (M.aiTested || "") === "DeepSeek";
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 分类=" + navs + " 页=" + pane.group +
-          " 块=" + (box ? 1 : 0) + " 通用行=" + (generic ? 1 : 0) + " 组=" + opts0 +
-          " 选中=" + picked0 + " 字段=" + fieldsN + "/" + inputsN + "/" + swsN +
-          " 打码=" + keyPh0 + " 空=" + (keyVal0 === "" ? 1 : 0) +
-          " 露=" + keyType1 + " 明文=" + (keyVal1 ? keyVal1.slice(0, 4) + "…" : "（空）") +
-          " 测=" + stOk + " [" + stTxt.slice(0, 28) + "] 亮=" + saveOn +
-          " 存=" + savedUrl + " 灰=" + saveOff + " 新组=" + optsNew + "/" + pickedNew +
-          " 可切=" + useOn + " 当前=" + activeMock + "/" + actLabel + " 删后=" + optsEnd;
+          " 块=" + (box ? 1 : 0) + " 通用行=" + (generic ? 1 : 0) + " 老字段=" + olds +
+          " 字段=" + fieldN + " 预制=" + chips + "/自定义" + (chipsBlank ? 1 : 0) +
+          " 组=" + opts0 + " 选中=" + picked0 + " 打码=" + keyPh0 +
+          " 空=" + (keyVal0 === "" ? 1 : 0) + " 模型框=" + modelTag0 +
+          "[" + modelTxt0.replace("\n", "|") + "]" +
+          " 填=" + preName + " / " + preUrl + " / " + preModel.replace("\n", "|") +
+          " 亮=" + saveOn + " 在视野=" + vis + " 存后组=" + opts1 +
+          "[" + names1 + "] 假库=[" + mockNames + "]" +
+          " 存=" + JSON.stringify(made) + " 测=" + stOk + "[" + stTxt.slice(0, 26) + "]" +
+          " 改名=" + (renamed ? 1 : 0) + " 旧组没了=" + oldGone +
+          " key=" + (keptKey ? "在" : "丢了") + " 组数=" + opts2 +
+          " 可切=" + useOn + " 当前=" + activeMock + " 删后=" + optsEnd;
         document.title = ok ? "READY" : ("SETTINGS-AI-FAIL " +
           document.querySelector("#meta").textContent);
       }

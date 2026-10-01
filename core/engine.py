@@ -121,17 +121,22 @@ def build_argv(inv, spec):
 def build_env(inv):
     """给子进程的环境。照抄 pa.py:234-238 的注入方式，换成 MOSS_* 前缀。"""
     env = os.environ.copy()
-    # ★ `V-137`：把**当前那组 AI 参数**注入给子进程 —— 包（以及以后 AI 相关的东西）
+    # ★ `V-137` / `V-139`：把**当前那组 AI 参数**注入给子进程 —— 包（以及以后 AI 相关的东西）
     #   不用自己解析 TOML，读 `MOSS_AI_*` 就行。key 也在里面（明文配置的必然结果，你定的）。
+    #   就四样：组名 + 地址 + 钥匙 + 模型；`MOSS_AI_MODEL` 是**第一个**（默认那个），
+    #   `MOSS_AI_MODELS` 是全部（逗号隔开）—— 要用哪个由代码当场按需挑。
+    #   温度 / 上限 / 超时这些**不注入**：那是每次调用的事，代码自己定（`V-139`）。
     try:
         _pname, _prof = config.ai_active_profile()
         if _prof:
             env["MOSS_AI_PROFILE"] = str(_pname)
-            for _k, _envk in (("base_url", "MOSS_AI_BASE_URL"), ("api_key", "MOSS_AI_API_KEY"),
-                              ("model", "MOSS_AI_MODEL"), ("timeout", "MOSS_AI_TIMEOUT")):
+            for _k, _envk in (("base_url", "MOSS_AI_BASE_URL"), ("api_key", "MOSS_AI_API_KEY")):
                 if _prof.get(_k) not in (None, ""):
                     env[_envk] = str(_prof.get(_k))
-            env["MOSS_AI_STREAM"] = "1" if _prof.get("stream", True) else "0"
+            _models = config.ai_models(_prof)
+            if _models:
+                env["MOSS_AI_MODEL"] = _models[0]
+                env["MOSS_AI_MODELS"] = ",".join(_models)
     except Exception:                                                   # noqa: BLE001
         pass
     env["MOSS_HOME"] = str(paths.HOME)

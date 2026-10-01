@@ -42,64 +42,41 @@ const MossSettings = {
           <h3 class="set-ptitle">{{ g.name }}</h3>
           <p class="set-pdesc" v-if="g.blurb">{{ g.blurb }}</p>
 
-          <!-- ★ AI 那一组（V-138）：组名是用户自己起的、一组一份参数，摆不成
-               「一个键一行」，所以单独一块 —— 选组 / 新增 / 复制 / 删除 / 设为当前 / 测连接。
-               底下的通用块用 v-if 让开（ai.active / ai.profiles 那两行不再重复渲染）。 -->
+          <!-- ★ AI 那一组（V-139 精简版）：就四样 —— 名字 / 接口地址 / 密钥 / 模型（可多个）。
+               「常用」那排按钮是预制参数（core 里的 AI_PRESETS），点一下把前三样替你填好，
+               只剩粘贴 key 这件事。没有「新增 / 复制」这些花样：点「自定义」就是一张白纸。 -->
           <div class="set-ai" v-if="isAi(g)">
             <div class="ai-bar">
               <label class="ai-lbl" for="ai-sel">用哪一组</label>
-              <select class="ai-sel" id="ai-sel" :value="ai.name" @change="aiPick($event)">
+              <select class="ai-sel" id="ai-sel" :value="aiSelValue" @change="aiPick($event)">
                 <option v-for="n in ai.profiles" :key="n" :value="n"
-                        :data-active="n === ai.active ? '1' : '0'">{{ n }}</option>
+                        :data-active="n === ai.active ? '1' : '0'">{{ n }}{{ n === ai.active ? "（当前）" : "" }}</option>
+                <option v-if="ai.creating" :value="aiVal('name')" data-new="1">{{ aiVal("name") }}（新）</option>
+                <option v-else-if="!ai.profiles.length" value="">{{ ai.name ? ai.name : "（还没有）" }}</option>
               </select>
-              <button class="btn-quiet sm" id="ai-new" type="button" @click="aiNew()">新增</button>
-              <button class="btn-quiet sm" id="ai-copy" type="button" :disabled="!ai.name"
-                      @click="aiCopy()" title="连密钥一起复制成新的一组">复制</button>
-              <button class="btn-quiet sm" id="ai-del" type="button" :disabled="!ai.name"
-                      @click="aiDel()">删除</button>
               <button class="btn-quiet sm" id="ai-use" type="button"
-                      :disabled="!ai.name || ai.name === ai.active"
+                      :disabled="!ai.name || ai.creating || ai.name === ai.active"
                       @click="aiUse()" title="以后跑包注入的就是这一组">设为当前</button>
+              <button class="btn-quiet sm" id="ai-del" type="button"
+                      :disabled="!ai.name || ai.creating" @click="aiDel()">删除</button>
             </div>
 
-            <p class="ai-none" v-if="!ai.profiles.length">
-              还没有任何一组 —— 点「新增」起个名字，填上接口地址和模型就能用了。
-            </p>
-
-            <!-- ★ 动作行放在**上面**（V-138 第二版）：九项字段排下来比一屏高，
-                 摆在底下就得滚动才看得见「保存这一组」—— 主操作不能藏在折线下面。 -->
-            <div class="ai-bar ai-acts" v-if="ai.name">
-              <button class="btn primary" id="ai-save" type="button"
-                      :disabled="!aiDirty() || ai.busy" @click="aiSave()">
-                {{ ai.busy ? "正在存…" : "保存这一组" }}
-              </button>
-              <button class="btn-quiet" id="ai-test" type="button" :disabled="ai.busy || !ai.name"
-                      @click="aiTest()" title="按这一组真发一个最小请求，看流式能不能回来">
-                测试连接
-              </button>
-              <span class="ai-state" id="ai-state" :class="ai.statusOk ? 'ok' : 'bad'"
-                    v-if="ai.status">{{ ai.status }}</span>
-              <span class="ai-tip" v-else>
-                参数<b>明文</b>存在 <code>user_data/config.toml</code>；跑包时按当前这一组注入
-                <code>MOSS_AI_*</code> 给子进程。
-              </span>
+            <div class="ai-pre">
+              <span class="ai-lbl">常用</span>
+              <button v-for="p in ai.presets" :key="p.name" type="button" class="ai-chip"
+                      :data-preset="p.name" @click="aiUsePreset(p)">{{ p.name }}</button>
+              <button type="button" class="ai-chip" data-preset="自定义" id="ai-blank"
+                      @click="aiBlank()">自定义</button>
             </div>
 
-            <div class="set-fields ai-fields" v-if="ai.name">
+            <div class="set-fields ai-fields">
               <div v-for="f in aiFields" :key="f.k" class="set-field" :data-ai="f.k">
                 <div class="set-lbl">
                   <span>{{ f.label }}</span>
                   <span v-if="f.hint" class="set-info ai-info" :title="f.hint"
                         v-html="icon('info')"></span>
                 </div>
-                <div v-if="f.type === 'bool'" class="ai-swbox">
-                  <button type="button" class="sw" :data-ai="f.k" role="switch"
-                          :aria-checked="aiVal(f.k) ? 'true' : 'false'"
-                          :title="aiVal(f.k) ? '开 —— 点一下关掉' : '关 —— 点一下打开'"
-                          @click="aiSet(f.k, !aiVal(f.k))"></button>
-                  <span class="ai-swtxt">{{ aiVal(f.k) ? "开 · 边生成边往回吐" : "关 · 等整段说完再回" }}</span>
-                </div>
-                <div v-else-if="f.type === 'key'" class="ai-keyrow">
+                <div v-if="f.type === 'key'" class="ai-keyrow">
                   <input class="inp" :data-ai="f.k" :type="ai.revealed ? 'text' : 'password'"
                          spellcheck="false" autocomplete="off" :placeholder="aiKeyPh()"
                          :value="aiVal(f.k)" @input="aiSet(f.k, $event.target.value)">
@@ -108,10 +85,30 @@ const MossSettings = {
                     {{ ai.revealed ? "藏起来" : "露出来" }}
                   </button>
                 </div>
+                <textarea v-else-if="f.type === 'lines'" class="inp ai-lines" :data-ai="f.k"
+                          spellcheck="false" :placeholder="f.ph || ''" :value="aiVal(f.k)"
+                          @input="aiSet(f.k, $event.target.value)"></textarea>
                 <input v-else class="inp" :data-ai="f.k" spellcheck="false" autocomplete="off"
                        :placeholder="f.ph || ''" :value="aiVal(f.k)"
                        @input="aiSet(f.k, $event.target.value)">
               </div>
+            </div>
+
+            <div class="ai-bar ai-acts">
+              <button class="btn primary" id="ai-save" type="button"
+                      :disabled="!aiDirty() || ai.busy" @click="aiSave()">
+                {{ ai.busy ? "正在存…" : "保存这一组" }}
+              </button>
+              <button class="btn-quiet" id="ai-test" type="button" :disabled="ai.busy || !ai.name"
+                      @click="aiTest()" title="真发一个最小请求，看流式能不能回来">
+                测试连接
+              </button>
+              <span class="ai-state" id="ai-state" :class="ai.statusOk ? 'ok' : 'bad'"
+                    v-if="ai.status">{{ ai.status }}</span>
+              <span class="ai-tip" v-else>
+                明文存在 <code>user_data/config.toml</code>；跑包时按当前这一组注入
+                <code>MOSS_AI_*</code>（地址 / 钥匙 / 模型清单）。
+              </span>
             </div>
           </div>
 
@@ -212,8 +209,12 @@ const MossSettings = {
       // ★ AI 那一组（`V-138`）：界面**不解析 TOML**，全都问宿主（`pywebview.api.ai_*`）。
       //   `params` = 宿主给的那一组（key **打码**）；`draft` = 用户改过、还没保存的字段
       //   （存的时候**只送这几个**，不会把打码那串当值写回去）。
-      ai: {loaded: false, busy: false, name: "", active: "", profiles: [],
-           params: {}, draft: {}, revealed: false, status: "", statusOk: false},
+      ai: {loaded: false, busy: false, name: "", active: "", profiles: [], presets: [],
+           params: {}, draft: {}, revealed: false, status: "", statusOk: false,
+           // ★ 正在**新建**一组（点了「常用」里某家或「自定义」）：这时候保存 = 加一组；
+           //   不然「名字框和当前那组不一样」就一律当成**改名** —— 点个预制参数再保存会把
+           //   原来那组改掉（第一版就这么错的，场景里"假库少了一组"才发现）。
+           creating: false},
       _timer: null,
       _seq: 0,
     };
@@ -258,35 +259,28 @@ const MossSettings = {
       });
       return out;
     },
-    // ★ AI 那一组的字段表（`V-138`）：**顺序就是显示顺序**，跟 `core/config.py` 的
-    //   `AI_FIELDS` 对应（那边管"存哪些"，这边多一层"怎么摆、怎么说"）。
-    //   ★ 必须放**计算属性**里：放 methods 就是把这个函数本身递给 `v-for` ——
-    //     函数没有可枚举属性，于是那一块**一个字段都不渲染**（第一版就这么写的，
-    //     场景里 `字段=0/0/0` 才看出来）。
+    // ★ AI 那一组的字段表（`V-138` / `V-139`）：**就四样** —— 顺序就是显示顺序。
+    //   跟 `core/config.py` 的 `AI_FIELDS` 对应（那边管"存哪三个键"，这边多一个"名字"和
+    //   "怎么摆、怎么说"）。★ 必须放**计算属性**里：放 methods 就是把这个函数本身递给
+    //   `v-for` —— 函数没有可枚举属性，那一块一个字段都不渲染（第一版这么写的，踩过）。
     aiFields(){
       return [
+        {k: "name", label: "名字", ph: "比如 DeepSeek（随便起）",
+         hint: "这一组叫什么，只给自己看。改了名字 = 换一组（保存时会把旧的删掉）。"},
         {k: "base_url", label: "接口地址", ph: "https://api.deepseek.com/v1",
          hint: "OpenAI 兼容的地址，填到 /v1 为止 —— 后面那截 /chat/completions 由 moss 拼。"},
         {k: "api_key", label: "密钥", type: "key",
-         hint: "明文存在 user_data/config.toml（你定的：明文即可）。留空 = 不改原来那串。"},
-        {k: "model", label: "模型", ph: "deepseek-chat",
-         hint: "请求里那个 model 字段 —— 各家自己起的名字（deepseek-chat / qwen2.5:7b …）。"},
-        {k: "stream", label: "流式输出", type: "bool",
-         hint: "开 = 边生成边往回吐（SSE），关 = 等整段说完再回。"},
-        {k: "temperature", label: "temperature", ph: "0.7",
-         hint: "越大越发散。留空 = 用服务商的默认值。"},
-        {k: "max_tokens", label: "max_tokens", ph: "2048",
-         hint: "一次最多生成多少 token。留空 = 用服务商的默认值。"},
-        {k: "top_p", label: "top_p", ph: "1",
-         hint: "另一种截断方式，和 temperature 挑一个调就行。"},
-        {k: "timeout", label: "超时（秒）", ph: "60",
-         hint: "连不上这么久就放弃 —— 本地小模型可以调大点。"},
-        {k: "note", label: "备注", ph: "这一组是干什么的",
-         hint: "只给自己看，不发给服务商。"},
+         hint: "明文存在 user_data/config.toml。留空 = 不改原来那串。"},
+        {k: "model", label: "模型（一行一个）", type: "lines",
+         ph: "deepseek-chat\ndeepseek-reasoner",
+         hint: "这个服务里你打算用的模型名，一行一个（第一个当默认）。跑包时注入 " +
+               "MOSS_AI_MODEL（第一个）和 MOSS_AI_MODELS（全部）—— 具体用哪个由代码当场挑。"},
       ];
     },
     // 现在这一页是不是 AI 那一组（是的话底部那颗全局「保存」就不摆 —— 见模板里的注释）
     aiPane(){ return this.isAiName(this.active); },
+    // 下拉里显示谁：正在新建时显示"你刚起的那个名字"（它还没进清单）
+    aiSelValue(){ return this.ai.creating ? this.aiVal("name") : this.ai.name; },
   },
   methods: {
     icon(name){ return ico(name, "i"); },
@@ -295,23 +289,40 @@ const MossSettings = {
       const g = (this.groups || []).find(x => x.name === name);
       return !!(g && (g.items || []).some(it => it.key === "ai.active"));
     },
+    /* ---- AI 那一组（`V-139`：名字 / 接口地址 / 密钥 / 模型）—— 全走宿主，界面不解析 TOML ---- */
     aiVal(k){
       if (Object.prototype.hasOwnProperty.call(this.ai.draft, k)) return this.ai.draft[k];
+      if (k === "name") return this.ai.name;
       // 打码的那串**不当值填进框里** —— 不然保存时会把 "sk-a…7890" 存成真 key
-      if (k === "api_key" && !this.ai.revealed) return "";
+      if (k === "api_key") return this.ai.revealed ? (this.ai.params.api_key || "") : "";
+      // 模型在库里是**列表**，在框里是「一行一个」的文本
+      if (k === "model"){
+        const m = this.ai.params.model;
+        return (Array.isArray(m) ? m : (m ? [m] : [])).join("\n");
+      }
       const v = this.ai.params[k];
       return v == null ? "" : v;
+    },
+    aiModelList(){
+      return String(this.aiVal("model") || "").split(/[\r\n,]+/)
+        .map(s => s.trim()).filter(Boolean);
     },
     aiKeyPh(){
       if (this.ai.revealed) return "明文已经读出来了，不动它就不会改";
       const m = this.ai.params.api_key;
-      return m ? (m + "（留空不改）") : "还没填";
+      return m ? (m + "（留空不改）") : "把 key 粘到这里";
     },
     aiSet(k, v){
       this.ai.draft[k] = v;
       this.ai.status = "";            // 改了参数，上次那个测试结果就不算数了
     },
     aiDirty(){ return Object.keys(this.ai.draft).length > 0; },
+    aiNewName(base){
+      // 名字撞了就在后面加 -2 / -3…（点预制参数时用）
+      let n = String(base || "").trim() || "我的AI", i = 2;
+      while (this.ai.profiles.indexOf(n) >= 0){ n = base + "-" + i; i++; }
+      return n;
+    },
     async aiLoad(name){
       const r = await pywebview.api.ai_config(name || "", false);
       if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "读 AI 参数失败"), true); return false; }
@@ -323,50 +334,100 @@ const MossSettings = {
       this.ai.draft = {};
       this.ai.revealed = false;
       this.ai.status = "";
+      this.ai.creating = false;      // 从库里读出来的这一组：不是"新建"
       return true;
     },
+    async aiLoadPresets(){
+      if (this.ai.presets.length) return;
+      const r = await pywebview.api.ai_presets();
+      this.ai.presets = (r && r.presets) || [];
+    },
+    // 换组（下拉）：有没保存的改动先问一句
     async aiPick(ev){
       const sel = ev && ev.target;
       const name = sel ? sel.value : "";
       if (!name || name === this.ai.name) return;
       const back = () => { if (sel) sel.value = this.ai.name; };
       if (this.aiDirty()){
-        askConfirm("这一组还没保存", "换一组会把刚改的丢掉。", () => { this.aiLoad(name); });
+        askConfirm("刚改的还没保存", "换一组会把刚改的丢掉。", () => { this.aiLoad(name); });
         back();
         return;
       }
       if (!(await this.aiLoad(name))) back();
     },
-    aiNew(){ askText("新的一组叫什么名字", "", (nm) => this.aiCreate(String(nm || "").trim())); },
-    async aiCreate(name, seed){
-      if (!name) return;
-      if (this.ai.profiles.indexOf(name) >= 0){ toast("已经有「" + name + "」了", true); return; }
-      const r = await pywebview.api.ai_save(name, seed || {base_url: "", model: ""});
+    // 点「常用」里那一家：把名字 / 地址 / 模型填进表单，只等你粘 key（**不写盘**）
+    aiUsePreset(p){
+      const fill = () => {
+        this.ai.draft = {name: this.aiNewName(p.name), base_url: p.base_url || "",
+                         model: (p.model || []).join("\n"), api_key: ""};
+        this.ai.creating = true;
+        this.ai.status = "";
+        this.$nextTick(() => {
+          const box = document.querySelector('.ai-fields .set-field[data-ai="api_key"] input');
+          if (box) box.focus();
+        });
+      };
+      if (this.aiDirty()) askConfirm("刚改的还没保存", "点预制参数会把表单换掉。", fill);
+      else fill();
+    },
+    // 「自定义」= 一张白纸（名字还是给一个，省得保存时还得先起名）
+    aiBlank(){
+      const fill = () => {
+        this.ai.draft = {name: this.aiNewName("我的AI"), base_url: "", model: "", api_key: ""};
+        this.ai.creating = true;
+        this.ai.status = "";
+        this.$nextTick(() => {
+          const box = document.querySelector('.ai-fields .set-field[data-ai="base_url"] input');
+          if (box) box.focus();
+        });
+      };
+      if (this.aiDirty()) askConfirm("刚改的还没保存", "点「自定义」会清空表单。", fill);
+      else fill();
+    },
+    aiNameNow(){
+      const v = Object.prototype.hasOwnProperty.call(this.ai.draft, "name")
+        ? this.ai.draft.name : this.ai.name;
+      return String(v || "").trim();
+    },
+    async aiSave(){
+      const name = this.aiNameNow();
+      if (!name){ toast("先给这一组起个名字", true); return; }
+      let old = this.ai.name;
+      const d = this.ai.draft;
+      // 新建（点了预制参数 / 自定义）⇒ 全新一组；否则才可能是在给**当前这组改名**
+      const creating = !old || this.ai.creating;
+      const fields = {};
+      // 全新的一组：三个字段都给（哪怕是空的，也算"我有这一组了"）
+      if (creating || Object.prototype.hasOwnProperty.call(d, "base_url"))
+        fields.base_url = String(this.aiVal("base_url") || "").trim();
+      if (creating || Object.prototype.hasOwnProperty.call(d, "model"))
+        fields.model = this.aiModelList();
+      // ★ 密钥**只在你真填过的时候才送**：没填就一个字都别动（不然会把已有的 key 抹成空）
+      if (creating || Object.prototype.hasOwnProperty.call(d, "api_key")) fields.api_key = d.api_key;
+      if (!creating && !Object.keys(fields).length && name === old){ toast("没有改动"); return; }
+      this.ai.busy = true;
+      // 改名 = 换一组：**让宿主整块搬**（`--ai-rename`）—— 不搬的话密钥拿不到，
+      // 面板上只有打码那串，按新名字再存一遍就等于把 key 丢了。
+      if (!creating && name !== old){
+        const rn = await pywebview.api.ai_rename(old, name);
+        if (!rn || !rn.ok){
+          this.ai.busy = false;
+          toast("✗ " + ((rn && rn.msg) || "改不了名字"), true);
+          return;
+        }
+      }
+      let r = {ok: true, msg: ""};
+      if (Object.keys(fields).length) r = await pywebview.api.ai_save(name, fields);
+      this.ai.busy = false;
       if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "没存上"), true); return; }
       await this.aiLoad(name);
-      toast("加了一组「" + name + "」—— 填上地址和模型再点「测试连接」");
-    },
-    aiCopy(){
-      const src = this.ai.name;
-      if (!src) return;
-      askText("复制成哪一组（换个名字）", src + "-副本", async (nm) => {
-        nm = String(nm || "").trim();
-        if (!nm) return;
-        if (nm === src || this.ai.profiles.indexOf(nm) >= 0){
-          toast("已经有「" + nm + "」了 —— 换个名字", true); return;
-        }
-        // ★ 复制要连**真密钥**一起（打码那串复制过去就是废的）⇒ 走 reveal 读一次明文
-        const r0 = await pywebview.api.ai_config(src, true);
-        const seed = (r0 && r0.ok && r0.params) || null;
-        if (!seed){ toast("✗ 读不到「" + src + "」的参数，没法复制", true); return; }
-        await this.aiCreate(nm, seed);
-      });
+      toast("已保存「" + name + "」—— 点「测试连接」试试");
     },
     aiDel(){
       const name = this.ai.name;
       if (!name) return;
       askConfirm("删除这一组？",
-                 "「" + name + "」的参数会从 config.toml 里删掉（只是配置，别的东西不动）。",
+                 "「" + name + "」会从 config.toml 里删掉（只是配置，别的东西不动）。",
                  async () => {
         const r = await pywebview.api.ai_delete(name);
         if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "没删掉"), true); return; }
@@ -390,18 +451,6 @@ const MossSettings = {
       const real = (r.params || {}).api_key || "";
       this.ai.params = Object.assign({}, this.ai.params, {api_key: real});
       if (Object.prototype.hasOwnProperty.call(this.ai.draft, "api_key")) delete this.ai.draft.api_key;
-    },
-    async aiSave(){
-      const name = this.ai.name;
-      if (!name) return;
-      const fields = Object.assign({}, this.ai.draft);
-      if (!Object.keys(fields).length){ toast("没有改动"); return; }
-      this.ai.busy = true;
-      const r = await pywebview.api.ai_save(name, fields);
-      this.ai.busy = false;
-      if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "没存上"), true); return; }
-      await this.aiLoad(name);
-      toast("已保存「" + name + "」（明文写在 config.toml 里）");
     },
     async aiTest(){
       const name = this.ai.name;
@@ -471,8 +520,8 @@ const MossSettings = {
     setActive(gid){
       this.active = gid;
       this.hideTip();
-      // 切到 AI 那一页时才去问宿主（省得每次开设置都多跑一条命令）
-      if (this.isAiName(gid) && !this.ai.loaded) this.aiLoad("");
+      // 切到 AI 那一页时才去问宿主（省得每次开设置都多跑两条命令）
+      if (this.isAiName(gid)){ this.aiLoadPresets(); if (!this.ai.loaded) this.aiLoad(""); }
     },
     setVal(key, v){
       this.values[key] = v;

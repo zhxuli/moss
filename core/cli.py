@@ -47,9 +47,12 @@ USAGE = """moss —— 多语言启动器
   moss --history <条数>        只打印不交互（管道 / 脚本用这种）
   moss --remove <别名>         卸载一个包：包本体 + 它的数据（永久删除，需确认；-y 跳过）
   moss --ai-config              看当前那组 AI 参数（key 默认**打码**；`--ai-config-reveal` 才给全文）
-  moss --ai-profile-set <组> k=v…  加/改一组 AI 参数（base_url / api_key / model / temperature /
-                               max_tokens / top_p / timeout / stream / note —— **明文**写 config.toml）
+  moss --ai-profile-set <组> k=v…  加/改一组 AI 参数（就三样：base_url / api_key / model ——
+                               model 可以多个，逗号隔开；**明文**写 config.toml）
+  moss --ai-presets             常见那几家的预制参数（DeepSeek / Gemini / OpenAI / Kimi /
+                               通义千问 / 智谱 / 硅基流动 / 本地 Ollama）—— 面板上的「常用」就是它
   moss --ai-active <组>         选当前用哪一组          moss --ai-profile-del <组>  删一组
+  moss --ai-rename <旧> <新>    给一组改名（整块搬，key 不用再读一遍）
   moss --ai-test [组]           **测试连接**：流式发一个最小请求，报状态码和第一个增量
   moss --ai-import-legacy       把旧的 user_data/state/ai/config.json 导成一组
   moss --snap …                版本快照（备份 / 恢复 / 导出 / 差异）—— 给人和 AI 用；
@@ -837,8 +840,19 @@ def cmd_ai_config(kv, reveal=False):
     return 0
 
 
+def cmd_ai_presets():
+    """`--ai-presets`：常见服务商的预制参数（面板上那排「常用」按钮读的就是它）。"""
+    import json as _json
+    print(_json.dumps({"ok": True, "presets": config.AI_PRESETS}, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_ai_profile_set(argv):
-    """`--ai-profile-set <组名> k=v …` —— 加/改组（明文写 config.toml）。"""
+    """`--ai-profile-set <组名> k=v …` —— 加/改组（明文写 config.toml）。
+
+    ★ 现在就三样字段（`V-139`）：`base_url` / `api_key` / `model`。
+      `model` 支持多个，逗号或空格隔开（`model=a,b`）—— 存进去是列表。
+    """
     if not argv:
         out.print_cyan("[错误] 用法：--ai-profile-set <组名> base_url=… model=… api_key=…")
         return 1
@@ -851,21 +865,30 @@ def cmd_ai_profile_set(argv):
         k = k.strip()
         if k not in config.AI_FIELDS:
             continue
-        if v.lower() in ("true", "false"):
-            fields[k] = (v.lower() == "true")
-        else:
-            try:
-                fields[k] = float(v) if "." in v else int(v)
-            except ValueError:
-                fields[k] = v
+        fields[k] = v
     nm, cur = config.ai_profile_set(name, fields)
-    out.print_cyan("已存：%s（字段 %s）" % (nm, " ".join(sorted(cur))))
+    shown = {k: (" / ".join(cur[k]) if isinstance(cur[k], list) else cur[k])
+             for k in sorted(cur)}
+    out.print_cyan("已存：%s（%s）" % (nm, "；".join("%s=%s" % (k, v) for k, v in shown.items())))
     return 0
 
 
 def cmd_ai_profile_del(name):
     left = config.ai_profile_del(name)
     out.print_cyan("删了「%s」；剩下的组：%s" % (name, " / ".join(left) or "（没有）"))
+    return 0
+
+
+def cmd_ai_rename(argv):
+    """`--ai-rename <旧组名> <新组名>` —— 整组改名（面板上改「名字」走的就是它）。"""
+    if len(argv) < 2:
+        out.print_cyan("[错误] 用法：--ai-rename <旧组名> <新组名>")
+        return 1
+    nm = config.ai_rename(argv[0], argv[1])
+    if not nm:
+        out.print_cyan("[错误] 没改成：旧的那组不存在，或者新名字已经被别的组占了。")
+        return 1
+    out.print_cyan("改名完成：%s → %s" % (argv[0], nm))
     return 0
 
 
@@ -886,41 +909,30 @@ def cmd_ai_test(argv):
         out.print_cyan("[错误] 没有这一组：%s（先 --ai-profile-set 配一个）" % (name or "（空）"))
         return 1
     base = str(p.get("base_url") or "").rstrip("/")
-    model = str(p.get("model") or "")
-    if not base or not model:
-        out.print_cyan("[错误] 这一组还没填 base_url / model。")
+    models = config.ai_models(p)
+    if not base or not models:
+        out.print_cyan("[错误] 这一组还没填 base_url / model（model 可以写多个，逗号隔开）。")
         return 1
-    # `stream` 没写就按 true（`V-137` 定的调子：要流式）；写了 false 就老老实实非流式。
-    stream = True if p.get("stream") is None else bool(p.get("stream"))
-    body = _json.dumps({"model": model, "stream": stream, "max_tokens": 8,
+    # ★ `V-139`：温度 / 上限 / 超时这些**不放在配置里**（它们是"每次调用"的事），
+    #   这里测连接就用一组写死的保守值：8 个 token、60 秒、**一律流式**（你定的调子：
+    #   "我们需要使用流式"）—— 顺带就把"流式这条路真的能回来"一起证明了。
+    model = models[0]
+    body = _json.dumps({"model": model, "stream": True, "max_tokens": 8,
                         "messages": [{"role": "user", "content": "只回两个字：收到"}]},
                        ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(base + "/chat/completions", data=body,
                                  headers={"Content-Type": "application/json",
                                           "Authorization": "Bearer " + str(p.get("api_key") or "")})
     try:
-        with urllib.request.urlopen(req, timeout=float(p.get("timeout") or 60)) as r:
-            code = r.status
-            # ★ 按这一组的 `stream` 说话（`V-138`）：开着就证明"流式真的能回来"（读第一个
-            #   增量就停），关着就把整段读完再报回话 —— 两种都测到，才叫"这一组能用"。
-            if stream:
-                first = ""
-                for raw in r:
-                    line = raw.decode("utf-8", "replace").strip()
-                    if line.startswith("data:"):
-                        first = line[5:].strip()
-                        break
-                out.print_cyan("连上了：HTTP %s · 流式第一个增量 = %s" % (code, (first or "（空）")[:200]))
-            else:
-                raw = r.read().decode("utf-8", "replace")
-                text = ""
-                try:
-                    j = _json.loads(raw)
-                    text = str((((j.get("choices") or [{}])[0].get("message") or {})
-                                .get("content")) or "")
-                except ValueError:
-                    text = raw
-                out.print_cyan("连上了：HTTP %s · 非流式回话 = %s" % (code, (text or "（空）")[:200]))
+        with urllib.request.urlopen(req, timeout=60) as r:
+            code, first = r.status, ""
+            for raw in r:
+                line = raw.decode("utf-8", "replace").strip()
+                if line.startswith("data:"):
+                    first = line[5:].strip()
+                    break
+        out.print_cyan("连上了：HTTP %s（模型 %s）· 流式第一个增量 = %s"
+                       % (code, model, (first or "（空）")[:200]))
         return 0
     except Exception as e:                                              # noqa: BLE001
         out.print_cyan("[错误] 没连上 / 报错：%s" % e)
@@ -1348,12 +1360,16 @@ def main(argv):
         return cmd_ai_config(rest)
     if first == "--ai-config-reveal":
         return cmd_ai_config(rest, reveal=True)
+    if first == "--ai-presets":
+        return cmd_ai_presets()
     if first == "--ai-profile-set":
         return cmd_ai_profile_set(rest)
     if first == "--ai-profile-del":
         return cmd_ai_profile_del(rest[0] if rest else "")
     if first == "--ai-active":
         return cmd_ai_active(rest[0] if rest else "")
+    if first == "--ai-rename":
+        return cmd_ai_rename(rest)
     if first == "--ai-test":
         return cmd_ai_test(rest)
     if first == "--ai-import-legacy":

@@ -29,9 +29,49 @@ from . import paths
 
 #: 默认配置。**改这里的时候，`CONFIG_TEMPLATE` 要一起改** —— 自检会核对两者是否一致
 #: （`template_problems()`，挂 `moss --selfcheck`），免得"默认值改了、模板没跟上"。
-#: AI 那几组参数的字段（`V-137`）：一组一份，明文存 `user_data/config.toml` 的 `[ai.profiles.<组名>]`。
-AI_FIELDS = ("base_url", "api_key", "model", "temperature", "max_tokens",
-             "top_p", "timeout", "stream", "note")
+#: AI 那几组参数的字段（`V-139` 精简到**四样**）：组名（= `[ai.profiles.<组名>]` 那个表名）
+#: 加下面三个键 —— `base_url` / `api_key` / `model`。
+#: ★ 为什么把 `stream` / `temperature` / `max_tokens` / `top_p` / `timeout` / `note` 拿掉了
+#:   （你的话：「其他的可以由程序根据需求来设置 不必遵守这些规矩」）：那些是**每次调用**
+#:   该由代码当场定的东西，摆在设置面板里只会让普通用户看不懂 —— 面板上只留
+#:   「连哪儿、拿什么钥匙、这个服务有哪些模型」。
+#: ★ `model` **可以是多个**（TOML 里写成数组，第一个当默认）；旧配置里写成字符串照样读得动。
+AI_FIELDS = ("base_url", "api_key", "model")
+
+#: 常见服务商**预制参数**（`V-139`）：名字 + 接口地址 + 模型清单，点一下就把这几样填进面板，
+#: 用户只需要粘一把 key。★ 表放在 core 里是为了**只有一份真相** —— 面板（走 `--ai-presets`）
+#: 和命令行看到的是同一份；地址都是 **OpenAI 兼容**的那个入口（`{base_url}/chat/completions`）。
+AI_PRESETS = [
+    {"name": "DeepSeek", "base_url": "https://api.deepseek.com/v1",
+     "model": ["deepseek-chat", "deepseek-reasoner"]},
+    {"name": "Gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+     "model": ["gemini-2.0-flash", "gemini-2.5-pro"]},
+    {"name": "OpenAI", "base_url": "https://api.openai.com/v1",
+     "model": ["gpt-4o-mini", "gpt-4o"]},
+    {"name": "Kimi", "base_url": "https://api.moonshot.cn/v1",
+     "model": ["moonshot-v1-8k", "moonshot-v1-32k"]},
+    {"name": "通义千问", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+     "model": ["qwen-plus", "qwen-max"]},
+    {"name": "智谱", "base_url": "https://open.bigmodel.cn/api/paas/v4",
+     "model": ["glm-4-flash", "glm-4-plus"]},
+    {"name": "硅基流动", "base_url": "https://api.siliconflow.cn/v1",
+     "model": ["deepseek-ai/DeepSeek-V3", "Qwen/Qwen2.5-7B-Instruct"]},
+    {"name": "本地 Ollama", "base_url": "http://127.0.0.1:11434/v1",
+     "model": ["qwen2.5:7b"]},
+]
+
+
+def ai_models(prof):
+    """一组里的模型清单 —— **永远是列表**（旧配置里写成字符串的也认）。
+
+    为什么要有这个函数：`model` 有两种历史写法（字符串 / 数组），凡是用到它的地方
+    （注入环境变量、测试连接、面板）都得先归一化，各写一遍早晚不一致。
+    """
+    v = (prof or {}).get("model")
+    if isinstance(v, (list, tuple)):
+        return [str(x).strip() for x in v if str(x).strip()]
+    s = str(v or "").strip()
+    return [s] if s else []
 
 DEFAULT_CONFIG = {
     # ★ `V-137`：AI 那几组（`[ai] active` + `[ai.profiles.<组名>]`）—— **不声明在这里，
@@ -114,19 +154,25 @@ max_parent_depth = 3
 force_kill = true
 
 
-# ---------------------------------------------------------------- AI（`V-137`）
+# ---------------------------------------------------------------- AI（`V-137` / `V-139`）
 # 一组 = `[ai.profiles.<组名>]`；`active` 指当前用哪一组。参数**明文**存在这个文件里
 # （它在 user_data/ 下、不进仓库）；跑包时宿主会把当前那组注入成 `MOSS_AI_*` 环境变量。
-#   字段：base_url 接口地址 / api_key 密钥 / model 模型名 / temperature 温度 /
-#         max_tokens 最大输出（0=不限）/ top_p / timeout 秒 / stream 流式 / note 备注
+#   就四样：**组名** + base_url 接口地址 / api_key 密钥 / model 模型（可以多个，第一个当默认）
+#   —— 像 temperature / max_tokens / stream / timeout 这些**不往这里放**：
+#   它们是"每次调用"该由代码当场定的，摆在这儿只会让人不敢动（你的话：不必遵守这些规矩）。
 # 加一组（命令行最省事，也可以照这个样子手写）：
-#   moss --ai-profile-set mine base_url=https://api.deepseek.com/v1 model=deepseek-chat api_key=sk-xxx
+#   moss --ai-profile-set DeepSeek base_url=https://api.deepseek.com/v1 model=deepseek-chat,deepseek-reasoner api_key=sk-xxx
+#   moss --ai-presets      # 看常见的几家（DeepSeek / Gemini / OpenAI / Kimi / 通义千问 / 智谱 / 硅基流动 / 本地 Ollama）
 # ★ 这里**只声明 active**：示例写在注释里 —— 模板和默认值（`DEFAULT_CONFIG`）必须对得上，
 #   不然 `--selfcheck` 的"模板和默认值一致"那条会报错（实测踩过）。
 [ai]
 active = ""
 # 各组：一组一张表（`moss --ai-profile-set <组名> …` 会往里加；也可以照注释里的样子手写）
 [ai.profiles]
+# [ai.profiles.DeepSeek]
+# base_url = "https://api.deepseek.com/v1"
+# api_key = "sk-xxx"
+# model = ["deepseek-chat", "deepseek-reasoner"]
 '''
 
 
@@ -206,14 +252,14 @@ SETTINGS_GROUPS = [
     #   不是「一个键一行」。这两个键留着是为了让「面板清单和 DEFAULT_CONFIG 对得上」
     #   那条自检能过；真正在面板上渲染的是 `js/settings.js` 里那块 `.set-ai`。
     {"name": "AI", "icon": "cpu",
-     "blurb": "AI 参数（可以配多组）：一组一份，明文存在 user_data/config.toml；"
-              "跑包时把当前那组注入成 MOSS_AI_* 环境变量",
+     "blurb": "AI 就四样：一组一个名字 + 接口地址 + 密钥 + 模型（可以多个）。"
+              "明文存在 user_data/config.toml；跑包时把当前那组注入成 MOSS_AI_* 环境变量",
      "items": [
          {"key": "ai.active", "label": "当前组", "type": "text",
           "hint": "现在用哪一组 —— 面板上那颗「设为当前」改的就是它。"},
          {"key": "ai.profiles", "label": "各组", "type": "text",
-          "hint": "每一组的字段（接口地址 / 密钥 / 模型 …）由面板上那一块直接管；"
-                  "命令行同样可以：moss --ai-profile-set <组名> base_url=… model=… api_key=…"},
+          "hint": "每一组的内容（接口地址 / 密钥 / 模型）由面板上那一块直接管；"
+                  "命令行同样可以：moss --ai-profile-set <组名> base_url=… model=a,b api_key=…"},
      ]},
 ]
 
@@ -697,7 +743,10 @@ def _ai_section_text(profiles, active):
             if k not in pr:
                 continue
             v = pr.get(k)
-            if isinstance(v, bool):
+            if isinstance(v, (list, tuple)):
+                # ★ `model` 可以是**多个**（`V-139`）：写成 TOML 数组，读回来还是列表。
+                out.append('%s = [%s]' % (k, ", ".join(_toml_str(x) for x in v)))
+            elif isinstance(v, bool):
                 out.append('%s = %s' % (k, 'true' if v else 'false'))
             elif isinstance(v, (int, float)) and not isinstance(v, bool):
                 out.append('%s = %s' % (k, v))
@@ -767,7 +816,16 @@ def ai_profile_set(name, fields, path=None):
     profs = ai_profiles(path)
     cur = dict(profs.get(name) or {})
     for k, v in (fields or {}).items():
-        if k in AI_FIELDS:
+        if k not in AI_FIELDS:
+            continue
+        # ★ `model` 一律**存成列表**（`V-139`：可以多个）。字符串也接受（命令行 / 手写），
+        #   顺手把逗号 / 换行拆开并去掉空的 —— 不然 `model="a,b"` 会变成一个叫 "a,b" 的模型名。
+        if k == "model":
+            if isinstance(v, (list, tuple)):
+                cur[k] = [str(x).strip() for x in v if str(x).strip()]
+            else:
+                cur[k] = [x.strip() for x in re.split(r"[,\n]", str(v)) if x.strip()]
+        else:
             cur[k] = v
     profs[name] = cur
     active = ai_active_name(path) or name
@@ -790,6 +848,29 @@ def ai_set_active(name, path=None):
     profs = ai_profiles(path)
     _write_ai_section(profs, str(name), path)
     return str(name)
+
+
+def ai_rename(old, new, path=None):
+    """给一组**改名**：整块搬过去（`profs[new] = profs.pop(old)`）。
+
+    ★ 为什么要有它（`V-139`）：面板上「名字」是个可改的框，改完保存就是换一组。
+      如果走"按新名字再存一遍"那条路，`base_url` / `model` 还能从面板拿到，
+      **密钥拿不到**（面板上只有打码那串，除非用户点「露出来」）—— 一不小心就把 key 弄丢。
+      搬整块表最省事：明文一个字节都不用离开磁盘。
+    ★ 目标名字**已经存在**就不动（返回 None）：那多半是想"合并两组"，而合并得用户自己拿主意；
+      悄悄把另一组的 key 覆盖掉是最坏的结果。
+    """
+    old = str(old or "").strip()
+    new = re.sub(r'["\\\[\]\.\r\n\t]', "_", str(new or "").strip())[:40].strip()
+    if not old or not new or old == new:
+        return None
+    profs = ai_profiles(path)
+    if old not in profs or new in profs:
+        return None
+    profs[new] = profs.pop(old)
+    active = ai_active_name(path)
+    _write_ai_section(profs, new if active == old else active, path)
+    return new
 
 
 def ai_import_legacy(path=None, legacy=None):
