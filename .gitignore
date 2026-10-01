@@ -32,3 +32,7 @@ nuitka-crash-report.xml
 system/runtimes/*/
 
 *.log
+
+# `unwx`（微信小程序反编译）不放发行版/仓库里 —— 它带一个 36 MB 的第三方 exe（KillWxapkg），
+# 属于"绕过技术保护措施"的工具；按 `H-08` 放**用户层** `user_data/pkgs/unwx/`（不进仓库、不进发行版）。
+/system/pkgs/unwx/
