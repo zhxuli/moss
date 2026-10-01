@@ -718,8 +718,11 @@ table.p th{color:var(--dim);font-weight:500}
 .argclear[hidden]{display:none}
 .argclear svg{width:13px;height:13px}
 .empty{color:var(--dim);text-align:center;margin-top:70px;font-size:13px}
+/* ★ 层级表（V-145，别再撞车）：面板/背包 70 · 设置面板 85 · 提示 toast 310 · 确认框 300 · 对比窗 120 · 快照窗 118
+   确认框（`#modal`）必须是**最上面那个对话框** —— 它以前是 80，比设置面板（85）低，
+   于是从设置里点「删除」弹出来的确认框被压在设置面板后面，看着就是"点了没反应"。 */
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;
-  align-items:center;justify-content:center;z-index:80}
+  align-items:center;justify-content:center;z-index:300}
 #modal.on{display:flex}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
   padding:16px 18px;min-width:340px;max-width:520px;box-shadow:0 18px 50px rgba(0,0,0,.28)}
@@ -748,9 +751,10 @@ table.p th{color:var(--dim);font-weight:500}
   color:color-mix(in srgb, #d97706 88%, var(--fg))}
 .card .btns button.warn:hover{background:color-mix(in srgb, #d97706 14%, transparent)}
 #toasts{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);
-  display:flex;flex-direction:column;gap:6px;align-items:center;z-index:90;pointer-events:none}
-.toast{background:var(--panel);border:1px solid var(--line);border-radius:9px;
-  padding:7px 14px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.22);
+  display:flex;flex-direction:column;gap:6px;align-items:center;z-index:310;pointer-events:none}
+/* ★ V-146：照稿子 —— 深色胶囊、白字、圆角 30（稿子的 .toast） */
+.toast{background:#18181b;color:#fff;border:0;border-radius:30px;
+  padding:10px 20px;font-size:14px;font-weight:500;box-shadow:0 4px 6px -1px rgba(0,0,0,.1);
   max-width:70vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .toast.bad{border-color:#d64545;color:#d64545}
 
@@ -758,19 +762,21 @@ table.p th{color:var(--dim);font-weight:500}
    左边是**最近一条状态提示**（toast 说了什么，它就留什么），右边一颗齿轮开「设置」。
    ★ 只放这一行字：状态栏最容易变成"什么信息都往里塞"的垃圾场，而现在真正需要
      一直看得见的信息还没有 —— 与其猜，不如空着。 */
-#statusbar{flex:none;display:flex;align-items:center;gap:8px;height:26px;
-  padding:0 6px 0 12px;border-top:1px solid var(--line);background:var(--panel);
-  color:var(--dim);font-size:12px;user-select:none}
+/* ★ V-166 / V-167：主窗口这条状态栏定高 **36px** —— 和设置面板底下那条底栏一样高（你说的"尺寸保持一致"）。
+   原来 26px 太扁，字和图标都贴边。 */
+#statusbar{flex:none;display:flex;align-items:center;gap:8px;height:36px;
+  padding:0 8px 0 14px;border-top:1px solid var(--line);background:var(--panel);
+  color:var(--dim);font-size:12.5px;user-select:none}
 #status-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #status-text.bad{color:#d64545}
 #statusbar .sp{flex:1}
 /* ★ 你说「不要边框」：状态栏里那颗齿轮**只留图标本身** —— 去掉描边和底色。
    `.iconbtn` 那套「白底 + 1px 描边」是工具栏的语言，钉在状态栏上像个贴上去的方块。
    悬停 / 按下还是给反馈（一层淡底 + 缩一点），不然会让人怀疑它到底能不能点。 */
-#statusbar .iconbtn{width:22px;height:22px;padding:0;min-width:0;border:0;
+#statusbar .iconbtn{width:26px;height:26px;padding:0;min-width:0;border:0;
   background:transparent;color:var(--dim)}
 #statusbar .iconbtn:hover{background:var(--hover);color:var(--fg)}
-#statusbar .iconbtn svg{width:14px;height:14px}
+#statusbar .iconbtn svg{width:15px;height:15px}
 
 /* ============================================================ 文件对比窗口（`V-109`）
    整屏浮层当窗口：左边=现在、右边=快照；新增=绿、删掉=红、改动=琥珀。

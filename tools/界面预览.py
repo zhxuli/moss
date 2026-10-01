@@ -498,11 +498,21 @@ MOCK_JS = r"""
       if (depth >= 6) probs.push({key: "search.max_parent_depth", level: "warn", also: [],
         why: "找得有点远（一共 " + (depth + 1) + " 个目录）—— 容易撞上上层项目里的同名文件，"
              + "撞上就会停下来问你"});
-      const live = (!p && !g)
-        ? "⚠ 两个都留空 —— 裸名（moss m）到底算找文件还是跑包，说不清了"
-        : ("现在：裸名 moss m 归「" + ((p && !g) ? "跑包" : "找文件") + "」" +
-           (p ? " ｜ moss " + p + "m 找文件" : "") + (g ? " ｜ moss " + g + "img 跑包" : "") +
-           (n ? " ｜ moss " + n + "m 不切目录" : "") + (d ? " ｜ moss " + d + "m 后台脱离" : ""));
+      const who = (p && !g) ? "跑包" : "找文件";
+      const liveL = ["现在：裸名 moss m 归「" + who + "」", ""];
+      liveL.push("例子：文件在 ./src/ceshi/main.py");
+      liveL.push("  moss " + p + "s/c/m        每段按前缀找：s→src/  c→ceshi/  m→main.py");
+      liveL.push("                      找到就用 python 跑它，工作目录切到 src/ceshi/");
+      if (n) liveL.push("  moss " + n + p + "s/c/m       同一个文件，但在当前目录跑（不切过去）");
+      liveL.push("");
+      liveL.push("怎么找：从当前目录往上逐层找（连自己一共 4 个目录），某一层里第一个满足的就用它");
+      liveL.push("        某一段要是目录（s、c），最后一段是文件名的开头（m）；大小写不敏感");
+      liveL.push("        同一层有多个候选时：项目标记 → 上次在这个目录选过的 → 类型优先级；还打平就问你");
+      liveL.push("执行的是：python <找到的那个文件>（那一层有 venv 就用 venv 里的 python）");
+      if (g) liveL.push("\n其他：moss " + g + "img   跑装好的包" + (d ? ("        moss " + d + "m   后台脱离运行") : ""));
+      if (!p && !g) liveL.push("\n⚠ 两个都留空 —— 裸名（moss m）到底算找文件还是跑包，说不清了");
+      if (p && g) liveL.push("\n⚠ 两个都有前缀 —— 谁也没占住裸名，moss m 现在按「找文件」处理");
+      const live = liveL.join("\n");
       return {ok: !probs.some(x => x.level === "error"), problems: probs, notes: notes,
               live: live, msg: ""};
     },
@@ -1447,7 +1457,11 @@ MOCK_JS = r"""
         const px = v => parseFloat(v) || 0;
         const label = b => (b.id || String(b.className || "") || b.tagName);
         const bordered = [], filled = [], inBordered = [];
+        // ★ V-145 的**唯一豁免**：AI 那份 UI 稿子里，次要按钮本来就是 1px 描边的
+        //   （设置 → AI 引擎 那一块，`.set-ai` 里面）。别处照旧：一个描边都不许有。
+        const aiBox = document.querySelector(".set-ai");
         [].slice.call(document.querySelectorAll("button")).forEach(function(b){
+          if (aiBox && aiBox.contains(b)) return;
           const cs = getComputedStyle(b);
           const w = Math.max(px(cs.borderTopWidth), px(cs.borderBottomWidth),
                              px(cs.borderLeftWidth), px(cs.borderRightWidth));
@@ -1470,7 +1484,7 @@ MOCK_JS = r"""
         await sleep(200);
         const ok = bordered.length === 0 && inBordered.length === 0 && modalFlat && total > 20;
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 按钮=" + total + " 有描边的=" + bordered.length +
+          "DIAG " + (ok ? "OK" : "FAIL") + "（AI 那块按稿子豁免）按钮=" + total + " 有描边的=" + bordered.length +
           (bordered.length ? ("（" + bordered.slice(0, 6).join(" ") + "）") : "") +
           " 输入框=" + inputs + " 有描边的=" + inBordered.length +
           (inBordered.length ? ("（" + inBordered.slice(0, 4).join(" ") + "）") : "") +
@@ -1609,8 +1623,8 @@ MOCK_JS = r"""
           " 存=" + Object.keys(saved).length + " 值=" + saved["symbols.no_chdir_mode"]);
       }
       // ---- AI 那一组（V-142）：**三张脸** —— 列表（卡片）/ 选服务商（网格）/ 编辑（表单）。
-      //      这条走：列表长什么样 → 卡片上测连接（结果横幅）→ 卡片上设为当前 →
-      //      卡片进编辑 → 改一项存 → 存完回列表。
+      //      这条走：列表长什么样 → 卡片上设为当前 → 卡片进编辑 → 编辑页里测连接（结果横幅）
+      //      → 改一项 → 存 → 回列表。
       //      ★ 硬判据：**那块地方不许有长说明**（`.ai-tip` 数为 0）；缺东西必须是高亮小标签。
       //      ★ sleep 总量必须 < 12 秒（工具 `--virtual-time-budget=12000`，超了会被半路截图）。
       if (h === "settings-ai"){
@@ -1619,7 +1633,7 @@ MOCK_JS = r"""
         const navs = document.querySelectorAll("#set-nav .set-navitem").length;
         const aiNav = Array.prototype.filter.call(
           document.querySelectorAll("#set-nav .set-navitem"),
-          b => (b.dataset.group || "") === "AI")[0];
+          b => (b.dataset.group || "") === "A I 引擎")[0];
         if (aiNav) aiNav.click();
         await sleep(700);
         const pane = (document.querySelector("#set-body .set-pane.on") || {}).dataset || {};
@@ -1632,7 +1646,7 @@ MOCK_JS = r"""
         const empty0 = !!document.querySelector("#ai-empty");
         const addBtn = document.querySelector("#ai-new");
         const addTxt = addBtn ? addBtn.textContent.trim() : "";
-        const form0 = document.querySelectorAll(scope + ".ai-fields .set-field").length;
+        const listOn0 = !!document.querySelector("#ai-view-list.active");
         const cardOf = n => document.querySelector(scope + '.ai-card[data-group="' + n + '"]');
         const cardMeta = n => {
           const c = cardOf(n);
@@ -1653,14 +1667,6 @@ MOCK_JS = r"""
         const metaOllama = cardMeta("本地 ollama");
         const warnOllama = cardWarn("本地 ollama");
         const tagDiyun = cardTag("深度求索");
-        // 卡片上「测试连接」→ 结果横幅
-        const tBtn = document.querySelector(scope + '.ai-card[data-group="深度求索"] [data-test]');
-        if (tBtn) tBtn.click();
-        await sleep(500);
-        const banner = document.querySelector("#ai-banner");
-        const bannerOk = banner ? /(^|\s)ok(\s|$)/.test(banner.className) : false;
-        const bannerTxt = (document.querySelector("#ai-state") || {}).textContent || "";
-        const tested = (M.aiTested || "");
         // 卡片上「设为当前」
         const useBtn = document.querySelector(scope + '.ai-card[data-group="本地 ollama"] [data-use]');
         if (useBtn) useBtn.click();
@@ -1672,25 +1678,32 @@ MOCK_JS = r"""
         if (editBtn) editBtn.click();
         await sleep(500);
         const ttl1 = (document.querySelector("#ai-ttl") || {}).textContent || "";
-        const backTxt = (document.querySelector("#ai-back") || {}).textContent.trim() || "";
-        const fieldN = document.querySelectorAll(scope + ".ai-fields .set-field").length;
+        const backOk = !!document.querySelector("#ai-back");   // 现在只有箭头、没有文字
+        const fieldN = document.querySelectorAll(scope + ".ai-fgroup").length;
         const boxOf = k => document.querySelector(
-          scope + '.ai-fields .set-field[data-ai="' + k + '"] input,' +
-          scope + '.ai-fields .set-field[data-ai="' + k + '"] textarea');
+          scope + '.ai-fgroup[data-ai="' + k + '"] input,' +
+          scope + '.ai-fgroup[data-ai="' + k + '"] textarea');
         const key0 = boxOf("api_key");
         const keyPh0 = key0 ? key0.placeholder : "";
         const keyVal0 = key0 ? key0.value : "";
         const mBox = boxOf("model");
         const modelTag0 = mBox ? mBox.tagName : "";
         const modelTxt0 = mBox ? mBox.value : "";
-        const test0 = document.querySelector("#ai-test");
+        const test0 = document.querySelector("#set-ai-test");
         const testOn0 = test0 ? !test0.disabled : false;
+        // 编辑页里「测试连接」→ 结果横幅（稿子把测试放在这张脸上）
+        if (test0) test0.click();
+        await sleep(500);
+        const banner = document.querySelector("#ai-banner");
+        const bannerOk = banner ? /(^|\s)ok(\s|$)/.test(banner.className) : false;
+        const bannerTxt = (document.querySelector("#ai-state") || {}).textContent || "";
+        const tested = (M.aiTested || "");
         // 改一项 → 保存 → 回列表
         const urlBox = boxOf("base_url");
         if (urlBox){ urlBox.value = "https://api.deepseek.com/v2";
                      urlBox.dispatchEvent(new Event("input", {bubbles: true})); }
         await sleep(150);
-        const sBtn = document.querySelector("#ai-save");
+        const sBtn = document.querySelector("#set-save");
         const saveOn = sBtn ? !sBtn.disabled : false;
         const bodyEl = document.querySelector("#set-body");
         const vis = !!(sBtn && bodyEl &&
@@ -1698,33 +1711,33 @@ MOCK_JS = r"""
         if (sBtn) sBtn.click();
         await sleep(700);
         const cards1 = document.querySelectorAll(scope + ".ai-card").length;
-        const form1 = document.querySelectorAll(scope + ".ai-fields .set-field").length;
+        const listOn1 = !!document.querySelector("#ai-view-list.active");
         const savedUrl = ((M.ai.profiles.filter(x => x.name === "深度求索")[0] || {}).params || {}).base_url;
-        const ok = navs === 5 && pane.group === "AI" && box && !generic && tipN === 0 &&
-                   cards0 === 3 && !empty0 && addTxt === "添加 AI 配置" && form0 === 0 &&
+        const ok = navs === 5 && pane.group === "A I 引擎" && box && !generic && tipN === 0 &&
+                   cards0 === 3 && !empty0 && addTxt === "添加新的 AI 配置" && listOn0 &&
                    /api\.deepseek\.com/.test(metaDiyun) && /deepseek-chat/.test(metaDiyun) &&
                    /127\.0\.0\.1:11434/.test(metaOllama) && warnOllama === "缺密钥" &&
                    tagDiyun === "当前" &&
                    bannerOk && /HTTP 200/.test(bannerTxt) && tested === "深度求索" &&
                    activeMock === "本地 ollama" && tagNow === "当前" &&
-                   ttl1 === "编辑 · 深度求索" && backTxt === "返回" && fieldN === 4 &&
+                   ttl1 === "编辑：深度求索" && backOk && fieldN === 4 &&
                    keyPh0 === "已保存，留空不改" && keyVal0 === "" &&
                    modelTag0 === "TEXTAREA" &&
                    modelTxt0 === "deepseek-chat\ndeepseek-reasoner" &&
                    testOn0 && saveOn && vis &&
                    savedUrl === "https://api.deepseek.com/v2" &&
-                   cards1 === 3 && form1 === 0;
+                   cards1 === 3 && listOn1;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 分类=" + navs + " 页=" + pane.group +
           " 块=" + (box ? 1 : 0) + " 通用行=" + (generic ? 1 : 0) + " 长文=" + tipN +
           " 卡片=" + cards0 + " 空框=" + (empty0 ? 1 : 0) + " 添加=[" + addTxt + "]" +
-          " 首屏字段=" + form0 + " 卡[" + metaDiyun + "|" + warnOllama + "|" + tagDiyun + "]" +
+          " 首屏列表视图=" + listOn0 + " 卡[" + metaDiyun + "|" + warnOllama + "|" + tagDiyun + "]" +
           " 本机[" + metaOllama + "] 横幅=" + bannerOk + "[" + bannerTxt.slice(0, 26) + "]" +
           " 测的=" + tested + " 切后=" + activeMock + "/" + tagNow +
-          " 标题=" + ttl1 + " 返回=[" + backTxt + "] 字段=" + fieldN +
+          " 标题=" + ttl1 + " 返回箭头=" + (backOk ? 1 : 0) + " 字段=" + fieldN +
           " 密钥框=" + keyPh0 + " 模型框=" + modelTag0 + "[" + modelTxt0.replace("\n", "|") + "]" +
           " 测可点=" + testOn0 + " 亮=" + saveOn + " 在视野=" + vis +
-          " 存=" + savedUrl + " 存后卡片=" + cards1 + "/" + form1;
+          " 存=" + savedUrl + " 存后卡片=" + cards1 + " 回列表=" + listOn1;
         document.title = ok ? "READY" : ("SETTINGS-AI-FAIL " +
           document.querySelector("#meta").textContent);
       }
@@ -1735,7 +1748,7 @@ MOCK_JS = r"""
         await sleep(500);
         const aiNav = Array.prototype.filter.call(
           document.querySelectorAll("#set-nav .set-navitem"),
-          b => (b.dataset.group || "") === "AI")[0];
+          b => (b.dataset.group || "") === "A I 引擎")[0];
         if (aiNav) aiNav.click();
         await sleep(700);
         const scope = "#set-body .set-pane.on .set-ai ";
@@ -1744,7 +1757,7 @@ MOCK_JS = r"""
         await sleep(500);
         const tiles = document.querySelectorAll(scope + ".ai-tpl").length;
         const backOk = !!document.querySelector("#ai-back");
-        const cardN = document.querySelectorAll(scope + ".ai-card").length;
+        const tplOn = !!document.querySelector("#ai-view-tpl.active");
         const tileOf = p => document.querySelector(scope + '.ai-tpl[data-preset="' + p + '"]');
         const dsTile = tileOf("DeepSeek");
         const dsName = dsTile ? dsTile.querySelector("b").textContent : "";
@@ -1755,11 +1768,11 @@ MOCK_JS = r"""
         await sleep(400);
         const ttl1 = (document.querySelector("#ai-ttl") || {}).textContent || "";
         const boxOf = k => document.querySelector(
-          scope + '.ai-fields .set-field[data-ai="' + k + '"] input,' +
-          scope + '.ai-fields .set-field[data-ai="' + k + '"] textarea');
+          scope + '.ai-fgroup[data-ai="' + k + '"] input,' +
+          scope + '.ai-fgroup[data-ai="' + k + '"] textarea');
         const valOf = k => { const e = boxOf(k); return e ? e.value : ""; };
         const keyPh = (boxOf("api_key") || {}).placeholder || "";
-        const testNew = document.querySelector("#ai-test");
+        const testNew = document.querySelector("#set-ai-test");
         const testDisabled = testNew ? testNew.disabled : false;
         const preName = valOf("name"), preUrl = valOf("base_url"), preModel = valOf("model");
         // ③ 粘 key → 保存 → 回列表
@@ -1767,7 +1780,7 @@ MOCK_JS = r"""
         if (keyBox){ keyBox.value = "sk-preset-1234567890";
                      keyBox.dispatchEvent(new Event("input", {bubbles: true})); }
         await sleep(150);
-        document.querySelector("#ai-save").click();
+        document.querySelector("#set-save").click();
         await sleep(700);
         const cards1 = document.querySelectorAll(scope + ".ai-card").length;
         const made = (M.ai.profiles.filter(x => x.name === "DeepSeek")[0] || {}).params || {};
@@ -1778,7 +1791,7 @@ MOCK_JS = r"""
         if (nameBox){ nameBox.value = "DeepSeek-备用";
                       nameBox.dispatchEvent(new Event("input", {bubbles: true})); }
         await sleep(150);
-        document.querySelector("#ai-save").click();
+        document.querySelector("#set-save").click();
         await sleep(700);
         const renamed = M.ai.profiles.filter(x => x.name === "DeepSeek-备用")[0] || null;
         const oldGone = !M.ai.profiles.some(x => x.name === "DeepSeek");
@@ -1791,14 +1804,11 @@ MOCK_JS = r"""
         if (urlBox2){ urlBox2.value = "https://改坏了.invalid/v1";
                       urlBox2.dispatchEvent(new Event("input", {bubbles: true})); }
         await sleep(150);
-        document.querySelector("#ai-cancel").click();
-        await sleep(300);
-        const mok = document.querySelector("#m-ok");
-        if (mok) mok.click();
-        await sleep(500);
+        document.querySelector("#ai-back2").click();   // 左上角那个箭头（不再二次确认）
+        await sleep(600);
         const afterCancel = ((M.ai.profiles.filter(x => x.name === "DeepSeek-备用")[0] || {}).params || {}).base_url;
         const cards3 = document.querySelectorAll(scope + ".ai-card").length;
-        const ok = tiles === M.aiPresets.length + 1 && backOk && cardN === 0 && blankOk &&
+        const ok = tiles === M.aiPresets.length + 1 && backOk && tplOn && blankOk &&
                    dsName === "DeepSeek" && dsHost === "api.deepseek.com" &&
                    ttl1 === "新建配置" && preName === "DeepSeek" &&
                    preUrl === "https://api.deepseek.com/v1" &&
@@ -1811,7 +1821,7 @@ MOCK_JS = r"""
                    afterCancel === "https://api.deepseek.com/v1" && cards3 === 4;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 格子=" + tiles + "[" + dsName + "/" + dsHost +
-          "] 自定义=" + (blankOk ? 1 : 0) + " 选人时卡片=" + cardN + " 返回=" + (backOk ? 1 : 0) +
+          "] 自定义=" + (blankOk ? 1 : 0) + " 选服务商视图=" + tplOn + " 返回=" + (backOk ? 1 : 0) +
           " 标题=" + ttl1 + " 填=" + preName + "/" + preUrl + "/" + preModel.replace("\n", "|") +
           " 密钥框=" + keyPh + " 新测灰=" + testDisabled +
           " 存后卡片=" + cards1 + " 存=" + JSON.stringify(made) +
@@ -1827,7 +1837,7 @@ MOCK_JS = r"""
         await sleep(500);
         const aiNav = Array.prototype.filter.call(
           document.querySelectorAll("#set-nav .set-navitem"),
-          b => (b.dataset.group || "") === "AI")[0];
+          b => (b.dataset.group || "") === "A I 引擎")[0];
         if (aiNav) aiNav.click();
         await sleep(700);
         const scope = "#set-body .set-pane.on .set-ai ";
@@ -1848,15 +1858,15 @@ MOCK_JS = r"""
         const eico = empty ? !!empty.querySelector("svg") : false;
         const addBtn = document.querySelector("#ai-new");
         const addTxt = addBtn ? addBtn.textContent.trim() : "";
-        const form = document.querySelectorAll(scope + ".ai-fields .set-field").length;
+        const formOn = !!document.querySelector("#ai-view-form.active");
         const ok = before === 3 && cards === 0 && M.ai.profiles.length === 0 && !listBox &&
-                   !!empty && emptyTxt === "还没有 AI 配置" && eico &&
-                   addTxt === "添加 AI 配置" && form === 0;
+                   !!empty && /暂无 AI 配置/.test(emptyTxt) && eico &&
+                   addTxt === "添加新的 AI 配置" && !formOn;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 删前=" + before + " 删后=" + cards +
           " 假库=" + M.ai.profiles.length + " 列表块=" + (listBox ? 1 : 0) +
           " 空框=" + (empty ? 1 : 0) + "[" + emptyTxt + "] 图标=" + (eico ? 1 : 0) +
-          " 添加=[" + addTxt + "] 输入框=" + form;
+          " 添加=[" + addTxt + "] 编辑视图=" + formOn;
         document.title = ok ? "READY" : ("SETTINGS-AI-EMPTY-FAIL " +
           document.querySelector("#meta").textContent);
       }
@@ -1866,7 +1876,7 @@ MOCK_JS = r"""
         await sleep(500);
         const aiNav = Array.prototype.filter.call(
           document.querySelectorAll("#set-nav .set-navitem"),
-          b => (b.dataset.group || "") === "AI")[0];
+          b => (b.dataset.group || "") === "A I 引擎")[0];
         if (aiNav) aiNav.click();
         await sleep(700);
         document.querySelector("#ai-new").click();

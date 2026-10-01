@@ -14,9 +14,14 @@
 #settings{position:fixed;inset:0;background:rgba(0,0,0,.38);display:none;
   align-items:center;justify-content:center;z-index:85}
 #settings.on{display:flex}
-.card.wide{width:min(760px,94vw);height:min(560px,86vh);max-width:none;padding:0;
-  border-radius:14px;display:flex;flex-direction:column;overflow:hidden}
-.set-head{display:flex;align-items:center;gap:10px;padding:14px 14px 12px 18px;
+/* ★ V-145：尺寸照 AI 配置那份 UI 稿子 —— 960×680、圆角 16 */
+.card.wide{width:min(960px,94vw);height:min(760px,92vh);max-width:none;padding:0;   /* V-162：比稿子的 680 高一点，长表单（AI 那一页）不用滚 */
+  border-radius:16px;display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 25px 50px -12px rgba(0,0,0,.25)}
+/* 顶部那两个可点的路径片段（V-160）：悬停给一点反馈，看着就知道能点 */
+.set-link{cursor:pointer;border-radius:4px;padding:1px 3px;transition:background .13s,color .13s}
+.set-link:hover{background:var(--hover);color:var(--accent)}
+.set-head{display:flex;align-items:center;gap:10px;height:56px;padding:0 24px;
   border-bottom:1px solid var(--hair);flex:none}
 .set-head h3{margin:0;font-size:15px;flex:none}
 .set-sub{flex:1;min-width:0;color:var(--dim);font-size:11.5px;font-family:var(--mono);
@@ -29,14 +34,20 @@
 .set-main{flex:1;min-height:0;display:flex}
 
 /* 左侧分类 */
-.set-nav{width:152px;flex:none;background:var(--panel2);border-right:1px solid var(--hair);
-  padding:8px;display:flex;flex-direction:column;gap:2px}
-.set-navitem{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
-  font:inherit;font-size:12.5px;color:var(--fg2);background:transparent;border:0;
-  cursor:pointer;text-align:left;transition:background .15s ease-out,color .15s ease-out}
-.set-navitem:hover{background:var(--hover)}
-.set-navitem.on{background:var(--sel);color:var(--accent);font-weight:600}
-.set-navitem svg{width:14px;height:14px;flex:none;opacity:.75}
+.set-nav{width:220px;flex:none;background:#fafafa;border-right:1px solid #e4e4e7;
+  padding:16px 12px;display:flex;flex-direction:column;gap:4px}
+.set-navitem{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;
+  font:inherit;font-size:14px;font-weight:500;color:#52525b;background:transparent;border:0;
+  cursor:pointer;text-align:left;transition:background .25s cubic-bezier(.4,0,.2,1), color .25s}
+/* ★ 名字里有**连续空格**（"AI  引擎" 那样补宽度）：HTML 默认会把连续空格折叠成一个，
+   所以这一格要 white-space:pre 才留得住（V-164） */
+.set-navname{white-space:pre}
+.set-navitem:hover{background:#f4f4f5;color:#18181b}
+.set-navitem.on{background:#fff;color:#2563eb;font-weight:600;
+  /* 稿子选中态是「白底 + 1px 亮线 + 细阴影」：亮线用 inset 阴影画，
+     这样不用给 button 加 border（那条通用闸还管着） */
+  box-shadow:inset 0 0 0 1px #e4e4e7, 0 1px 2px rgba(0,0,0,.05)}
+.set-navitem svg{width:16px;height:16px;flex:none;opacity:.8}
 .set-navitem.on svg{opacity:1}
 .set-navitem .set-dot{width:6px;height:6px;border-radius:50%;background:#d64545;margin-left:auto;
   flex:none;display:none}
@@ -45,11 +56,17 @@
 .set-navspacer{flex:1}
 
 /* 右侧内容：一次只显示一组 */
-.set-body{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;padding:16px 20px 10px}
+.set-body{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;padding:0}
 .set-pane{display:none}
-.set-pane.on{display:block}
-.set-ptitle{font-size:13.5px;font-weight:600;margin:0}
-.set-pdesc{font-size:12px;color:var(--dim);line-height:1.65;margin:4px 0 14px}
+/* ★ V-145：每一页的内边距照稿子的 .view（32px 40px）
+   ★ V-168：**切到哪一页都有「淡入 + 上移 15px」的过场**（以前只有 AI 那一页有）。
+     靠 CSS 动画实现：`display` 从 none 变成 block 时动画会重新播一遍，所以每次切页自动就有。 */
+@keyframes setPaneIn{from{opacity:0;transform:translateY(15px)}to{opacity:1;transform:none}}
+.set-pane.on{display:block;padding:32px 40px;animation:setPaneIn .3s ease}
+/* AI 那一页的过场是它自己的 .ai-view 在做，这里别再叠一层（叠了位移变 30px） */
+.set-pane.on.is-ai{animation:none}
+.set-ptitle{font-size:24px;font-weight:600;color:#18181b;margin:0 0 8px}
+.set-pdesc{font-size:14px;color:#52525b;line-height:1.6;margin:0 0 24px}
 /* 开关类：一行一个（本来就该一行一个 —— 左边名字、右边开关） */
 .set-list{display:flex;flex-direction:column}
 .set-item{display:grid;grid-template-columns:1fr auto;align-items:center;gap:0 10px;
@@ -96,7 +113,9 @@
 .sw:focus-visible{outline:none;box-shadow:0 0 0 3px var(--field-focus)}
 /* 步进器（`V-92`：外壳也去掉描边，用一层灰底；里面那两颗 ± 本来就无底色） */
 #settings .step{display:inline-flex;align-items:center;border:0;
-  border-radius:8px;overflow:hidden;background:var(--fill);height:32px;flex:none}
+  border-radius:8px;overflow:hidden;background:var(--fill);height:32px;flex:none;
+  /* ★ 字段那格是 flex 列，默认 align-items:stretch 会把这块**拉满整行** ⇒ 自己靠左站住（V-160） */
+  align-self:flex-start}
 #settings .step button{width:30px;height:100%;border:0;background:transparent;color:var(--fg2);
   cursor:pointer;font-size:15px;line-height:1;padding:0;transition:background .12s,color .12s}
 #settings .step button:hover:not(:disabled){background:var(--hover);color:var(--fg)}
@@ -110,19 +129,22 @@
 .set-item.warn .sw,.set-field.warn .inp,.set-field.warn .step{border-color:#e0a02a;
   box-shadow:0 0 0 3px rgba(224,160,42,.16)}
 /* 快捷命令那页底下的预览行（照那个稿子：一行把四条命令都摆出来） */
-.set-live{margin-top:16px;padding:10px 12px;border-radius:10px;background:var(--tile);
-  font-family:var(--mono);font-size:12px;color:var(--fg2);line-height:1.8;word-break:break-all}
+/* 预览：多行显示（`V-156`）—— 一行挤着看不清 */
+.set-live{margin-top:16px;padding:12px 14px;border-radius:10px;background:var(--tile);
+  font-family:var(--mono);font-size:12px;color:var(--fg2);line-height:1.9;
+  white-space:pre-wrap;overflow-x:auto;tab-size:4}
 .set-live b{color:var(--fg);font-weight:600}
 .set-live.bad{background:rgba(214,69,69,.08);color:#d64545}
 
 /* 脚：状态 + 按钮 */
-.set-foot{display:flex;align-items:center;gap:10px;padding:12px 14px 12px 18px;
+/* ★ V-167：定高 **36px**（跟主窗口那条状态栏一模一样高）—— 以前是 padding 撑出来的，跟着内容变。 */
+.set-foot{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px 0 18px;
   border-top:1px solid var(--hair);flex:none;background:var(--panel2)}
 .set-state{font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap;flex:1;min-width:0}
 .set-state.moved{color:var(--accent)}
 .set-state.bad{color:#d64545}
-.set-foot .btn{padding:6px 12px;border-radius:8px;border:0;
+.set-foot .btn{padding:4px 11px;border-radius:7px;border:0;
   background:transparent;color:var(--fg2);cursor:pointer;font:inherit;font-size:13px;font-weight:500;
   transition:background .13s ease-out,color .13s ease-out,transform .1s ease-out}
 .set-foot .btn:hover{background:var(--hover);color:var(--fg)}
@@ -130,7 +152,7 @@
 .set-foot .btn.primary{background:transparent;border:0;color:var(--accent)}
 .set-foot .btn.primary:hover{background:color-mix(in srgb, var(--accent) 12%, transparent)}
 .set-foot .btn:disabled{opacity:.45;cursor:default;filter:none}
-.set-foot .btn-quiet{padding:6px 11px;border-radius:8px;border:0;
+.set-foot .btn-quiet{padding:4px 10px;border-radius:7px;border:0;
   background:transparent;color:var(--dim);cursor:pointer;font:inherit;font-size:13px}
 .set-foot .btn-quiet:hover{background:var(--hover);color:var(--fg)}
 
@@ -146,101 +168,155 @@
 #tip .tip-prob.bad{color:#d64545}
 #tip .tip-prob.warn{color:#a86400}
 
-/* ---------------------------------------------------------------- AI 那一组（V-142）
-   照你给的那份 UI 稿子重做：列表（卡片 + 虚线空框）/ 选服务商（模板网格）/ 编辑（两列 + 全宽 + 动作条）
-   + 测试结果横幅。
-   ★ 硬规矩（V-92 的通用闸）：**带边框的元素一律不是 `button`** —— 卡片 / 空框 / 模板格子用 div + @click；
-     按钮都不许有描边，靠底色和颜色表示状态。 */
-.set-ai{display:flex;flex-direction:column;gap:12px}
-/* 结果横幅：成/不成各一色，图标 + 一行短话 */
-.ai-banner{display:flex;align-items:flex-start;gap:9px;padding:10px 12px;border-radius:10px;
-  font-size:12.5px;line-height:1.6}
-.ai-banner .ai-bico{flex:none;display:flex;margin-top:1px}
-.ai-banner.ok{background:rgba(26,127,69,.10);color:#14713c}
-.ai-banner.bad{background:rgba(214,69,69,.10);color:#c03c3c}
+/* ---------------------------------------------------------------- AI（V-145）
+   ★ 这一块**照那份 UI 稿子 1:1 对齐**：zinc 灰 + 蓝 #2563eb 那套配色、960×680 的内容留白、
+   人物图标的虚线空框、加号在上面的虚线添加条、次要按钮 1px 描边（这一块豁免
+   「按钮不许有描边」那条通用闸 —— 稿子就是描边的，见 tools/界面预览.py 的 flat-buttons）。
+   三张视图（列表 / 选服务商 / 编辑）常驻 DOM，靠 .active 做「淡入 + 上移 15px」的切换。 */
+.set-ai{display:block;min-width:0;
+  /* 局部换掉这套令牌：稿子的颜色只在这一块生效，别处不动 */
+  --accent:#2563eb; --accent-fg:#fff; --line2:#e4e4e7; --ctl:#a1a1aa;
+  --fg:#18181b; --fg2:#52525b; --dim:#a1a1aa; --dim2:#a1a1aa;
+  --tile:#fafafa; --hover:#f4f4f5; --field-focus:rgba(37,99,235,.12)}
+/* ★ AI 那一页要**撑满可视高度**，底下的动作条（测试连接 / 保存配置）才贴得住最下面；
+   别的设置页还是原来的块状布局（不加 is-ai 那个类）。 */
+.set-pane.on.is-ai{display:flex;flex-direction:column;min-height:100%;padding:0;
+  box-sizing:border-box}
+/* ★ 中间这层 .set-ai 也得跟着撑高 —— 它原来是 display:block，内容多高就多高，
+   flex 链在它这儿断了，动作条就贴不到底（量出来差 98px）。 */
+.set-pane.on.is-ai .set-ai{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+/* 三张视图一次只渲染一张（v-if），每张进来时做稿子那个「淡入 + 上移 15px」 */
+/* ★ 视图 = [滚动区][动作条] 两兄弟：内容多高都在 .ai-scroll 里滚，
+   动作条 flex:none 永远钉在最下面（不再靠 margin-top:auto / sticky —— 那两个内容一高就失效） */
+.ai-view{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;
+  overflow:hidden;animation:aiViewIn .3s ease}
+.ai-scroll{flex:1;min-height:0;overflow-y:auto;box-sizing:border-box;padding:32px 40px 24px}
+@keyframes aiViewIn{from{opacity:0;transform:translateY(15px)}to{opacity:1;transform:none}}
+
+/* 视图头 */
+.ai-vhead{margin-bottom:24px}
+.ai-vtitle{font-size:24px;font-weight:600;color:#18181b;margin:0 0 8px}
+.ai-vdesc{font-size:14px;color:#52525b;margin:0}
+
+/* 返回：**只有箭头、没有字**，热区 36×36（不要那种小得不好点的） */
+/* 热区是**一整条**（132×36），箭头靠左放 —— 箭头右边那片也能点，不用去戳那一个小方块 */
+.ai-back{width:132px;height:36px;flex:none;display:inline-flex;align-items:center;
+  justify-content:flex-start;padding:0 0 0 9px;margin:-6px 0 18px -9px;align-self:flex-start;
+  border:0;border-radius:8px;background:transparent;color:#52525b;cursor:pointer;
+  transition:background .2s, color .2s}
+.ai-back:hover{background:#f4f4f5;color:#18181b}
+.ai-back:active{transform:scale(.97)}
+.ai-back svg{width:18px;height:18px}
+
+/* 空状态：虚线框 + 人物图标 + 标题 + 一句（照稿子） */
+.ai-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:48px 20px;border:1px dashed #e4e4e7;border-radius:10px;background:#fafafa;
+  text-align:center;margin-bottom:16px}
+.ai-eico{display:flex;margin-bottom:12px;color:#a1a1aa}
+.ai-eico svg{width:48px;height:48px;opacity:.5}
+.ai-empty h4{font-size:15px;font-weight:600;color:#52525b;margin:0 0 4px}
+.ai-empty p{font-size:13px;color:#a1a1aa;margin:0}
+
+/* 列表：卡片（16×20 / 圆角 10） */
+.ai-list{display:flex;flex-direction:column;gap:12px}
+.ai-card{display:flex;justify-content:space-between;align-items:center;gap:12px;
+  padding:16px 20px;border:1px solid #e4e4e7;border-radius:10px;background:#fff;
+  transition:border-color .25s cubic-bezier(.4,0,.2,1), box-shadow .25s cubic-bezier(.4,0,.2,1)}
+.ai-card:hover{border-color:#2563eb;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.ai-cinfo{display:flex;flex-direction:column;gap:4px;min-width:0}
+.ai-cname{display:flex;align-items:center;font-size:15px;font-weight:600;color:#18181b;min-width:0}
+.ai-cmeta{font-size:13px;color:#a1a1aa;font-family:var(--mono);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ai-cacts{display:flex;gap:8px;flex:none}
+.ai-cdot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block;margin-right:8px;
+  background:#10b981;box-shadow:0 0 0 3px #ecfdf5}
+
+/* 「添加新的 AI 配置」：虚线框、加号在上（照稿子） */
+.ai-add{display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px;
+  margin-top:12px;border:1px dashed #a1a1aa;border-radius:10px;color:#52525b;
+  font-size:14px;font-weight:500;cursor:pointer;
+  transition:border-color .25s cubic-bezier(.4,0,.2,1), color .25s, background .25s}
+.ai-add:hover{border-color:#2563eb;color:#2563eb;background:#eff6ff}
+.ai-add svg{width:24px;height:24px}
+
+/* 选服务商：三列网格（格子 20 / 图标 40） */
+.ai-tplgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.ai-tpl{display:flex;align-items:center;gap:12px;padding:20px;border:1px solid #e4e4e7;
+  border-radius:10px;background:#fff;cursor:pointer;
+  transition:border-color .25s cubic-bezier(.4,0,.2,1), transform .25s cubic-bezier(.4,0,.2,1),
+             box-shadow .25s}
+.ai-tpl:hover{border-color:#2563eb;transform:translateY(-3px);
+  box-shadow:0 4px 6px -1px rgba(0,0,0,.1)}
+.ai-tico{width:40px;height:40px;border-radius:8px;flex:none;display:flex;align-items:center;
+  justify-content:center;background:#f4f4f5;color:#2563eb;font-size:18px;font-weight:700}
+.ai-tinfo{display:flex;flex-direction:column;min-width:0}
+.ai-tinfo b{font-size:15px;font-weight:600;color:#18181b;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ai-tinfo i{font-size:12px;font-style:normal;color:#a1a1aa;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+
+/* 编辑：表单（照稿子的 form-group / form-control） */
+.ai-frow{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.ai-fgroup{display:flex;flex-direction:column;margin-bottom:20px;min-width:0}
+.ai-flabel{display:block;font-size:13px;font-weight:600;color:#52525b;margin-bottom:8px}
+.ai-input{width:100%;padding:10px 14px;border:1px solid #e4e4e7;border-radius:6px;
+  background:#fff;color:#18181b;font:inherit;font-size:14px;
+  transition:border-color .25s cubic-bezier(.4,0,.2,1), box-shadow .25s}
+.ai-input:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+.ai-textarea{resize:vertical;min-height:80px;font-family:var(--mono);font-size:13px;line-height:1.7}
+/* 密钥框里那只小眼睛（V-149）：贴右侧内侧，默认藏；悬停 / 聚焦且**有内容**才出现。
+   ★ 同时关掉浏览器自带那只（Edge 的 ::-ms-reveal）—— 它失焦再聚焦就不出来了，行为不受控。 */
+.ai-keywrap{position:relative;display:block}
+.ai-keywrap .ai-input{padding-right:36px}
+.ai-eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  width:26px;height:26px;display:flex;align-items:center;justify-content:center;
+  border:0;background:transparent;border-radius:6px;color:#a1a1aa;cursor:pointer;
+  opacity:0;pointer-events:none;
+  transition:opacity .15s ease-out, color .15s ease-out, background .15s ease-out}
+.ai-keywrap:hover .ai-eye,
+.ai-keywrap:focus-within .ai-eye{opacity:1;pointer-events:auto}
+/* ★ 类名别用 `empty`：全局那条 `.empty{margin-top:70px}` 会把它顶下去 70px（踩过） */
+.ai-keywrap.nokey .ai-eye{opacity:0;pointer-events:none}
+.ai-eye:hover{color:#52525b;background:#f4f4f5}
+.ai-eye svg{width:16px;height:16px}
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear{display:none}
+
+/* 结果横幅（照稿子：淡绿底 + 淡绿边） */
+.ai-banner{display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-radius:10px;
+  font-size:13px;line-height:1.5;margin-top:10px;animation:aiFadeIn .3s}
+.ai-banner.ok{background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46}
+.ai-banner.bad{background:#fef2f2;border:1px solid #fca5a5;color:#991b1b}
+.ai-bico{display:flex;flex:none;margin-top:2px}
+.ai-bico svg{width:18px;height:18px}
 .ai-btxt{min-width:0;word-break:break-all}
+/* 「详情」那颗小字按钮 + 展开后的原始报文 */
+.ai-more{margin-left:8px;border:0;background:transparent;padding:0;color:inherit;
+  cursor:pointer;font:inherit;text-decoration:underline;text-underline-offset:2px;opacity:.75}
+.ai-more:hover{opacity:1}
+.ai-detail{display:block;margin-top:8px;padding:8px 10px;max-height:150px;overflow:auto;
+  background:#fff;border:1px solid #e4e4e7;border-radius:6px;color:#52525b;
+  font-family:var(--mono);font-size:12px;line-height:1.6;white-space:pre-wrap;
+  word-break:break-all;text-align:left}
+@keyframes aiFadeIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
 
-/* ① 列表：卡片 */
-.ai-cards{display:flex;flex-direction:column;gap:8px}
-.ai-card{display:flex;align-items:center;gap:10px;padding:11px 13px;border-radius:12px;
-  border:1px solid var(--line2);background:var(--panel);transition:var(--transition)}
-.ai-card:hover{border-color:var(--accent);box-shadow:0 1px 2px rgba(0,0,0,.05)}
-.ai-card.on{border-color:color-mix(in srgb, var(--accent) 40%, var(--line2));
-  background:color-mix(in srgb, var(--accent) 5%, transparent)}
-.ai-cinfo{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
-.ai-cname{display:flex;align-items:center;gap:7px;min-width:0}
-.ai-cn{font-size:14px;font-weight:600;color:var(--fg);overflow:hidden;
-  text-overflow:ellipsis;white-space:nowrap}
-.ai-cmeta{font-size:12px;color:var(--dim);font-family:var(--mono);overflow:hidden;
-  text-overflow:ellipsis;white-space:nowrap}
-.ai-cacts{display:flex;align-items:center;gap:2px;flex:none}
-.ai-cacts .btn-quiet{padding:5px 9px;border-radius:8px;border:0;background:transparent;
-  color:var(--fg2);cursor:pointer;font:inherit;font-size:12.5px;
-  transition:background .13s ease-out,color .13s ease-out}
-.ai-cacts .btn-quiet:hover{background:var(--tag);color:var(--fg)}
-.ai-cacts .btn-quiet.danger:hover{background:rgba(214,69,69,.10);color:#c03c3c}
-/* 高亮小标签：缺东西 / 当前 */
-.ai-warn{font-size:11.5px;flex:none;color:#a86400;background:rgba(255,159,10,.16);
-  padding:2px 8px;border-radius:999px}
-.ai-tag{font-size:11.5px;flex:none;color:var(--accent);
-  background:color-mix(in srgb, var(--accent) 12%, transparent);
-  padding:2px 8px;border-radius:999px}
-/* 没配过：一个虚线空框（div，不是 button —— 它带边框） */
-.ai-emptybox{display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:8px;padding:30px 16px;border:1px dashed var(--ctl);border-radius:12px;
-  background:var(--tile);color:var(--dim)}
-.ai-eico{display:flex;opacity:.45}
-.ai-eico svg{width:34px;height:34px}
-.ai-etxt{font-size:13px}
-/* 「添加 AI 配置」：整条虚线框（照稿子），也是 div + @click */
-.ai-add{display:flex;align-items:center;justify-content:center;gap:7px;padding:13px;
-  border:1px dashed var(--ctl);border-radius:12px;color:var(--fg2);cursor:pointer;
-  font-size:13px;transition:var(--transition)}
-.ai-add:hover{border-color:var(--accent);color:var(--accent);
-  background:color-mix(in srgb, var(--accent) 6%, transparent)}
-.ai-add svg{width:15px;height:15px}
+/* 底部动作条（照稿子：细线隔开、贴底） */
+/* 动作条：内容短时靠 margin-top:auto 贴底；内容比框高时靠 sticky **钉在可视区底部**，
+   反正它和上面那条线永远在最下面（V-153 量过：普通放法会差 17px，因为表单比框高一点点）。 */
 
-/* ② 选服务商：模板网格 */
-.ai-back{display:inline-flex;align-items:center;gap:5px;color:var(--fg2);cursor:pointer;
-  font-size:12.5px;align-self:flex-start;padding:2px 0;transition:color .13s ease-out}
-.ai-back:hover{color:var(--fg)}
-.ai-back svg{width:14px;height:14px}
-/* ★ `minmax(0,1fr)`：`1fr` 的最小宽度是**内容宽度** —— 像 generativelanguage.googleapis.com
-   这种长地址会把格子撑宽、第三列溢出到面板外（V-142 踩过：截图里 OpenAI 那一列被切掉）。 */
-.ai-tplgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-.ai-tpl{display:flex;align-items:center;gap:10px;padding:12px 13px;border-radius:12px;
-  border:1px solid var(--line2);background:var(--panel);cursor:pointer;
-  transition:var(--transition)}
-.ai-tpl:hover{border-color:var(--accent);transform:translateY(-2px);
-  box-shadow:0 4px 10px -4px rgba(0,0,0,.16)}
-.ai-tico{width:32px;height:32px;border-radius:8px;flex:none;display:flex;align-items:center;
-  justify-content:center;background:var(--tile);color:var(--accent);font-weight:700;font-size:14px}
-.ai-tinfo{display:flex;flex-direction:column;gap:2px;min-width:0}
-.ai-tinfo b{font-size:13px;color:var(--fg);font-weight:600;overflow:hidden;
-  text-overflow:ellipsis;white-space:nowrap}
-.ai-tinfo i{font-size:11.5px;color:var(--dim2);font-style:normal;font-family:var(--mono);
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 按钮（照稿子：10×20、圆角 6、14px/500；次要按钮 1px 描边） */
+.ai-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  padding:10px 20px;border-radius:6px;border:1px solid transparent;background:#fff;
+  color:#18181b;border-color:#e4e4e7;cursor:pointer;font:inherit;font-size:14px;font-weight:500;
+  transition:background .2s, color .2s, border-color .2s, transform .1s}
+.ai-btn:hover{background:#f4f4f5}
+.ai-btn:active{transform:scale(.97)}
+.ai-btn:disabled{opacity:.45;cursor:default;filter:none}
+.ai-btn.primary{background:#2563eb;border-color:transparent;color:#fff;
+  box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.ai-btn.primary:hover{background:#1d4ed8}
+.ai-btn.danger{color:#ef4444;border-color:#e4e4e7}
+.ai-btn.danger:hover{background:#fef2f2;border-color:#fca5a5;color:#ef4444}
+/* 卡片右边那两颗小按钮（照稿子的 .btn-icon：6×12、圆角 6、13px） */
+.ai-cacts .ai-btn{padding:6px 12px;border-radius:6px;font-size:13px}
 
-/* ③ 编辑 */
-.ai-ttl{font-size:15px;font-weight:600;color:var(--fg)}
-.ai-fields{grid-template-columns:1fr 1fr}
-.ai-fields .ai-wide{grid-column:1 / -1}
-.ai-lines{resize:vertical;min-height:62px;font-family:var(--mono);font-size:12.5px;
-  line-height:1.7}
-.ai-keyrow{display:flex;align-items:center;gap:6px}
-.ai-keyrow .inp{flex:1;min-width:0}
-.ai-keyrow .btn-quiet{flex:none;padding:5px 9px;border-radius:8px;border:0;
-  background:var(--tile);color:var(--fg2);cursor:pointer;font:inherit;font-size:12px}
-.ai-keyrow .btn-quiet:hover{background:var(--hover);color:var(--fg)}
-/* 动作条：测试连接在左，取消 / 保存在右（贴底，字段再高也看得见） */
-.ai-acts{display:flex;align-items:center;gap:8px;position:sticky;bottom:-2px;z-index:2;
-  background:var(--panel);padding:10px 0 2px;border-top:1px solid var(--hair)}
-.ai-gap{flex:1}
-.ai-acts .btn,.ai-acts .btn-quiet{padding:6px 12px;border-radius:8px;border:0;
-  background:transparent;color:var(--fg2);cursor:pointer;font:inherit;font-size:13px;
-  font-weight:500;transition:background .13s ease-out,color .13s ease-out,transform .1s ease-out}
-.ai-acts .btn:hover,.ai-acts .btn-quiet:hover{background:var(--hover);color:var(--fg)}
-.ai-acts .btn:active{transform:scale(.97)}
-.ai-acts .btn.primary{background:transparent;border:0;color:var(--accent)}
-.ai-acts .btn.primary:hover{background:color-mix(in srgb, var(--accent) 12%, transparent)}
-.ai-acts .btn:disabled,.ai-acts .btn-quiet:disabled{opacity:.45;cursor:default;filter:none}

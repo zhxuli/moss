@@ -19,7 +19,12 @@ const MossSettings = {
   <div class="card wide">
     <div class="set-head">
       <h3>设置</h3>
-      <span class="set-sub" id="set-path" :title="path">{{ shortPath }}</span>
+      <!-- 路径两段分开、都能点：点目录开文件夹，点文件名开那个文件（V-160） -->
+      <span class="set-sub" id="set-path" :title="path"><span
+        class="set-link" id="set-open-dir" role="button" tabindex="0"
+        title="打开所在文件夹" @click="openDir()">{{ dirName }}</span><span
+        class="set-link" id="set-open-file" role="button" tabindex="0"
+        title="打开这个文件" @click="openFile()">{{ fileName }}</span></span>
       <button class="set-x" id="set-close" title="关闭（Esc）" aria-label="关闭"
               @click="close" v-html="icon('x')"></button>
     </div>
@@ -30,132 +35,161 @@ const MossSettings = {
                 :class="{on: g.name === active, 'has-bad': badGroups[g.name] === 'bad',
                          'has-warn': badGroups[g.name] === 'warn'}"
                 :data-group="g.name" :title="navTitle(g.name)" @click="setActive(g.name)">
-          <span v-html="icon(g.icon || 'settings')"></span><span>{{ g.name }}</span>
+          <span v-html="isAi(g) ? aiSvg('openai') : icon(g.icon || 'settings')"></span><span
+            class="set-navname">{{ g.name }}</span>
           <span class="set-dot"></span>
         </button>
       </div>
 
       <div class="set-body" id="set-body" @mouseleave="hideTip" @scroll="hideTip">
-        <div v-for="g in groups" :key="g.name" class="set-pane" :class="{on: g.name === active}"
-             :data-group="g.name">
+        <div v-for="g in groups" :key="g.name" class="set-pane"
+             :class="{on: g.name === active, 'is-ai': isAi(g)}" :data-group="g.name">
 
-          <h3 class="set-ptitle">{{ g.name }}</h3>
-          <p class="set-pdesc" v-if="g.blurb">{{ g.blurb }}</p>
+          <!-- 通用标题 + 说明：AI 那一页自己有稿子的 view-header，这里让开（V-146） -->
+          <template v-if="!isAi(g)">
+            <h3 class="set-ptitle">{{ g.name }}</h3>
+            <p class="set-pdesc" v-if="g.blurb">{{ g.blurb }}</p>
+          </template>
 
-          <!-- ★ AI 那一组（V-142）：**三张脸** —— 列表 / 选服务商 / 编辑，照你给的那份 UI 稿子：
-               列表是卡片（名字 + 地址 + 一排小按钮）、没配过是一个虚线空框、
-               选服务商是整块模板网格、编辑是「两列 + 全宽 + 底部动作条 + 结果横幅」。
-               ★ 规矩：**带边框的都不是 button**（V-92 那条通用闸会遍历每个 button 量边框宽度），
-                 所以卡片 / 空框 / 模板格子用 div + @click，按钮一律无边框。 -->
+          <!-- ★ AI（V-143）：照那份 UI 稿子抄的 —— 三张"视图"（列表 / 选服务商 / 编辑）**常驻 DOM**，
+               靠 .active 做「淡入 + 上移 15px」的切换（稿子的 .view / .view.active 那套），
+               卡片 / 虚线空框 / 九宫格 / 结果横幅 / 底部动作条的大小间距也按稿子来。
+               ★ 唯一没照抄的：稿子里的次要按钮是 1px 描边的，咱这边有「按钮不许有描边」那条通用闸
+                 （V-92 你定的），所以换成浅底色 —— 形状、尺寸、字重照旧。 -->
           <div class="set-ai" v-if="isAi(g)">
-            <!-- 连接测试的结果：哪个视图都看得见（刚测的是哪一组、成没成） -->
-            <div class="ai-banner" id="ai-banner" v-if="ai.status"
-                 :class="ai.statusOk ? 'ok' : 'bad'">
-              <span class="ai-bico" v-html="icon(ai.statusOk ? 'check' : 'circle-alert')"></span>
-              <span class="ai-btxt" id="ai-state">{{ ai.status }}</span>
-            </div>
-
-            <!-- ① 列表 -->
-            <template v-if="ai.mode === 'list'">
-              <div class="ai-emptybox" id="ai-empty" v-if="!ai.profiles.length">
-                <span class="ai-eico" v-html="icon('globe')"></span>
-                <span class="ai-etxt">还没有 AI 配置</span>
+            <!-- 视图 1：列表 -->
+            <div class="ai-view active" id="ai-view-list" v-if="ai.mode === 'list'">
+              <div class="ai-scroll">
+              <div class="ai-vhead">
+                <h3 class="ai-vtitle">AI 服务配置</h3>
+                <p class="ai-vdesc">管理你接入的各个大语言模型服务，支持多组配置切换。</p>
               </div>
-              <div class="ai-cards" id="ai-list" v-else>
-                <div v-for="n in ai.profiles" :key="n" class="ai-card" :data-group="n"
-                     :class="{on: n === ai.active}">
+
+              <div class="ai-empty" id="ai-empty" v-if="!ai.profiles.length">
+                <span class="ai-eico" v-html="aiSvg('user')"></span>
+                <h4>暂无 AI 配置</h4>
+                <p>请点击下方按钮，添加并配置你的第一个 AI 引擎</p>
+              </div>
+
+              <div class="ai-list" id="ai-list" v-else>
+                <div v-for="n in ai.profiles" :key="n" class="ai-card" :data-group="n">
                   <div class="ai-cinfo">
                     <div class="ai-cname">
-                      <span class="ai-cn">{{ n }}</span>
-                      <span class="ai-tag" v-if="n === ai.active">当前</span>
-                      <span class="ai-warn" v-for="w in aiWarns(n)" :key="w"
-                            :data-warn="w">{{ w }}</span>
+                      <span class="ai-cdot" v-if="n === ai.active"
+                            title="当前用的就是这一组"></span>{{ n }}
                     </div>
                     <div class="ai-cmeta">{{ aiSummary(n) }}</div>
                   </div>
                   <div class="ai-cacts">
-                    <button class="btn-quiet sm" type="button" v-if="n !== ai.active"
+                    <button class="ai-btn" type="button" v-if="n !== ai.active"
                             :data-use="n" @click="aiUse(n)">设为当前</button>
-                    <button class="btn-quiet sm" type="button" :data-test="n"
-                            @click="aiTest(n)">测试连接</button>
-                    <button class="btn-quiet sm" type="button" :data-edit="n"
+                    <button class="ai-btn" type="button" :data-edit="n"
                             @click="aiEdit(n)">编辑</button>
-                    <button class="btn-quiet sm danger" type="button" :data-del="n"
+                    <button class="ai-btn danger" type="button" :data-del="n"
                             @click="aiDel(n)">删除</button>
                   </div>
                 </div>
               </div>
-              <div class="ai-add" id="ai-new" @click="aiTemplates()">
-                <span v-html="icon('file-plus')"></span><span>添加 AI 配置</span>
-              </div>
-            </template>
 
-            <!-- ② 选服务商（照着稿子：一格一家，点一下就填好） -->
-            <template v-else-if="ai.mode === 'tpl'">
-              <div class="ai-back" id="ai-back" @click="aiList()">
-                <span v-html="icon('undo-2')"></span><span>返回</span>
+              <div class="ai-add" id="ai-new" @click="aiTemplates()">
+                <span v-html="aiSvg('plus')"></span>
+                <span>添加新的 AI 配置</span>
+              </div>
+              </div>
+            </div>
+
+            <!-- 视图 2：选服务商 -->
+            <div class="ai-view active" id="ai-view-tpl" v-else-if="ai.mode === 'tpl'">
+              <div class="ai-scroll">
+              <button class="ai-back" id="ai-back" type="button" title="返回列表"
+                      aria-label="返回列表" @click="aiList()"
+                      v-html="aiSvg('back')"></button>
+              <div class="ai-vhead">
+                <h3 class="ai-vtitle">选择服务商</h3>
+                <p class="ai-vdesc">选择一个预设模板以快速填入接口信息，或选择自定义。</p>
               </div>
               <div class="ai-tplgrid" id="ai-tplgrid">
                 <div v-for="p in ai.presets" :key="p.name" class="ai-tpl" :data-preset="p.name"
                      @click="aiUsePreset(p)">
                   <span class="ai-tico">{{ p.name.slice(0, 1) }}</span>
-                  <span class="ai-tinfo"><b>{{ p.name }}</b><i>{{ aiHost(p.base_url) }}</i></span>
+                  <span class="ai-tinfo"><b>{{ p.name }}</b><i>{{ p.desc || aiHost(p.base_url) }}</i></span>
                 </div>
                 <div class="ai-tpl" data-preset="自定义" id="ai-blank" @click="aiBlank()">
                   <span class="ai-tico">＋</span>
-                  <span class="ai-tinfo"><b>自定义</b><i>自己填地址</i></span>
+                  <span class="ai-tinfo"><b>自定义</b><i>手动填写基地址</i></span>
                 </div>
               </div>
-            </template>
-
-            <!-- ③ 编辑 -->
-            <template v-else>
-              <div class="ai-back" id="ai-back" @click="aiCancel()">
-                <span v-html="icon('undo-2')"></span><span>返回</span>
               </div>
-              <div class="ai-ttl" id="ai-ttl">{{ ai.creating ? "新建配置" : ("编辑 · " + ai.name) }}</div>
+            </div>
 
-              <div class="set-fields ai-fields">
-                <div v-for="f in aiFields" :key="f.k" class="set-field"
-                     :class="{'ai-wide': f.type === 'key' || f.type === 'lines'}" :data-ai="f.k">
-                  <div class="set-lbl">
-                    <span>{{ f.label }}</span>
-                    <span v-if="f.hint" class="set-info ai-info" :title="f.hint"
-                          v-html="icon('info')"></span>
-                  </div>
-                  <div v-if="f.type === 'key'" class="ai-keyrow">
-                    <input class="inp" :data-ai="f.k" :type="ai.revealed ? 'text' : 'password'"
-                           spellcheck="false" autocomplete="off" :placeholder="aiKeyPh()"
-                           :value="aiVal(f.k)" @input="aiSet(f.k, $event.target.value)">
-                    <button class="btn-quiet sm" id="ai-eye" type="button" @click="aiEye()"
-                            :disabled="ai.creating"
-                            :title="ai.creating ? '还没保存，直接填就行'
-                                                : (ai.revealed ? '藏起来' : '看明文')">
-                      {{ ai.revealed ? "藏起来" : "露出来" }}
-                    </button>
-                  </div>
-                  <textarea v-else-if="f.type === 'lines'" class="inp ai-lines" :data-ai="f.k"
-                            spellcheck="false" :placeholder="f.ph || ''" :value="aiVal(f.k)"
-                            @input="aiSet(f.k, $event.target.value)"></textarea>
-                  <input v-else class="inp" :data-ai="f.k" spellcheck="false" autocomplete="off"
-                         :placeholder="f.ph || ''" :value="aiVal(f.k)"
-                         @input="aiSet(f.k, $event.target.value)">
+            <!-- 视图 3：编辑 -->
+            <div class="ai-view active" id="ai-view-form" v-else>
+              <div class="ai-scroll">
+              <button class="ai-back" id="ai-back2" type="button" title="放弃修改，返回列表"
+                      aria-label="放弃修改，返回列表" @click="aiCancel()"
+                      v-html="aiSvg('back')"></button>
+              <div class="ai-vhead" style="margin-bottom:16px">
+                <h3 class="ai-vtitle" id="ai-ttl">{{ ai.creating
+                  ? (ai.from === "自定义" ? "新建自定义配置" : ("配置 " + (ai.from || "AI")))
+                  : ("编辑: " + ai.name) }}</h3>
+              </div>
+
+              <div class="ai-frow">
+                <div class="ai-fgroup" data-ai="name">
+                  <label class="ai-flabel" for="ai-in-name"
+                         title="只给自己看。改了名字保存 = 给这一组改名。">配置名称别名</label>
+                  <input class="ai-input" id="ai-in-name" :data-ai="'name'" type="text"
+                         spellcheck="false" autocomplete="off" placeholder="例如：主用 DeepSeek"
+                         :value="aiVal('name')" @input="aiSet('name', $event.target.value)">
+                </div>
+                <div class="ai-fgroup" data-ai="base_url">
+                  <label class="ai-flabel" for="ai-in-url"
+                         title="OpenAI 兼容的地址，填到 /v1 为止。">接口地址 (Base URL)</label>
+                  <input class="ai-input" id="ai-in-url" type="text" spellcheck="false"
+                         autocomplete="off" placeholder="https://api..."
+                         :value="aiVal('base_url')" @input="aiSet('base_url', $event.target.value)">
                 </div>
               </div>
 
-              <div class="ai-acts">
-                <button class="btn-quiet" id="ai-test" type="button"
-                        :disabled="ai.busy || ai.creating || aiDirty() || !ai.name"
-                        :title="ai.creating ? '先保存' : (aiDirty() ? '先保存改过的' : '发一个最小请求试试')"
-                        @click="aiTest(ai.name)">测试连接</button>
-                <span class="ai-gap"></span>
-                <button class="btn-quiet" id="ai-cancel" type="button" @click="aiCancel()">取消</button>
-                <button class="btn primary" id="ai-save" type="button"
-                        :disabled="!aiDirty() || ai.busy" @click="aiSave()">
-                  {{ ai.busy ? "保存中…" : "保存" }}
-                </button>
+              <div class="ai-fgroup" data-ai="api_key">
+                <label class="ai-flabel" for="ai-in-key"
+                       title="明文存在 user_data/config.toml；留空 = 不修改。">API Key (密钥)</label>
+                <div class="ai-keywrap" :class="{nokey: !aiVal('api_key')}">
+                  <input class="ai-input" id="ai-in-key" :type="ai.showKey ? 'text' : 'password'"
+                         spellcheck="false" autocomplete="off" :placeholder="aiKeyPh()"
+                         :value="aiVal('api_key')" @input="aiSet('api_key', $event.target.value)">
+                  <!-- 框里那只小眼睛：悬停/聚焦 + 框里有内容才出现（悬停、有字才看得见） -->
+                  <button class="ai-eye" id="ai-eye" type="button"
+                          :title="ai.showKey ? '藏起来' : '看明文'"
+                          @click="aiToggleKey()"
+                          v-html="icon(ai.showKey ? 'eye-off' : 'eye')"></button>
+                </div>
               </div>
-            </template>
+
+              <div class="ai-fgroup" data-ai="model">
+                <label class="ai-flabel" for="ai-in-models"
+                       title="一行一个，第一个当默认；跑包时注入 MOSS_AI_MODEL / MOSS_AI_MODELS。">可用模型列表 (换行分割)</label>
+                <textarea class="ai-input ai-textarea" id="ai-in-models" spellcheck="false"
+                          placeholder="输入模型名称..." :value="aiVal('model')"
+                          @input="aiSet('model', $event.target.value)"></textarea>
+              </div>
+
+              <div class="ai-banner" id="ai-banner" v-if="ai.status"
+                   :class="ai.statusOk ? 'ok' : 'bad'">
+                <span class="ai-bico"
+                      v-html="icon(ai.statusOk ? 'check' : 'circle-alert')"></span>
+                <span class="ai-btxt">
+                  <span id="ai-state">{{ ai.status }}</span>
+                  <!-- 原始报文（那一大串）折起来，点了才看 —— 普通用户不需要看到代码 -->
+                  <button class="ai-more" id="ai-more" type="button" v-if="ai.detail"
+                          @click="ai.open = !ai.open">{{ ai.open ? "收起" : "详情" }}</button>
+                  <code class="ai-detail" id="ai-detail" v-if="ai.open && ai.detail">{{ ai.detail }}</code>
+                </span>
+              </div>
+
+              </div>
+
+            </div>
           </div>
 
           <!-- 通用那套（一个键一行）：AI 那一组自己有界面（上面那块），所以用 v-if 让开 -->
@@ -171,7 +205,7 @@ const MossSettings = {
                       v-html="icon('info')"></span>
               </div>
               <div v-if="it.type === 'int'" class="step">
-                <button type="button" title="减一" :disabled="Number(values[it.key]) <= 1"
+                <button type="button" title="减一" :disabled="Number(values[it.key]) <= 0"
                         @click="bump(it.key, -1)">−</button>
                 <input class="num" :data-key="it.key" :value="values[it.key]" inputmode="numeric"
                        @change="setVal(it.key, clampNum($event.target.value))">
@@ -213,16 +247,19 @@ const MossSettings = {
       </div>
     </div>
 
+    <!-- ★ 底栏**所有页共用一条**（V-155）：AI 不做特殊化。
+         左边状态字 + 右边按钮：AI 页是「测试连接 / 保存」，别的页是「取消 / 保存」。 -->
     <div class="set-foot">
-      <span class="set-state" id="set-state" :class="footClass">{{ aiPane
-        ? (ai.mode === "list" ? "AI 参数在左边列表里管" : "改完点「保存」")
-        : footText }}</span>
-      <button class="btn-quiet" id="set-cancel" @click="close">取消</button>
-      <!-- ★ AI 那一页**不摆**全局那颗「保存」（V-138）：AI 的参数走上面那条自己的保存，
-           全局这颗只认「设置项」，在 AI 页上按下去只会说"没有改动"然后关窗 ——
-           看着像存上了、其实什么都没发生，这种坑不如不放。 -->
-      <button class="btn primary" id="set-save" v-if="!aiPane" :disabled="!canSave"
-              @click="save">保存</button>
+      <span class="set-state" id="set-state" :class="footClass">{{ aiPane ? aiFootText() : footText }}</span>
+      <button class="btn-quiet" id="set-ai-test" v-if="aiPane && ai.mode === 'edit'"
+              :disabled="ai.busy || !aiFilled()"
+              :title="aiFilled() ? '发一个最小请求试试（不用先保存）'
+                                 : '接口地址 / 密钥 / 模型 都填了才能测'"
+              @click="aiTest(ai.name)">测试连接</button>
+      <button class="btn primary" id="set-save"
+              :disabled="aiPane ? (!aiFilled() || !aiDirty() || ai.busy) : !canSave"
+              :title="aiPane && !aiFilled() ? '接口地址 / 密钥 / 模型 都填了才能保存' : ''"
+              @click="aiPane ? aiSave() : save()">{{ ai.busy ? "保存中…" : "保存" }}</button>
     </div>
   </div>
 
@@ -258,7 +295,9 @@ const MossSettings = {
       //   （存的时候**只送这几个**，不会把打码那串当值写回去）。
       ai: {loaded: false, busy: false, name: "", active: "", profiles: [], presets: [],
            summary: {},
-           params: {}, draft: {}, revealed: false, status: "", statusOk: false,
+           params: {}, draft: {}, status: "", statusOk: false, from: "", showKey: false,
+           keyReal: false,
+           detail: "", open: false,
            // ★ `V-140`：两张脸 —— `list`（默认，一组一行）/ `edit`（点新建或某行编辑才进来）。
            //   一打开就摊开四个输入框（上一版）会让人以为"已经配好了"，你的原话：
            //   「还没有设置过的时候 它不应该是显示列表吗」。
@@ -272,6 +311,16 @@ const MossSettings = {
     };
   },
   computed: {
+    // 路径拆两段：目录（含末尾斜杠）+ 文件名 —— 两段分别可点（V-160）
+    dirName(){
+      const s = String(this.path || "");
+      return s.replace(/[^\\/]+$/, "");
+    },
+    fileName(){
+      const s = String(this.path || "");
+      const m = s.match(/[^\\/]+$/);
+      return m ? m[0] : s;
+    },
     shortPath(){
       const s = String(this.path || "").replace(/\\/g, "/");
       const parts = s.split("/").filter(Boolean);
@@ -293,7 +342,8 @@ const MossSettings = {
         return "改了 " + this.changed.length + " 项 · 保存后下一次启动 moss 生效"
                + (this.msg ? "（" + this.msg + "）" : "");
       }
-      return "还没有改动" + (this.msg ? "（" + this.msg + "）" : "");
+      // ★ `V-164`：没改动不是状态、更不是错，什么都不显示（只留宿主顺带说的话）
+      return this.msg ? ("（" + this.msg + "）") : "";
     },
     footClass(){
       if (this.errs) return "bad";
@@ -311,24 +361,9 @@ const MossSettings = {
       });
       return out;
     },
-    // ★ AI 那一组的字段表（`V-138` / `V-139`）：**就四样** —— 顺序就是显示顺序。
-    //   跟 `core/config.py` 的 `AI_FIELDS` 对应（那边管"存哪三个键"，这边多一个"名字"和
-    //   "怎么摆、怎么说"）。★ 必须放**计算属性**里：放 methods 就是把这个函数本身递给
-    //   `v-for` —— 函数没有可枚举属性，那一块一个字段都不渲染（第一版这么写的，踩过）。
-    aiFields(){
-      return [
-        {k: "name", label: "名字", ph: "DeepSeek",
-         hint: "只给自己看。"},
-        {k: "base_url", label: "接口地址", ph: "https://api.deepseek.com/v1",
-         hint: "OpenAI 兼容，填到 /v1 为止。"},
-        {k: "api_key", label: "密钥", type: "key",
-         hint: "明文存在 user_data/config.toml；留空 = 不修改。"},
-        {k: "model", label: "模型", type: "lines", ph: "deepseek-chat\ndeepseek-reasoner",
-         hint: "一行一个，第一个当默认；跑包时注入 MOSS_AI_MODEL / MOSS_AI_MODELS。"},
-      ];
-    },
     // 现在这一页是不是 AI 那一组（是的话底部那颗全局「保存」就不摆 —— 见模板里的注释）
     aiPane(){ return this.isAiName(this.active); },
+
   },
   methods: {
     icon(name){ return ico(name, "i"); },
@@ -338,11 +373,22 @@ const MossSettings = {
       return !!(g && (g.items || []).some(it => it.key === "ai.active"));
     },
     /* ---- AI 那一组（`V-139`：名字 / 接口地址 / 密钥 / 模型）—— 全走宿主，界面不解析 TOML ---- */
+    // 接口地址 / 密钥 / 模型 **三样都齐**才让保存和测试（V-151）。
+    // ★ 密钥：这一组已经存过一把（列表摘要里的 has_key）也算齐 —— 不然"编辑旧配置"时
+    //   输入框是空的（占位写着"已保存，留空不改"），会被判成没填、按钮永远灰着。
+    aiFilled(){
+      if (!String(this.aiVal("base_url") || "").trim()) return false;
+      if (!this.aiModelList().length) return false;
+      if (String(this.aiVal("api_key") || "").trim()) return true;
+      if (this.ai.creating) return false;
+      return !!(((this.ai.summary || {})[this.ai.name] || {}).has_key);
+    },
     aiVal(k){
       if (Object.prototype.hasOwnProperty.call(this.ai.draft, k)) return this.ai.draft[k];
       if (k === "name") return this.ai.name;
       // 打码的那串**不当值填进框里** —— 不然保存时会把 "sk-a…7890" 存成真 key
-      if (k === "api_key") return this.ai.revealed ? (this.ai.params.api_key || "") : "";
+      // 打码那串永远不当值填进框；只有"进编辑时真去读过明文"（`V-159`）才显示
+      if (k === "api_key") return this.ai.keyReal ? (this.ai.params.api_key || "") : "";
       // 模型在库里是**列表**，在框里是「一行一个」的文本
       if (k === "model"){
         const m = this.ai.params.model;
@@ -356,10 +402,10 @@ const MossSettings = {
         .map(s => s.trim()).filter(Boolean);
     },
     aiKeyPh(){
-      if (this.ai.revealed) return "";
-      // ★ 新建的时候**没有"已保存的密钥"这回事**（`ai.params` 还留着上一组读出来的东西）
-      if (this.ai.creating) return "sk-…";
-      return this.ai.params.api_key ? "已保存，留空不改" : "sk-…";
+      if (this.ai.keyReal) return "";
+      // 新建的时候**没有"已保存的密钥"这回事**（`ai.params` 还留着上一组读出来的东西）
+      if (this.ai.creating) return "sk-xxxxxxxxxxxxxxxx";
+      return this.ai.params.api_key ? "已保存，留空不改" : "sk-xxxxxxxxxxxxxxxx";
     },
     aiSet(k, v){
       this.ai.draft[k] = v;
@@ -368,22 +414,8 @@ const MossSettings = {
     aiDirty(){ return Object.keys(this.ai.draft).length > 0; },
     // 列表里那一行的小字：地址 · 第一个模型（+N）—— 就这些，别的交给高亮标签
     aiSummary(n){
-      const s = (this.ai.summary || {})[n] || {};
-      const url = String(s.base_url || "").replace(/^https?:\/\//, "");
-      const ms = s.model || [];
-      const bits = [];
-      if (url) bits.push(url);
-      if (ms.length) bits.push(ms.length > 1 ? (ms[0] + " +" + (ms.length - 1)) : ms[0]);
-      return bits.join(" · ");
-    },
-    // 缺什么就挂一颗**高亮**的小标签（比在字里写"⚠ key 没填"清楚，也更短）
-    aiWarns(n){
-      const s = (this.ai.summary || {})[n] || {};
-      const out = [];
-      if (!String(s.base_url || "")) out.push("缺地址");
-      if (!(s.model || []).length) out.push("缺模型");
-      if (!s.has_key) out.push("缺密钥");
-      return out;
+      return String(((this.ai.summary || {})[n] || {}).base_url || "")
+        .replace(/^https?:\/\//, "");
     },
     aiNewName(base){
       // 名字撞了就在后面加 -2 / -3…（点预制参数时用）
@@ -401,9 +433,10 @@ const MossSettings = {
       this.ai.name = r.name || "";
       this.ai.params = r.params || {};
       this.ai.draft = {};
-      this.ai.revealed = false;
       this.ai.status = "";
       this.ai.creating = false;      // 从库里读出来的这一组：不是"新建"
+      this.ai.showKey = false;
+      this.ai.keyReal = false;
       return true;
     },
     async aiLoadPresets(){
@@ -411,6 +444,42 @@ const MossSettings = {
       const r = await pywebview.api.ai_presets();
       this.ai.presets = (r && r.presets) || [];
     },
+    // 稿子里的三个内联图标（人物 / 加号 / 左箭头）—— 我们的图标库里没有，直接照抄它的 path
+    aiSvg(name){
+      const P = {
+        user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>' +
+              '<circle cx="12" cy="7" r="4"></circle>',
+        plus: '<path d="M12 5v14M5 12h14"></path>',
+        back: '<path d="M19 12H5M12 19l-7-7 7-7"></path>',
+        // OpenAI 的那个标记（Tabler Icons 的 brand-openai，MIT；用来表示"咱走的是 OpenAI 兼容格式"）
+        openai: '<path d="M11.217 19.384a3.501 3.501 0 0 0 6.783 -1.217v-5.167l-6 -3.35"></path>' +
+                '<path d="M5.214 15.014a3.501 3.501 0 0 0 4.446 5.266l4.34 -2.534v-6.946"></path>' +
+                '<path d="M6 7.63c-1.391 -.236 -2.787 .395 -3.534 1.689a3.474 3.474 0 0 0 1.271 4.745' +
+                'l4.263 2.514l6 -3.348"></path>' +
+                '<path d="M12.783 4.616a3.501 3.501 0 0 0 -6.783 1.217v5.067l6 3.45"></path>' +
+                '<path d="M18.786 8.986a3.501 3.501 0 0 0 -4.446 -5.266l-4.34 2.534v6.946"></path>' +
+                '<path d="M18 16.302c1.391 .236 2.787 -.395 3.534 -1.689a3.474 3.474 0 0 0 -1.271 -4.745' +
+                'l-4.308 -2.514l-5.955 3.42"></path>',
+      }[name] || '';
+      // ★ 跟 `icon()` 出来的一模一样：带 `class="i"`（那条样式管着宽高 + `display:block`）
+      //   —— 少了它，svg 是行内元素、按基线摆，跟旁边文字对不齐（V-161 踩过）。
+      //   描边也用 1.5，跟 lucide 那一族一个粗细（Tabler 原图是 2，放进导航里会显得重）。
+      return '<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+             'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" ' +
+             'aria-hidden="true">' + P + '</svg>';
+    },
+    // 点路径：文件夹和文件都用系统默认方式打开（宿主 `open_path`）
+    async openDir(){ await pywebview.api.open_path(this.dirName); },
+    async openFile(){ await pywebview.api.open_path(this.path); },
+    // AI 页在底栏左边显示什么（V-155）—— 和别的页一个位置、一个样式
+    aiFootText(){
+      if (this.ai.mode !== "edit") return "";
+      if (!this.aiFilled()) return "把接口地址 / 密钥 / 模型 填全";
+      if (!this.aiDirty()) return "";        // `V-159`：没改动不是错，别在左下角挂一句
+      return "改动还没保存";
+    },
+    // 框里那只眼睛：只切「明文 / 圆点」，**不碰 draft / 不问宿主**（V-149）
+    aiToggleKey(){ this.ai.showKey = !this.ai.showKey; },
     // ---- 三张脸之间走：列表 ⇄ 选服务商 ⇄ 编辑（`V-142`，照那份 UI 稿子）----
     // 模板格子上那行小字：把地址里的协议头去掉，只留主机名（短、认得出来就行）
     aiHost(url){
@@ -427,7 +496,6 @@ const MossSettings = {
       this.ai.mode = "list";
       this.ai.creating = false;
       this.ai.draft = {};
-      this.ai.revealed = false;
       this.ai.status = "";
       this.aiLoad("");
     },
@@ -437,30 +505,40 @@ const MossSettings = {
         this.ai.mode = "list";
         this.ai.creating = false;
         this.ai.draft = {};
-        this.ai.revealed = false;
-        this.ai.status = "";
+        this.ai.showKey = false;
+        this.ai.keyReal = false;
+          this.ai.status = "";
         this.aiLoad("");
       };
-      if (this.aiDirty()) askConfirm("改动还没保存", "返回就会丢掉。", go);
-      else go();
+      // ★ V-146：返回**不再二次确认**（你说的）—— 直接回去，改动丢掉就丢掉
+      go();
     },
     // 列表里某一张卡片的「编辑」：进编辑态，表单就是这一组现在的样子
+    // ★ `V-159`：顺便把**已存的密钥读成明文填进去**（你说的"编辑以后 API KEY 应该显示"）——
+    //   这是本机自己的配置、明文就存在 config.toml 里，显示出来才改得动。
     async aiEdit(n){
       if (this.aiDirty() && this.ai.name === n && this.ai.mode === "edit") return;
       const r = await this.aiLoad(n);
       if (!r) return;
       this.ai.mode = "edit";
       this.ai.status = "";
+      const rr = await pywebview.api.ai_config(n, true);
+      if (rr && rr.ok){
+        this.ai.params = Object.assign({}, this.ai.params,
+                                       {api_key: (rr.params || {}).api_key || ""});
+        this.ai.keyReal = true;
+      }
     },
     // 选服务商里点某一家：把名字 / 地址 / 模型填进表单，只等你粘 key（**不写盘**）
     aiUsePreset(p){
       this.ai.draft = {name: this.aiNewName(p.name), base_url: p.base_url || "",
                        model: (p.model || []).join("\n"), api_key: ""};
       this.ai.creating = true;
+      this.ai.from = p.name;                       // 标题要写「配置 DeepSeek」（照稿子）
       this.ai.mode = "edit";
       this.ai.status = "";
       this.$nextTick(() => {
-        const box = document.querySelector('.ai-fields .set-field[data-ai="api_key"] input');
+        const box = document.querySelector('.ai-fgroup[data-ai="api_key"] input');
         if (box) box.focus();
       });
     },
@@ -468,10 +546,11 @@ const MossSettings = {
     aiBlank(){
       this.ai.draft = {name: this.aiNewName("我的AI"), base_url: "", model: "", api_key: ""};
       this.ai.creating = true;
+      this.ai.from = "自定义";
       this.ai.mode = "edit";
       this.ai.status = "";
       this.$nextTick(() => {
-        const box = document.querySelector('.ai-fields .set-field[data-ai="base_url"] input');
+        const box = document.querySelector('.ai-fgroup[data-ai="base_url"] input');
         if (box) box.focus();
       });
     },
@@ -523,9 +602,12 @@ const MossSettings = {
                  async () => {
         const r = await pywebview.api.ai_delete(name);
         if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "没删掉"), true); return; }
-        const fromEdit = (this.ai.mode === "edit" && this.ai.name === name);
-        if (fromEdit){ this.ai.mode = "list"; this.ai.creating = false; this.ai.draft = {}; }
-        await this.aiLoad(fromEdit ? "" : this.ai.name);
+        // ★ 删完一律重新读"当前那组 / 第一组"（传名字的话，删掉的正好是它 ⇒ 读不到 ⇒ 列表不刷新，
+        //   表现就是"点了删除没反应"，V-143 的 bug）
+        if (this.ai.mode === "edit" && this.ai.name === name){
+          this.ai.mode = "list"; this.ai.creating = false; this.ai.draft = {};
+        }
+        await this.aiLoad("");
         toast("删了「" + name + "」");
       });
     },
@@ -537,27 +619,39 @@ const MossSettings = {
       this.ai.active = name;
       toast("当前：" + name);
     },
-    async aiEye(){
-      if (this.ai.revealed){ this.ai.revealed = false; this.ai.draft = {}; return; }
-      const r = await pywebview.api.ai_config(this.ai.name, true);
-      if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "读明文失败"), true); return; }
-      this.ai.revealed = true;
-      const real = (r.params || {}).api_key || "";
-      this.ai.params = Object.assign({}, this.ai.params, {api_key: real});
-      if (Object.prototype.hasOwnProperty.call(this.ai.draft, "api_key")) delete this.ai.draft.api_key;
-    },
-    // 测连接：列表卡片上传组名（`aiTest(n)`），编辑态里传当前这组
+    // 测连接：**不用先保存**（V-147）—— 把表里现在的值一起送过去，宿主拿它们当临时覆盖。
+    // 密钥只在你这次真填了 / 点过「眼睛」时才送（不然送的是打码那串，等于测不了）。
     async aiTest(name){
       name = name || this.ai.name;
-      if (!name) return;
-      if (this.aiDirty()){ toast("先保存再测", true); return; }
+      const fields = {};
+      fields.base_url = String(this.aiVal("base_url") || "").trim();
+      fields.model = this.aiModelList();
+      const k = String(this.aiVal("api_key") || "");
+      if (k) fields.api_key = k;
       this.ai.busy = true;
       this.ai.status = "正在连…"; this.ai.statusOk = false;
-      const r = await pywebview.api.ai_test(name);
+      const r = await pywebview.api.ai_test(name || "", fields);
       this.ai.busy = false;
       this.ai.statusOk = !!(r && r.ok);
-      this.ai.status = (name === this.ai.name ? "" : name + "：")
-                     + ((r && r.msg) || "（宿主没回话）");
+      const raw = String((r && r.msg) || "").trim();
+      this.ai.status = this.aiShort(raw, this.ai.statusOk);
+      // 原始报文只在跟前那句"不一样"的时候才给「详情」（免得重复一遍废话）
+      this.ai.detail = (raw && raw !== this.ai.status) ? raw : "";
+      this.ai.open = false;
+    },
+    // 把宿主那一行文本变成人话：成功 = 「连接成功（HTTP 200 · 模型 xxx）」；
+    // 失败 = 「连接失败：<原因>」。原始报文另存（上面那个 detail）。
+    aiShort(raw, ok){
+      const s = String(raw || "").replace(/^\[错误\]\s*/, "").trim();
+      if (ok){
+        const http = (s.match(/HTTP\s*(\d+)/) || [])[1] || "";
+        const model = (s.match(/模型\s*([^）)\s]+)/) || [])[1] || "";
+        const bits = [http ? ("HTTP " + http) : "", model].filter(Boolean).join(" · ");
+        return "连接成功" + (bits ? ("（" + bits + "）") : "");
+      }
+      const why = s.replace(/^没连上\s*\/\s*报错：/, "").replace(/^没连上\s*\/\s*报错:/, "").trim();
+      const short = why.length > 60 ? (why.slice(0, 60) + "…") : why;
+      return "连接失败" + (short ? ("：" + short) : "");
     },
     fieldsOf(g){ return (g.items || []).filter(it => it.type !== "bool"); },
     rowsOf(g){ return (g.items || []).filter(it => it.type === "bool"); },
@@ -584,7 +678,7 @@ const MossSettings = {
     },
     clampNum(v){
       const n = parseInt(v, 10);
-      return isFinite(n) ? Math.max(1, Math.min(20, n)) : 1;
+      return isFinite(n) ? Math.max(0, Math.min(20, n)) : 0;   // `V-159`：0 也允许（只看当前目录）
     },
 
     /* ---- 打开 / 关闭 / 切换分类 ---- */

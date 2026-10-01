@@ -29,6 +29,13 @@ from . import paths
 
 #: 默认配置。**改这里的时候，`CONFIG_TEMPLATE` 要一起改** —— 自检会核对两者是否一致
 #: （`template_problems()`，挂 `moss --selfcheck`），免得"默认值改了、模板没跟上"。
+#: **命令行里有特殊含义的字符**（`V-156`）：这些不能当命令前缀。
+#: ★ 为什么只挡这些：`/` 本来就是我们的默认值，`~` `.` `-` `:` 之类也只是普通字符，
+#:   它们不会引起什么特殊执行；真正会出事的是 `>`（重定向 / 管道）、`@`（把命令本身藏起来）、
+#:   `%` `!`（cmd 的变量 / 延迟展开）、`$` 和反引号（PowerShell 的变量 / 求值）、
+#:   `*` `?`（通配）、`&` `|` `;`（连接多条命令）、括号和引号（分组 / 引号）。
+SYMBOL_BAD = set('&|<>^%!*?()$`"\'=#@,;[]{}')
+
 #: AI 那几组参数的字段（`V-139` 精简到**四样**）：组名（= `[ai.profiles.<组名>]` 那个表名）
 #: 加下面三个键 —— `base_url` / `api_key` / `model`。
 #: ★ 为什么把 `stream` / `temperature` / `max_tokens` / `top_p` / `timeout` / `note` 拿掉了
@@ -42,21 +49,21 @@ AI_FIELDS = ("base_url", "api_key", "model")
 #: 用户只需要粘一把 key。★ 表放在 core 里是为了**只有一份真相** —— 面板（走 `--ai-presets`）
 #: 和命令行看到的是同一份；地址都是 **OpenAI 兼容**的那个入口（`{base_url}/chat/completions`）。
 AI_PRESETS = [
-    {"name": "DeepSeek", "base_url": "https://api.deepseek.com/v1",
-     "model": ["deepseek-chat", "deepseek-reasoner"]},
-    {"name": "Gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+    {"name": "DeepSeek", "desc": "官方 API", "base_url": "https://api.deepseek.com/v1",
+     "model": ["deepseek-flash"]},
+    {"name": "Gemini", "desc": "Google", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
      "model": ["gemini-2.0-flash", "gemini-2.5-pro"]},
-    {"name": "OpenAI", "base_url": "https://api.openai.com/v1",
+    {"name": "OpenAI", "desc": "ChatGPT 系列", "base_url": "https://api.openai.com/v1",
      "model": ["gpt-4o-mini", "gpt-4o"]},
-    {"name": "Kimi", "base_url": "https://api.moonshot.cn/v1",
+    {"name": "Kimi", "desc": "月之暗面", "base_url": "https://api.moonshot.cn/v1",
      "model": ["moonshot-v1-8k", "moonshot-v1-32k"]},
-    {"name": "通义千问", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    {"name": "通义千问", "desc": "阿里", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
      "model": ["qwen-plus", "qwen-max"]},
-    {"name": "智谱", "base_url": "https://open.bigmodel.cn/api/paas/v4",
+    {"name": "智谱", "desc": "GLM", "base_url": "https://open.bigmodel.cn/api/paas/v4",
      "model": ["glm-4-flash", "glm-4-plus"]},
-    {"name": "硅基流动", "base_url": "https://api.siliconflow.cn/v1",
+    {"name": "硅基流动", "desc": "聚合平台", "base_url": "https://api.siliconflow.cn/v1",
      "model": ["deepseek-ai/DeepSeek-V3", "Qwen/Qwen2.5-7B-Instruct"]},
-    {"name": "本地 Ollama", "base_url": "http://127.0.0.1:11434/v1",
+    {"name": "本地 Ollama", "desc": "本机跑", "base_url": "http://127.0.0.1:11434/v1",
      "model": ["qwen2.5:7b"]},
 ]
 
@@ -96,7 +103,7 @@ DEFAULT_CONFIG = {
         "symbol": "",
     },
     "search": {
-        "max_parent_depth": 3,
+        "max_parent_depth": 0,          # `V-159`：0 = 只看当前目录（严谨的人喜欢这个）
     },
     "ctrl_c": {
         "force_kill": True,
@@ -146,8 +153,8 @@ command           = true    # 打印将要执行的命令
 symbol            = ""      # 行首符号（空 = 用内置的）
 
 [search]
-# 运行 `moss m` 时"向上找几层目录"。
-max_parent_depth = 3
+# 运行 `moss m` 时"向上找几层目录"。0 = 只看当前目录，不往上找。
+max_parent_depth = 0
 
 [ctrl_c]
 # Ctrl+C 怎么停：true = 第一次就强杀整棵树；false = 先温和 terminate，再按一次才强杀。
@@ -192,9 +199,7 @@ active = ""
 #   以及每条该有的说明有没有写），挂在 `moss --selfcheck` 上。
 SETTINGS_GROUPS = [
     {"name": "快捷命令", "icon": "hash", "live": True,
-     "blurb": "行首那个符号决定这条命令是什么意思。四项都能换成你顺手的字符"
-              "（moss 会先去掉前缀，再判断这条命令属于哪一类）。"
-              "谁留空，裸名就归谁 —— 这两项是互相牵制的，配错了下面会标红。",
+     "blurb": "行首那个符号决定命令的种类。留空 = 裸名就用这一类。",
      "items": [
          {"key": "symbols.path_mode", "label": "路径调用", "type": "symbol",
           "hint": "留空 = 裸名就是它：moss m 直接在当前目录（及上层）找 main.py 之类的入口跑。"},
@@ -225,7 +230,7 @@ SETTINGS_GROUPS = [
          {"key": "output.duration", "label": "打印运行总长", "type": "bool",
           "hint": "跑完打印这次用了多久（秒）。"},
      ]},
-    {"name": "输出格式", "icon": "type",
+    {"name": "输出格式", "icon": "braces",
      "blurb": "那几行的文字样式：前后各可以打一整行自己的话，也能改行首的符号。",
      "items": [
          {"key": "output.start_banner", "label": "起始横幅文本", "type": "text",
@@ -235,14 +240,13 @@ SETTINGS_GROUPS = [
          {"key": "output.symbol", "label": "行首符号", "type": "text",
           "hint": "上面那几行开头的符号（例如 >）；留空 = 用内置的 [执行] 这种。"},
      ]},
-    {"name": "高级设置", "icon": "sliders",
+    {"name": "高级设置", "icon": "settings",
      "blurb": "不常动的两项：找文件往上找几层，以及按 Ctrl+C 时怎么处理这个子进程树。",
      "items": [
          {"key": "search.max_parent_depth", "label": "向上查找层数", "type": "int",
-          "hint": "跑 moss m 这类路径调用时，从当前目录开始一层层往上找，谁先命中算谁。"
-                  "这一项是「含当前目录在内最多看几个目录」：默认 3 = 当前 + 往上 3 级，"
-                  "一共 4 个目录。往上找得越远越慢，也越容易撞上上层项目里的同名文件"
-                  "（撞上就会停下来问你选哪个）。"},
+          "hint": "跑 moss m 这类路径调用时，从当前目录往上找几级。0 = 只看当前目录（默认）；"
+                  "填 3 就是当前目录 + 往上 3 级，一共 4 个目录。往上找得越远越慢，"
+                  "也越容易撞上上层项目里的同名文件（撞上就会停下来问你选哪个）。"},
          {"key": "ctrl_c.force_kill", "label": "第一次按 Ctrl+C 就强杀整棵树", "type": "bool",
           "hint": "在终端里按 Ctrl+C 时，第一次就强杀整棵进程树。关掉之后：第一次只温和地"
                   "请它退出，再按一次才强杀 —— 有收尾工作的包适合关掉。"},
@@ -251,12 +255,15 @@ SETTINGS_GROUPS = [
     #   这一组是「账号 / 通道」，性质不同；而且它的界面是专门画的一块（选组 + 一串动作），
     #   不是「一个键一行」。这两个键留着是为了让「面板清单和 DEFAULT_CONFIG 对得上」
     #   那条自检能过；真正在面板上渲染的是 `js/settings.js` 里那块 `.set-ai`。
-    {"name": "AI", "icon": "activity",
+    {"name": "A I 引擎", "icon": "activity",
      "blurb": "配置 AI 服务的地址和密钥（可以多组）",
      "items": [
          {"key": "ai.active", "label": "当前组", "type": "text",
           "hint": "跑包时用哪一组。"},
-         {"key": "ai.profiles", "label": "各组", "type": "text",
+         # ★ `V-159`：`ai.profiles` 是**表**（dict），以前声明成 text ⇒ 通用校验每次都说
+         #   「要的是字符串，收到 {}」—— 于是 AI 页永远挂着"1 处冲突"、底栏还标红。
+         #   给它一个 `raw` 类型：通用校验直接跳过它（它由 AI 那块界面自己管）。
+         {"key": "ai.profiles", "label": "各组", "type": "raw",
           "hint": "每组：接口地址 / 密钥 / 模型；在面板上点「新建」或某行的「编辑」改。"},
      ]},
 ]
@@ -286,31 +293,46 @@ def _after_values(values):
     return after
 
 
-def _live_line(after):
-    """「现在这样」那一行（给命令前缀符号那组用的活预览）。
-
-    ★ 为什么这句话必须由宿主算：裸名归谁是一条规则（谁的前缀是空串谁占裸名），
-      界面自己推一遍就是第二处真相。面板每改一下都来问一次，显示的就是当下真的会怎样。
-    """
+def _live_lines(after):
+    """底部那块预览（多行）：一个能照抄的例子 + 搜索逻辑（`V-156` / `V-157`）。"""
     p = after.get("symbols.path_mode") or ""
     g = after.get("symbols.plugin_mode") or ""
-    if not p and not g:
-        return "⚠ 两个都留空 —— 裸名（moss m）到底算找文件还是跑包，说不清了"
-    if p and g:
-        return "⚠ 两个都有前缀 —— 谁也没占住裸名，moss m 现在按「找文件」处理"
-    who = "跑包" if (p and not g) else "找文件"
-    parts = ["现在：裸名 moss m 归「%s」" % who]
-    if p:
-        parts.append("moss %sm 找文件" % p)
-    if g:
-        parts.append("moss %simg 跑包" % g)
     n = after.get("symbols.no_chdir_mode") or ""
-    if n:
-        parts.append("moss %sm 不切目录" % n)
     d = after.get("symbols.no_force_kill_mode") or ""
-    if d:
-        parts.append("moss %sm 后台脱离" % d)
-    return " ｜ ".join(parts)
+    depth = 3
+    try:
+        depth = int(after.get("search.max_parent_depth", 3))
+    except (TypeError, ValueError):
+        pass
+    who = "跑包" if (p and not g) else "找文件"
+    out = ["现在：裸名 moss m 归「%s」" % who, ""]
+    out.append("例子：文件在 ./src/ceshi/main.py")
+    out.append("  moss %ss/c/m        每段按前缀找：s→src/  c→ceshi/  m→main.py" % p)
+    out.append("                      找到就用 python 跑它，工作目录切到 src/ceshi/")
+    if n:
+        out.append("  moss %s%ss/c/m       同一个文件，但在当前目录跑（不切过去）" % (n, p))
+    out.append("")
+    out.append("怎么找：从当前目录往上逐层找（连自己一共 %d 个目录），某一层里第一个满足的就用它"
+               % (depth + 1))
+    out.append("        某一段要是目录（s、c），最后一段是文件名的开头（m）；大小写不敏感")
+    out.append("        同一层有多个候选时：项目标记 → 上次在这个目录选过的 → 类型优先级；还打平就问你")
+    out.append("执行的是：python <找到的那个文件>（那一层有 venv 就用 venv 里的 python）")
+    if g:
+        out.append("")
+        out.append("其他：moss %simg   跑装好的包        moss %sm   后台脱离运行" % (g, d) if d
+                   else "其他：moss %simg   跑装好的包" % g)
+    if not p and not g:
+        out.append("")
+        out.append("⚠ 两个都留空 —— 裸名（moss m）到底算找文件还是跑包，说不清了")
+    if p and g:
+        out.append("")
+        out.append("⚠ 两个都有前缀 —— 谁也没占住裸名，moss m 现在按「找文件」处理")
+    return "\n".join(out)
+
+
+def _live_line(after):
+    """旧名字（调用点还在用）—— 直接转给多行那版。"""
+    return _live_lines(after)
 
 
 def _notes_for(after):
@@ -320,20 +342,22 @@ def _notes_for(after):
     g = after.get("symbols.plugin_mode") or ""
     n = after.get("symbols.no_chdir_mode") or ""
     d = after.get("symbols.no_force_kill_mode") or ""
-    notes["symbols.path_mode"] = ("现在：裸名 moss m = 找文件"
-                                  if not p else "现在：moss %sm = 找文件" % p)
+    notes["symbols.path_mode"] = ("现在：裸名 moss m = 找文件并运行"
+                                  if not p else "现在：moss %sm = 找文件并运行" % p)
     notes["symbols.plugin_mode"] = ("现在：裸名 moss img = 跑包"
                                     if not g else "现在：moss %simg = 跑包" % g)
     notes["symbols.no_chdir_mode"] = ("现在：这一类不带前缀（用裸名或路径前缀）"
-                                      if not n else "现在：moss %sm = 不切目录" % n)
+                                      if not n else "现在：moss %sm = 找文件但不切目录" % n)
     notes["symbols.no_force_kill_mode"] = ("现在：这一类不带前缀"
                                            if not d else "现在：moss %sm = 后台脱离" % d)
     try:
         v = int(after.get("search.max_parent_depth", DEFAULT_CONFIG["search"]["max_parent_depth"]))
     except (TypeError, ValueError):
         v = DEFAULT_CONFIG["search"]["max_parent_depth"]
-    notes["search.max_parent_depth"] = ("现在：从当前目录起，连自己带父目录一共 %d 个目录"
-                                        "（当前 + 往上 %d 级）" % (v + 1, v))
+    notes["search.max_parent_depth"] = ("现在：只在当前目录找，不往上"
+                                        if v == 0 else
+                                        "现在：从当前目录起往上找 %d 级（连自己一共 %d 个目录）"
+                                        % (v, v + 1))
     return notes
 
 
@@ -363,14 +387,16 @@ def _check_values(values):
             err(key, "不认识的设置项")
             continue
         kind = it.get("type") or "text"
+        if kind == "raw":
+            continue                    # `V-159`：表 / 结构化的项，通用校验管不着
         if kind == "bool":
             if not isinstance(val, bool):
                 err(key, "要的是开关（true / false），收到 %r" % (val,))
         elif kind == "int":
             if isinstance(val, bool) or not isinstance(val, int):
                 err(key, "要的是整数，收到 %r" % (val,))
-            elif not 1 <= val <= 20:
-                err(key, "只允许 1~20（现在 %r）" % (val,))
+            elif not 0 <= val <= 20:
+                err(key, "只允许 0~20（0 = 只看当前目录，现在 %r）" % (val,))
         else:
             if not isinstance(val, str):
                 err(key, "要的是字符串，收到 %r" % (val,))
@@ -380,12 +406,16 @@ def _check_values(values):
                     err(key, "最多 4 个字符（现在 %r）" % (val,))
                 if any(c.isspace() for c in val):
                     err(key, "里不能有空格 / 换行（现在 %r）" % (val,))
-                if "#" in val or "=" in val or '"' in val or "'" in val:
-                    err(key, "里不能有 # = \" ' 这几个字符（会和配置文件语法打架，"
-                             "现在 %r）" % (val,))
-                elif val and val in "/\\.":
-                    warn(key, "「%s」也是路径里常见的字符 —— moss /m 和 moss /a/b "
-                              "会长得很像，容易看错" % val)
+                # ★ `V-156`：只挡**在命令行里有特殊意思**的字符。
+                #   以前 `#` `=` 引号之外还会把 `/` 当成"路径里常见、容易看错"来提醒 ——
+                #   可 `/` 本来就是我们的默认值，它和一封普通字符一样不会引起什么特殊执行，
+                #   白提醒只会让人以为配错了。真正会出事的是 `>`（重定向/管道）、`@`（把命令
+                #   本身藏起来）、`%` `!`（cmd 变量 / 延迟展开）这些。
+                _bad = sorted({c for c in val if c in SYMBOL_BAD})
+                if _bad:
+                    err(key, "「%s」在命令行里有特殊意思（重定向 / 管道 / 变量 / 通配那一类），"
+                             "当前缀会出事 —— 换一个普通的，比如 / : ~ . - _ 或者一个字母"
+                             % " ".join(_bad))
             else:
                 # TOML 的基本字符串不能跨行：横幅文本里混进换行会把整个文件写坏
                 if "\n" in val or "\r" in val:

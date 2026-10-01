@@ -2504,7 +2504,7 @@ class Api:
         r = _run_capture(HOST + ["--ai-active", name])
         return {"ok": r.get("code") == 0, "msg": (r.get("out") or "").strip()}
 
-    def ai_test(self, name=""):
+    def ai_test(self, name="", fields=None):
         """**测试连接**：宿主按这一组的 `stream` 真发一个最小请求，把结果原样带回来。
 
         ★ 这里必须让**宿主**去发：key 和 url 都只存在宿主那边读得到的配置里，
@@ -2513,6 +2513,12 @@ class Api:
         if not HOST:
             return {"ok": False, "code": -1, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
         argv = HOST + ["--ai-test"] + ([str(name)] if str(name or "").strip() else [])
+        # ★ `V-147`：面板可以把"表里现在的值"一起送过来 ⇒ **不用先保存也能测**。
+        #   只是临时覆盖，一个字节都不落盘。
+        for k in sorted(fields or {}):
+            v = (fields or {})[k]
+            if v not in (None, ""):
+                argv.append("%s=%s" % (k, _ai_arg(v)))
         r = _run_capture(argv)
         return {"ok": r.get("code") == 0, "code": r.get("code"),
                 "msg": (r.get("out") or "").strip() or "（宿主没说什么）"}

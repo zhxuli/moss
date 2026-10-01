@@ -916,11 +916,28 @@ def cmd_ai_test(argv):
     """`--ai-test [组名]` —— **流式**发一个最小请求，报状态码和第一个增量（"测试连接"）。"""
     import json as _json
     import urllib.request
+    # ★ `V-147`：除了组名，还可以直接给 `k=v` 覆盖（面板"还没保存就想测一下"走的就是这条路）。
+    #   给了 base_url / model 的话，**不提组名也能测**（一组都还没存过的时候用得上）。
     profs = config.ai_profiles()
-    name = argv[0] if argv else config.ai_active_name()
-    p = profs.get(name) or {}
+    name, over = "", {}
+    for tok in (argv or []):
+        if "=" in tok:
+            _k, _, _v = tok.partition("=")
+            if _k.strip() in config.AI_FIELDS:
+                over[_k.strip()] = _v
+        elif not name:
+            name = tok
+    name = name or config.ai_active_name()
+    p = dict(profs.get(name) or {})
+    for _k, _v in over.items():
+        if _k == "model":
+            # 不引 re：逗号 / 换行都当分隔符（cli 里本来没 import re）
+            p["model"] = [_x.strip() for _x in _v.replace("\\n", ",").split(",") if _x.strip()]
+        else:
+            p[_k] = _v
     if not p:
-        out.print_cyan("[错误] 没有这一组：%s（先 --ai-profile-set 配一个）" % (name or "（空）"))
+        out.print_cyan("[错误] 没有这一组：%s（先 --ai-profile-set 配一个，或者直接给 base_url=… model=…）"
+                       % (name or "（空）"))
         return 1
     base = str(p.get("base_url") or "").rstrip("/")
     models = config.ai_models(p)
