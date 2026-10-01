@@ -146,78 +146,101 @@
 #tip .tip-prob.bad{color:#d64545}
 #tip .tip-prob.warn{color:#a86400}
 
-/* ---------------------------------------------------------------- AI 那一组（V-138）
-   组名是用户自己起的、一组一份参数 —— 通用那种"一个键一行"摆不下，所以单独一块：
-   顶上一排（选组 + 新增/复制/删除/设为当前），底下仍然用那套 .set-fields 两列网格。 */
-.set-ai{display:flex;flex-direction:column;gap:14px}
-.ai-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.ai-lbl{font-size:12.5px;color:var(--dim);flex:none}
-.ai-sel{min-width:180px;max-width:290px;padding:6px 9px;border-radius:8px;
-  border:1px solid var(--line2);background:var(--panel);color:var(--fg);
-  font:inherit;font-size:13px;cursor:pointer}
-.ai-sel:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--field-focus)}
-.ai-bar .btn-quiet{padding:6px 10px;border-radius:8px;border:0;background:transparent;
+/* ---------------------------------------------------------------- AI 那一组（V-142）
+   照你给的那份 UI 稿子重做：列表（卡片 + 虚线空框）/ 选服务商（模板网格）/ 编辑（两列 + 全宽 + 动作条）
+   + 测试结果横幅。
+   ★ 硬规矩（V-92 的通用闸）：**带边框的元素一律不是 `button`** —— 卡片 / 空框 / 模板格子用 div + @click；
+     按钮都不许有描边，靠底色和颜色表示状态。 */
+.set-ai{display:flex;flex-direction:column;gap:12px}
+/* 结果横幅：成/不成各一色，图标 + 一行短话 */
+.ai-banner{display:flex;align-items:flex-start;gap:9px;padding:10px 12px;border-radius:10px;
+  font-size:12.5px;line-height:1.6}
+.ai-banner .ai-bico{flex:none;display:flex;margin-top:1px}
+.ai-banner.ok{background:rgba(26,127,69,.10);color:#14713c}
+.ai-banner.bad{background:rgba(214,69,69,.10);color:#c03c3c}
+.ai-btxt{min-width:0;word-break:break-all}
+
+/* ① 列表：卡片 */
+.ai-cards{display:flex;flex-direction:column;gap:8px}
+.ai-card{display:flex;align-items:center;gap:10px;padding:11px 13px;border-radius:12px;
+  border:1px solid var(--line2);background:var(--panel);transition:var(--transition)}
+.ai-card:hover{border-color:var(--accent);box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.ai-card.on{border-color:color-mix(in srgb, var(--accent) 40%, var(--line2));
+  background:color-mix(in srgb, var(--accent) 5%, transparent)}
+.ai-cinfo{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.ai-cname{display:flex;align-items:center;gap:7px;min-width:0}
+.ai-cn{font-size:14px;font-weight:600;color:var(--fg);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ai-cmeta{font-size:12px;color:var(--dim);font-family:var(--mono);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ai-cacts{display:flex;align-items:center;gap:2px;flex:none}
+.ai-cacts .btn-quiet{padding:5px 9px;border-radius:8px;border:0;background:transparent;
   color:var(--fg2);cursor:pointer;font:inherit;font-size:12.5px;
   transition:background .13s ease-out,color .13s ease-out}
-.ai-bar .btn-quiet:hover{background:var(--hover);color:var(--fg)}
-.ai-bar .btn-quiet:disabled{opacity:.42;cursor:default}
-.ai-none{margin:0;padding:10px 12px;border-radius:10px;background:var(--tile);
-  font-size:12.5px;color:var(--dim)}
-/* 列表态（V-140 / V-141）：没配过就一句「还没有配置」+ 一颗「新建」；配过了就是一组一行。
-   ★ 缺什么用**高亮小标签**说（`缺密钥` 那种），不要写在正文里 —— 短、而且一眼看得见。 */
-.ai-empty{margin:0;padding:0 0 12px;font-size:13.5px;color:var(--dim)}
-.ai-list{display:flex;flex-direction:column;gap:6px}
-.ai-row{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:11px;
-  background:var(--tile);transition:background .13s ease-out}
-.ai-row:hover{background:var(--hover)}
-.ai-row.on{background:color-mix(in srgb, var(--accent) 9%, transparent)}
-.ai-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--tag)}
-.ai-row.on .ai-dot{background:var(--accent)}
-.ai-name{font-size:13.5px;font-weight:600;color:var(--fg);flex:none;max-width:190px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ai-sub{font-size:12px;color:var(--dim);flex:1;min-width:0;overflow:hidden;
-  text-overflow:ellipsis;white-space:nowrap}
-/* ★ 高亮的小标签：缺东西（`缺密钥` 等）和「当前」都用它这一族 */
-.ai-warn{font-size:11.5px;flex:none;color:#a86400;
-  background:rgba(255,159,10,.16);padding:2px 8px;border-radius:999px}
-.ai-tag{font-size:11.5px;color:var(--accent);flex:none;
+.ai-cacts .btn-quiet:hover{background:var(--tag);color:var(--fg)}
+.ai-cacts .btn-quiet.danger:hover{background:rgba(214,69,69,.10);color:#c03c3c}
+/* 高亮小标签：缺东西 / 当前 */
+.ai-warn{font-size:11.5px;flex:none;color:#a86400;background:rgba(255,159,10,.16);
+  padding:2px 8px;border-radius:999px}
+.ai-tag{font-size:11.5px;flex:none;color:var(--accent);
   background:color-mix(in srgb, var(--accent) 12%, transparent);
   padding:2px 8px;border-radius:999px}
-.ai-row .btn-quiet{flex:none;padding:4px 9px;border-radius:8px;border:0;background:transparent;
-  color:var(--fg2);cursor:pointer;font:inherit;font-size:12px}
-.ai-row .btn-quiet:hover{background:var(--tag);color:var(--fg)}
-.ai-ttl{font-size:13.5px;font-weight:600;color:var(--fg)}
-/* 「常用」那排预制参数（点一下就把名字/地址/模型填好，只剩粘 key 这件事） */
-.ai-pre{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
-.ai-chip{padding:4px 11px;border-radius:999px;border:0;background:var(--tag);
-  color:var(--fg2);cursor:pointer;font:inherit;font-size:12px;
-  transition:background .13s ease-out,color .13s ease-out}
-.ai-chip:hover{background:color-mix(in srgb, var(--accent) 14%, transparent);color:var(--accent)}
+/* 没配过：一个虚线空框（div，不是 button —— 它带边框） */
+.ai-emptybox{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:8px;padding:30px 16px;border:1px dashed var(--ctl);border-radius:12px;
+  background:var(--tile);color:var(--dim)}
+.ai-eico{display:flex;opacity:.45}
+.ai-eico svg{width:34px;height:34px}
+.ai-etxt{font-size:13px}
+/* 「添加 AI 配置」：整条虚线框（照稿子），也是 div + @click */
+.ai-add{display:flex;align-items:center;justify-content:center;gap:7px;padding:13px;
+  border:1px dashed var(--ctl);border-radius:12px;color:var(--fg2);cursor:pointer;
+  font-size:13px;transition:var(--transition)}
+.ai-add:hover{border-color:var(--accent);color:var(--accent);
+  background:color-mix(in srgb, var(--accent) 6%, transparent)}
+.ai-add svg{width:15px;height:15px}
+
+/* ② 选服务商：模板网格 */
+.ai-back{display:inline-flex;align-items:center;gap:5px;color:var(--fg2);cursor:pointer;
+  font-size:12.5px;align-self:flex-start;padding:2px 0;transition:color .13s ease-out}
+.ai-back:hover{color:var(--fg)}
+.ai-back svg{width:14px;height:14px}
+/* ★ `minmax(0,1fr)`：`1fr` 的最小宽度是**内容宽度** —— 像 generativelanguage.googleapis.com
+   这种长地址会把格子撑宽、第三列溢出到面板外（V-142 踩过：截图里 OpenAI 那一列被切掉）。 */
+.ai-tplgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.ai-tpl{display:flex;align-items:center;gap:10px;padding:12px 13px;border-radius:12px;
+  border:1px solid var(--line2);background:var(--panel);cursor:pointer;
+  transition:var(--transition)}
+.ai-tpl:hover{border-color:var(--accent);transform:translateY(-2px);
+  box-shadow:0 4px 10px -4px rgba(0,0,0,.16)}
+.ai-tico{width:32px;height:32px;border-radius:8px;flex:none;display:flex;align-items:center;
+  justify-content:center;background:var(--tile);color:var(--accent);font-weight:700;font-size:14px}
+.ai-tinfo{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ai-tinfo b{font-size:13px;color:var(--fg);font-weight:600;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ai-tinfo i{font-size:11.5px;color:var(--dim2);font-style:normal;font-family:var(--mono);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ③ 编辑 */
+.ai-ttl{font-size:15px;font-weight:600;color:var(--fg)}
 .ai-fields{grid-template-columns:1fr 1fr}
-.ai-lines{resize:vertical;min-height:58px;font-family:var(--mono);font-size:12.5px;
+.ai-fields .ai-wide{grid-column:1 / -1}
+.ai-lines{resize:vertical;min-height:62px;font-family:var(--mono);font-size:12.5px;
   line-height:1.7}
 .ai-keyrow{display:flex;align-items:center;gap:6px}
 .ai-keyrow .inp{flex:1;min-width:0}
 .ai-keyrow .btn-quiet{flex:none;padding:5px 9px;border-radius:8px;border:0;
   background:var(--tile);color:var(--fg2);cursor:pointer;font:inherit;font-size:12px}
 .ai-keyrow .btn-quiet:hover{background:var(--hover);color:var(--fg)}
-.ai-swbox{display:flex;align-items:center;gap:9px;min-height:32px}
-.ai-swtxt{font-size:12px;color:var(--dim)}
-.ai-bar .btn,.ai-bar .btn-quiet{padding:6px 11px;border-radius:8px;border:0;
+/* 动作条：测试连接在左，取消 / 保存在右（贴底，字段再高也看得见） */
+.ai-acts{display:flex;align-items:center;gap:8px;position:sticky;bottom:-2px;z-index:2;
+  background:var(--panel);padding:10px 0 2px;border-top:1px solid var(--hair)}
+.ai-gap{flex:1}
+.ai-acts .btn,.ai-acts .btn-quiet{padding:6px 12px;border-radius:8px;border:0;
   background:transparent;color:var(--fg2);cursor:pointer;font:inherit;font-size:13px;
   font-weight:500;transition:background .13s ease-out,color .13s ease-out,transform .1s ease-out}
-.ai-bar .btn:hover,.ai-bar .btn-quiet:hover{background:var(--hover);color:var(--fg)}
-.ai-bar .btn:active{transform:scale(.97)}
-.ai-bar .btn.primary{background:transparent;border:0;color:var(--accent)}
-.ai-bar .btn.primary:hover{background:color-mix(in srgb, var(--accent) 12%, transparent)}
-.ai-bar .btn:disabled{opacity:.45;cursor:default;filter:none}
-/* 动作行：保存这一组 / 测试连接 / 结果 —— **贴着可视区底边**（sticky）：
-   字段万一比一屏高，滚的只是字段，主操作永远看得见。 */
-.ai-acts{gap:10px;position:sticky;bottom:-2px;z-index:2;background:var(--panel);
-  padding:8px 0 2px;border-top:1px solid var(--hair)}
-.ai-state{font-size:12px;line-height:1.6;min-width:0;word-break:break-all;flex:1}
-.ai-state.ok{color:#1a7f45}
-.ai-state.bad{color:#d64545}
-.ai-tip{font-size:12px;color:var(--dim2);line-height:1.6;flex:1}
-.ai-tip code{font-family:var(--mono);font-size:11.5px;background:var(--tile);
-  padding:1px 4px;border-radius:4px}
+.ai-acts .btn:hover,.ai-acts .btn-quiet:hover{background:var(--hover);color:var(--fg)}
+.ai-acts .btn:active{transform:scale(.97)}
+.ai-acts .btn.primary{background:transparent;border:0;color:var(--accent)}
+.ai-acts .btn.primary:hover{background:color-mix(in srgb, var(--accent) 12%, transparent)}
+.ai-acts .btn:disabled,.ai-acts .btn-quiet:disabled{opacity:.45;cursor:default;filter:none}

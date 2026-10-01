@@ -251,7 +251,7 @@ SETTINGS_GROUPS = [
     #   这一组是「账号 / 通道」，性质不同；而且它的界面是专门画的一块（选组 + 一串动作），
     #   不是「一个键一行」。这两个键留着是为了让「面板清单和 DEFAULT_CONFIG 对得上」
     #   那条自检能过；真正在面板上渲染的是 `js/settings.js` 里那块 `.set-ai`。
-    {"name": "AI", "icon": "cpu",
+    {"name": "AI", "icon": "activity",
      "blurb": "配置 AI 服务的地址和密钥（可以多组）",
      "items": [
          {"key": "ai.active", "label": "当前组", "type": "text",

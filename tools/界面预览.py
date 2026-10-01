@@ -71,7 +71,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "flat-buttons", "backup-diff", "refresh-keep-ctx", "compare", "hist-snap", "modal-kinds", "snap-modal",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
-          "settings-ai", "settings-ai-empty", "settings-ai-edit",
+          "settings-ai", "settings-ai-tpl", "settings-ai-new", "settings-ai-empty",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail"]
 
@@ -1608,13 +1608,11 @@ MOCK_JS = r"""
           " 挪=" + /改了 1 项/.test(stateMoved) + " 关=" + closedAfterSave + " 开=" + opened +
           " 存=" + Object.keys(saved).length + " 值=" + saved["symbols.no_chdir_mode"]);
       }
-      // ---- AI 那一组（V-140 / V-141）：**两张脸**，字尽量少。
-      //      一打开是列表（不是一堆输入框）→ 行里 设为当前 / 编辑 → 编辑态改一项存 → 测连接
-      //      → 返回 → 新建（常用预制填表）→ 改名（旧组没了、key 不能丢）。
-      //      ★ 缺东西必须是**高亮小标签**（缺密钥 / 缺模型 / 缺地址），不在正文里写长句。
-      //      ★ 整个场景的 sleep 加起来**必须 < 12 秒**（工具用 `--virtual-time-budget=12000`，
-      //        超了会被半路截图、标题还停在 "moss"）—— "删光看空列表"那步在
-      //        `settings-ai-empty` 里（踩过：一个场景塞太长 ⇒ 假 OK）。
+      // ---- AI 那一组（V-142）：**三张脸** —— 列表（卡片）/ 选服务商（网格）/ 编辑（表单）。
+      //      这条走：列表长什么样 → 卡片上测连接（结果横幅）→ 卡片上设为当前 →
+      //      卡片进编辑 → 改一项存 → 存完回列表。
+      //      ★ 硬判据：**那块地方不许有长说明**（`.ai-tip` 数为 0）；缺东西必须是高亮小标签。
+      //      ★ sleep 总量必须 < 12 秒（工具 `--virtual-time-budget=12000`，超了会被半路截图）。
       if (h === "settings-ai"){
         await openSettings();
         await sleep(500);
@@ -1625,48 +1623,57 @@ MOCK_JS = r"""
         if (aiNav) aiNav.click();
         await sleep(700);
         const pane = (document.querySelector("#set-body .set-pane.on") || {}).dataset || {};
-        const box = !!document.querySelector("#set-body .set-pane.on .set-ai");
+        const scope = "#set-body .set-pane.on .set-ai ";
+        const box = !!document.querySelector(scope);
         const generic = !!document.querySelector(
           '#set-body .set-pane.on .set-field[data-key="ai.active"]');
-        const scope = "#set-body .set-pane.on .set-ai ";
-        // ★ `V-141`：AI 那一块**不许有大段说明文字**（`.ai-tip` 那种）—— 说明都收进 ⓘ 里。
         const tipN = document.querySelectorAll(scope + ".ai-tip").length;
-        const blurb = (document.querySelector("#set-body .set-pane.on .set-pdesc") || {}).textContent || "";
-        const rows0 = document.querySelectorAll(scope + ".ai-list .ai-row").length;
-        const oldSel = !!document.querySelector("#ai-sel");
-        const form0 = document.querySelectorAll(scope + ".ai-fields .set-field").length;
+        const cards0 = document.querySelectorAll(scope + ".ai-card").length;
         const empty0 = !!document.querySelector("#ai-empty");
-        const newBtn = !!document.querySelector("#ai-new");
-        const newTxt = newBtn ? document.querySelector("#ai-new").textContent.trim() : "";
-        const rowOf = n => document.querySelector(scope + '.ai-row[data-group="' + n + '"]');
-        const rowSub = n => {
-          const r = rowOf(n);
-          const s = r ? r.querySelector(".ai-sub") : null;
-          return s ? s.textContent : "";
+        const addBtn = document.querySelector("#ai-new");
+        const addTxt = addBtn ? addBtn.textContent.trim() : "";
+        const form0 = document.querySelectorAll(scope + ".ai-fields .set-field").length;
+        const cardOf = n => document.querySelector(scope + '.ai-card[data-group="' + n + '"]');
+        const cardMeta = n => {
+          const c = cardOf(n);
+          const m = c ? c.querySelector(".ai-cmeta") : null;
+          return m ? m.textContent : "";
         };
-        const rowWarn = n => {
-          const r = rowOf(n);
-          return r ? Array.prototype.map.call(r.querySelectorAll(".ai-warn"),
+        const cardWarn = n => {
+          const c = cardOf(n);
+          return c ? Array.prototype.map.call(c.querySelectorAll(".ai-warn"),
                                              x => x.textContent).join("/") : "";
         };
-        const subDiyun = rowSub("深度求索");        // 有 key：不该有"缺密钥"
-        const warnDiyun = rowWarn("深度求索");
-        const subOllama = rowSub("本地 ollama");    // 没 key：该挂一颗「缺密钥」
-        const warnOllama = rowWarn("本地 ollama");
-        const activeRow0 = document.querySelector(scope + ".ai-row.on .ai-name");
-        const activeName0 = activeRow0 ? activeRow0.textContent : "";
-        const tagN = document.querySelectorAll(scope + ".ai-tag").length;
-        const useBtn = document.querySelector(scope + '.ai-row[data-group="本地 ollama"] [data-use]');
+        const cardTag = n => {
+          const c = cardOf(n);
+          const t = c ? c.querySelector(".ai-tag") : null;
+          return t ? t.textContent : "";
+        };
+        const metaDiyun = cardMeta("深度求索");
+        const metaOllama = cardMeta("本地 ollama");
+        const warnOllama = cardWarn("本地 ollama");
+        const tagDiyun = cardTag("深度求索");
+        // 卡片上「测试连接」→ 结果横幅
+        const tBtn = document.querySelector(scope + '.ai-card[data-group="深度求索"] [data-test]');
+        if (tBtn) tBtn.click();
+        await sleep(500);
+        const banner = document.querySelector("#ai-banner");
+        const bannerOk = banner ? /(^|\s)ok(\s|$)/.test(banner.className) : false;
+        const bannerTxt = (document.querySelector("#ai-state") || {}).textContent || "";
+        const tested = (M.aiTested || "");
+        // 卡片上「设为当前」
+        const useBtn = document.querySelector(scope + '.ai-card[data-group="本地 ollama"] [data-use]');
         if (useBtn) useBtn.click();
         await sleep(400);
-        const activeMock1 = (M.ai || {}).active || "";
-        const editBtn = document.querySelector(scope + '.ai-row[data-group="深度求索"] [data-edit]');
+        const activeMock = (M.ai || {}).active || "";
+        const tagNow = cardTag("本地 ollama");
+        // 卡片进编辑
+        const editBtn = document.querySelector(scope + '.ai-card[data-group="深度求索"] [data-edit]');
         if (editBtn) editBtn.click();
         await sleep(500);
         const ttl1 = (document.querySelector("#ai-ttl") || {}).textContent || "";
-        const backTxt = (document.querySelector("#ai-back") || {}).textContent || "";
+        const backTxt = (document.querySelector("#ai-back") || {}).textContent.trim() || "";
         const fieldN = document.querySelectorAll(scope + ".ai-fields .set-field").length;
-        const chipsWhileEdit = document.querySelectorAll(".ai-pre .ai-chip").length;
         const boxOf = k => document.querySelector(
           scope + '.ai-fields .set-field[data-ai="' + k + '"] input,' +
           scope + '.ai-fields .set-field[data-ai="' + k + '"] textarea');
@@ -1678,6 +1685,7 @@ MOCK_JS = r"""
         const modelTxt0 = mBox ? mBox.value : "";
         const test0 = document.querySelector("#ai-test");
         const testOn0 = test0 ? !test0.disabled : false;
+        // 改一项 → 保存 → 回列表
         const urlBox = boxOf("base_url");
         if (urlBox){ urlBox.value = "https://api.deepseek.com/v2";
                      urlBox.dispatchEvent(new Event("input", {bubbles: true})); }
@@ -1689,100 +1697,131 @@ MOCK_JS = r"""
           sBtn.getBoundingClientRect().bottom <= bodyEl.getBoundingClientRect().bottom + 1);
         if (sBtn) sBtn.click();
         await sleep(700);
-        const ttl2 = (document.querySelector("#ai-ttl") || {}).textContent || "";
-        const savedUrl = ((M.ai.profiles.filter(x => x.name === "深度求索")[0] || {}).params || {}).base_url;
-        const tBtn = document.querySelector("#ai-test");
-        const testOn1 = tBtn ? !tBtn.disabled : false;
-        if (tBtn) tBtn.click();
-        await sleep(500);
-        const stEl = document.querySelector("#ai-state");
-        const stOk = stEl ? /(^|\s)ok(\s|$)/.test(stEl.className) : false;
-        const stTxt = stEl ? stEl.textContent : "";
-        document.querySelector("#ai-back").click();
-        await sleep(500);
-        const rows1 = document.querySelectorAll(scope + ".ai-list .ai-row").length;
+        const cards1 = document.querySelectorAll(scope + ".ai-card").length;
         const form1 = document.querySelectorAll(scope + ".ai-fields .set-field").length;
+        const savedUrl = ((M.ai.profiles.filter(x => x.name === "深度求索")[0] || {}).params || {}).base_url;
+        const ok = navs === 5 && pane.group === "AI" && box && !generic && tipN === 0 &&
+                   cards0 === 3 && !empty0 && addTxt === "添加 AI 配置" && form0 === 0 &&
+                   /api\.deepseek\.com/.test(metaDiyun) && /deepseek-chat/.test(metaDiyun) &&
+                   /127\.0\.0\.1:11434/.test(metaOllama) && warnOllama === "缺密钥" &&
+                   tagDiyun === "当前" &&
+                   bannerOk && /HTTP 200/.test(bannerTxt) && tested === "深度求索" &&
+                   activeMock === "本地 ollama" && tagNow === "当前" &&
+                   ttl1 === "编辑 · 深度求索" && backTxt === "返回" && fieldN === 4 &&
+                   keyPh0 === "已保存，留空不改" && keyVal0 === "" &&
+                   modelTag0 === "TEXTAREA" &&
+                   modelTxt0 === "deepseek-chat\ndeepseek-reasoner" &&
+                   testOn0 && saveOn && vis &&
+                   savedUrl === "https://api.deepseek.com/v2" &&
+                   cards1 === 3 && form1 === 0;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 分类=" + navs + " 页=" + pane.group +
+          " 块=" + (box ? 1 : 0) + " 通用行=" + (generic ? 1 : 0) + " 长文=" + tipN +
+          " 卡片=" + cards0 + " 空框=" + (empty0 ? 1 : 0) + " 添加=[" + addTxt + "]" +
+          " 首屏字段=" + form0 + " 卡[" + metaDiyun + "|" + warnOllama + "|" + tagDiyun + "]" +
+          " 本机[" + metaOllama + "] 横幅=" + bannerOk + "[" + bannerTxt.slice(0, 26) + "]" +
+          " 测的=" + tested + " 切后=" + activeMock + "/" + tagNow +
+          " 标题=" + ttl1 + " 返回=[" + backTxt + "] 字段=" + fieldN +
+          " 密钥框=" + keyPh0 + " 模型框=" + modelTag0 + "[" + modelTxt0.replace("\n", "|") + "]" +
+          " 测可点=" + testOn0 + " 亮=" + saveOn + " 在视野=" + vis +
+          " 存=" + savedUrl + " 存后卡片=" + cards1 + "/" + form1;
+        document.title = ok ? "READY" : ("SETTINGS-AI-FAIL " +
+          document.querySelector("#meta").textContent);
+      }
+      // 新建那一整条：添加 → 选服务商（网格）→ 点一家 → 粘 key → 保存 → 回列表 →
+      // 改名（旧组没了、key 不能丢）→ 再进编辑改一项 → 取消（不落盘）。
+      if (h === "settings-ai-new"){
+        await openSettings();
+        await sleep(500);
+        const aiNav = Array.prototype.filter.call(
+          document.querySelectorAll("#set-nav .set-navitem"),
+          b => (b.dataset.group || "") === "AI")[0];
+        if (aiNav) aiNav.click();
+        await sleep(700);
+        const scope = "#set-body .set-pane.on .set-ai ";
+        // ① 「添加 AI 配置」→ 选服务商
         document.querySelector("#ai-new").click();
-        await sleep(450);
-        const ttl3 = (document.querySelector("#ai-ttl") || {}).textContent || "";
-        const chips = document.querySelectorAll(".ai-pre .ai-chip").length;
+        await sleep(500);
+        const tiles = document.querySelectorAll(scope + ".ai-tpl").length;
+        const backOk = !!document.querySelector("#ai-back");
+        const cardN = document.querySelectorAll(scope + ".ai-card").length;
+        const tileOf = p => document.querySelector(scope + '.ai-tpl[data-preset="' + p + '"]');
+        const dsTile = tileOf("DeepSeek");
+        const dsName = dsTile ? dsTile.querySelector("b").textContent : "";
+        const dsHost = dsTile ? dsTile.querySelector("i").textContent : "";
+        const blankOk = !!document.querySelector("#ai-blank");
+        // ② 点 DeepSeek → 编辑那张脸（表已填好，只差 key）
+        if (dsTile) dsTile.click();
+        await sleep(400);
+        const ttl1 = (document.querySelector("#ai-ttl") || {}).textContent || "";
+        const boxOf = k => document.querySelector(
+          scope + '.ai-fields .set-field[data-ai="' + k + '"] input,' +
+          scope + '.ai-fields .set-field[data-ai="' + k + '"] textarea');
+        const valOf = k => { const e = boxOf(k); return e ? e.value : ""; };
+        const keyPh = (boxOf("api_key") || {}).placeholder || "";
         const testNew = document.querySelector("#ai-test");
-        const testNewOff = testNew ? testNew.disabled : false;
-        const chip = Array.prototype.filter.call(
-          document.querySelectorAll(".ai-pre .ai-chip"),
-          b => (b.dataset.preset || "") === "DeepSeek")[0];
-        if (chip) chip.click();
-        await sleep(250);
-        const preName = (boxOf("name") || {}).value || "";
-        const preUrl = (boxOf("base_url") || {}).value || "";
-        const preModel = (boxOf("model") || {}).value || "";
-        const key1 = boxOf("api_key");
-        if (key1){ key1.value = "sk-preset-1234567890";
-                   key1.dispatchEvent(new Event("input", {bubbles: true})); }
+        const testDisabled = testNew ? testNew.disabled : false;
+        const preName = valOf("name"), preUrl = valOf("base_url"), preModel = valOf("model");
+        // ③ 粘 key → 保存 → 回列表
+        const keyBox = boxOf("api_key");
+        if (keyBox){ keyBox.value = "sk-preset-1234567890";
+                     keyBox.dispatchEvent(new Event("input", {bubbles: true})); }
         await sleep(150);
         document.querySelector("#ai-save").click();
         await sleep(700);
-        const ttl4 = (document.querySelector("#ai-ttl") || {}).textContent || "";
+        const cards1 = document.querySelectorAll(scope + ".ai-card").length;
         const made = (M.ai.profiles.filter(x => x.name === "DeepSeek")[0] || {}).params || {};
-        const nameIn2 = boxOf("name");
-        if (nameIn2){ nameIn2.value = "DeepSeek-备用";
-                      nameIn2.dispatchEvent(new Event("input", {bubbles: true})); }
+        // ④ 改名
+        document.querySelector(scope + '.ai-card[data-group="DeepSeek"] [data-edit]').click();
+        await sleep(500);
+        const nameBox = boxOf("name");
+        if (nameBox){ nameBox.value = "DeepSeek-备用";
+                      nameBox.dispatchEvent(new Event("input", {bubbles: true})); }
         await sleep(150);
         document.querySelector("#ai-save").click();
         await sleep(700);
         const renamed = M.ai.profiles.filter(x => x.name === "DeepSeek-备用")[0] || null;
         const oldGone = !M.ai.profiles.some(x => x.name === "DeepSeek");
         const keptKey = renamed ? (renamed.params.api_key || "") : "";
-        document.querySelector("#ai-back").click();
+        const cards2 = document.querySelectorAll(scope + ".ai-card").length;
+        // ⑤ 再进编辑改一项 → 取消（该不落盘）
+        document.querySelector(scope + '.ai-card[data-group="DeepSeek-备用"] [data-edit]').click();
         await sleep(500);
-        const rows2 = document.querySelectorAll(scope + ".ai-list .ai-row").length;
-        const ok = navs === 5 && pane.group === "AI" && box && !generic &&
-                   blurb === "配置 AI 服务的地址和密钥（可以多组）" && tipN === 0 &&
-                   rows0 === 3 && !oldSel && form0 === 0 && !empty0 && newTxt === "新建" &&
-                   tagN === 1 &&
-                   /api\.deepseek\.com/.test(subDiyun) && warnDiyun === "" &&
-                   /127\.0\.0\.1:11434/.test(subOllama) && warnOllama === "缺密钥" &&
-                   activeName0 === "深度求索" && activeMock1 === "本地 ollama" &&
-                   ttl1 === "编辑「深度求索」" && backTxt.trim() === "返回" && fieldN === 4 &&
-                   chipsWhileEdit === 0 &&
-                   keyPh0 === "已保存，留空不改" && keyVal0 === "" &&
-                   modelTag0 === "TEXTAREA" &&
-                   modelTxt0 === "deepseek-chat\ndeepseek-reasoner" &&
-                   testOn0 && saveOn && vis &&
-                   ttl2 === "编辑「深度求索」" &&
-                   savedUrl === "https://api.deepseek.com/v2" && testOn1 &&
-                   stOk && /HTTP 200/.test(stTxt) &&
-                   rows1 === 3 && form1 === 0 &&
-                   ttl3 === "新建" && chips === M.aiPresets.length + 1 && testNewOff &&
-                   preName === "DeepSeek" && preUrl === "https://api.deepseek.com/v1" &&
+        const urlBox2 = boxOf("base_url");
+        if (urlBox2){ urlBox2.value = "https://改坏了.invalid/v1";
+                      urlBox2.dispatchEvent(new Event("input", {bubbles: true})); }
+        await sleep(150);
+        document.querySelector("#ai-cancel").click();
+        await sleep(300);
+        const mok = document.querySelector("#m-ok");
+        if (mok) mok.click();
+        await sleep(500);
+        const afterCancel = ((M.ai.profiles.filter(x => x.name === "DeepSeek-备用")[0] || {}).params || {}).base_url;
+        const cards3 = document.querySelectorAll(scope + ".ai-card").length;
+        const ok = tiles === M.aiPresets.length + 1 && backOk && cardN === 0 && blankOk &&
+                   dsName === "DeepSeek" && dsHost === "api.deepseek.com" &&
+                   ttl1 === "新建配置" && preName === "DeepSeek" &&
+                   preUrl === "https://api.deepseek.com/v1" &&
                    preModel === "deepseek-chat\ndeepseek-reasoner" &&
-                   ttl4 === "编辑「DeepSeek」" &&
-                   made.api_key === "sk-preset-1234567890" &&
+                   keyPh === "sk-…" && testDisabled &&
+                   cards1 === 4 && made.api_key === "sk-preset-1234567890" &&
                    Array.isArray(made.model) && made.model.length === 2 &&
                    !!renamed && oldGone && keptKey === "sk-preset-1234567890" &&
-                   rows2 === 4;
+                   cards2 === 4 &&
+                   afterCancel === "https://api.deepseek.com/v1" && cards3 === 4;
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 分类=" + navs + " 页=" + pane.group +
-          " 块=" + (box ? 1 : 0) + " 通用行=" + (generic ? 1 : 0) + " 长文=" + tipN +
-          " 说明=" + blurb + " 首屏列表=" + rows0 + " 老下拉=" + (oldSel ? 1 : 0) +
-          " 首屏字段=" + form0 + " 空提示=" + (empty0 ? 1 : 0) + " 新建=[" + newTxt + "]" +
-          " 当前标=" + tagN + " 行[" + subDiyun + "|" + warnDiyun + "][" + subOllama + "|" +
-          warnOllama + "] 当前=" + activeName0 + " 切后=" + activeMock1 +
-          " 标题=" + ttl1 + " 返回=[" + backTxt.trim() + "] 字段=" + fieldN +
-          " 编辑时预制=" + chipsWhileEdit + " 密钥框=" + keyPh0 + " 模型框=" + modelTag0 +
-          "[" + modelTxt0.replace("\n", "|") + "] 测可点=" + testOn0 + " 亮=" + saveOn +
-          " 在视野=" + vis + " 存后标题=" + ttl2 + " 存=" + savedUrl + " 测=" + stOk +
-          "[" + stTxt.slice(0, 24) + "] 回列表=" + rows1 + "/" + form1 +
-          " 新建标题=" + ttl3 + " 预制=" + chips + " 新测灰=" + testNewOff +
-          " 填=" + preName + "/" + preUrl + "/" + preModel.replace("\n", "|") +
-          " 新建后标题=" + ttl4 + " 存=" + JSON.stringify(made) +
+          "DIAG " + (ok ? "OK" : "FAIL") + " 格子=" + tiles + "[" + dsName + "/" + dsHost +
+          "] 自定义=" + (blankOk ? 1 : 0) + " 选人时卡片=" + cardN + " 返回=" + (backOk ? 1 : 0) +
+          " 标题=" + ttl1 + " 填=" + preName + "/" + preUrl + "/" + preModel.replace("\n", "|") +
+          " 密钥框=" + keyPh + " 新测灰=" + testDisabled +
+          " 存后卡片=" + cards1 + " 存=" + JSON.stringify(made) +
           " 改名=" + (renamed ? 1 : 0) + " 旧组没了=" + oldGone +
-          " key=" + (keptKey ? "在" : "丢了") + " 行=" + rows2;
-        document.title = ok ? "READY" : ("SETTINGS-AI-FAIL " +
+          " key=" + (keptKey ? "在" : "丢了") + " 卡片=" + cards2 +
+          " 取消后地址=" + afterCancel + " 卡片=" + cards3;
+        document.title = ok ? "READY" : ("SETTINGS-AI-NEW-FAIL " +
           document.querySelector("#meta").textContent);
       }
-      // 全删光 ⇒ 「没配置过」该有的样子：**一句「还没有配置」+ 一颗「新建」**（没有输入框）。
-      // 单独一个场景是因为上一条已经用掉大半虚拟时间（`V-140` 踩过：塞在一起 ⇒ 半路被截图）。
+      // 全删光 ⇒ 「没配置过」该有的样子：虚线空框 + 一句「还没有 AI 配置」+「添加 AI 配置」。
       if (h === "settings-ai-empty"){
         await openSettings();
         await sleep(500);
@@ -1792,9 +1831,9 @@ MOCK_JS = r"""
         if (aiNav) aiNav.click();
         await sleep(700);
         const scope = "#set-body .set-pane.on .set-ai ";
-        const before = document.querySelectorAll(scope + ".ai-list .ai-row").length;
+        const before = document.querySelectorAll(scope + ".ai-card").length;
         for (let i = 0; i < 8; i++){
-          const d = document.querySelector(scope + ".ai-list .ai-row [data-del]");
+          const d = document.querySelector(scope + ".ai-card [data-del]");
           if (!d) break;
           d.click();
           await sleep(300);
@@ -1802,26 +1841,27 @@ MOCK_JS = r"""
           if (mok) mok.click();
           await sleep(550);
         }
-        const rows = document.querySelectorAll(scope + ".ai-list .ai-row").length;
+        const cards = document.querySelectorAll(scope + ".ai-card").length;
+        const listBox = !!document.querySelector("#ai-list");
         const empty = document.querySelector("#ai-empty");
         const emptyTxt = empty ? empty.textContent.trim() : "";
-        const newBtn = document.querySelector("#ai-new");
-        const newTxt = newBtn ? newBtn.textContent.trim() : "";
+        const eico = empty ? !!empty.querySelector("svg") : false;
+        const addBtn = document.querySelector("#ai-new");
+        const addTxt = addBtn ? addBtn.textContent.trim() : "";
         const form = document.querySelectorAll(scope + ".ai-fields .set-field").length;
-        const listBox = !!document.querySelector(scope + ".ai-list");
-        const mockLeft = M.ai.profiles.length;
-        const ok = before === 3 && rows === 0 && mockLeft === 0 && !!empty &&
-                   emptyTxt === "还没有配置" && newTxt === "新建" && form === 0 && !listBox;
+        const ok = before === 3 && cards === 0 && M.ai.profiles.length === 0 && !listBox &&
+                   !!empty && emptyTxt === "还没有 AI 配置" && eico &&
+                   addTxt === "添加 AI 配置" && form === 0;
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 删前=" + before + " 删后=" + rows +
-          " 假库=" + mockLeft + " 提示=[" + emptyTxt + "] 新建=[" + newTxt + "]" +
-          " 输入框=" + form + " 列表块=" + (listBox ? 1 : 0);
+          "DIAG " + (ok ? "OK" : "FAIL") + " 删前=" + before + " 删后=" + cards +
+          " 假库=" + M.ai.profiles.length + " 列表块=" + (listBox ? 1 : 0) +
+          " 空框=" + (empty ? 1 : 0) + "[" + emptyTxt + "] 图标=" + (eico ? 1 : 0) +
+          " 添加=[" + addTxt + "] 输入框=" + form;
         document.title = ok ? "READY" : ("SETTINGS-AI-EMPTY-FAIL " +
           document.querySelector("#meta").textContent);
       }
-      // 「新建」那张脸也留一张图（`V-141`：文案砍短之后得看一眼还认不认得出该填什么）。
-      // 只走到"点一家常见服务把表填好"，不存盘 —— 短，稳，不容易超虚拟时间。
-      if (h === "settings-ai-edit"){
+      // 选服务商那张脸（网格）：留一张图 + 断言"每家一格、地址小字、自定义那格也在"。
+      if (h === "settings-ai-tpl"){
         await openSettings();
         await sleep(500);
         const aiNav = Array.prototype.filter.call(
@@ -1831,39 +1871,24 @@ MOCK_JS = r"""
         await sleep(700);
         document.querySelector("#ai-new").click();
         await sleep(500);
-        const chips = document.querySelectorAll(".ai-pre .ai-chip").length;
-        const chip = Array.prototype.filter.call(
-          document.querySelectorAll(".ai-pre .ai-chip"),
-          b => (b.dataset.preset || "") === "Gemini")[0];
-        if (chip) chip.click();
-        await sleep(300);
         const scope = "#set-body .set-pane.on .set-ai ";
-        const valOf = k => {
-          const el = document.querySelector(scope + '.ai-fields .set-field[data-ai="' + k + '"] input,' +
-                                            scope + '.ai-fields .set-field[data-ai="' + k + '"] textarea');
-          return el ? el.value : "";
-        };
-        const labels = Array.prototype.map.call(
-          document.querySelectorAll(scope + ".ai-fields .set-lbl > span:first-child"),
-          x => x.textContent.trim());
-        const ttl = (document.querySelector("#ai-ttl") || {}).textContent || "";
-        const keyPh = (document.querySelector(scope + '.ai-fields .set-field[data-ai="api_key"] input')
-                       || {}).placeholder || "";
-        const tipN = document.querySelectorAll(scope + ".ai-tip").length;
-        const testBtn = document.querySelector("#ai-test");
-        const ok = ttl === "新建" && chips === M.aiPresets.length + 1 &&
-                   labels.join("/") === "名字/接口地址/密钥/模型" &&
-                   valOf("name") === "Gemini" &&
-                   /generativelanguage/.test(valOf("base_url")) &&
-                   valOf("key") === "" && keyPh === "sk-…" && /gemini-2/.test(valOf("model")) &&
-                   !!(testBtn && testBtn.disabled) && tipN === 0;
+        const tiles = document.querySelectorAll(scope + ".ai-tpl").length;
+        const names = Array.prototype.map.call(
+          document.querySelectorAll(scope + ".ai-tpl b"), x => x.textContent.trim());
+        const hosts = Array.prototype.map.call(
+          document.querySelectorAll(scope + ".ai-tpl i"), x => x.textContent.trim());
+        const cols = getComputedStyle(document.querySelector(scope + ".ai-tplgrid"))
+          .gridTemplateColumns.split(" ").length;
+        const blank = !!document.querySelector("#ai-blank");
+        const back = !!document.querySelector("#ai-back");
+        const ok = tiles === M.aiPresets.length + 1 && cols === 3 && blank && back &&
+                   names.indexOf("DeepSeek") >= 0 && names.indexOf("自定义") >= 0 &&
+                   hosts.indexOf("api.deepseek.com") >= 0;
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 标题=" + ttl + " 预制=" + chips +
-          " 标签=" + labels.join("/") + " 名字=" + valOf("name") +
-          " 地址=" + valOf("base_url") + " 密钥=[" + valOf("key") + "]/" + keyPh +
-          " 模型=" + valOf("model").replace("\n", "|") +
-          " 测灰=" + (testBtn ? testBtn.disabled : "无") + " 长文=" + tipN;
-        document.title = ok ? "READY" : ("SETTINGS-AI-EDIT-FAIL " +
+          "DIAG " + (ok ? "OK" : "FAIL") + " 格子=" + tiles + " 列=" + cols +
+          " 名字=" + names.join("/") + " 地址=" + hosts.slice(0, 3).join("/") +
+          " 自定义=" + (blank ? 1 : 0) + " 返回=" + (back ? 1 : 0);
+        document.title = ok ? "READY" : ("SETTINGS-AI-TPL-FAIL " +
           document.querySelector("#meta").textContent);
       }
       // 三个分类各留一张图（`V-66`：一次只看一组，得分别看一眼长什么样）
