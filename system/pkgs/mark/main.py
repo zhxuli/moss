@@ -35,7 +35,8 @@ else:
 # 宿主 pa 注入的插件专属数据目录 (user_data/<插件目录名>)；独立运行时退回插件目录
 DATA_DIR = (os.environ.get('MOSS_PLUGIN_DATA_DIR')
             or os.environ.get('PA_PLUGIN_DATA_DIR')   # 老 pa，保留兜底
-            or PLUGIN_DIR)
+            or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
+              "user_data", "state", "mark"))
 
 # 数据保存文件（与插件代码分离存放）
 DATA_FILE = os.path.join(DATA_DIR, 'directories.json')

@@ -28,8 +28,8 @@ from PIL import Image
 #   两个都认，脚本被单独跑时退回脚本自身目录。
 DATA_DIR = (os.environ.get('MOSS_PLUGIN_DATA_DIR')
             or os.environ.get('PA_PLUGIN_DATA_DIR')
-            or (os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals()
-                else os.path.abspath(sys.path[0])))
+            or (os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
+                    "user_data", "state", "img"))))
 CONFIG_FILE = os.path.join(DATA_DIR, 'config.json')
 HISTORY_LIMIT = 50
 

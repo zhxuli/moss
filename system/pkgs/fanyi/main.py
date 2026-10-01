@@ -25,7 +25,8 @@ except ImportError as e:
 # --- 路径获取 ---
 application_path = os.path.dirname(sys.executable) if 'python' not in os.path.basename(sys.executable).lower() else os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.path.abspath(sys.path[0])
 # 宿主 moss 注入的插件专属数据目录 (= user_data/state/fanyi)；老 pa 的 PA_* 与插件目录作兜底
-DATA_DIR = os.environ.get('MOSS_PLUGIN_DATA_DIR') or os.environ.get('PA_PLUGIN_DATA_DIR') or application_path
+DATA_DIR = os.environ.get('MOSS_PLUGIN_DATA_DIR') or os.environ.get('PA_PLUGIN_DATA_DIR') or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
+              "user_data", "state", "fanyi")
 CACHE_FILE_PATH = os.path.join(DATA_DIR, 'translation_cache.txt')
 
 # --- 全局变量和配置 ---

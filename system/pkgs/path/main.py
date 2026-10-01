@@ -23,7 +23,8 @@ COLORS = {
 }
 application_path = os.path.dirname(sys.executable) if 'python' not in os.path.basename(sys.executable).lower() else os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.path.abspath(sys.path[0])
 # 宿主 moss 注入的插件专属数据目录 (user_data/<插件目录名>)；独立运行时退回插件目录
-DATA_DIR = os.environ.get('MOSS_PLUGIN_DATA_DIR') or os.environ.get('PA_PLUGIN_DATA_DIR') or application_path
+DATA_DIR = os.environ.get('MOSS_PLUGIN_DATA_DIR') or os.environ.get('PA_PLUGIN_DATA_DIR') or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
+              "user_data", "state", "path")
 class BackupManager:
     def __init__(self):
         self.backup_dir = Path(DATA_DIR) / ".path_editor" / "path_bak"
@@ -444,7 +445,8 @@ def main():
         sys.exit(0)
     try:
         path_manager = PathManager()
-        target_path = path or application_path
+        target_path = path or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
+              "user_data", "state", "path")
         if command == 'add':
             success, message = path_manager.add_path_and_broadcast(target_path)
             print(message); sys.exit(0 if success else 1)

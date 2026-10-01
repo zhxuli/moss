@@ -273,7 +273,8 @@ def get_base():
 
 BASE = get_base()
 # 宿主 moss 注入的插件专属数据目录 (= user_data/state/paste)；老 pa 的 PA_* 与插件目录作兜底
-DATA_DIR = Path(os.environ.get("MOSS_PLUGIN_DATA_DIR") or os.environ.get("PA_PLUGIN_DATA_DIR") or BASE)
+DATA_DIR = Path(os.environ.get("MOSS_PLUGIN_DATA_DIR") or os.environ.get("PA_PLUGIN_DATA_DIR") or (Path(os.environ.get("MOSS_HOME") or os.path.expanduser("~"))
+             / "user_data" / "state" / "paste"))
 DATA_FILE = DATA_DIR / "data.json"
 
 

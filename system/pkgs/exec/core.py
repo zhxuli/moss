@@ -28,7 +28,8 @@ else:
     PLUGIN_DIR = sys.path[0] if sys.path else os.getcwd()
 
 # 宿主 moss 注入的插件专属数据目录 (= user_data/state/exec)；老 pa 的 PA_* 与插件目录作兜底
-DATA_DIR = os.environ.get('MOSS_PLUGIN_DATA_DIR') or os.environ.get('PA_PLUGIN_DATA_DIR') or PLUGIN_DIR
+DATA_DIR = os.environ.get('MOSS_PLUGIN_DATA_DIR') or os.environ.get('PA_PLUGIN_DATA_DIR') or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
+             "user_data", "state", "exec")
 CMDS_DIR = os.path.join(DATA_DIR, 'cmds')
 PREVIEW_DIR = os.path.join(DATA_DIR, 'preview')     # HTML 页面落盘处
 OUTPUT_DIR = os.path.join(DATA_DIR, 'output')       # "输出存文件"落盘处
