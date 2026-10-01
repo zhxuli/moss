@@ -479,21 +479,35 @@ const MossFileSnap = {
           const cur = ta.value.split("\n").map(x => x.trim()).filter(Boolean);
           ta.value = cur.filter(x => (pats || []).indexOf(x) < 0).join("\n");
         };
+        /* 命中的组里、**还没进规则框**的那些模式 —— 「一键填入」要写的就是这些；
+           一个都没有 ⇒ 这颗按钮就没必要显示（`V-136`）。 */
+        const pendingPats = () => {
+          const cur = rulesOf();
+          let out = [];
+          hotL.forEach(p => {
+            patsOf(p).forEach(x => { if (cur.indexOf(x) < 0 && out.indexOf(x) < 0) out.push(x); });
+          });
+          return out;
+        };
         const fill = w.querySelector("#snap-fill"), clr = w.querySelector("#snap-clear");
+        // ★ `V-136`：两颗按钮**按情况显示**（没东西可填就不显示「一键填入」；规则框空着就不显示「清空」）。
+        //   做法：`syncBtns()` 先给个空实现，等预设加载完（下面）再赋真正的实现 + 立刻算一次；
+        //   规则框打字、点 chip、点更多都会再算一次。
+        let syncBtns = () => {};
         if (fill){
           fill.querySelector(".snap-ico").innerHTML = ico("check", "i");
           fill.onclick = (ev) => {
             ev.stopPropagation();
-            let pats = [];
-            // ★ 只填"检测到的"（`V-128`）：命中的组按 `patsOf` 只给命中的模式
-            hotL.forEach(p => { pats = pats.concat(patsOf(p)); });
+            const pats = pendingPats();
+            if (!pats.length) return;                    // 没得填就什么都不做（按钮本来也该是藏着的）
             addRules(pats);
+            syncBtns();
             toast("已填入 " + pats.length + " 条规则");
           };
         }
         if (clr){
           clr.querySelector(".snap-ico").innerHTML = ico("eraser", "i");
-          clr.onclick = (ev) => { ev.stopPropagation(); ta.value = ""; ta.focus(); };
+          clr.onclick = (ev) => { ev.stopPropagation(); ta.value = ""; ta.focus(); syncBtns(); };
         }
         /* `V-128`：一条预设该写哪些模式 —— 命中的组只写**命中的那些**；
            没命中的组（在「更多」里、用户主动点的）才写整组（那时无从"只写命中的"）。 */
@@ -515,11 +529,18 @@ const MossFileSnap = {
           (hotL.length ? hotL.map(chip).join("")
                        : '<span class="snap-hint">这个目录里没匹配到常见规则</span>') +
           (coldL.length ? ('<span class="snap-more" id="snap-more" title="看全部预设（这些这次没匹配到）">更多（' + coldL.length + '）</span>') : "");
+        syncBtns = () => {
+          if (fill) fill.hidden = (pendingPats().length === 0);
+          if (clr) clr.hidden = (String(ta.value || "").trim() === "");
+        };
+        syncBtns();
+        ta.addEventListener("input", syncBtns);
         const more = box.querySelector("#snap-more");
         if (more) more.onclick = (ev) => {
           ev.stopPropagation();
           more.insertAdjacentHTML("beforebegin", coldL.map(chip).join(""));
           more.remove();
+          syncBtns();
         };
         box.onclick = (ev) => {
           const c = ev.target.closest ? ev.target.closest(".snap-chip") : null;
@@ -531,6 +552,7 @@ const MossFileSnap = {
           const pp = patsOf(pr);
           if (allIn) dropRules(pp); else addRules(pp);
           c.classList.toggle("on", !allIn);
+          syncBtns();
         };
       }catch(e){ w.querySelector("#snap-pres").textContent = "（读不到预设）"; }
     },

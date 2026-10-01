@@ -828,6 +828,7 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
 .snap-chip i{font-style:normal;opacity:.6;margin-left:6px;font-family:var(--mono);font-size:10.5px}
 .snap-rules-top{display:flex;align-items:center;gap:8px;margin-top:2px}
 .snap-rules-top .btn{padding:4px 10px;font-size:12px}
+.snap-rules-top .btn[hidden]{display:none}   /* `V-136`：.btn 是 inline-flex，不加这条 hidden 藏不住 */
 .snap-fill{color:var(--accent)}
 .snap-fill:hover{background:color-mix(in srgb, var(--accent) 12%, transparent)}
 .snap-ico svg{width:14px;height:14px;display:block}

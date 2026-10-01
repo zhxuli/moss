@@ -1157,17 +1157,29 @@ MOCK_JS = r"""
         // V-127：两颗按钮要在、且真的管用
         const fillBtn = document.querySelector("#snapwin #snap-fill");
         const clrBtn = document.querySelector("#snapwin #snap-clear");
+        const fillVisible = !!fillBtn && fillBtn.hidden === false;   // 有命中 ⇒ 该显示
+        const clrHiddenAtFirst = !!clrBtn && clrBtn.hidden === true; // 规则框空着 ⇒ 该藏
         if (fillBtn) fillBtn.click();
         await sleep(150);
         const filledVal = ((document.querySelector("#snapwin #snap-rules") || {}).value || "");
+        const afterFill = {fill: !!fillBtn && fillBtn.hidden, clr: !!clrBtn && clrBtn.hidden};
         const filled = filledVal.length > 0;
         // V-128：只该写"检测到的" —— 场景里放了 run.log + venv/ ⇒ 只该有 *.log 和 venv
         // 按行精确比（别用 indexOf：`venv` 里就含着 `env` 三个字母，第一版断言就是这么写错的）
-        const filledLines = filledVal.split("\n").map(x => x.trim()).filter(Boolean).sort().join(",");
-        const noRedundant = filledLines === "*.log,venv";
+        const filledArr = filledVal.split("\n").map(x => x.trim()).filter(Boolean);
+        // V-128 的真正要求：**只写命中的那些模式**，不许把整组（.venv/env/site-packages/node_modules/*.mp4…）都塞进来。
+        // （别写死成 *.log+venv —— 那一层里真有个 __pycache__，它是命中的、就该被写。）
+        const allowed = ["*.log", "venv", "__pycache__", "*.pyc", "*.pyo", "*.class", "*.o"];
+        const noRedundant = filledArr.length > 0 && filledArr.every(x => allowed.indexOf(x) >= 0);
+        const filledLines = filledArr.slice().sort().join(",");
         if (clrBtn) clrBtn.click();
         await sleep(150);
         const cleared = ((document.querySelector("#snapwin #snap-rules") || {}).value || "") === "";
+        const afterClear = {fill: !!fillBtn && fillBtn.hidden, clr: !!clrBtn && clrBtn.hidden};
+        // V-136：填完 ⇒ 没有新东西可填 ⇒ 「一键填入」藏起来、「清空」露出来；清空后反过来
+        const btnRulesOk = fillVisible && clrHiddenAtFirst &&
+                           afterFill.fill === true && afterFill.clr === false &&
+                           afterClear.fill === false && afterClear.clr === true;
         const rules0 = (document.querySelector("#snapwin #snap-rules") || {}).value || "";
         const c0 = document.querySelector("#snapwin .snap-chip");
         if (c0) c0.click();
@@ -1190,14 +1202,14 @@ MOCK_JS = r"""
         await sleep(300);
         const rows3 = document.querySelectorAll(".bk-snap .bk-file").length;
         const ok = !!win && chips0 === hot && hot >= 2 && chips > chips0 && keep &&
-                   !!fillBtn && !!clrBtn && filled && noRedundant && cleared &&
+                   !!fillBtn && !!clrBtn && btnRulesOk && filled && noRedundant && cleared &&
                    rules0 === "" && rules1.length > 0 && closed &&
                    rows1 > 0 && rows2 === 0 && foldedHint && rows3 === rows1;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 窗口=" + !!win + " 预设=" + chips + " 命中项=" + hot +
           " 记住勾=" + keep + " 点选后规则=" + JSON.stringify(rules1.slice(0, 24)) +
           " 关掉=" + closed + " 行数=" + [rows1, rows2, rows3].join("/") + " 收起提示=" + foldedHint;
-        document.title = ok ? "READY" : "SNAPMODAL-FAIL";
+        document.title = ok ? "READY" : ("SNAPMODAL-FAIL " + JSON.stringify({首: [fillVisible, clrHiddenAtFirst], 填: afterFill, 清: afterClear, 行: filledLines, ok: [!!win, chips0, hot, chips > chips0, filled, noRedundant, cleared, btnRulesOk]}));
         snapClose();
         return;
       }

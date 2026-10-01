@@ -46,6 +46,12 @@ USAGE = """moss —— 多语言启动器
                                回车进入程序后，程序退出即结束，不会回到列表
   moss --history <条数>        只打印不交互（管道 / 脚本用这种）
   moss --remove <别名>         卸载一个包：包本体 + 它的数据（永久删除，需确认；-y 跳过）
+  moss --ai-config              看当前那组 AI 参数（key 默认**打码**；`--ai-config-reveal` 才给全文）
+  moss --ai-profile-set <组> k=v…  加/改一组 AI 参数（base_url / api_key / model / temperature /
+                               max_tokens / top_p / timeout / stream / note —— **明文**写 config.toml）
+  moss --ai-active <组>         选当前用哪一组          moss --ai-profile-del <组>  删一组
+  moss --ai-test [组]           **测试连接**：流式发一个最小请求，报状态码和第一个增量
+  moss --ai-import-legacy       把旧的 user_data/state/ai/config.json 导成一组
   moss --snap …                版本快照（备份 / 恢复 / 导出 / 差异）—— 给人和 AI 用；
                                `moss --snap --help` 看全部子命令（会动磁盘的要 --yes）
   moss --spec                  打印「插件契约」：怎么写一个插件（写插件 / AI 调用前请先读）
@@ -801,6 +807,110 @@ def _human_size(n):
     return "%d 字节" % n
 
 
+def _ai_mask(p):
+    q = dict(p or {})
+    k = str(q.get("api_key") or "")
+    q["api_key"] = (k[:4] + "…" + k[-4:]) if len(k) > 10 else ("（已设置）" if k else "（空）")
+    return q
+
+
+def cmd_ai_config(kv, reveal=False):
+    """`--ai-config`：当前那组 AI 参数（默认 **key 打码**，`--reveal` 才给全文）。"""
+    import json as _json
+    name, prof = config.ai_active_profile()
+    prof = dict(prof) if reveal else _ai_mask(prof)
+    kids = " ".join(kv or [])
+    want = ""
+    for tok in (kv or []):
+        if tok.startswith("--profile="):
+            want = tok.split("=", 1)[1]
+    if want:
+        p2 = config.ai_profiles().get(want)
+        if p2 is None:
+            out.print_cyan("[错误] 没有这一组：%s" % want)
+            return 1
+        name = want
+        prof = dict(p2) if reveal else _ai_mask(p2)
+    print(_json.dumps({"ok": True, "active": config.ai_active_name(), "profile": name,
+                       "params": prof, "profiles": sorted(config.ai_profiles())},
+                      ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_ai_profile_set(argv):
+    """`--ai-profile-set <组名> k=v …` —— 加/改组（明文写 config.toml）。"""
+    if not argv:
+        out.print_cyan("[错误] 用法：--ai-profile-set <组名> base_url=… model=… api_key=…")
+        return 1
+    name, rest = argv[0], argv[1:]
+    fields = {}
+    for item in rest:
+        if "=" not in item:
+            continue
+        k, _, v = item.partition("=")
+        k = k.strip()
+        if k not in config.AI_FIELDS:
+            continue
+        if v.lower() in ("true", "false"):
+            fields[k] = (v.lower() == "true")
+        else:
+            try:
+                fields[k] = float(v) if "." in v else int(v)
+            except ValueError:
+                fields[k] = v
+    nm, cur = config.ai_profile_set(name, fields)
+    out.print_cyan("已存：%s（字段 %s）" % (nm, " ".join(sorted(cur))))
+    return 0
+
+
+def cmd_ai_profile_del(name):
+    left = config.ai_profile_del(name)
+    out.print_cyan("删了「%s」；剩下的组：%s" % (name, " / ".join(left) or "（没有）"))
+    return 0
+
+
+def cmd_ai_active(name):
+    config.ai_set_active(name)
+    out.print_cyan("当前那组 = %s" % name)
+    return 0
+
+
+def cmd_ai_test(argv):
+    """`--ai-test [组名]` —— **流式**发一个最小请求，报状态码和第一个增量（"测试连接"）。"""
+    import json as _json
+    import urllib.request
+    profs = config.ai_profiles()
+    name = argv[0] if argv else config.ai_active_name()
+    p = profs.get(name) or {}
+    if not p:
+        out.print_cyan("[错误] 没有这一组：%s（先 --ai-profile-set 配一个）" % (name or "（空）"))
+        return 1
+    base = str(p.get("base_url") or "").rstrip("/")
+    model = str(p.get("model") or "")
+    if not base or not model:
+        out.print_cyan("[错误] 这一组还没填 base_url / model。")
+        return 1
+    body = _json.dumps({"model": model, "stream": True, "max_tokens": 8,
+                        "messages": [{"role": "user", "content": "只回两个字：收到"}]},
+                       ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(base + "/chat/completions", data=body,
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + str(p.get("api_key") or "")})
+    try:
+        with urllib.request.urlopen(req, timeout=float(p.get("timeout") or 60)) as r:
+            code, first = r.status, ""
+            for raw in r:
+                line = raw.decode("utf-8", "replace").strip()
+                if line.startswith("data:"):
+                    first = line[5:].strip()
+                    break
+        out.print_cyan("连上了：HTTP %s · 流式第一个增量 = %s" % (code, (first or "（空）")[:200]))
+        return 0
+    except Exception as e:                                              # noqa: BLE001
+        out.print_cyan("[错误] 没连上 / 报错：%s" % e)
+        return 4
+
+
 def cmd_remove(name, table, assume_yes=False):
     """卸载一个包：**包本体 + 它产生的数据**。
 
@@ -1218,6 +1328,22 @@ def main(argv):
             out.print_cyan("[错误] --remove 需要一个包名（别名或 id）。直接敲 moss 看有哪些。")
             return 1
         return cmd_remove(args[0], table, assume_yes=yes)
+    if first in ("--ai-config", "--ai"):
+        return cmd_ai_config(rest)
+    if first == "--ai-config-reveal":
+        return cmd_ai_config(rest, reveal=True)
+    if first == "--ai-profile-set":
+        return cmd_ai_profile_set(rest)
+    if first == "--ai-profile-del":
+        return cmd_ai_profile_del(rest[0] if rest else "")
+    if first == "--ai-active":
+        return cmd_ai_active(rest[0] if rest else "")
+    if first == "--ai-test":
+        return cmd_ai_test(rest)
+    if first == "--ai-import-legacy":
+        nm = config.ai_import_legacy()
+        out.print_cyan(("导进来了，组名 %s" % nm) if nm else "没找到旧的 state/ai/config.json")
+        return 0
     if first in ("--snap", "--snapshot"):
         # 版本快照（`V-100`）：备份 / 恢复 / 导出 / 差异 —— 给人和 AI 的一条通道。
         # 实现在 `core/snap.py`，底层借用界面那份存储（`system/ui/backup.py`）。

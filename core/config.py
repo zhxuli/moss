@@ -21,6 +21,7 @@
 """
 import copy
 import os
+import re
 import tomllib
 from pathlib import Path
 
@@ -28,7 +29,14 @@ from . import paths
 
 #: 默认配置。**改这里的时候，`CONFIG_TEMPLATE` 要一起改** —— 自检会核对两者是否一致
 #: （`template_problems()`，挂 `moss --selfcheck`），免得"默认值改了、模板没跟上"。
+#: AI 那几组参数的字段（`V-137`）：一组一份，明文存 `user_data/config.toml` 的 `[ai.profiles.<组名>]`。
+AI_FIELDS = ("base_url", "api_key", "model", "temperature", "max_tokens",
+             "top_p", "timeout", "stream", "note")
+
 DEFAULT_CONFIG = {
+    # ★ `V-137`：AI 那几组（`[ai] active` + `[ai.profiles.<组名>]`）—— **不声明在这里，
+    #   `load()` 会把整段当"不认识的段"丢掉**（实测踩过：写了组、读回来是空的）。
+    "ai": {"active": "", "profiles": {}},
     "symbols": {
         "path_mode": "",           # 空串 = 裸名就是路径调用（默认档，见 bare_owner()）
         "no_chdir_mode": "/",
@@ -104,6 +112,21 @@ max_parent_depth = 3
 [ctrl_c]
 # Ctrl+C 怎么停：true = 第一次就强杀整棵树；false = 先温和 terminate，再按一次才强杀。
 force_kill = true
+
+
+# ---------------------------------------------------------------- AI（`V-137`）
+# 一组 = `[ai.profiles.<组名>]`；`active` 指当前用哪一组。参数**明文**存在这个文件里
+# （它在 user_data/ 下、不进仓库）；跑包时宿主会把当前那组注入成 `MOSS_AI_*` 环境变量。
+#   字段：base_url 接口地址 / api_key 密钥 / model 模型名 / temperature 温度 /
+#         max_tokens 最大输出（0=不限）/ top_p / timeout 秒 / stream 流式 / note 备注
+# 加一组（命令行最省事，也可以照这个样子手写）：
+#   moss --ai-profile-set mine base_url=https://api.deepseek.com/v1 model=deepseek-chat api_key=sk-xxx
+# ★ 这里**只声明 active**：示例写在注释里 —— 模板和默认值（`DEFAULT_CONFIG`）必须对得上，
+#   不然 `--selfcheck` 的"模板和默认值一致"那条会报错（实测踩过）。
+[ai]
+active = ""
+# 各组：一组一张表（`moss --ai-profile-set <组名> …` 会往里加；也可以照注释里的样子手写）
+[ai.profiles]
 '''
 
 
@@ -122,6 +145,17 @@ force_kill = true
 # ★ `settings_problems()` 会核对这份清单和 `DEFAULT_CONFIG` 对不对得上（键、类型、
 #   以及每条该有的说明有没有写），挂在 `moss --selfcheck` 上。
 SETTINGS_GROUPS = [
+    # `V-137`：AI 参数（多组）。`ai.active` 是普通文本（组名）；`ai.profiles` 是**表**，
+    # 面板里只显示一行说明、不能手改（改它走 `moss --ai-profile-set`，见 `set_values` 里的路由）。
+    {"name": "AI", "icon": "cpu", "blurb": "AI 参数（可以配多组）：一组一份，明文存在 user_data/config.toml；"
+                            "跑包时会把当前那组注入成 MOSS_AI_* 环境变量",
+     "items": [
+         {"key": "ai.active", "label": "当前组", "type": "text",
+          "hint": "现在用哪一组；组名要和 [ai.profiles.<组名>] 对上（改名请用 moss --ai-profile-set）"},
+         {"key": "ai.profiles", "label": "各组", "type": "text",
+          "hint": "加/改组请用命令行：moss --ai-profile-set <组名> base_url=… model=… api_key=…；"
+                  "moss --ai-active <组名> 切当前组；moss --ai-test 测连接。"},
+     ]},
     {"name": "快捷命令", "icon": "hash", "live": True,
      "blurb": "行首那个符号决定这条命令是什么意思。四项都能换成你顺手的字符"
               "（moss 会先去掉前缀，再判断这条命令属于哪一类）。"
@@ -488,6 +522,21 @@ def _split_comment(rest):
 
 
 def set_values(values, path=None):
+    # ★ `V-137`：`ai.*` 单独处理 —— `ai.profiles` 是**表**，通用那条"逐键写 TOML"的路子会把它写成
+    #   一个字符串，下次读就崩（`ai_profiles()` 拿到的不是 dict）。所以：
+    #     ai.active     → 切当前组（`ai_set_active`）
+    #     ai.profiles   → **忽略**（只认 `--ai-profile-set`，免得手滑写坏）
+    try:
+        _ai = {k: v for k, v in (values or {}).items() if str(k).startswith("ai.")}
+        if _ai:
+            for k in list(_ai):
+                if k == "ai.active" and str(_ai[k] or "").strip():
+                    ai_set_active(str(_ai[k]).strip(), path)
+                values.pop(k, None)
+            if not values:
+                return True, []
+    except Exception:                                                   # noqa: BLE001
+        pass
     """把面板上改过的值写回配置文件，返回 `{"ok", "problems"}`。
 
     ★ 为什么按行换值，而不是"重新生成整个文件"：那份 TOML 的注释就是说明书
@@ -629,6 +678,130 @@ def _collect_problems(user, problems):
                                 % (section, key, type(want).__name__,
                                    type(val).__name__, val, want))
                 got.pop(key)          # 让默认值接手
+
+
+# ---------------------------------------------------------------- AI 那几组（`V-137`）
+def _ai_section_text(profiles, active):
+    """把 AI 那几节拼成 TOML 文本（整段重建，文件其它部分一字不动）。"""
+    out = ['[ai]', 'active = %s' % _toml_str(active or ""), '']
+    for name in sorted(profiles or {}):
+        pr = profiles[name] or {}
+        out.append('[ai.profiles.%s]' % name)
+        for k in AI_FIELDS:
+            if k not in pr:
+                continue
+            v = pr.get(k)
+            if isinstance(v, bool):
+                out.append('%s = %s' % (k, 'true' if v else 'false'))
+            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                out.append('%s = %s' % (k, v))
+            else:
+                out.append('%s = %s' % (k, _toml_str(v)))
+        out.append('')
+    return '\n'.join(out)
+
+
+def _toml_str(v):
+    t = str(v if v is not None else "")
+    return '"' + t.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n') + '"'
+
+
+def _write_ai_section(profiles, active, path=None):
+    """只替换文件里的 `[ai]`/`[ai.profiles.*]` 那几节，别的一个字不动。
+
+    ★ 为什么整段重建而不是逐行改：profiles 是**动态表**（增删组、组名字数不一），
+      逐行改要处理"删组""改组名"这些情况，容易把文件弄坏；整段换掉最稳。"""
+    p = Path(path or paths.USER_CONFIG)
+    txt = p.read_text(encoding="utf-8") if p.is_file() else CONFIG_TEMPLATE
+    lines = txt.splitlines()
+    keep, skipping = [], False
+    for ln in lines:
+        st = ln.strip()
+        if st.startswith("[ai]") or st.startswith("[ai.") or st.startswith("[[ai"):
+            skipping = True
+            continue
+        if skipping and st.startswith("[") and not st.startswith("[ai"):
+            skipping = False
+        if skipping:
+            continue
+        keep.append(ln)
+    body = "\n".join(keep).rstrip("\n")
+    p.write_text(body + "\n\n" + _ai_section_text(profiles, active), encoding="utf-8")
+
+
+def ai_profiles(path=None):
+    """当前的 AI 各组（`{组名: {字段…}}`）。"""
+    cfg = load().get("ai") or {}
+    profs = cfg.get("profiles") or {}
+    return {k: dict(v or {}) for k, v in profs.items()}
+
+
+def ai_active_name(path=None):
+    return str((load().get("ai") or {}).get("active") or "")
+
+
+def ai_active_profile(path=None):
+    """当前那组的参数（`active` 为空或那组不存在时，取第一组）。"""
+    profs = ai_profiles(path)
+    name = ai_active_name(path)
+    if name not in profs:
+        name = sorted(profs)[0] if profs else ""
+    if not name:
+        return "", {}
+    return name, dict(profs[name])
+
+
+def ai_profile_set(name, fields, path=None):
+    """加/改组（给了哪几个字段就写哪几个；其它字段保持）。"""
+    name = re.sub(r"[^A-Za-z0-9_.@-]", "_", str(name or "").strip())[:40] or "default"
+    profs = ai_profiles(path)
+    cur = dict(profs.get(name) or {})
+    for k, v in (fields or {}).items():
+        if k in AI_FIELDS:
+            cur[k] = v
+    profs[name] = cur
+    active = ai_active_name(path) or name
+    _write_ai_section(profs, active, path)
+    return name, cur
+
+
+def ai_profile_del(name, path=None):
+    profs = ai_profiles(path)
+    profs.pop(str(name), None)
+    active = ai_active_name(path)
+    if active == name:
+        active = sorted(profs)[0] if profs else ""
+    _write_ai_section(profs, active, path)
+    return sorted(profs)
+
+
+def ai_set_active(name, path=None):
+    _, _ = ai_profile_set(name, {}, path)          # 组不存在就先建个空壳，免得指到一个不存在的组
+    profs = ai_profiles(path)
+    _write_ai_section(profs, str(name), path)
+    return str(name)
+
+
+def ai_import_legacy(path=None, legacy=None):
+    """把老的 `user_data/state/ai/config.json` 导成一组（`V-137` 的迁移）。"""
+    f = Path(legacy) if legacy else (paths.USER_DIR / "state" / "ai" / "config.json")
+    if not f.is_file():
+        return None
+    try:
+        import json as _json
+        j = _json.loads(f.read_text(encoding="utf-8"))
+    except Exception:                                                   # noqa: BLE001
+        return None
+    fields = {}
+    if j.get("BASE_URL"):
+        fields["base_url"] = j["BASE_URL"]
+    if j.get("MODEL"):
+        fields["model"] = j["MODEL"]
+    if j.get("API_KEY"):
+        fields["api_key"] = j["API_KEY"]
+    fields["note"] = "从旧的 state/ai/config.json 导进来的"
+    name, _ = ai_profile_set("legacy-ai", fields, path)
+    return name
 
 
 def load():

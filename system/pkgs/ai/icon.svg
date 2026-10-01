@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
-     fill="none" stroke="currentColor" stroke-width="1.5"
-     stroke-linecap="round" stroke-linejoin="round">
-  <!-- moss 包图标 · AI 对话（星芒（智能））· 24×24 / 1.5 描边 / currentColor：
-       界面可以跟随主题色，深浅模式都不用重画。改形状直接改下面的 path。 -->
-  <path d="M11 3l1.7 4.3L17 9l-4.3 1.7L11 15l-1.7-4.3L5 9l4.3-1.7z"/>
-  <path d="M17.5 14.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/>
-</svg>
