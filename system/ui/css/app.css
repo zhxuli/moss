@@ -173,6 +173,10 @@ main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;he
   color:var(--dim);cursor:pointer;font:inherit;font-size:13px}
 #sideswitch button:hover{background:var(--hover)}
 #sideswitch button.on{background:var(--fill);border-color:transparent;color:var(--fg);font-weight:500}
+/* 插件 / 历史 名字后面那个数字（`V-199`）：等宽数字，宽度别跳来跳去 */
+#sideswitch .sw-n{font-size:11px;font-weight:600;color:var(--dim);
+  font-variant-numeric:tabular-nums;min-width:12px;text-align:right}
+#sideswitch button.on .sw-n{color:var(--accent)}
 /* 右边那个「新建包」：靠 margin-left:auto 顶到最右。**不再自己改底色和描边** ——
    它就是个普通按钮，和别处同一套长相（原来这里写死了 --panel2/--line，
    是"填充块"时代的残留，和现在的白底细描边不一致）。 */
@@ -266,6 +270,12 @@ body.dragging .item{border-style:dashed}          /* 拖动时可选的那些包
    宿主开的第二个窗口加载的是**同一份页面**，只多一个 `#float=<包id>`（`body.float`）：
    那一页只画这个包的一帧，别的全藏起来 —— 于是它看起来就是一扇"这个包自己的窗口"，
    最小化＝收回主窗口、关闭＝结束（`V-194`），后端进程一步都没动。 */
+/* 内嵌那一帧上的拖放接住了（`V-204`）：**完全透明**的罩子，平时不吃鼠标事件，
+   只在那一帧报"有人拖着东西在我头上"时打开（`frameDrag`）。
+   ★ 它**不画任何提示**（`V-206`）：大提示归那一帧自己（它才知道这一松手会发生什么），
+     我们只保证事件能落到这侧、路径拿得到。 */
+#dropcatcher{position:fixed;inset:0;z-index:120;pointer-events:none;display:none}
+#dropcatcher.on{display:block;pointer-events:auto}
 body.float header,
 body.float aside,
 body.float #statusbar,

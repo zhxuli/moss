@@ -36,6 +36,20 @@ function onVueError(err, vm, info){
               (err && err.message) || String(err), (err && err.stack) || "");
 }
 
+/* 这一页是不是"浮动窗口"那一份（`V-192`）：宿主开的第二个窗口加载同一份页面，只多一个
+   `#float=<包id>`。
+
+   ★ **为什么定义在这儿（core.js，第一个加载的文件）而不是用它的 app.js**：`embed.js` 在
+     `app.js` **之前**加载，而它挂载组件是**当场**发生的（`mountVue` 一调就渲染）——
+     那一刻 `app.js` 里的 `const FLOAT_PID` 还没执行到，于是 `isFloat` 这个计算属性直接
+     `ReferenceError: FLOAT_PID is not defined`：**页面一启动就报错**（`V-202` 实测）。
+     `const` 虽然跨脚本共享，但那是对**已经跑过**的脚本成立 —— 加载顺序是硬约束。
+   ★ 一处定义，两个文件都读它（`window.__mossFloatPid`）。 */
+window.__mossFloatPid = (function () {
+  const m = /^#float=([A-Za-z0-9_-]{1,32})$/.exec(location.hash || "");
+  return m ? m[1] : "";
+})();
+
 /* 建 Vue app 一律走这个 —— 省得哪一处忘了挂 errorHandler（忘了就又是"静悄悄死掉"）。
    返回值与 `Vue.createApp(x).mount(y)` 一样（根组件实例），调用点别的都不用改。
    `globals`：往 `app.config.globalProperties` 上摊一份（文件管理那套模板助手要用）。

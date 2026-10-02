@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>PATH 管理</title>
+<link rel="stylesheet" href="style.css">
+<script src="vendor/vue.global.prod.js"></script>
+<script src="icons.js"></script>
+<script src="moss-embed.js"></script>
+</head>
+<body>
+<div id="app" :class="{dragging: dragOn}">
+
+  <!-- 顶栏：图标 + 名字 + 一眼看得到的统计；右边几颗工具按钮 -->
+  <header class="hd">
+    <img class="logo" src="../icon.svg" alt="">
+    <div class="who">
+      <b>PATH 管理</b>
+      <span class="sub">当前用户 · <span class="mono">{{ pathCount }}</span> 条
+        <template v-if="missing.length"> · <span class="warn">{{ missing.length }} 条目录不存在</span></template>
+      </span>
+    </div>
+    <span class="sp"></span>
+    <button class="btn" @click="dedup" :disabled="busy" :title="'去掉重复项（大小写不敏感）'">
+      <i v-html="ic('layers')"></i>去重</button>
+    <button class="btn" @click="dropMissing" :disabled="busy" title="清掉目录已经不存在的那些（带 %VAR% 的不动）">
+      <i v-html="ic('eraser')"></i>清失效</button>
+    <button class="btn" @click="load" :disabled="busy" title="重新读一遍注册表">
+      <i v-html="ic('refresh-cw')"></i>刷新</button>
+  </header>
+
+  <!-- 左右两栏：左边宽（PATH 列表），右边窄（备份 / 恢复）—— 一件事在一屏里说完 -->
+  <div class="cols">
+
+    <!-- ============ 左：PATH ============ -->
+    <section class="pane left">
+      <div class="addrow">
+        <span class="fi"><i v-html="ic('folder')"></i>
+          <input v-model="input" spellcheck="false" placeholder="粘贴一个目录，或拖文件夹进来"
+                 @keyup.enter="add"></span>
+        <button class="btn" @click="pick" :disabled="busy">
+          <i v-html="ic('folder-open')"></i>选择…</button>
+        <button class="btn primary" @click="add" :disabled="busy || !input.trim()">
+          <i v-html="ic('folder-plus')"></i>添加</button>
+      </div>
+
+      <div class="list">
+        <div class="row" v-for="(p, i) in paths" :key="p" :class="{gone: isMissing(p)}">
+          <span class="idx">{{ i + 1 }}</span>
+          <span class="p" :title="p">{{ p }}</span>
+          <span class="chip" v-if="same(p, selfDir)" title="这个包自己的目录">本包</span>
+          <span class="chip bad" v-if="isMissing(p)" :title="'磁盘上没有这个目录'">
+            <i v-html="ic('circle-alert')"></i>不存在</span>
+          <button class="x" title="从 PATH 里移除" @click="remove(p)" v-html="ic('x')"></button>
+        </div>
+        <div class="empty" v-if="!paths.length">
+          <i v-html="ic('folder-open')"></i>
+          <b>PATH 还是空的</b>
+          <span>上面填一个目录，或者把文件夹直接拖进来</span>
+        </div>
+      </div>
+
+      <!-- 拖进来时铺一层提示（只在拖动中出现） -->
+      <div class="dropmask" v-if="dragOn">
+        <i v-html="ic('folder-plus')"></i>
+        <b>松手 = 把这个目录加进 PATH</b>
+        <span>拖文件夹（或文件，会取它所在的目录）</span>
+      </div>
+    </section>
+
+    <!-- ============ 右：备份 / 恢复 ============ -->
+    <aside class="pane right">
+      <div class="rhd">
+        <i v-html="ic('history')"></i>
+        <b>备份</b>
+        <span class="sp"></span>
+        <button class="btn small" @click="makeBackup" :disabled="busy" title="把当前 PATH 存成一份文本">
+          <i v-html="ic('save')"></i>备份一份</button>
+      </div>
+
+      <div class="blist">
+        <div class="bcard" v-for="b in backups" :key="b.file"
+             :class="{sel: sel && sel.file === b.file}" @click="choose(b)">
+          <div class="brow">
+            <span class="when">{{ b.time }}</span>
+            <span class="sp"></span>
+            <span class="chip">{{ b.total }} 条</span>
+          </div>
+          <div class="brow dim2 small">
+            <span v-if="b.add" class="plus">+{{ b.add }}</span>
+            <span v-if="b.remove" class="minus">-{{ b.remove }}</span>
+            <span v-if="!b.add && !b.remove">和现在一样</span>
+            <span class="sp"></span>
+            <span class="chip" v-if="b.legacy" title="老位置 .path_editor/path_bak 里的备份，只能读">老位置</span>
+          </div>
+          <div class="bacts">
+            <button class="btn small" @click.stop="restore(b)" :disabled="busy">
+              <i v-html="ic('undo-2')"></i>恢复</button>
+            <button class="btn small danger" @click.stop="delBackup(b)" :disabled="busy">
+              <i v-html="ic('trash-2')"></i>删除</button>
+          </div>
+          <!-- 选中才展开：这一份备份和现在差在哪 -->
+          <div class="bdiff" v-if="sel && sel.file === b.file">
+            <div class="dh">会加进来（{{ (preview.add || []).length }}）</div>
+            <div class="dl" v-for="p in preview.add" :key="'a' + p">{{ p }}</div>
+            <div class="dl dim2" v-if="!(preview.add || []).length">没有</div>
+            <div class="dh">会去掉（{{ (preview.remove || []).length }}）</div>
+            <div class="dl" v-for="p in preview.remove" :key="'r' + p">{{ p }}</div>
+            <div class="dl dim2" v-if="!(preview.remove || []).length">没有</div>
+          </div>
+        </div>
+        <div class="empty small" v-if="!backups.length">
+          <i v-html="ic('save')"></i>
+          <b>还没有备份</b>
+          <span>点上面「备份一份」<br>把当前的 PATH 存成一行一个路径的文本</span>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- 底栏：最后一句人话（成功/失败）+ 后端自证 -->
+  <footer class="ft">
+    <span class="msg" :class="{bad: msgBad}">
+      <i v-html="ic(msgBad ? 'circle-alert' : 'info')"></i>{{ msg || readyHint }}</span>
+    <span class="sp"></span>
+    <span class="dim2 small mono" :title="'备份目录：' + backupDir">
+      {{ info.python ? 'Python ' + info.python + ' · ' : '' }}{{ shortData }}</span>
+  </footer>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

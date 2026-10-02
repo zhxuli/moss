@@ -2,20 +2,20 @@
   "spec": 1,
   "id": "path",
   "kind": "app",
-  "version": "1.0",
+  "version": "1.1",
   "name": {
     "zh-CN": "PATH 管理",
     "en": "PATH manager"
   },
   "desc": {
-    "zh-CN": "查看/管理 Windows PATH 环境变量",
-    "en": "View and manage the Windows PATH environment variable"
+    "zh-CN": "查看/管理 Windows 用户 PATH（带备份/恢复）",
+    "en": "View and manage the Windows user PATH, with backups"
   },
   "tags": [
     "环境变量",
     "PATH",
     "注册表",
-    "gui"
+    "界面"
   ],
   "aliases": [
     "path"
@@ -69,10 +69,26 @@
   "docs": {
     "agent": "AGENT.md"
   },
+  "_uiWhy": "V-200：界面换成网页（ui/index.html，Vue 3），内嵌到 moss 的「界面」选项卡、也能自己开窗口 —— 原来那套 tkinter 界面（PathEditorApp / RestoreWindow，还依赖 windnd）按契约「界面写成网页、别用 Tk 写新包」退休了。配色照抄 moss 主界面那套令牌，深浅跟随系统。",
+  "ui": {
+    "embed": "ui/index.html",
+    "title": {
+      "zh-CN": "PATH 管理"
+    }
+  },
+  "_storeWhy": "V-200：备份放 MOSS_PLUGIN_DATA_DIR/data/backups/path_backup_<时间戳>.txt（一行一个路径），不再写进包目录、也不再写 .path_editor/ —— 那个老位置仍然**认**（能列、能恢复、能删），只是不再往里写。",
   "drop": {
     "dir": {
       "param": true,
       "quote": true
     }
-  }
+  },
+  "changes": [
+    "界面换成网页（Vue 3，内嵌 moss 选项卡 / 也能独立开窗），配色用 moss 那套设计令牌；tkinter 那套和 windnd 依赖一起退休。",
+    "备份改放 user_data/state/path/data/backups/（契约定下的 data/ 目录）；老位置 .path_editor/path_bak 仍然认，能列能恢复能删，但不再往里写。",
+    "恢复前先看清楚：列备份时直接标出「会加几条 / 会去掉几条」，选中再展开两列明细，确认才写注册表。",
+    "多两件小工具：去重（大小写不敏感）、清失效（目录已经不存在的摘掉；带 %VAR% 的不动）。",
+    "拖一个文件夹进来（或 moss :path D:\\tools\\bin）＝ add 那条目录 —— 以前会被当成「未知命令」打一屏用法。",
+    "省略路径时 add/remove 用**这个包自己的目录**（老代码用的是数据目录，等于把 user_data/state/path 加进 PATH，没道理）。"
+  ]
 }

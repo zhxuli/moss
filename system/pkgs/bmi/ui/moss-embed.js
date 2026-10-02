@@ -106,6 +106,35 @@
     }
   });
 
+  /* 拖放进来了 → **告诉宿主**（`V-204`）。
+     ★ 为什么要多这一步：拖动时鼠标如果压在这一帧上，浏览器的 `dragover`/`drop` 全给了
+       **这一帧**（跨文档事件不冒泡到父页面）—— 而"真实路径"只有父页面那侧（pywebview 从
+       WebView2 里取）才拿得到。结果是：界面型包的 iframe 盖住右栏时，往里拖什么都会**丢**。
+       这里只做一件事：把"有东西拖到我头上了 / 走了"报给宿主，宿主在自己上面铺一张罩子
+       把拖放接过去，路径就回到 Python 那侧了。 */
+  if (EMBEDDED) {
+    let over = false;
+    let captured = false;      // 宿主铺了罩子接住（`V-205`）：这期间别再报"走了"
+    function tellDrag(phase) {
+      if (phase === 'over' && over) return;        // 只报"进入"，别在 dragover 里刷屏
+      if (phase === 'out' && (!over || captured)) return;   // 罩子盖上引起的 leave 不算
+      over = (phase === 'over');
+      try { window.parent.postMessage({ moss: 1, kind: 'drag', phase: phase }, '*'); } catch (e) {}
+    }
+    function hasFiles(e) {
+      return !!(e.dataTransfer && (e.dataTransfer.types || []).indexOf('Files') >= 0);
+    }
+    window.addEventListener('dragenter', function (e) { if (hasFiles(e)) tellDrag('over'); });
+    window.addEventListener('dragover', function (e) { if (hasFiles(e)) tellDrag('over'); });
+    window.addEventListener('dragleave', function (e) { if (!e.relatedTarget) tellDrag('out'); });
+    window.addEventListener('drop', function () { tellDrag('out'); });
+    // ★ 宿主说"我接住了"（`V-205`）：罩子一盖上来，这一帧就会收到一次 `dragleave`
+    //   （鼠标底下的元素被换掉了）—— 要是照着报 `out`，宿主会收罩子、这一帧又收到
+    //   `dragenter` 再报 `over` ⇒ **来回抖**。所以接住之后到 `dragend` 之前一律不报离开。
+    moss.on('captured', function () { captured = true; });
+    moss.on('dragend', function () { captured = false; over = false; });
+  }
+
   /* 独立窗口里，后端要发事件就调 window.moss.__emit(...) —— 在这边把 pywebview 的
      就绪事件也转成统一的 ready，让界面只写一次初始化。 */
   window.addEventListener('pywebviewready', function () {

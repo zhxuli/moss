@@ -169,6 +169,10 @@ window.addEventListener("message", async (ev) => {
     pushEmbedEvent(pid, "theme", {dark: matchMedia("(prefers-color-scheme: dark)").matches});
     pushEmbedEvent(pid, "visible", {visible: tab === "embed" && !!cur && cur.id === pid});
     paintEmbedTab();
+  } else if (m.kind === "drag"){
+    // 这一帧上正有人拖着东西（`V-204`）：跨文档的 drag 事件不会冒到我们这儿，
+    // 得靠它报信 —— 我们铺一张罩子把拖放接过来，真实路径才拿得到。
+    if (typeof frameDrag === "function") frameDrag(pid, m.phase);
   }
 });
 /* 「界面」选项卡该不该出现 —— 那颗按钮在**选项卡那一行**（不在这一页里，`V-84`），
@@ -205,14 +209,17 @@ const MossEmbed = {
     title(){ this.R.rev; const p = this.p; return p ? (p.ui.title || p.name || "界面") : "界面"; },
     aliveN(){ this.R.rev; return Object.keys(EMB.alive).length; },
     // 这一页是**浮动窗口**那一份吗（`V-192`：同一份页面，靠 `#float=<id>` 分流）
-    isFloat(){ return !!FLOAT_PID; },
+    // ★ 读 `window.__mossFloatPid`（`core.js` 里定义），**不读** app.js 里的 `FLOAT_PID`：
+    //   这个组件是**当场挂载**的，那一刻 app.js 还没跑到 —— 直接读它就是一个
+    //   `ReferenceError: FLOAT_PID is not defined`，页面一启动就报错（`V-202` 实测）。
+    isFloat(){ return !!window.__mossFloatPid; },
     // 当前这个包的帧是不是已经被弹到窗口里去了（主窗口这一侧显示占位）
     floatedHere(){ this.R.rev; const p = this.p; return !!(p && EMB.floated[p.id]); },
     info(){
       this.R.rev;
       const p = this.p;
       if (!p) return "";
-      if (FLOAT_PID)                      // 浮动窗口：说清那两颗按钮是什么意思
+      if (window.__mossFloatPid)          // 浮动窗口：说清那两颗按钮是什么意思
         return embedRunning(p.id) ? "浮动窗口 · 点最小化＝收回主窗口，点关闭＝结束这个包" : "还没起";
       if (EMB.floated[p.id]) return "已经弹到窗口里去了（那边最小化就回来）";
       if (!embedRunning(p.id)) return "还没跑 —— 点右上角「运行」就起";

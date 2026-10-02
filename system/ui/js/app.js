@@ -6,11 +6,10 @@
    （CSS 里那些 `body.float …`）。
    ★ 为什么要复用**同一份页面**而不是另写一个小页：`embed.js` 那条
      `postMessage → embed_send → 后端子进程 stdin` 一个字都不用改，后端也完全不知道
-     自己"被搬了窗口"。 */
-const FLOAT_PID = (function(){
-  const m = /^#float=([A-Za-z0-9_-]{1,32})$/.exec(location.hash || "");
-  return m ? m[1] : "";
-})();
+     自己"被搬了窗口"。
+   ★ 这个标记**由 `core.js` 定义**（第一个加载的文件）—— `embed.js` 在 `app.js` 之前
+     挂载组件，挂载那一刻就要读它，写在 app.js 里会 `ReferenceError`（`V-202`）。 */
+const FLOAT_PID = window.__mossFloatPid || "";
 if (FLOAT_PID) document.body.classList.add("float");
 
 /* 浮动窗口的启动：不跑那一整套主界面流程，只要"选中这个包 + 把帧开起来"。 */
@@ -45,13 +44,29 @@ function writeStartDiag(){
   }catch(e){}
 }
 
+/* 插件 / 历史 那两颗按钮上的**数字**（`V-199`）。
+   ★ 数的是**总数**（插件 = `DATA.packages.length`，历史 = `HIST.length`），不是"筛完之后
+     剩几个" —— 那两个数回答的是"我这台机器上有多少东西"，跟着筛选跳来跳去反而看不懂。
+   ★ 原来这两个数写在顶栏那行（"19 个包 · 启动方式：… · D:\…"），现在挪到名字后面：
+     一眼就看到，还不占搜索框右边的地方。 */
+function paintSwitchCounts(){
+  const n = (typeof DATA !== "undefined" && DATA && DATA.packages) ? DATA.packages.length : 0;
+  const h = (typeof HIST !== "undefined" && HIST) ? HIST.length : 0;
+  const a = document.getElementById("sw-n-pkg"), b = document.getElementById("sw-n-hist");
+  if (a) a.textContent = String(n);
+  if (b) b.textContent = String(h);
+}
+
 async function init(){
   setStatus("就绪");        // 状态栏（`V-61`）：还没干任何事时它是空的，给一句起点
   DATA = await pywebview.api.state();
   // ★ 浮动窗口（`V-192`）：只要那一帧，别跑主界面那一整套（列表 / 历史 / 文件管理都不用）。
   if (FLOAT_PID){ await initFloatMode(); return; }
-  $("#meta").textContent =
-    DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home;
+  // ★ `V-199`：那一行"19 个包 · 启动方式：… · D:\…"不再显示 —— 数字挪到左边
+  //   「插件 / 历史」两颗按钮上（`paintSwitchCounts`），启动方式和安装根挂到品牌名的
+  //   tooltip 上（鼠标停一下就有，不占地方）。顶栏右边只留「自检」那颗按钮。
+  document.querySelector("header .brand").title =
+    "moss · " + DATA.home + " · 启动方式：" + DATA.launch_kind;
   renderList(); paintStates();
   await loadHist();        // 先把历史读回来（loadHist 会顺手按 key 找回选中的那条）
   setSide(side);           // 切换条的高亮 / 隐藏状态跟 JS 变量对齐；顺带画一遍列表
@@ -98,10 +113,15 @@ function paintStaticIcons(){
   $("#btn-selfcheck").innerHTML = ico("activity", "i");
   $("#btn-aside-mini").innerHTML = ico("chevron-right", "i");   // `V-171`：收起 / 展开
   // 左侧顶部：插件 / 历史 切换 + 新建包
-  $("#sw-pkg").innerHTML  = ico("package", "i") + '<span>插件</span>';
+  // ★ `V-199`：名字后面各跟一个**数字**（`#sw-n-pkg` / `#sw-n-hist`）——
+  //   就是列表里能数出来的条目数（插件 = `DATA.packages`，历史 = `HIST`），由
+  //   `paintSwitchCounts()` 填；顶栏那一行"19 个包 · 启动方式…"因此撤掉了。
+  $("#sw-pkg").innerHTML  = ico("package", "i") + '<span>插件</span>' +
+                            '<b class="sw-n" id="sw-n-pkg"></b>';
   // ★ 历史用 Lucide 那个**带表针的 history**（lucide-static 1.48.0，见 vendor/README.md）。
   //   以前用的是 `corner-up-left`（一个"返回箭头"），跟"历史"不是一回事。
-  $("#sw-hist").innerHTML = ico("history", "i") + '<span>历史</span>';
+  $("#sw-hist").innerHTML = ico("history", "i") + '<span>历史</span>' +
+                            '<b class="sw-n" id="sw-n-hist"></b>';
   $("#btn-newpkg").innerHTML = ico("file-plus", "i");
   $("#btn-settings").innerHTML = ico("settings", "i");   // 状态栏那颗齿轮（`V-61`）
   // 确认框右上角那颗 ×（`V-63`）。★ 设置面板那颗 × 由**组件自己**画

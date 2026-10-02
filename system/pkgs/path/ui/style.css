@@ -1,0 +1,147 @@
+/* PATH 管理 —— 界面样式（`V-201`）。
+   ★ 配色照抄 moss 主界面那套设计令牌（`system/ui/css/app.css`），深浅跟随系统 ——
+     内嵌在 moss 的「界面」选项卡里时，看起来就是同一套东西。
+   ★ 布局：**左右两栏** —— 左边宽（PATH 列表，主战场）、右边窄（备份/恢复，随手可用）。
+     窄屏（选项卡被拖窄了）自动落成一栏，右边的备份排到下面去。
+   ★ 图标全部走 `icons.js` 的 `icon()`（lucide，24×24 / 1.5 描边 / currentColor）。 */
+:root{
+  --bg:#f5f5f7; --panel:#fff; --panel2:#fbfbfd; --line:#f0f0f0; --line2:#e8e8ed;
+  --ctl:#c6c6cc; --ctl-in:#9a9aa2;
+  --fg:#1d1d1f; --fg2:#515154; --dim:#86868b; --dim2:#a1a1a6; --ph:#8e8e96;
+  --tag:#e8e8ed;
+  --accent:#0071e3; --accent-fg:#fff;
+  --hover:#f5f5f7; --sel:#e8f1ff; --fill:rgba(120,120,128,.10);
+  --warn:#a35b00; --warn-bg:#fdf3e3; --ok:#1a7f45;
+  --mono: ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#151517; --panel:#1c1c1e; --panel2:#232326; --line:#2c2c30; --line2:#2c2c30;
+    --ctl:#4a4a52; --ctl-in:#6e6e78;
+    --fg:#f5f5f7; --fg2:#d1d1d6; --dim:#a1a1a6; --dim2:#7c7c82; --ph:#8e8e96;
+    --tag:#3a3a3f;
+    --accent:#0a84ff; --hover:#2a2a2e; --sel:#1f2c3d; --fill:rgba(120,120,128,.22);
+    --warn:#e5a44f; --warn-bg:#2a2118; --ok:#54c07d;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:13px/1.55 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+#app{height:100%;display:flex;flex-direction:column;position:relative}
+.sp{flex:1}
+.dim2{color:var(--dim2)}
+.small{font-size:12px}
+.mono{font-family:var(--mono)}
+.warn{color:var(--warn)}
+svg.i{width:15px;height:15px;flex:none;display:block}
+
+/* ---------------------------------------------------------------- 顶栏 */
+.hd{display:flex;align-items:center;gap:10px;padding:10px 14px;flex:none;
+  background:var(--panel);border-bottom:1px solid var(--line2)}
+.hd .logo{width:26px;height:26px;flex:none;opacity:.9}
+.hd .who{display:flex;flex-direction:column;line-height:1.25;min-width:0}
+.hd .who b{font-size:14px}
+.hd .sub{font-size:11.5px;color:var(--dim)}
+
+/* 按钮：小图标 + 文字，hover 才有底色（moss 里那套 `.t` / `.iconbtn` 的合体） */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;font:inherit;font-size:12.5px;
+  color:var(--fg2);cursor:pointer;background:transparent;border:1px solid transparent;border-radius:8px;
+  transition:background .12s,color .12s,border-color .12s;white-space:nowrap}
+.btn:hover{background:var(--hover);color:var(--fg)}
+.btn:disabled{opacity:.45;cursor:default;background:transparent}
+.btn.primary{background:var(--accent);color:var(--accent-fg)}
+.btn.primary:hover{filter:brightness(1.06);color:var(--accent-fg)}
+.btn.primary:disabled{opacity:.5}
+.btn.small{padding:3px 8px;font-size:12px}
+.btn.danger:hover{color:#d64545;background:var(--hover)}
+.btn svg.i{width:14px;height:14px}
+
+/* ---------------------------------------------------------------- 两栏 */
+.cols{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 320px}
+.pane{min-width:0;min-height:0;display:flex;flex-direction:column;position:relative}
+.left{background:var(--panel)}
+.right{background:var(--panel2);border-left:1px solid var(--line2)}
+
+/* 左：添加行 */
+.addrow{display:flex;gap:8px;align-items:center;padding:10px 14px;flex:none;
+  border-bottom:1px solid var(--line)}
+.fi{flex:1;min-width:0;display:flex;align-items:center;gap:8px;padding:0 10px;
+  background:var(--bg);border:1px solid var(--ctl-in);border-radius:var(--r)}
+.fi:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--fill)}
+.fi > i{display:flex;color:var(--dim2)}
+.fi input{flex:1;min-width:0;padding:7px 0;font:inherit;color:var(--fg);background:transparent;border:0;outline:0}
+.fi input::placeholder{color:var(--ph)}
+
+/* 左：列表 */
+.list{flex:1;min-height:0;overflow:auto}
+.row{display:flex;align-items:center;gap:9px;padding:7px 12px 7px 14px;border-bottom:1px solid var(--line)}
+.row:hover{background:var(--hover)}
+.row .idx{width:20px;flex:none;text-align:right;font-size:11px;color:var(--dim2);
+  font-variant-numeric:tabular-nums}
+.row .p{flex:1;min-width:0;font-family:var(--mono);font-size:12.5px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row.gone .p{color:var(--warn)}
+.row .x{width:24px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;
+  color:var(--dim2);cursor:pointer;background:transparent;border:0;border-radius:7px;
+  opacity:0;transition:opacity .12s,background .12s,color .12s}
+.row:hover .x{opacity:1}
+.row .x:hover{background:var(--fill);color:var(--fg)}
+
+/* 小标签 */
+.chip{display:inline-flex;align-items:center;gap:4px;flex:none;font-size:11px;padding:1px 7px;
+  border-radius:999px;background:var(--tag);color:var(--fg2);white-space:nowrap}
+.chip.bad{background:var(--warn-bg);color:var(--warn)}
+.chip svg.i{width:11px;height:11px}
+.plus{color:var(--ok)}
+.minus{color:var(--warn)}
+
+/* 空状态 */
+.empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:44px 20px;
+  color:var(--dim2);text-align:center}
+.empty svg.i{width:26px;height:26px;opacity:.6}
+.empty b{color:var(--fg2);font-size:13px;font-weight:500}
+.empty span{font-size:12px;line-height:1.6}
+
+/* 拖动中：铺一层提示（不吃鼠标事件，drop 由监听收） */
+.dropmask{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:8px;pointer-events:none;color:var(--accent);
+  background:color-mix(in srgb, var(--accent) 8%, var(--panel));
+  border:2px dashed var(--accent);border-radius:12px;margin:10px}
+.dropmask svg.i{width:30px;height:30px}
+.dropmask b{font-size:13px}
+.dropmask span{font-size:12px;color:var(--dim)}
+#app.dragging .left{background:var(--panel)}
+
+/* ---------------------------------------------------------------- 右：备份 */
+.rhd{display:flex;align-items:center;gap:7px;padding:12px 14px 8px;flex:none;color:var(--fg2)}
+.rhd > i{display:flex;color:var(--dim)}
+.rhd b{font-size:12.5px;color:var(--fg)}
+.blist{flex:1;min-height:0;overflow:auto;padding:0 12px 12px}
+.bcard{background:var(--panel);border:1px solid var(--line2);border-radius:var(--r);
+  padding:9px 11px;margin-bottom:8px;cursor:pointer;transition:border-color .12s,box-shadow .12s}
+.bcard:hover{border-color:var(--ctl)}
+.bcard.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--fill)}
+.brow{display:flex;align-items:center;gap:6px}
+.brow .when{font-size:12.5px;font-variant-numeric:tabular-nums}
+.bacts{display:flex;gap:6px;margin-top:8px}
+.bdiff{margin-top:9px;padding-top:8px;border-top:1px solid var(--line2)}
+.bdiff .dh{font-size:11px;color:var(--dim);margin:4px 0 2px}
+.bdiff .dl{font-family:var(--mono);font-size:11.5px;color:var(--fg2);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ---------------------------------------------------------------- 底栏 */
+.ft{display:flex;align-items:center;gap:10px;padding:7px 14px;flex:none;
+  background:var(--panel);border-top:1px solid var(--line2)}
+.msg{display:flex;align-items:center;gap:6px;min-width:0;color:var(--fg2);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msg svg.i{width:13px;height:13px;color:var(--dim)}
+.msg.bad{color:var(--warn)}
+.msg.bad svg.i{color:var(--warn)}
+
+/* 窄了（选项卡拖窄 / 小窗）就落成一栏：备份排到下面 */
+@media (max-width: 760px){
+  .cols{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,42%)}
+  .right{border-left:0;border-top:1px solid var(--line2)}
+}

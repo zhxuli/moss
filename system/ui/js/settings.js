@@ -19,12 +19,14 @@ const MossSettings = {
   <div class="card wide">
     <div class="set-head">
       <h3>设置</h3>
-      <!-- 路径两段分开、都能点：点目录开文件夹，点文件名开那个文件（V-160） -->
+      <!-- 整条路径**每一段**都能点（V-198）：点哪一段就打开"到那一级"的路径，一直能点到根目录。
+           最后一段没有分隔符 ⇒ 那是个文件，点它就是打开文件（上一版只拆了目录 / 文件名两段，V-160）。 -->
       <span class="set-sub" id="set-path" :title="path"><span
-        class="set-link" id="set-open-dir" role="button" tabindex="0"
-        title="打开所在文件夹" @click="openDir()">{{ dirName }}</span><span
-        class="set-link" id="set-open-file" role="button" tabindex="0"
-        title="打开这个文件" @click="openFile()">{{ fileName }}</span></span>
+        v-for="(s, i) in segs" :key="i" class="set-link" :data-path="s.path"
+        :id="i === segs.length - 1 ? 'set-open-file' : null"
+        role="button" tabindex="0"
+        :title="(s.isFile ? '打开这个文件：' : '打开这一级：') + s.path"
+        @click="openSeg(s)">{{ s.text }}</span></span>
       <button class="set-x" id="set-close" title="关闭（Esc）" aria-label="关闭"
               @click="close" v-html="icon('x')"></button>
     </div>
@@ -311,15 +313,28 @@ const MossSettings = {
     };
   },
   computed: {
-    // 路径拆两段：目录（含末尾斜杠）+ 文件名 —— 两段分别可点（V-160）
-    dirName(){
-      const s = String(this.path || "");
-      return s.replace(/[^\\/]+$/, "");
-    },
-    fileName(){
-      const s = String(this.path || "");
-      const m = s.match(/[^\\/]+$/);
-      return m ? m[0] : s;
+    // ★ `V-198`：整条路径拆成**每一段**（每段自带它后面那个分隔符），每段都记着"到这一级"的完整路径。
+    //   上一版只拆两段（目录 / 文件名，`V-160`）—— 中间那几级点不动。
+    //   ★ 切法是"段 + 分隔符交替"，好处有三：① 拼回去**一字不差**（原来是 `/` 还是 `\` 都照原样）；
+    //     ② 盘符 `D:\` / UNC 头 `\\server\share\` / 根 `/` 单独当第一段；③ **最后一段没有分隔符**
+    //     正好就等于"这是个文件"（路径以分隔符结尾 ⇒ 最后那段是目录）。
+    segs(){
+      const raw = String(this.path || "");
+      const out = [];
+      if (!raw) return out;
+      const m = raw.match(/^([A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+[\\/]|[\\/])/);
+      const head = m ? m[1] : "";
+      if (head) out.push({text: head, path: head, isFile: false});
+      const parts = raw.slice(head.length).split(/([\\/]+)/);
+      let cur = head;
+      for (let i = 0; i < parts.length; i += 2){
+        const name = parts[i];
+        if (!name) continue;
+        const sep = parts[i + 1] || "";
+        cur += name + sep;
+        out.push({text: name + sep, path: cur, isFile: !sep});
+      }
+      return out;
     },
     shortPath(){
       const s = String(this.path || "").replace(/\\/g, "/");
@@ -468,9 +483,8 @@ const MossSettings = {
              'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" ' +
              'aria-hidden="true">' + P + '</svg>';
     },
-    // 点路径：文件夹和文件都用系统默认方式打开（宿主 `open_path`）
-    async openDir(){ await pywebview.api.open_path(this.dirName); },
-    async openFile(){ await pywebview.api.open_path(this.path); },
+    // 点路径里的任意一段（`V-198`）：用系统默认方式打开"到这一段为止"的那个路径
+    async openSeg(s){ if (s && s.path) await pywebview.api.open_path(s.path); },
     // AI 页在底栏左边显示什么（V-155）—— 和别的页一个位置、一个样式
     aiFootText(){
       if (this.ai.mode !== "edit") return "";

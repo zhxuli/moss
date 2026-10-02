@@ -17,7 +17,7 @@
        于是拖一个 .txt 进窗口时，`md5`（不限）亮、`img`（只收图片）**不亮** ——
        以前两个都亮，松手还会把 .txt 交给 img 去"处理"，纯属白跑一趟。
      **没写 `drop` 的包 = 完全不收拖入**（比如快捷翻译）—— 拖动时它连列表都不出现。 */
-const DRAG = {on: false, kind: null, items: null, depth: 0, cmd: 0, hits: 0};
+const DRAG = {on: false, kind: null, items: null, depth: 0, cmd: 0, hits: 0, framePid: null};
 /* 上一次**拖进来**塞进参数框的那一段（"包 id + 那一段原文"）。
    为什么要记：拖进来的那一段是追加在末尾的，连着拖两次就会叠成一串 —— 实测叠起来之后
    md5 收到两条路径，于是判成字符串、算了个错的 MD5。下一次拖入时先把这一段摘掉。 */
@@ -187,6 +187,51 @@ function dropCommandsFor(p, isDir){
   return ((p && p.drop) || []).filter(c => c[k]).map(c => ({label: c.label || "运行", rule: c[k]}));
 }
 function dropKindName(kind){ return kind === "dir" ? "文件夹" : (kind === "file" ? "文件" : "文件/文件夹"); }
+
+/* ---------------------------------------------------------------- 内嵌那一帧上的拖放（`V-204`）
+   ★ 问题：拖动时鼠标压在内嵌界面（那一帧 iframe）上时，浏览器的 `dragover`/`drop` **全给了
+     那一帧** —— 跨文档的拖放事件**不会冒泡到父页面**。而"真实路径"只有父页面这侧才拿得到
+     （路径是 Python 从 WebView2 里取出来再送进来的），于是：**界面型包的界面盖住右栏时，
+     往里拖任何东西都会石沉大海**（`path` 就是这么中的）。
+   ★ 办法：那一帧自己会报信（垫片看到拖动就 postMessage `kind:"drag"`），我们收到就铺一张
+     **透明罩子**盖住整扇窗，把后面的 `dragover`/`drop` 接到我们这层来 —— 于是既有的那条路
+     （`__mossDrop` → 收得下就送进那一帧 / 收不下就走命令行）原样生效。
+   ★ 罩子平时 `pointer-events:none`（不挡任何点击），只在有帧报拖动时才打开。 */
+let CATCHER = null;
+function catcherEl(){
+  if (CATCHER && CATCHER.isConnected) return CATCHER;
+  CATCHER = document.createElement("div");
+  CATCHER.id = "dropcatcher";
+  // ★ **罩子本身不画任何东西**（`V-206`）：它只负责"把拖放事件接到我们这侧，好拿到真实路径"。
+  //   画大提示的活儿归**那一帧自己** —— 它才知道这一松手会发生什么（"加进 PATH" / "转成 webp"…），
+  //   我们这边只知道"交给 :pid"。上一版两边各画一个虚线框，屏幕上就是**两个"松手"**，
+  //   看着像两个不一样的选项（`V-205` 踩的）；现在大的只有一个（页面那个），
+  //   我们只在左上角那条细条上说一句"拖到「X」的界面上了"。
+  document.body.appendChild(CATCHER);
+  return CATCHER;
+}
+function frameDrag(pid, phase){
+  const el = catcherEl();
+  if (phase === "over"){
+    if (DRAG.framePid === pid && el.classList.contains("on")) return;
+    DRAG.framePid = pid;
+    el.classList.add("on");
+    // ★ 告诉那一帧"我接住了，别再报离开"（`V-205`）：罩子一盖上去，它就会收到一次
+    //   `dragleave`（鼠标下的元素被换掉了）—— 它照着报 `out`，我们就收罩子；罩子一收，
+    //   它又收到 `dragenter` 再报 `over` ⇒ **来回抖**（你看到的"有时候"就是这个）。
+    pushEmbedEvent(pid, "captured", {});
+    if (DRAG.on){
+      renderList();          // 这一拖是冲着**那一帧**去的 ⇒ 左边列表**不筛**（`V-205`）
+      paintDragBar();        // 条上改说"松手就交给 :pid 的界面"
+    }
+    uiLog("frame drag: :" + pid + " 上有人在拖 —— 铺罩子接住（真实路径只有我们这侧拿得到）");
+  } else {
+    el.classList.remove("on");
+    if (DRAG.framePid === pid) DRAG.framePid = null;
+    if (DRAG.on){ renderList(); paintDragBar(); }   // 回到"按声明筛"的正常行为
+    uiLog("frame drag: :" + pid + " 上没东西了 —— 收罩子");
+  }
+}
 /* 一个包都没收的时候，说人话解释"差在哪"（`V-183`）—— 最典型的就是"只差扩展名"：
    拖个 .txt 进窗口，md5 收、img 不收，得让人一眼看出 img 为什么没出现。 */
 function dropWhyNone(items){
@@ -243,6 +288,15 @@ function dragRetry(e){
 function dragEnd(){
   if (!DRAG.on){ paintDropZone(false); return; }
   DRAG.on = false; DRAG.kind = null; DRAG.items = null; DRAG.depth = 0; DRAG.cmd = 0;
+  // 拖动结束：把罩子收掉，并告诉那一帧"拖完了"（它那边画的提示框要自己收，
+  // `V-204`：罩子把 drop 接走之后，那一帧就再也收不到 drop 事件了）。
+  if (DRAG.framePid){
+    const el = CATCHER;
+    if (el) el.classList.remove("on");
+    pushEmbedEvent(DRAG.framePid, "dragend", {});
+    uiLog("frame drag: 收掉罩子（:" + DRAG.framePid + "）");
+    DRAG.framePid = null;
+  }
   document.body.classList.remove("dragging");
   renderList();
   paintDragBar();
@@ -298,6 +352,19 @@ const MossDragBar = {
     html(){
       this.R.rev;
       if (!DRAG.on) return "";
+      // ★ 拖到内嵌那一帧上了（`V-205`）：**这一拖不是"找包"**，是给那个包的界面。
+      //   所以条上说清"松手交给谁"，左边列表也**不筛**（别让人以为列表坏了）。
+      if (DRAG.framePid){
+        const fp = (DATA && DATA.packages || []).find(x => x.id === DRAG.framePid) || {};
+        const takes = dropAccepts(fp, DRAG.items);
+        // 只在这里说一句（大的那个提示由**那一帧自己**画，`V-206`：两边都画就是两个"松手"）。
+        return ico("copy", "i") +
+          (takes
+            ? '<span>拖到 <b>' + (fp.name || DRAG.framePid) + '</b> 的界面上了：松手就交给它' +
+              '（<b>:</b>' + DRAG.framePid + '）—— 这一次不跑命令行</span>'
+            : '<span><b>' + (fp.name || DRAG.framePid) + '</b> 的界面不收这个（它没声明收拖入）' +
+              ' —— 松手不会有反应</span>');
+      }
       const n = DATA ? DATA.packages.filter(p => dropAccepts(p, DRAG.items)).length : 0;
       // `V-188`：这一次到底读没读到 —— 读不到就**明说**，别让人以为筛选坏了
       if (!DRAG.items) return ico("copy", "i") +
@@ -412,6 +479,9 @@ function bindDropZone(){
    ★ 到这一步我们才知道真实路径，也才知道拖的到底是文件还是文件夹（以宿主说的为准）。 */
 window.__mossDrop = function(items){
   const cmdIdx = DRAG.cmd;
+  // ★ 拖放是**冲着哪一帧**去的，得在 `dragEnd()` 之前记下来（`V-205`：罩子那条路上，
+  //   用户是把东西拖到内嵌界面上的，目标就是那一帧 —— 不是"当前选中的包"）。
+  const framePid = DRAG.framePid;
   dragEnd();
   if (!items || !items.length){ uiLog("host drop: 没有路径（WebView2 没给）"); return; }
   // ★ `V-88`：拖进来的路径**先问一下有没有"别人更想要"**（比如备份那一页的「导出到」
@@ -439,6 +509,18 @@ window.__mossDrop = function(items){
   }
   if (items.length > 1)
     toast("拖进来 " + items.length + " 个，先用第一个：" + (it.name || it.path));
+  // ★ `V-201` / `V-205`：目标帧**优先**是"拖过去的那一帧"（罩子那条路），没有才看当前选中的包。
+  //   这一帧的内嵌界面正跑着、而且它收得下 ⇒ 把真实路径**送给那一帧**，而不是再起一个
+  //   命令行进程（拖文件夹给 `path` 这种界面型包，用户的意图是"加进列表里"）。
+  //   事件名 `drop` 是垫片里早就留好的口子（`moss.on('drop')`，见契约 §内嵌界面）。
+  const target = (framePid && DATA.packages.find(x => x.id === framePid)) || p;
+  if (target && embedRunning(target.id) && dropAccepts(target, asItems)){
+    const send = items.map(x => String(x.path || "")).filter(Boolean);
+    pushEmbedEvent(target.id, "drop", {items: send});
+    uiLog("host drop → 内嵌界面 :" + target.id + " " + JSON.stringify(send));
+    toast("把 " + send.length + " 个路径交给了 :" + target.id + " 的界面");
+    return;
+  }
   const cmds = dropCommandsFor(p, it.isDir);
   if (!p || !cmds.length){
     toast("✗ " + (p ? (":" + p.id + " 不收" + (it.isDir ? "文件夹" : "文件"))

@@ -73,7 +73,20 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "settings-bad", "settings-warn", "settings-tip",
           "settings-ai", "settings-ai-tpl", "settings-ai-new", "settings-ai-empty",
           "hist", "hist-console", "hist-file",
-          "edit-manifest", "edit-manifest-detail", "float-window"]
+          "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui"]
+
+#: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
+#: 是场景（或它的假数据）跟不上 —— 待办记在账本 `V-203`。
+#: ★ 为什么要单列而不是直接删掉/改绿：默认模式以前**不看标题结论**，这 5 个一直在悄悄失败，
+#:   我却拿"51 个场景 OK"当全绿报了好几轮。现在每次跑都会把它们点名打出来（`STALE`），
+#:   直到真去修掉为止 —— 不许再藏。
+KNOWN_STALE = {
+    "settings-bad": "期望「预览行变红」（要 host 给的 live 以 ⚠ 开头），假数据没跟上",
+    "settings-tip": "直接调提示函数那条路：期望的返回值形状变了",
+    "settings-ai": "编辑视图里找返回箭头的选择器过期（`#ai-back` 现在在，但取到的是别的东西）",
+    "settings-ai-tpl": "预制卡片副标题早改成 `desc`（\"官方 API\"），场景还在找主机名 `api.deepseek.com`",
+    "settings-ai-new": "同上（走的是新增那一支）",
+}
 
 
 def browser():
@@ -385,10 +398,46 @@ MOCK_JS = r"""
     embed_send: async (pid, line) => {
       let req = {};
       try { req = JSON.parse(line); } catch(e){}
+      // `V-200`：记下"哪个包、调了什么" —— 场景靠它证明"页面真的转起来了"（iframe 是
+      // 别的源，父页面读不到里面，只能从这一侧看）
+      (M.embedCalls = M.embedCalls || []).push({pid: pid, method: req.method});
       const reply = (result) => window.__mossEmbedFromBackend(pid, JSON.stringify(
         {id: req.id, ok: true, result: result}));
       const d = new Date();
-      if (req.method === "info") reply({pid: 4242, python: "3.12（预览）", cwd: "(预览)", embedded: true});
+      // ---- path 那个包（`V-200`）：一份假的 PATH 状态，够页面画出来
+      const pstate = () => ({
+        ok: true, count: 4,
+        paths: ["C:\\\\Windows\\\\system32", "C:\\\\Windows", "D:\\\\tools\\\\bin",
+                "D:\\\\已经没了的目录\\\\bin"],
+        self_dir: "D:\\\\python\\\\two\\\\moss\\\\system\\\\pkgs\\\\path",
+        self_registered: false,
+        data_dir: "D:\\\\python\\\\two\\\\moss\\\\user_data\\\\state\\\\path",
+        backup_dir: "D:\\\\python\\\\two\\\\moss\\\\user_data\\\\state\\\\path\\\\data\\\\backups",
+        legacy_dir: "D:\\\\python\\\\two\\\\moss\\\\user_data\\\\state\\\\path\\\\.path_editor\\\\path_bak",
+        missing: ["D:\\\\已经没了的目录\\\\bin"]});
+      if (req.method === "state") reply(pstate());
+      else if (req.method === "info") reply({ok: true, pid: 4242, python: "3.12（预览）",
+        data_dir: "(预览)", self_dir: "(预览)", embedded: true});
+      else if (req.method === "add" || req.method === "remove" || req.method === "dedup" ||
+               req.method === "drop_missing")
+        reply({ok: true, msg: "(预览) " + req.method, state: pstate()});
+      else if (req.method === "add_many")
+        reply({ok: true, msg: "(预览) 加了 " + ((req.params.paths || []).length) + " 条",
+               state: pstate()});
+      else if (req.method === "pick_dir") reply({ok: true, path: "D:\\\\预览选的目录"});
+      else if (req.method === "backup_create")
+        reply({ok: true, msg: "(预览) 已备份 4 条", file: "(预览)", state: pstate()});
+      else if (req.method === "backup_list") reply({ok: true, state: pstate(), items: [
+        {file: "(预览) path_backup_20261002_120000.txt", time: "2026-10-02 12:00:00",
+         stamp: "20261002_120000", total: 4, add: 1, remove: 0, legacy: false, paths: []},
+        {file: "(预览) path_backup_20250101_010101.txt", time: "2025-01-01 01:01:01",
+         stamp: "20250101_010101", total: 3, add: 0, remove: 1, legacy: true, paths: []}]});
+      else if (req.method === "backup_preview")
+        reply({ok: true, add: ["D:\\\\tools\\\\bin"], remove: ["D:\\\\已经没了的目录\\\\bin"],
+               paths: [], msg: "会加 1 条、去掉 1 条", state: pstate()});
+      else if (req.method === "backup_restore" || req.method === "backup_delete")
+        reply({ok: true, msg: "(预览) " + req.method, state: pstate()});
+      // ---- bmi 那个包
       else if (req.method === "now") reply({text: d.toTimeString().slice(0, 8),
         date: d.toISOString().slice(0, 10), week: "一二三四五六日"[d.getDay()],
         who: "(预览) 假后端"});
@@ -905,6 +954,8 @@ MOCK_JS = r"""
               msg: "(预览) 导出 " + relPaths.length + " 个到 " + plan.root};
     },
     pick_dir: async () => ({ok: true, path: "D:\\预览选的目录"}),
+    // 点路径里某一段（`V-198`）：真后端是 os.startfile 打开那一级；这里记下来给场景断言
+    open_path: async (p) => { (M.opened = M.opened || []).push(String(p)); return {ok: true}; },
     backup_delete: async (id) => {
       M.bk = M.bk || [];
       const at = M.bk.findIndex(x => x.id === id);
@@ -1618,22 +1669,39 @@ MOCK_JS = r"""
         await openSettings();                     // 再打开：留给截图看个完整的
         await sleep(700);
         const opened = document.querySelector("#settings").classList.contains("on");
+        // ★ `V-198`：整条路径**每一段**都能点，直到根目录
+        const pathBox = document.querySelector("#set-path");
+        const segEls = [].slice.call(document.querySelectorAll("#set-path .set-link"));
+        const rawPath = (pathBox && pathBox.getAttribute("title")) || "";
+        const joined = segEls.map(e => e.textContent).join("");
+        const eachHasPath = segEls.every(e => !!e.getAttribute("data-path"));
+        // 点"倒数第二段"（一个目录）：宿主应该收到**到那一级为止**的路径
+        const midSeg = segEls[segEls.length - 2] || segEls[0];
+        const wantMid = (midSeg && midSeg.getAttribute("data-path")) || "";
+        if (midSeg) midSeg.click();
+        await sleep(300);
+        const gotMid = (M.opened || [])[(M.opened || []).length - 1] || "";
+        const segOk = segEls.length >= 3 && joined === rawPath && eachHasPath &&
+                      !!wantMid && gotMid === wantMid;
         const ok = navs === 5 && panes === 5 && activePane.group === "快捷命令" &&
                    pane2.group === "执行提示" && switches === 7 && inputs === 4 &&
                    labels === 4 && infos === 4 && liveBox && hasX && disabledAtStart &&
                    enabledAfter && /改了 1 项/.test(stateMoved) && closedAfterSave && opened &&
-                   Object.keys(saved).length === 1 && saved["symbols.no_chdir_mode"] === "@";
+                   Object.keys(saved).length === 1 && saved["symbols.no_chdir_mode"] === "@" &&
+                   segOk;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 分类=" + navs + " 面板=" + panes +
           " 首屏=" + activePane.group + " 次屏=" + pane2.group + " 开关=" + switches +
           " 输入=" + inputs + " 标签=" + labels + " ?=" + infos + " 预览行=" + (liveBox ? 1 : 0) +
-          " ×=" + (hasX ? 1 : 0) + " 存了=" + JSON.stringify(saved);
+          " ×=" + (hasX ? 1 : 0) + " 存了=" + JSON.stringify(saved) +
+          " 路径段=" + segEls.length + " 拼回原样=" + (joined === rawPath);
         document.title = ok ? "READY" : ("SETTINGS-FAIL 分类=" + navs + " 面板=" + panes +
           " 首屏=" + activePane.group + " 次屏=" + pane2.group + " 开关=" + switches +
           " 输入=" + inputs + " 标签=" + labels + " ?=" + infos + " 预览=" + liveBox +
           " ×=" + hasX + " 起灰=" + disabledAtStart + " 改亮=" + enabledAfter +
           " 挪=" + /改了 1 项/.test(stateMoved) + " 关=" + closedAfterSave + " 开=" + opened +
-          " 存=" + Object.keys(saved).length + " 值=" + saved["symbols.no_chdir_mode"]);
+          " 存=" + Object.keys(saved).length + " 值=" + saved["symbols.no_chdir_mode"] +
+          " 段=" + segEls.length + " 拼=" + (joined === rawPath) + " 点段=" + (gotMid === wantMid));
       }
       // ---- AI 那一组（V-142）：**三张脸** —— 列表（卡片）/ 选服务商（网格）/ 编辑（表单）。
       //      这条走：列表长什么样 → 卡片上设为当前 → 卡片进编辑 → 编辑页里测连接（结果横幅）
@@ -2515,7 +2583,13 @@ MOCK_JS = r"""
         const noBmi = idsTxt.indexOf("bmi") < 0;
         const barTxt = ((document.querySelector("#dragbar") || {}).textContent || "")
                          .replace(/\s+/g, " ");
-        const saidWhy = barTxt.indexOf("img") >= 0 && barTxt.indexOf("只收") >= 0;
+        // ★ 说清"为什么"的那句话只在**一个都没收**时才出现；拖 .txt 时 md5/open 是收的，
+        //   所以这里分开验两件事：① 条上把筛完的数字说对；② `dropWhyNone`（0 个收的时候
+        //   那句点名）本身说的话对 —— 直接调它，别指望拖动时会走到那条分支（`V-202` 改）。
+        const barOk = /只列出收得下它的 2 个包/.test(barTxt);
+        const whyTxt = (typeof window.dropWhyNone === "function")
+          ? window.dropWhyNone([{name: "note.txt", isDir: false}]) : "";
+        const saidWhy = whyTxt.indexOf("img") >= 0 && whyTxt.indexOf("只收") >= 0;
         dragEnd();
         await sleep(200);
         // ② 拖一张 .PNG（大写）：img 该出现（扩展名不分大小写）
@@ -2603,7 +2677,7 @@ MOCK_JS = r"""
                           .every(id => idsBlank.indexOf(id) >= 0);
         dragEnd();
         await sleep(200);
-        const ok = hasExt && imgOut && md5In && saidWhy && imgIn && upperOk && dirIn &&
+        const ok = hasExt && imgOut && md5In && barOk && saidWhy && imgIn && upperOk && dirIn &&
                    noRun && toastSaid && ranOk && noDirOnly && noBmi && lateOk &&
                    mimeOk && mimeImgOk && blankOk;
         const diag = "DIAG " + (ok ? "OK" : "FAIL") +
@@ -2698,6 +2772,115 @@ MOCK_JS = r"""
           " 收=" + (docked ? 1 : 0) + " 关=" + (closed ? 1 : 0);
         if (ok) setTab("console");
         document.title = ok ? "READY" : "FLOAT-FAIL";
+      }
+      // ★ `V-199`：插件 / 历史 两颗按钮上的数字；顶栏那行统计不再显示（自检留着）
+      if (h === "side-counts"){
+        await sleep(400);
+        const txt = sel => { const e = document.querySelector(sel); return e ? e.textContent : null; };
+        const nPkg = txt("#sw-n-pkg"), nHist = txt("#sw-n-hist");
+        const wantPkg = String(state.packages.length);
+        const wantHist = String((HIST || []).length);
+        const metaTxt = txt("#meta") || "";
+        const metaEmpty = metaTxt.trim() === "";
+        const noOldStats = !/个包|启动方式/.test(metaTxt);
+        const selfcheck = !!document.querySelector("#btn-selfcheck svg");
+        const brandTip = (document.querySelector("header .brand") || {}).title || "";
+        const tipOk = /启动方式/.test(brandTip) && brandTip.indexOf(state.home) >= 0;
+        // 切到历史再切回来：数字不该变（它是总数，不跟着筛选跳）
+        const nav = document.querySelectorAll("#sideswitch button");
+        const histBtn = document.querySelector("#sw-hist");
+        if (histBtn) histBtn.click();
+        await sleep(250);
+        const nPkg2 = txt("#sw-n-pkg"), nHist2 = txt("#sw-n-hist");
+        if (document.querySelector("#sw-pkg")) document.querySelector("#sw-pkg").click();
+        await sleep(250);
+        const ok = nPkg === wantPkg && nHist === wantHist && metaEmpty && noOldStats &&
+                   selfcheck && tipOk && nPkg2 === wantPkg && nHist2 === wantHist;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n插件数字 = " + nPkg + "（应为 " + wantPkg + "）" +
+          "\n历史数字 = " + nHist + "（应为 " + wantHist + "）" +
+          "\n顶栏 = " + JSON.stringify(metaTxt.slice(0, 40)) + "  空=" + metaEmpty +
+          "  旧统计没有了=" + noOldStats +
+          "\n自检按钮还在 = " + selfcheck + "   品牌 tooltip 带安装根和启动方式 = " + tipOk +
+          "\n切到历史再切回：插件=" + nPkg2 + " 历史=" + nHist2;
+        document.querySelector("#meta").className = "meta";
+        if (ok) setTab("console");
+        document.title = ok ? "READY" : "COUNT-FAIL";
+      }
+      // ★ `V-200`：`path` 那个包换成内嵌网页界面之后，整条路要通 ——
+      //   选中它 → 「界面」选项卡 → 起后端 → iframe 加载**真的那份页面** →
+      //   垫片 postMessage → 宿主 embed_send → 后端答话。
+      //   ★ iframe 是**另一个源**（预览里是 file://），父页面读不到里面的 DOM ——
+      //     所以这里从"宿主这一侧"验：iframe 的地址、以及后端到底被问了什么
+      //     （页面 `onMounted` 会先 `info` 再 `state`，看到这两条就说明页面真的转起来了）。
+      if (h === "path-ui"){
+        const p0 = state.packages.find(x => x.id === "path");
+        if (!p0){ document.title = "NO-PATH-PKG"; return; }
+        const hasEmbed = !!(p0.ui && p0.ui.embed);
+        select("path");
+        await sleep(400);
+        const tabBtn = document.querySelector('.tab[data-tab="embed"]');
+        const tabShown = !!(tabBtn && !tabBtn.hidden);
+        M.embedCalls = [];
+        await embedOpen(p0);                       // = 点「运行」
+        await sleep(2600);                         // 等 iframe 加载 + Vue 挂载 + 问后端
+        const frame = document.querySelector("#embed-wrap iframe[data-pid='path']");
+        const src = frame ? (frame.getAttribute("src") || "") : "";
+        const srcOk = /path\/ui\/index\.html$/.test(src.replace(/\\\\/g, "/").replace(/\\/g, "/"));
+        const calls = (M.embedCalls || []).map(c => c.method);
+        const asked = calls.indexOf("info") >= 0 && calls.indexOf("state") >= 0;
+        // ★ `V-201`：拖一个文件夹进来 —— 应该**送进内嵌那一帧**（而不是再起一个命令行进程），
+        //   页面收到 `drop` 事件后调 `add_many`。这一条把"拖放 → 内嵌界面"整条路验穿。
+        window.__mossDrop([{path: "D:\\\\tools\\\\新拖进来的", isDir: true,
+                            dir: "D:\\\\tools\\\\新拖进来的", name: "新拖进来的"}]);
+        await sleep(700);
+        const dropped = (M.embedCalls || []).some(c => c.method === "add_many");
+        const noErr = !(window.__errors || []).length;
+        // ★ `V-204` / `V-205`：那一帧报"有人拖着东西在我头上"时，**罩子要打开**（把拖放接到
+        //   我们这侧，真实路径才拿得到）、**要显示提示**、**左边列表不许跟着筛**（那一拖是给
+        //   那一帧的），拖动结束后罩子收掉、列表回到正常筛选。
+        select("path");
+        await sleep(200);
+        const rowsBefore = document.querySelectorAll("#list .item").length;
+        window.__mossDropStart && window.__mossDropStart();      // 有就顺手起一次（没有也不影响）
+        const fakeDrag = new Event("dragenter", {bubbles: true});
+        fakeDrag.dataTransfer = {types: ["Files"], dropEffect: "",
+          items: [{webkitGetAsEntry: () => ({isDirectory: true, name: "x"})}]};
+        document.dispatchEvent(fakeDrag);
+        await sleep(200);
+        window.frameDrag("path", "over");
+        await sleep(200);
+        const cat = document.querySelector("#dropcatcher");
+        const catOn = !!cat && cat.classList.contains("on") &&
+                      getComputedStyle(cat).pointerEvents === "auto";
+        // `V-206`：罩子**不画提示**（大的那个提示归那一帧自己）—— 屏幕上只能有一个"松手"
+        const catBare = !!cat && !cat.querySelector(".dc-in") && cat.innerHTML.trim() === "";
+        const rowsDuring = document.querySelectorAll("#list .item").length;
+        const notFiltered = rowsDuring >= rowsBefore;
+        const barTxt = ((document.querySelector("#dragbar") || {}).textContent || "")
+                         .replace(/\s+/g, " ");
+        const barFrame = /的界面上了/.test(barTxt);
+        dragEnd();
+        await sleep(200);
+        const catOff = !!cat && !cat.classList.contains("on");
+        const rowsAfter = document.querySelectorAll("#list .item").length;
+        const ok = hasEmbed && tabShown && !!frame && srcOk && asked && dropped && catOn &&
+                   catBare && notFiltered && barFrame && catOff && rowsAfter === rowsBefore && noErr;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n声明了内嵌界面 = " + hasEmbed + "（" + JSON.stringify(p0.ui || null) + "）" +
+          "\n「界面」选项卡出现 = " + tabShown +
+          "\niframe = " + (frame ? src.slice(-40) : "（没有）") + "  地址对不对 = " + srcOk +
+          "\n后端被问到 = " + JSON.stringify(calls) + "  （info+state 说明页面真的跑起来了）" +
+          "\n拖文件夹进来 → 送给内嵌界面（add_many）= " + dropped +
+          "\\n帧上拖动 → 罩子打开可用 = " + catOn + "、罩子本身不画提示 = " + catBare +
+          "、左边**不筛** = " + notFiltered + "（" + rowsBefore + " → " + rowsDuring + " 行）" +
+          "\n条上说的是「那一帧」= " + barFrame + "  |  " + barTxt.slice(0, 46) +
+          "\n松手后罩子收掉 = " + catOff + "、列表复原 = " + (rowsAfter === rowsBefore) +
+          "\n页内错误 = " + (window.__errors || []).length;
+        if (ok) setTab("console");
+        document.title = ok ? "READY" : "PATHUI-FAIL";
       }
       // ★ 报错这条路本身也要能自证（`V-81`）：故意造一个"计算属性里抛错"的组件（和
       //   `MossList.rows` 读 `DATA.packages` 抛的那个是同一类），看它有没有被
@@ -2880,15 +3063,19 @@ def main():
     # `--dark`：让 `prefers-color-scheme: dark` 生效 —— 深色那套令牌是另一份值，
     # 不单独看一眼很容易只在浅色下"看着没事"。
     dark = "--dark" in args
-    # `--check`：多跑一次 `--dump-dom`，把场景写进 `document.title` 的**结论**读出来 ——
-    # "图片生成了"不等于"场景判过了"。
-    check = "--check" in args
+    # 读标题里的结论 —— **默认就做**（`V-202`）。
+    # ★ 血的教训：以前只有 `--check` 才读标题，平时只看"图片生成没有"。于是页面**从第一个
+    #   场景起就在抛 `FLOAT_PID is not defined`**（每个场景都记成 PAGE-ERR），而默认那一跑
+    #   照样一屏 OK —— 我拿它当"全绿"报了好几轮。**"图片出来了"和"场景判过了"是两件事。**
+    #   想快一点（只截图、不判）用 `--fast`。
+    check = "--fast" not in args
     print("浏览器 : %s" % exe)
     print("临时副本: %s" % PRE)
     print("窗口    : %s%s%s" % (size, "  （深色）" if dark else "",
-                                "  （--check：读标题里的结论）" if check else ""))
+                                "" if check else "  （--fast：只截图，不读结论）"))
     print("=" * 64)
     bad = 0
+    staleN = []                    # 期望过期的那几个（`KNOWN_STALE`），最后汇总点名
     for sc in scenes:
         out = SHOTS / (sc + ".png")
         prof = PRE / ("_profile_" + sc)
@@ -2914,15 +3101,30 @@ def main():
             verdict = "  标题=%s" % (title or "（读不到）")
             ok = ok and good
         if not ok:
-            bad += 1
-        print("  %-16s %s  %s%s" % (sc, "OK" if ok else "FAIL",
+            # 已知过期的那几个：**照样点名打出来**，但不计入"失败数"（不然每次跑都一屏红，
+            # 真出问题的那条反而被淹没）。跑完还会在末尾汇总一次并指向账本。
+            if (not check) or (sc in KNOWN_STALE):
+                staleN.append(sc)
+            else:
+                bad += 1
+        else:
+            staleN = [s for s in staleN if s != sc]
+        print("  %-16s %s  %s%s" % (sc, "OK" if ok else ("STALE" if sc in KNOWN_STALE else "FAIL"),
                                    ("%.0f KB" % (out.stat().st_size / 1024)) if out.is_file()
                                    else (r.stderr or "")[-160:], verdict))
     print("=" * 64)
     print("截图：%s" % SHOTS)
     print("★ 用 read_image 看图。仓库没被改动；临时副本可以随时删。")
+    if staleN:
+        print()
+        print("⚠ 有 %d 个场景的期望**已经过期**（产品是对的，是场景/假数据没跟上）—— 见账本 V-203："
+              % len(staleN))
+        for s in staleN:
+            print("    %-16s %s" % (s, KNOWN_STALE.get(s, "（没有记原因）")))
     return 1 if bad else 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
+
+

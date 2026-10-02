@@ -1,462 +1,620 @@
+# -*- coding: utf-8 -*-
+"""PATH 管理 —— 一份界面代码（`ui/index.html`，Vue 3），两种跑法（照抄 `bmi` 那个样板，`V-48`）：
+
+    moss :path                 不带参数 → 自己开一个窗口
+    在 moss 界面里点「运行」     → 内嵌到 moss 的「界面」选项卡里跑（`pkg.json` 的 `ui.embed`）
+
+界面跟后端说话全部经过 `ui/moss-embed.js` 那个垫片：被嵌进 moss 时走 postMessage，
+独立窗口时走 pywebview 的 `js_api`。**改注册表、读写备份全在这个文件里** ——
+界面只负责显示，所以"是不是 Python 在干活"看一眼命令行那页的 print 就知道。
+
+★ 数据放哪（`V-200`）：`MOSS_PLUGIN_DATA_DIR`（= `user_data/state/path/`）下面的
+  `data/backups/path_backup_<时间戳>.txt`，**一行一个路径**。老位置
+  `.path_editor/path_bak/` 仍然**认**（能列出来、能恢复、能删），但**不再往里写**。
+★ 只改**当前用户**的 PATH（注册表 `HKCU\\Environment` 的 `Path`，`REG_EXPAND_SZ`），
+  不需要管理员；改完广播 `WM_SETTINGCHANGE`（**已经开着的**终端不会变，新开的才看得到）。
+★ 上一版是 tkinter 界面（`PathEditorApp` / `RestoreWindow`，还依赖 `windnd` 收拖放）——
+  按契约"界面写成网页、别用 Tk 写新包"换掉了：现在一份网页两份环境通用，
+  并且**不再需要 windnd**（拖文件夹进来的事由 moss 那边负责）。
+"""
+import ctypes
+import json
 import os
 import sys
-import ctypes
+import threading
 import winreg
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
-from pathlib import Path
 from datetime import datetime
-# python -m nuitka --onefile --lto=yes --plugin-enable=tk-inter --windows-disable-console --remove-output --windows-icon-from-ico=icon.ico -o path main.py
-# 依赖检查和颜色配置等所有类定义都保持不变
-try:
-    import windnd
-except ImportError:
-    messagebox.showerror("依赖缺失", "错误: 缺少 'windnd' 库。\n请在命令行中运行: pip install windnd")
-    sys.exit(1)
+from pathlib import Path
 
-COLORS = {
-    "bg": "#2E3440", "fg": "#ECEFF4", "frame_bg": "#3B4252",
-    "list_bg": "#3B4252", "list_select_bg": "#88C0D0", "list_select_fg": "#2E3440",
-    "button_bg": "#5E81AC", "button_fg": "#ECEFF4", "success_bg": "#A3BE8C",
-    "success_fg": "#2E3440", "status_bg": "#434C5E", "disabled_fg": "#4C566A",
-    "tree_heading_bg": "#4C566A", "warning_fg": "#EBCB8B"
-}
-application_path = os.path.dirname(sys.executable) if 'python' not in os.path.basename(sys.executable).lower() else os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.path.abspath(sys.path[0])
-# 宿主 moss 注入的插件专属数据目录 (user_data/<插件目录名>)；独立运行时退回插件目录
-DATA_DIR = os.environ.get('MOSS_PLUGIN_DATA_DIR') or os.environ.get('PA_PLUGIN_DATA_DIR') or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
-              "user_data", "state", "path")
+#: 这个包自己的目录（"注册自身目录"那颗按钮用的就是它）
+SELF_DIR = os.path.dirname(os.path.abspath(__file__))
+
+#: 宿主注入的插件数据目录；独立运行时退回 `user_data/state/path`
+DATA_DIR = Path(
+    os.environ.get('MOSS_PLUGIN_DATA_DIR')
+    or os.environ.get('PA_PLUGIN_DATA_DIR')
+    or (Path(os.environ.get('MOSS_HOME') or Path.home()) / 'user_data' / 'state' / 'path')
+)
+
+#: 备份放这儿（`V-200`：按契约用 `data/`——持久、要备份的东西放这里）
+BACKUP_DIR = DATA_DIR / 'data' / 'backups'
+#: 老位置：只读认，不再写
+LEGACY_BACKUP_DIR = DATA_DIR / '.path_editor' / 'path_bak'
+
+TITLE = 'PATH 管理'
+UI_FILE = os.path.join(SELF_DIR, 'ui', 'index.html')
+
+
+# ---------------------------------------------------------------- 备份
 class BackupManager:
+    """备份就是"把当前用户 PATH 那一串存成一份文本"（一行一个路径）。
+
+    ★ 为什么存纯文本：出问题时用记事本就能看、能对、能手工拼回去 —— 备份这种东西
+      **可读性**比紧凑重要（而且老备份就是这格式，换格式等于把老备份作废）。
+    """
+
     def __init__(self):
-        self.backup_dir = Path(DATA_DIR) / ".path_editor" / "path_bak"
+        self.backup_dir = BACKUP_DIR
+        self.legacy_dir = LEGACY_BACKUP_DIR
         self.backup_prefix = "path_backup_"
         self.time_format = "%Y%m%d_%H%M%S"
-    def create_backup(self, paths: list[str]) -> tuple[bool, str]:
-        timestamp = datetime.now().strftime(self.time_format)
-        backup_file = self.backup_dir / f"{self.backup_prefix}{timestamp}.txt"
-        try:
-            # 懒加载：只有真正备份时才创建数据目录
-            self.backup_dir.mkdir(parents=True, exist_ok=True)
-            with open(backup_file, 'w', encoding='utf-8') as f:
-                for path in paths:
-                    f.write(f"{path}\n")
-            return True, f"成功备份到: {backup_file}"
-        except IOError as e:
-            return False, f"备份失败: {e}"
-    def get_paths_from_backup(self, backup_filepath: str) -> list[str]:
-        try:
-            with open(backup_filepath, 'r', encoding='utf-8') as f:
-                return [line.strip() for line in f if line.strip()]
-        except FileNotFoundError:
-            return []
-    def list_backups(self, current_system_paths: list[str]) -> list[dict]:
-        backups = []
-        current_set = {os.path.normpath(p).lower() for p in current_system_paths}
-        for f in self.backup_dir.glob(f"{self.backup_prefix}*.txt"):
-            try:
-                timestamp_str = f.stem.replace(self.backup_prefix, '')
-                backup_time = datetime.strptime(timestamp_str, self.time_format)
-                backup_paths = self.get_paths_from_backup(str(f))
-                backup_set = {os.path.normpath(p).lower() for p in backup_paths}
-                added_count = len(backup_set - current_set)
-                removed_count = len(current_set - backup_set)
-                backups.append({
-                    "path": str(f),
-                    "time": backup_time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "total_count": len(backup_paths),
-                    "added_count": added_count,
-                    "removed_count": removed_count
-                })
-            except (ValueError, IndexError):
-                continue
-        return sorted(backups, key=lambda x: x['time'], reverse=True)
 
+    # ---- 写
+    def create_backup(self, paths):
+        """返回 (ok, 说明, 文件路径)。空 PATH 不备份（没有意义）。"""
+        if not paths:
+            return False, "当前 PATH 是空的，没什么可备份", ""
+        stamp = datetime.now().strftime(self.time_format)
+        f = self.backup_dir / ("%s%s.txt" % (self.backup_prefix, stamp))
+        try:
+            self.backup_dir.mkdir(parents=True, exist_ok=True)     # 懒加载：真要写才建目录
+            with open(f, 'w', encoding='utf-8') as fh:
+                fh.write("\n".join(paths) + "\n")
+            return True, "已备份 %d 条到 %s" % (len(paths), f), str(f)
+        except OSError as e:
+            return False, "备份失败：%s" % e, ""
+
+    # ---- 读
+    def read(self, filepath):
+        try:
+            with open(filepath, 'r', encoding='utf-8') as fh:
+                return [ln.strip() for ln in fh if ln.strip()]
+        except OSError:
+            return []
+
+    def _scan(self, folder, legacy):
+        out = []
+        try:
+            files = list(folder.glob("%s*.txt" % self.backup_prefix))
+        except OSError:
+            return out
+        for f in files:
+            try:
+                stamp = f.stem.replace(self.backup_prefix, '')
+                when = datetime.strptime(stamp, self.time_format)
+            except ValueError:
+                continue
+            paths = self.read(str(f))
+            out.append({"file": str(f), "time": when.strftime("%Y-%m-%d %H:%M:%S"),
+                        "stamp": stamp, "total": len(paths), "paths": paths,
+                        "legacy": bool(legacy)})
+        return out
+
+    def list_backups(self, current_paths):
+        """所有备份，新的在前。带上"与现在比会新增/移除几条"（恢复前先看清楚）。"""
+        cur = {os.path.normpath(p).lower() for p in current_paths}
+        out = self._scan(self.backup_dir, False) + self._scan(self.legacy_dir, True)
+        for b in out:
+            bset = {os.path.normpath(p).lower() for p in b["paths"]}
+            b["add"] = len(bset - cur)
+            b["remove"] = len(cur - bset)
+        return sorted(out, key=lambda x: x["stamp"], reverse=True)
+
+    def diff(self, backup_paths, current_paths):
+        """这份备份和现在比：会**新增**哪些、会**移除**哪些。"""
+        bset = {os.path.normpath(p).lower() for p in backup_paths}
+        cur = {os.path.normpath(p).lower() for p in current_paths}
+        add = [p for p in backup_paths if os.path.normpath(p).lower() not in cur]
+        gone = [p for p in current_paths if os.path.normpath(p).lower() not in bset]
+        return add, gone
+
+    def delete(self, filepath):
+        """删一份备份。只认自己那两个目录里的（别让界面把任意文件删了）。"""
+        p = Path(filepath).resolve()
+        for folder in (self.backup_dir, self.legacy_dir):
+            try:
+                if p.parent.resolve() == folder.resolve() and p.is_file():
+                    p.unlink()
+                    return True, "已删除备份：%s" % p.name
+            except OSError as e:
+                return False, "删除失败：%s" % e
+        return False, "这个文件不在备份目录里，没动它"
+
+
+# ---------------------------------------------------------------- PATH（注册表）
 class PathManager:
     ENV_REG_KEY = winreg.HKEY_CURRENT_USER
     ENV_REG_SUBKEY = 'Environment'
     HWND_BROADCAST = 0xFFFF
     WM_SETTINGCHANGE = 0x001A
+
     def _broadcast_change(self):
+        """告诉系统"环境变量变了" —— 新开的进程才会拿到新 PATH。"""
         ctypes.windll.user32.SendNotifyMessageW(
-            self.HWND_BROADCAST, self.WM_SETTINGCHANGE, 0,
-            ctypes.c_wchar_p('Environment')
-        )
-    def get_user_path_list(self) -> list[str]:
+            self.HWND_BROADCAST, self.WM_SETTINGCHANGE, 0, ctypes.c_wchar_p('Environment'))
+
+    def get_user_path_list(self):
+        """当前用户的 PATH（拆成一条一条，去掉空的）。系统 PATH 在这个键里看不到 —— 那在
+        `HKLM`，我们**不动**它（用户级就够用，也不用管理员）。"""
         try:
             with winreg.OpenKey(self.ENV_REG_KEY, self.ENV_REG_SUBKEY) as key:
-                path_str, _ = winreg.QueryValueEx(key, 'Path')
-            return [p.strip() for p in path_str.split(';') if p.strip()]
+                value, _ = winreg.QueryValueEx(key, 'Path')
+            return [p.strip() for p in str(value).split(';') if p.strip()]
         except FileNotFoundError:
             return []
-    def is_path_registered(self, dir_to_check: str) -> bool:
-        normalized_dir = os.path.normpath(dir_to_check).lower()
-        return any(os.path.normpath(p).lower() == normalized_dir for p in self.get_user_path_list())
-    def add_path_and_broadcast(self, dir_to_add: str) -> tuple[bool, str]:
-        normalized_dir = os.path.normpath(dir_to_add)
-        if self.is_path_registered(normalized_dir):
-            return False, f"路径 '{normalized_dir}' 已存在。"
-        current_paths = self.get_user_path_list()
-        new_paths = list(dict.fromkeys(current_paths))
-        new_paths.append(normalized_dir)
-        return self.set_new_path_and_broadcast(new_paths, f"成功注册路径: {normalized_dir}")
-    def remove_path_and_broadcast(self, dir_to_remove: str) -> tuple[bool, str]:
-        normalized_dir_lower = os.path.normpath(dir_to_remove).lower()
-        current_paths = self.get_user_path_list()
-        new_paths = [p for p in current_paths if os.path.normpath(p).lower() != normalized_dir_lower]
-        if len(new_paths) == len(current_paths):
-            return False, f"路径 '{os.path.normpath(dir_to_remove)}' 未在PATH中找到。"
-        return self.set_new_path_and_broadcast(new_paths, f"成功反注册路径: {os.path.normpath(dir_to_remove)}")
-    def set_new_path_and_broadcast(self, new_paths: list[str], success_message: str) -> tuple[bool, str]:
-        new_path_str = ';'.join(new_paths)
+        except OSError:
+            return []
+
+    def is_registered(self, path):
+        want = os.path.normpath(path).lower()
+        return any(os.path.normpath(p).lower() == want for p in self.get_user_path_list())
+
+    def write(self, paths, success_msg):
+        """整串写回去 + 广播。**所有改动都走这里**（只有一处碰注册表）。"""
         try:
-            with winreg.OpenKey(self.ENV_REG_KEY, self.ENV_REG_SUBKEY, 0, winreg.KEY_WRITE) as key:
-                winreg.SetValueEx(key, 'Path', 0, winreg.REG_EXPAND_SZ, new_path_str)
+            with winreg.OpenKey(self.ENV_REG_KEY, self.ENV_REG_SUBKEY, 0,
+                                winreg.KEY_WRITE) as key:
+                winreg.SetValueEx(key, 'Path', 0, winreg.REG_EXPAND_SZ, ';'.join(paths))
             self._broadcast_change()
-            return True, success_message
-        except Exception as e:
-            return False, f"修改注册表失败: {e}"
+            return True, success_msg
+        except OSError as e:
+            return False, "改注册表失败：%s" % e
 
-# --- 恢复窗口 (已修改) ---
-class RestoreWindow(tk.Toplevel):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.parent = parent
-        self.transient(parent)
-        self.grab_set()
-        self.title("从备份恢复PATH")
-        self.geometry("750x600")
-        self.configure(bg=COLORS["bg"])
-        self._center_window()
-        self.selected_backup = None
-        self.paths_to_add = []
-        self.paths_to_remove = []
-        self.full_backup_paths = []
-        self._setup_styles()
-        self._create_step1_widgets()
-        self._create_step2_widgets()
-        self.show_step1()
-    def _center_window(self):
-        self.update_idletasks()
-        parent_x, parent_y = self.parent.winfo_x(), self.parent.winfo_y()
-        parent_w, parent_h = self.parent.winfo_width(), self.parent.winfo_height()
-        w, h = self.winfo_width(), self.winfo_height()
-        x = parent_x + (parent_w // 2) - (w // 2)
-        y = parent_y + (parent_h // 2) - (h // 2)
-        self.geometry(f"+{x}+{y}")
-    def _setup_styles(self):
-        style = ttk.Style(self); style.configure("Restore.TLabel", background=COLORS["bg"], foreground=COLORS["fg"], padding=5)
-        style.configure("Treeview", background=COLORS["list_bg"], foreground=COLORS["fg"], fieldbackground=COLORS["list_bg"], rowheight=25)
-        style.map("Treeview", background=[('selected', COLORS["list_select_bg"])], foreground=[('selected', COLORS["list_select_fg"])])
-        style.configure("Treeview.Heading", background=COLORS["tree_heading_bg"], foreground=COLORS["fg"], padding=5, font=('Segoe UI', 10, 'bold'))
-        style.configure("Custom.TPanedwindow", background=COLORS["bg"]); style.configure("Custom.TPanedwindow.Sash", background=COLORS["frame_bg"], sashthickness=2, relief=tk.FLAT, borderwidth=0)
-    def _create_step1_widgets(self):
-        self.step1_frame = ttk.Frame(self, padding=10)
-        ttk.Label(self.step1_frame, text="步骤 1: 选择一个备份文件", style="Restore.TLabel", font=('Segoe UI', 12, 'bold')).pack(fill=tk.X)
-        ttk.Label(self.step1_frame, text="列表显示了每个备份与当前系统PATH对比的变化。", style="Restore.TLabel").pack(fill=tk.X, pady=(0, 10))
-        tree_frame = ttk.Frame(self.step1_frame)
-        tree_frame.pack(fill=tk.BOTH, expand=True)
-        cols = ("备份时间", "总条数", "将新增", "将移除")
-        self.backup_tree = ttk.Treeview(tree_frame, columns=cols, show='headings', selectmode='browse')
-        for col in cols: self.backup_tree.heading(col, text=col)
-        self.backup_tree.column("备份时间", width=160, anchor=tk.W); self.backup_tree.column("总条数", width=80, anchor=tk.CENTER); self.backup_tree.column("将新增", width=80, anchor=tk.CENTER); self.backup_tree.column("将移除", width=80, anchor=tk.CENTER)
-        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.backup_tree.yview)
-        self.backup_tree.configure(yscrollcommand=scrollbar.set)
-        self.backup_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.backup_tree.bind("<<TreeviewSelect>>", self._on_backup_select)
-        
-        btn_frame = ttk.Frame(self.step1_frame, padding=(0, 10))
-        btn_frame.pack(fill=tk.X, side=tk.BOTTOM)
-        
-        # 按钮从右向左放置
-        self.btn_next = ttk.Button(btn_frame, text="下一步", state=tk.DISABLED, command=self.go_to_step2)
-        self.btn_next.pack(side=tk.RIGHT)
-        
-        # **新增**: 删除备份按钮
-        self.btn_delete = ttk.Button(btn_frame, text="删除所选", state=tk.DISABLED, command=self.delete_selected_backup)
-        self.btn_delete.pack(side=tk.RIGHT, padx=5)
+    def add(self, path):
+        p = os.path.normpath(str(path).strip().strip('"'))
+        cur = self.get_user_path_list()
+        if any(os.path.normpath(x).lower() == p.lower() for x in cur):
+            return False, "这条已经在 PATH 里了：%s" % p
+        return self.write(cur + [p], "已加进 PATH：%s" % p)
 
-        ttk.Button(btn_frame, text="取消", command=self.destroy).pack(side=tk.RIGHT, padx=5)
-    def _create_step2_widgets(self):
-        self.step2_frame = ttk.Frame(self, padding=10)
-        ttk.Label(self.step2_frame, text="步骤 2: 确认变更内容", style="Restore.TLabel", font=('Segoe UI', 12, 'bold')).pack(fill=tk.X, pady=(0, 10))
-        self.paned_window = ttk.PanedWindow(self.step2_frame, orient=tk.HORIZONTAL, style="Custom.TPanedwindow")
-        self.paned_window.pack(fill=tk.BOTH, expand=True)
-        add_frame = ttk.Frame(self.paned_window, padding=5); ttk.Label(add_frame, text="将新增的路径:", style="Restore.TLabel").pack(anchor='w')
-        self.add_listbox = tk.Listbox(add_frame, bg=COLORS["list_bg"], fg=COLORS["fg"], selectbackground=COLORS["list_select_bg"], selectforeground=COLORS["list_select_fg"], borderwidth=0, highlightthickness=0)
-        self.add_listbox.pack(fill=tk.BOTH, expand=True); self.paned_window.add(add_frame, weight=1)
-        remove_frame = ttk.Frame(self.paned_window, padding=5); ttk.Label(remove_frame, text="将移除的路径:", style="Restore.TLabel").pack(anchor='w')
-        self.remove_listbox = tk.Listbox(remove_frame, bg=COLORS["list_bg"], fg=COLORS["fg"], selectbackground=COLORS["list_select_bg"], selectforeground=COLORS["list_select_fg"], borderwidth=0, highlightthickness=0)
-        self.remove_listbox.pack(fill=tk.BOTH, expand=True); self.paned_window.add(remove_frame, weight=1)
-        btn_frame = ttk.Frame(self.step2_frame, padding=(0, 10)); btn_frame.pack(fill=tk.X, side=tk.BOTTOM)
-        self.btn_apply = ttk.Button(btn_frame, text="确认恢复", style="Success.TButton", command=self.apply_restore)
-        self.btn_apply.pack(side=tk.RIGHT)
-        ttk.Button(btn_frame, text="返回上一步", command=self.show_step1).pack(side=tk.RIGHT, padx=5)
-    def go_to_step2(self):
-        backup_paths = self.parent.backup_manager.get_paths_from_backup(self.selected_backup['path']); current_paths = self.parent.path_manager.get_user_path_list(); backup_set = {os.path.normpath(p).lower() for p in backup_paths}; current_set = {os.path.normpath(p).lower() for p in current_paths}
-        self.paths_to_add = [p for p in backup_paths if os.path.normpath(p).lower() not in current_set]; self.paths_to_remove = [p for p in current_paths if os.path.normpath(p).lower() not in backup_set]
-        self.full_backup_paths = backup_paths; self.add_listbox.delete(0, tk.END); self.remove_listbox.delete(0, tk.END)
-        for p in self.paths_to_add: self.add_listbox.insert(tk.END, p)
-        for p in self.paths_to_remove: self.remove_listbox.insert(tk.END, p)
-        self.step1_frame.pack_forget(); self.step2_frame.pack(fill=tk.BOTH, expand=True); self.update_idletasks()
-        try: width = self.paned_window.winfo_width(); self.paned_window.sashpos(0, width // 2)
-        except tk.TclError: pass
-    def show_step1(self):
-        self.step2_frame.pack_forget()
-        self.step1_frame.pack(fill=tk.BOTH, expand=True)
-        self.load_backup_list()
-    def apply_restore(self):
-        if messagebox.askyesno("最后确认", "确定要用此备份覆盖当前的系统PATH吗？此操作不可撤销。", icon='warning', parent=self): self.destroy(); self.parent.perform_action(self.parent.path_manager.set_new_path_and_broadcast, self.full_backup_paths, "PATH已成功从备份恢复。", op_desc="正在从备份恢复系统PATH...")
-    def load_backup_list(self):
-        for item in self.backup_tree.get_children(): self.backup_tree.delete(item)
-        current_paths = self.parent.path_manager.get_user_path_list()
-        backups = self.parent.backup_manager.list_backups(current_paths)
-        if not backups:
-            self.backup_tree.insert('', 'end', values=("没有找到任何备份文件。", "", "", ""))
-            self.btn_next.config(state=tk.DISABLED)
-            self.btn_delete.config(state=tk.DISABLED) # 同时禁用删除按钮
-            return
-        for backup in backups:
-            self.backup_tree.insert('', 'end', values=(backup['time'], backup['total_count'], f"+{backup['added_count']}", f"-{backup['removed_count']}"), iid=backup['path'])
-    
-    # **新增**: 删除选中备份的逻辑
-    def delete_selected_backup(self):
-        if not self.selected_backup or not self.selected_backup.get('path'):
-            return
-        
-        backup_path = self.selected_backup['path']
-        backup_filename = Path(backup_path).name
+    def remove(self, path):
+        p = os.path.normpath(str(path).strip().strip('"')).lower()
+        cur = self.get_user_path_list()
+        left = [x for x in cur if os.path.normpath(x).lower() != p]
+        if len(left) == len(cur):
+            return False, "这条不在 PATH 里：%s" % path
+        return self.write(left, "已从 PATH 移除：%s" % path)
 
-        if messagebox.askyesno("确认删除", f"确定要永久删除此备份吗？\n\n文件: {backup_filename}", icon='warning', parent=self):
-            try:
-                os.remove(backup_path)
-                messagebox.showinfo("删除成功", f"备份 '{backup_filename}' 已被删除。", parent=self)
-                # 刷新列表
-                self.load_backup_list()
-            except OSError as e:
-                messagebox.showerror("删除失败", f"无法删除文件: {e}", parent=self)
+    def dedup(self):
+        """去掉重复项（大小写不敏感），保持原顺序。返回 (ok, 说明)。"""
+        cur = self.get_user_path_list()
+        seen, keep = set(), []
+        for p in cur:
+            k = os.path.normpath(p).lower()
+            if k not in seen:
+                seen.add(k)
+                keep.append(p)
+        if len(keep) == len(cur):
+            return False, "没有重复项"
+        return self.write(keep, "去掉 %d 条重复项" % (len(cur) - len(keep)))
 
-    # **修改**: _on_backup_select 现在也控制删除按钮的状态
-    def _on_backup_select(self, event):
-        selected_item = self.backup_tree.selection()
-        if selected_item:
-            path = selected_item[0]
-            if Path(path).exists():
-                self.selected_backup = {"path": path}
-                self.btn_next.config(state=tk.NORMAL)
-                self.btn_delete.config(state=tk.NORMAL)
-            else:
-                self.selected_backup = None
-                self.btn_next.config(state=tk.DISABLED)
-                self.btn_delete.config(state=tk.DISABLED)
+    def drop_missing(self):
+        """把"目录已经不存在"的那些摘掉（只摘**盘符路径**里确实没有的；带 `%VAR%` 的
+        展开不了就留着，别误伤）。"""
+        cur = self.get_user_path_list()
+        keep, gone = [], []
+        for p in cur:
+            if '%' in p:
+                keep.append(p)
+                continue
+            (gone if not os.path.isdir(p) else keep).append(p)
+        if not gone:
+            return False, "没有失效的目录"
+        ok, msg = self.write(keep, "清掉 %d 条已经不存在的目录" % len(gone))
+        return ok, (msg + "：" + "；".join(gone[:3]) + ("…" if len(gone) > 3 else "")) if ok else msg
+
+
+# ---------------------------------------------------------------- 界面能调的东西
+class Api:
+    """界面里 `moss.call("名字", {...})` 就能调到下面这些方法。
+
+    ★ 内嵌（stdio）和独立窗口（pywebview `js_api`）**共用同一份** —— 这就是
+      "一份界面两种跑法"能成立的原因（照抄 bmi）。
+    ★ 约定：真要干活儿的方法返回 `{"ok": bool, "msg": "...", "state": {...}}` ——
+      带上**改完之后**的完整状态，界面一次往返就能重画（不用再问一遍）。
+    """
+
+    def __init__(self):
+        self.pm = PathManager()
+        self.bm = BackupManager()
+
+    # ---- 状态
+    def state(self, params=None):
+        paths = self.pm.get_user_path_list()
+        return {
+            "ok": True,
+            "count": len(paths),
+            "paths": sorted(paths, key=str.lower),
+            "self_dir": SELF_DIR,
+            "self_registered": self.pm.is_registered(SELF_DIR),
+            "data_dir": str(DATA_DIR),
+            "backup_dir": str(self.bm.backup_dir),
+            "legacy_dir": str(self.bm.legacy_dir),
+            "missing": [p for p in paths if '%' not in p and not os.path.isdir(p)],
+        }
+
+    def info(self, params=None):
+        """自证：这些数字是 Python 报的（`V-54` 那条"让后端证明它在干活"）。"""
+        print('[path] 后端信息：pid=%d python=%s 数据目录=%s'
+              % (os.getpid(), sys.version.split()[0], DATA_DIR), flush=True)
+        return {"ok": True, "pid": os.getpid(), "python": sys.version.split()[0],
+                "data_dir": str(DATA_DIR), "self_dir": SELF_DIR,
+                "embedded": bool(os.environ.get('MOSS_UI_EMBED'))}
+
+    # ---- 改 PATH
+    def add(self, params=None):
+        p = str((params or {}).get("path") or "").strip()
+        if not p:
+            return {"ok": False, "msg": "先给一个目录", "state": self.state()}
+        ok, msg = self.pm.add(p)
+        print('[path] %s（Python 改的注册表）' % msg, flush=True)
+        return {"ok": ok, "msg": msg, "state": self.state()}
+
+    def add_many(self, params=None):
+        """一次加好几条 —— 拖文件夹进来、或拖文件时取它所在的目录（`V-201`）。
+
+        ★ **只写一次注册表、只广播一次**：拖 5 个目录进来不代表要改 5 遍环境变量。
+        ★ 拖进来的是**文件** ⇒ 用**它所在的目录**（老 tkinter 界面就是这个规矩）。
+        """
+        raw = list((params or {}).get("paths") or [])
+        cur = self.pm.get_user_path_list()
+        seen = {os.path.normpath(p).lower() for p in cur}
+        added, dup, bad = [], [], []
+        for item in raw:
+            p = str(item or "").strip().strip('"')
+            if not p:
+                continue
+            if os.path.isfile(p):                       # 拖的是文件 → 要它所在的目录
+                p = os.path.dirname(p)
+            p = os.path.normpath(p)
+            if not os.path.isdir(p):
+                bad.append(p)
+                continue
+            key = p.lower()
+            if key in seen:
+                dup.append(p)
+                continue
+            seen.add(key)
+            added.append(p)
+        if not added:
+            bits = []
+            if dup:
+                bits.append("%d 条已经在 PATH 里" % len(dup))
+            if bad:
+                bits.append("%d 条目录不存在" % len(bad))
+            why = "、".join(bits) or "没拿到可用的目录"
+            print('[path] 没加任何东西：%s' % why, flush=True)
+            return {"ok": False, "msg": why, "state": self.state()}
+        ok, msg = self.pm.write(cur + added, "加进 PATH %d 条：%s"
+                                % (len(added), "；".join(added[:2]) + ("…" if len(added) > 2 else "")))
+        if dup or bad:
+            msg += "（跳过 %d 条重复 / %d 条不存在）" % (len(dup), len(bad))
+        print('[path] %s（Python 改的注册表）' % msg, flush=True)
+        return {"ok": ok, "msg": msg, "state": self.state()}
+
+    def remove(self, params=None):
+        p = str((params or {}).get("path") or "").strip()
+        ok, msg = self.pm.remove(p)
+        print('[path] %s（Python 改的注册表）' % msg, flush=True)
+        return {"ok": ok, "msg": msg, "state": self.state()}
+
+    def toggle_self(self, params=None):
+        """注册 / 反注册**这个包自己的目录**。"""
+        if self.pm.is_registered(SELF_DIR):
+            ok, msg = self.pm.remove(SELF_DIR)
         else:
-            self.selected_backup = None
-            self.btn_next.config(state=tk.DISABLED)
-            self.btn_delete.config(state=tk.DISABLED)
+            ok, msg = self.pm.add(SELF_DIR)
+        print('[path] %s' % msg, flush=True)
+        return {"ok": ok, "msg": msg, "state": self.state()}
 
-# --- PathEditorApp 和其他函数 (无任何修改) ---
-class PathEditorApp(tk.Tk):
-    def __init__(self, script_dir: str):
-        super().__init__(); self.script_dir = script_dir; self.normalized_script_dir = os.path.normpath(self.script_dir).lower()
-        self.path_manager = PathManager(); self.backup_manager = BackupManager(); self.controls = []; self.path_count_var = tk.StringVar(); self.reg_status_var = tk.StringVar()
-        self.title(f"Path 环境编辑器 - [{self.script_dir}]"); self.geometry("650x800"); self.minsize(600, 500); self.configure(bg=COLORS["bg"])
-        self._setup_styles(); self._create_widgets(); self.populate_path_list(); windnd.hook_dropfiles(self, func=self.handle_drop)
-    def _setup_styles(self):
-        style = ttk.Style(self); style.theme_use('clam'); style.configure("TFrame", background=COLORS["bg"]); style.configure("TLabel", background=COLORS["bg"], foreground=COLORS["fg"], padding=5)
-        style.configure("Count.TLabel", background=COLORS["bg"], foreground=COLORS["fg"], padding=(5,0), font=('Segoe UI', 9, 'italic')); style.configure("Status.TLabel", background=COLORS["status_bg"], foreground=COLORS["fg"], padding=5)
-        style.configure("RegStatus.TLabel", background=COLORS["bg"], font=('Segoe UI', 10, 'bold'), padding=(5,0)); style.configure("TButton", background=COLORS["button_bg"], foreground=COLORS["button_fg"], padding=6, bordercolor=COLORS["frame_bg"], lightcolor=COLORS["button_bg"], darkcolor=COLORS["button_bg"])
-        style.map("TButton", background=[('active', '#81A1C1')], foreground=[('disabled', COLORS["disabled_fg"])]); style.configure("Success.TButton", background=COLORS["success_bg"], foreground=COLORS["success_fg"]); style.map("Success.TButton", background=[('active', '#B4D59F')])
-    def _create_widgets(self):
-        main_frame = ttk.Frame(self, padding=10); main_frame.pack(fill=tk.BOTH, expand=True); top_frame = ttk.Frame(main_frame); top_frame.pack(fill=tk.X, pady=(0, 10))
-        reg_frame = ttk.Frame(top_frame); reg_frame.pack(side=tk.LEFT, anchor='w'); self.btn_toggle_self = ttk.Button(reg_frame, text="..."); self.btn_toggle_self.pack(side=tk.LEFT, ipady=4); self.controls.append(self.btn_toggle_self)
-        self.reg_status_label = ttk.Label(reg_frame, textvariable=self.reg_status_var, style="RegStatus.TLabel"); self.reg_status_label.pack(side=tk.LEFT, padx=10, anchor='w')
-        self.path_count_label = ttk.Label(main_frame, textvariable=self.path_count_var, style="Count.TLabel"); self.path_count_label.pack(anchor='w'); list_frame = ttk.Frame(main_frame); list_frame.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
-        self.path_listbox = tk.Listbox(list_frame, selectmode=tk.EXTENDED, bg=COLORS["list_bg"], fg=COLORS["fg"], selectbackground=COLORS["list_select_bg"], selectforeground=COLORS["list_select_fg"], borderwidth=0, highlightthickness=1, highlightcolor=COLORS["button_bg"], highlightbackground=COLORS["frame_bg"], font=('Segoe UI', 10))
-        self.path_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); self.controls.append(self.path_listbox); scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.path_listbox.yview); scrollbar.pack(side=tk.RIGHT, fill=tk.Y); self.path_listbox.config(yscrollcommand=scrollbar.set)
-        bottom_frame = ttk.Frame(main_frame); bottom_frame.pack(fill=tk.X, pady=(10, 0)); left_btn_frame = ttk.Frame(bottom_frame); left_btn_frame.pack(side=tk.LEFT)
-        self.btn_add = ttk.Button(left_btn_frame, text="添加目录...", command=self.add_directory); self.btn_add.pack(side=tk.LEFT, padx=(0, 5)); self.controls.append(self.btn_add)
-        self.btn_remove = ttk.Button(left_btn_frame, text="移除选中项", command=self.remove_selected); self.btn_remove.pack(side=tk.LEFT); self.controls.append(self.btn_remove)
-        right_btn_frame = ttk.Frame(bottom_frame); right_btn_frame.pack(side=tk.RIGHT); self.btn_backup = ttk.Button(right_btn_frame, text="一键备份", command=self.create_backup); self.btn_backup.pack(side=tk.LEFT, padx=(0, 5)); self.controls.append(self.btn_backup)
-        self.btn_restore = ttk.Button(right_btn_frame, text="恢复备份...", command=self.open_restore_window); self.btn_restore.pack(side=tk.LEFT); self.controls.append(self.btn_restore)
-        self.status_var = tk.StringVar(); self.status_var.set("欢迎使用！将文件或文件夹拖到此处即可添加。"); status_bar = ttk.Label(self, textvariable=self.status_var, style="Status.TLabel", anchor='w'); status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-    def populate_path_list(self):
-        self.path_listbox.delete(0, tk.END); paths = self.path_manager.get_user_path_list(); self.path_count_var.set(f"当前用户 PATH 环境变量 ({len(paths)} 条):")
-        sorted_paths = sorted(paths, key=str.lower)
-        for i, path in enumerate(sorted_paths):
-            self.path_listbox.insert(tk.END, path)
-            if os.path.normpath(path).lower() == self.normalized_script_dir: self.path_listbox.itemconfigure(i, bg=COLORS["success_bg"], fg=COLORS["success_fg"], selectbackground=COLORS["button_bg"], selectforeground=COLORS["fg"])
-        self.update_self_reg_status()
-    def update_self_reg_status(self):
-        is_registered = self.path_manager.is_path_registered(self.script_dir)
-        if is_registered: self.btn_toggle_self.configure(text="反注册自身目录", style="TButton", command=self.unregister_self); self.reg_status_var.set("状态: ✔ 已注册"); self.reg_status_label.configure(foreground=COLORS["success_bg"])
-        else: self.btn_toggle_self.configure(text="注册自身目录", style="Success.TButton", command=self.register_self); self.reg_status_var.set("状态: ❌ 未注册"); self.reg_status_label.configure(foreground=COLORS["warning_fg"])
-    def toggle_controls(self, state=tk.NORMAL):
-        for control in self.controls:
-            if isinstance(control, tk.Listbox): control.config(state=state)
-            else: control.config(state=state)
-    def perform_action(self, action_func, *args, op_desc="正在处理...", **kwargs):
-        self.toggle_controls(tk.DISABLED); self.status_var.set(op_desc); self.update_idletasks(); success, message = action_func(*args, **kwargs); self.toggle_controls(tk.NORMAL); self.status_var.set(message)
-        if success:
-            self.populate_path_list()
-            if "恢复" not in op_desc: messagebox.showinfo("操作成功", message)
-        else: messagebox.showwarning("操作提示", message)
-    def register_self(self): self.perform_action(self.path_manager.add_path_and_broadcast, self.script_dir, op_desc=f"正在注册 {self.script_dir} ...")
-    def unregister_self(self): self.perform_action(self.path_manager.remove_path_and_broadcast, self.script_dir, op_desc=f"正在反注册 {self.script_dir} ...")
-    def add_directory(self):
-        dir_path = filedialog.askdirectory(title="请选择要添加到PATH的文件夹", initialdir=self.script_dir)
-        if dir_path: self.perform_action(self.path_manager.add_path_and_broadcast, dir_path, op_desc=f"正在添加 {dir_path} ...")
-    def remove_selected(self):
-        selected_indices = self.path_listbox.curselection()
-        if not selected_indices: messagebox.showwarning("提示", "请先在列表中选择要移除的路径。"); return
-        paths_to_remove = [self.path_listbox.get(i) for i in selected_indices]
-        if messagebox.askyesno("确认移除", f"确定要移除选中的 {len(paths_to_remove)} 个路径吗？", icon='warning'):
-            for path in paths_to_remove: self.perform_action(self.path_manager.remove_path_and_broadcast, path, op_desc=f"正在移除 {path} ...")
-    def handle_drop(self, files):
-        decoded_files = [f.decode(sys.getfilesystemencoding()) for f in files]
-        paths_to_add = {str(Path(f).parent if Path(f).is_file() else Path(f).resolve()) for f in decoded_files}
-        if not paths_to_add: return
-        for path in paths_to_add: self.perform_action(self.path_manager.add_path_and_broadcast, path, op_desc=f"正在添加 {path} ...")
-    def create_backup(self):
-        self.status_var.set("正在创建备份..."); self.update_idletasks(); current_paths = self.path_manager.get_user_path_list()
-        if not current_paths: messagebox.showwarning("备份提示", "当前PATH为空，无需备份。"); self.status_var.set("备份取消，PATH为空。"); return
-        success, message = self.backup_manager.create_backup(current_paths); self.status_var.set(message)
-        if success: messagebox.showinfo("备份成功", message)
-        else: messagebox.showerror("备份失败", message)
-    def open_restore_window(self): RestoreWindow(self)
+    def dedup(self, params=None):
+        ok, msg = self.pm.dedup()
+        return {"ok": ok, "msg": msg, "state": self.state()}
 
-def print_cli_help():
-    # 命令名：旧代码取 sys.argv[0]（旧宿主下是 "main.py" 或 "-c"），对新宿主
-    # 没有意义 —— 在 moss 里这条命令就是 `moss :path`（和 kill/tree/open 的
-    # 提示保持一致）。直接 python main.py 调试时显示的也是这条，同样正确。
-    script_name = "moss :path"
-    help_text = f"""
-Path 环境变量编辑器 - 命令行使用说明
+    def drop_missing(self, params=None):
+        ok, msg = self.pm.drop_missing()
+        return {"ok": ok, "msg": msg, "state": self.state()}
 
-以 GUI 模式运行 (默认):
-  {script_name}
+    def pick_dir(self, params=None):
+        """弹系统对话框挑一个文件夹。
 
-通过命令行管理 PATH:
-  {script_name} <命令> [路径]
+        ★ 独立窗口：用 pywebview 的对话框（挂在我们自己那扇窗上）。
+          内嵌：我们**没有自己的窗口**（窗口是 moss 的）⇒ 退回 tkinter 的 askdirectory。
+          界面那边通常会先问 moss 主界面要（那边有正规的对话框），这条路是兜底。
+        """
+        start = str((params or {}).get("start") or "").strip() or (self.pm.get_user_path_list() or [SELF_DIR])[0]
+        try:
+            import webview as _wv
+            wins = list(getattr(_wv, "windows", None) or [])
+            if wins:
+                kind = getattr(getattr(_wv, "FileDialog", None), "FOLDER", None)
+                if kind is None:
+                    kind = getattr(_wv, "FOLDER_DIALOG", None)
+                    if callable(kind):
+                        kind = kind()
+                if kind is not None:
+                    try:
+                        res = wins[0].create_file_dialog(kind, directory=start)
+                    except TypeError:
+                        res = wins[0].create_file_dialog(kind, start)
+                    if not res:
+                        return {"ok": False, "msg": "没有选（取消）"}
+                    return {"ok": True, "path": str(res[0] if isinstance(res, (list, tuple)) else res)}
+        except Exception:                                              # noqa: BLE001
+            pass
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()                     # 只借它弹一个对话框，别闪出一个空窗
+            p = filedialog.askdirectory(title="选一个要加进 PATH 的文件夹", initialdir=start)
+            root.destroy()
+            if not p:
+                return {"ok": False, "msg": "没有选（取消）"}
+            return {"ok": True, "path": str(p)}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "挑文件夹失败：%s" % e}
 
-可用命令:
-  add [路径]        将指定路径添加到用户 PATH 环境变量中。
-                    如果省略 [路径]，则添加此脚本/程序所在的目录。
-                    (别名: register, reg)
+    # ---- 备份 / 恢复
+    def backup_create(self, params=None):
+        ok, msg, f = self.bm.create_backup(self.pm.get_user_path_list())
+        print('[path] %s' % msg, flush=True)
+        return {"ok": ok, "msg": msg, "file": f, "state": self.state()}
 
-  remove [路径]     从用户 PATH 环境变量中移除指定路径。
-                    如果省略 [路径]，则移除此脚本/程序所在的目录。
-                    (别名: unregister, del)
+    def backup_list(self, params=None):
+        return {"ok": True, "items": self.bm.list_backups(self.pm.get_user_path_list()),
+                "state": self.state()}
 
-  help              显示此帮助信息。
-                    (别名: ?, -h, --help)
+    def backup_preview(self, params=None):
+        """恢复前先看清楚：会加什么、会去掉什么。"""
+        f = str((params or {}).get("file") or "")
+        paths = self.bm.read(f)
+        if not paths:
+            return {"ok": False, "msg": "这份备份读不出来（文件没了？）", "state": self.state()}
+        add, gone = self.bm.diff(paths, self.pm.get_user_path_list())
+        return {"ok": True, "add": add, "remove": gone, "paths": paths,
+                "msg": "会加 %d 条、去掉 %d 条" % (len(add), len(gone)), "state": self.state()}
 
-示例:
-  {script_name} add "C:\\Program Files\\MyTool"
-  {script_name} add
-  {script_name} remove
-"""
-    print(help_text)
+    def backup_restore(self, params=None):
+        f = str((params or {}).get("file") or "")
+        paths = self.bm.read(f)
+        if not paths:
+            return {"ok": False, "msg": "这份备份读不出来（文件没了？）", "state": self.state()}
+        ok, msg = self.pm.write(paths, "已恢复成 %s 那份备份（%d 条）"
+                                % (Path(f).stem.replace(self.bm.backup_prefix, ""), len(paths)))
+        print('[path] %s（Python 改的注册表）' % msg, flush=True)
+        return {"ok": ok, "msg": msg, "state": self.state()}
 
-def _split_args(s: str) -> list[str]:
-    r"""按空白拆参数，但**不碰反斜杠**（照抄 system/pkgs/tree/main.py 的同名函数）。
+    def backup_delete(self, params=None):
+        ok, msg = self.bm.delete(str((params or {}).get("file") or ""))
+        return {"ok": ok, "msg": msg, "state": self.state()}
 
-    为什么不用 shlex：Windows 路径里的 `\` 会被 shlex 当转义吃掉。
-    引号包起来的部分保持成一个参数（带空格的路径用得上）。
+
+# ---------------------------------------------------------------- 内嵌模式（stdio）
+class Embedded:
+    """宿主给了 `MOSS_UI_EMBED=1` 时走这儿：**不开窗口**，在 stdin/stdout 上说话。
+
+    协议（`V-48`）：一行一个 JSON 对象 ——
+      收 `{"id": 1, "method": "state", "params": {...}}`
+      回 `{"id": 1, "ok": true, "result": {...}}` / `{"id": 1, "ok": false, "error": "…"}`
+      主动推 `{"event": "名字", "data": {...}}`（本包暂时不推东西，留着口子）
+    """
+
+    def __init__(self):
+        self.api = Api()
+
+    def send(self, obj):
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False) + '\n')
+        sys.stdout.flush()
+
+    def loop(self):
+        for line in sys.stdin:
+            line = (line or '').strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                self.send({'event': 'error', 'data': {'why': '这不是 JSON：%s' % line[:80]}})
+                continue
+            mid = msg.get('id')
+            method = str(msg.get('method') or '')
+            fn = getattr(self.api, method, None)
+            if not callable(fn) or method.startswith('_'):
+                self.send({'id': mid, 'ok': False, 'error': '没有这个方法：%s' % method})
+                continue
+            try:
+                self.send({'id': mid, 'ok': True, 'result': fn(msg.get('params'))})
+            except Exception as e:                                     # noqa: BLE001
+                self.send({'id': mid, 'ok': False, 'error': '%s: %s' % (type(e).__name__, e)})
+        return 0
+
+
+# ---------------------------------------------------------------- 独立窗口
+def run_window():
+    """自己开一扇窗（`moss :path`）。界面文件和内嵌时**是同一份**。"""
+    import webview
+
+    api = Api()
+    window = webview.create_window(TITLE, url=UI_FILE, js_api=api,
+                                   width=980, height=700, min_size=(620, 460))
+
+    def on_drop(event):
+        """页面上的 drop → 把**真实路径**交给页面（`V-201`）。
+
+        ★ Chromium **不把 `File.path` 交给页面**（安全设计）：路径只有 Python 这侧拿得到
+          （pywebview 从 WebView2 的 AdditionalObjects 里取出，放在 `pywebviewFullPath`）。
+          挂法和 moss 主界面那套**一模一样**（`system/ui/main.py:_on_files_dropped`）——
+          而且只有挂过监听，pywebview 才会把路径留下来（没监听它直接丢掉）。
+        """
+        try:
+            files = (event.get("dataTransfer") or {}).get("files") or []
+        except Exception:                                              # noqa: BLE001
+            files = []
+        items = []
+        for f in files:
+            try:
+                p = f.get("pywebviewFullPath")
+            except Exception:                                          # noqa: BLE001
+                p = None
+            if not p:
+                continue
+            try:
+                is_dir = os.path.isdir(p)
+            except OSError:
+                is_dir = False
+            items.append({"path": str(p), "isDir": bool(is_dir),
+                          "dir": str(p) if is_dir else os.path.dirname(str(p)),
+                          "name": os.path.basename(str(p))})
+        print('[path] 拖进来 %d 个（%d 个带路径）' % (len(files), len(items)), flush=True)
+        if not items:
+            return
+        try:
+            window.evaluate_js('window.moss && window.moss.__emit("drop", %s)'
+                               % json.dumps({"items": [it["path"] for it in items]},
+                                            ensure_ascii=False))
+        except Exception:                                              # noqa: BLE001
+            pass
+
+    def arm_drop():
+        """等页面加载完再挂 drop 监听（`webview.start` 里跑，在别的线程）。"""
+        try:
+            from webview.dom import DOMEventHandler
+            window.events.loaded.wait(20)
+            window.dom.document.events.drop += DOMEventHandler(
+                on_drop, prevent_default=True, stop_propagation=True)
+            print('[path] 拖放监听已挂上（拖文件夹进来就能加）', flush=True)
+        except Exception as e:                                          # noqa: BLE001
+            print('[path] 拖放监听没挂上（不影响别的功能）：%r' % (e,), flush=True)
+
+    threading.Thread(target=arm_drop, daemon=True).start()
+    webview.start()
+    return 0
+
+
+# ---------------------------------------------------------------- 命令行
+def _split_args(s):
+    r"""按空白拆参数，但**不碰反斜杠**（照抄 tree/path 的同名函数）。
+
+    为什么不用 shlex：Windows 路径里的 `\` 会被它当转义吃掉。引号包起来的算一个参数。
     """
     out, cur, quote = [], "", None
     for ch in s:
         if quote:
-            if ch == quote: quote = None
-            else: cur += ch
-        elif ch in "\"'": quote = ch
+            if ch == quote:
+                quote = None
+            else:
+                cur += ch
+        elif ch in "\"'":
+            quote = ch
         elif ch.isspace():
-            if cur: out.append(cur); cur = ""
-        else: cur += ch
-    if cur: out.append(cur)
+            if cur:
+                out.append(cur)
+                cur = ""
+        else:
+            cur += ch
+    if cur:
+        out.append(cur)
     return out
 
 
 def _moss_args():
-    """从宿主拿参数；拿不到返回 None（调用方退回 sys.argv）。
+    """从宿主拿参数（`MOSS_PKG_PARAMS` / `MOSS_ARGS`）；拿不到返回 None（退回 sys.argv）。
 
-    宿主 moss 把参数放在 `MOSS_PKG_PARAMS`（JSON，键是 pkg.json 里声明的参数名）
-    和 `MOSS_ARGS`（原始字符串）两个环境变量里 —— 老 pa 是拼进 argv 的。
-    本包的 `args` 声明成 `rest: true`（包名后面那一整串全归我），所以这里原样拆开，
-    再交给下面这套老解析逻辑（写法照抄 system/pkgs/exec/main.py 的 _moss_args）。
+    `args` 在 pkg.json 里声明成 `rest: true`（包名后面那一整串全归我），所以这里原样拆开。
     """
-    import json as _json
-    import os as _os
-
-    raw = _os.environ.get("MOSS_PKG_PARAMS")
+    raw = os.environ.get("MOSS_PKG_PARAMS")
     if raw:
         try:
-            p = _json.loads(raw) or {}
+            p = json.loads(raw) or {}
             if p.get("args"):
                 return _split_args(str(p["args"]))
-        except Exception:
+        except ValueError:
             pass
-    raw = _os.environ.get("MOSS_ARGS")
+    raw = os.environ.get("MOSS_ARGS")
     if raw:
         return _split_args(raw)
     return None
 
 
-def parse_cli_args() -> tuple[str | None, str | None]:
-    # 参数来源：先问宿主（MOSS_PKG_PARAMS / MOSS_ARGS），读不到才退回 argv ——
-    # 这样直接 `python main.py add xxx` 调试仍然能用。
+def print_cli_help():
+    print("""
+PATH 管理 —— 命令行用法
+
+  moss :path                  打开界面（不带参数）
+  moss :path add [目录]       把目录加进**当前用户**的 PATH（别名 register / reg）
+  moss :path remove [目录]    从 PATH 里移除（别名 unregister / del）
+  moss :path help             这条帮助
+
+  · 省略 [目录] 时用**这个包自己的目录**。
+  · 只改当前用户（注册表 HKCU\\Environment\\Path），不需要管理员。
+  · 改完广播一次系统消息 —— **已经开着的**终端不会变，新开的才看得到。
+  · 备份在 user_data/state/path/data/backups/（界面里有备份 / 恢复 / 对比）。
+""")
+
+
+def parse_cli_args():
     args = _moss_args()
     if args is None:
         args = sys.argv[1:]
     if args and args[0] == '-c':
         args = args[1:]
         if args and (args[0].endswith('.py') or Path(args[0]).is_file()):
-             args = args[1:]
-    if not args: return None, None
-    COMMANDS = {'add': ['add', 'register', 'reg'], 'remove': ['remove', 'unregister', 'del'], 'help': ['help', '?', '-h', '--help']}
-    raw_arg1 = args[0].lower()
-    if raw_arg1 in COMMANDS['help']: return 'help', None
-    for cmd_type, aliases in COMMANDS.items():
-        if cmd_type == 'help': continue
-        for alias in aliases:
-            if raw_arg1.startswith(alias + ' '):
-                command = cmd_type
-                path = args[0][len(alias) + 1:].strip('"')
-                return command, path
-        if raw_arg1 in aliases:
-            command = cmd_type
-            path = " ".join(args[1:]).strip('"') if len(args) > 1 else None
-            return command, path
-    return raw_arg1, " ".join(args[1:])
+            args = args[1:]
+    if not args:
+        return None, None
+    COMMANDS = {'add': ['add', 'register', 'reg'],
+                'remove': ['remove', 'unregister', 'del'],
+                'help': ['help', '?', '-h', '--help']}
+    first = args[0].lower()
+    if first in COMMANDS['help']:
+        return 'help', None
+    for kind in ('add', 'remove'):
+        for alias in COMMANDS[kind]:
+            if first.startswith(alias + ' '):
+                return kind, args[0][len(alias) + 1:].strip('"')
+            if first == alias:
+                return kind, (" ".join(args[1:]).strip('"') or None)
+    # ★ 拖一个文件夹进来（或直接 `moss :path D:\tools\bin`）：第一次位置参数不是命令，
+    #   但它**是个存在的目录** ⇒ 当 `add` 用。不这么认的话，拖进来的目录会被当成
+    #   "未知命令"，然后打一屏用法退出 —— 而 `pkg.json` 里的 drop 声明就是"拖目录进来"。
+    if os.path.isdir(args[0].strip('"')):
+        return 'add', args[0].strip('"')
+    return first, " ".join(args[1:])
+
 
 def main():
+    if str(os.environ.get('MOSS_UI_EMBED') or '').strip() in ('1', 'true', 'yes'):
+        return Embedded().loop()          # 内嵌：不开窗口，在 stdio 上答话
     command, path = parse_cli_args()
     if command is None:
-        try:
-            if getattr(sys, 'frozen', False):
-                try: ctypes.windll.kernel32.FreeConsole()
-                except Exception: pass
-            script_dir = application_path
-            app = PathEditorApp(script_dir)
-            app.mainloop()
-        except Exception as e:
-            messagebox.showerror("严重错误", f"程序遇到未知错误并即将退出。\n\n错误信息: {e}")
-            sys.exit(1)
-        return
+        return run_window()               # 不带参数 → 界面
     if command == 'help':
         print_cli_help()
-        sys.exit(0)
-    try:
-        path_manager = PathManager()
-        target_path = path or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
-              "user_data", "state", "path")
-        if command == 'add':
-            success, message = path_manager.add_path_and_broadcast(target_path)
-            print(message); sys.exit(0 if success else 1)
-        elif command == 'remove':
-            success, message = path_manager.remove_path_and_broadcast(target_path)
-            print(message); sys.exit(0 if success else 1)
-        else:
-            print(f"错误: 未知命令 '{command}'\n"); print_cli_help(); sys.exit(1)
-    except Exception as e:
-        print(f"执行命令时发生严重错误: {e}"); sys.exit(1)
+        return 0
+    pm = PathManager()
+    target = path or SELF_DIR
+    if command == 'add':
+        ok, msg = pm.add(target)
+    elif command == 'remove':
+        ok, msg = pm.remove(target)
+    else:
+        print("错误：不认识这个命令 %r\n" % command)
+        print_cli_help()
+        return 1
+    print(msg)
+    return 0 if ok else 1
 
-if __name__ == "__main__":
-    main()
+
+if __name__ == '__main__':
+    sys.exit(main())

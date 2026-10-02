@@ -91,6 +91,7 @@ function histDir(it){
 
 function renderHist(){
   bumpLists();
+  try{ paintSwitchCounts(); }catch(e){}      // `V-199`：历史那个数字
   Vue.nextTick(() => { try{ paintHistStats(); }catch(e){} });
 }
 
@@ -283,6 +284,8 @@ function renderList(){
   //   否则页面加载那一刻 `DATA` 还是 null，`DATA.packages` 会抛错。
   LISTR.ready = !!(DATA && DATA.packages);
   bumpLists();
+  // `V-199`：插件那份数（按钮上那个数字）跟着一起更新
+  try{ paintSwitchCounts(); }catch(e){}
   // ★ Vue 是异步渲染：状态那一小块（行尾图标）等这一帧画完再填 —— 原来这里是同步调的，
   //   已确认没有任何调用方在 renderList() 之后**同步**读 `.item`，所以放到 nextTick 是安全的。
   Vue.nextTick(() => { try{ paintRowStats(); }catch(e){} });
@@ -697,12 +700,15 @@ const MossList = {
       });
       // ★ 正拖着东西的时候：**只列收得下它的包**（`V-39`）—— 不支持对应操作的先藏起来
       //   `V-183` 起"收得下"还包括扩展名（拖 .txt 时 :img 不该出现），判断都用 DRAG.items
-      return DRAG.on ? sorted.filter(p => dropAccepts(p, DRAG.items)) : sorted;
+      //   ★ `V-205`：**拖到内嵌那一帧上时不筛** —— 那一拖是给那个包的界面的，不是"找包"；
+      //     列表忽然少一大半会让人以为坏了（实测反馈："左侧去响应了，把不支持的隐藏了"）。
+      return (DRAG.on && !DRAG.framePid) ? sorted.filter(p => dropAccepts(p, DRAG.items)) : sorted;
     },
     emptyHTML(){
       // ★ 同 `V-83` 那个坑：`DRAG` 是普通对象（非响应式）—— 不登记 `R.rev` 的话，
       //   开始拖动（列表被筛空）时这句提示不会更新。
       this.R.rev;
+      if (DRAG.on && DRAG.framePid) return "没有匹配的包";   // `V-205`：这一拖是给那一帧的，列表没筛
       return DRAG.on
         ? ("没有包收「" + dropKindName(DRAG.kind) + "」" + dropWhyNone(DRAG.items))
         : "没有匹配的包";
