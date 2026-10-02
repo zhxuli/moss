@@ -1095,8 +1095,10 @@ def _pump_embed(pid, proc):
                 try:
                     # ★ 带上 pid：界面上可能同时开着好几个包的内嵌界面，
                     #   它得知道这一行是谁说的，才能送回**那一帧**。
-                    window.evaluate_js("window.__mossEmbedFromBackend(%s, %s)"
-                                       % (json.dumps(str(pid)), json.dumps(s, ensure_ascii=False)))
+                    # ★ `V-192`：帧可能正待在**浮动窗口**里 —— 那就送给那个窗口。
+                    _js(_float_win(pid) or window,
+                        "window.__mossEmbedFromBackend(%s, %s)"
+                        % (json.dumps(str(pid)), json.dumps(s, ensure_ascii=False)))
                 except Exception:                                    # noqa: BLE001
                     pass
             else:
@@ -1118,8 +1120,8 @@ def _pump_embed(pid, proc):
             if EMBED.get(pid, {}).get("proc") is proc:
                 EMBED.pop(pid, None)
         try:
-            window.evaluate_js("window.__mossEmbedGone(%s, %s)"
-                               % (json.dumps(pid), json.dumps(code)))
+            _js(_float_win(pid) or window,          # `V-192`：帧在浮动窗口里就送给它
+                "window.__mossEmbedGone(%s, %s)" % (json.dumps(pid), json.dumps(code)))
         except Exception:                                            # noqa: BLE001
             pass
 
@@ -2342,6 +2344,105 @@ class Api:
     #   好处：协议归包和契约管，宿主不用为每个方法改代码。
     # ★ 只把 `{` 开头的行当消息转走 —— 宿主的横幅是 `[执行]/[目录]/[PID]` 这种
     #   **数组样子**的行，包的普通输出（print）也可能有；那些进命令行面板，不当消息。
+    # ------------------------------------------------ 浮动窗口（`V-192` / `V-194`）
+    def ui_float(self, pid):
+        """把内嵌那一帧**弹出**成 moss 自己的另一个窗口（后端进程一步不动）。
+
+        ★ 为什么能这么干：pywebview 的 `create_window()` 在 `start()` **跑过之后**、
+          且**不在主线程**时，会**立刻建窗** —— 源码原话
+          `This immediately creates the window only if start has already been called`；
+          Windows 后端真实现了（`platforms/winforms.py:682 create_window`）。
+          而 js_api 的方法本来就跑在**非主线程** ⇒ 这里直接建窗就行。
+        """
+        pid = str(pid)
+        with _FLOAT_LOCK:
+            cur = _FLOAT.get(pid)
+        if cur is not None:                    # 已经开着 → 抬到前面
+            try:
+                cur.show()
+                cur.restore()
+            except Exception:                                          # noqa: BLE001
+                pass
+            return {"ok": True, "msg": "这个包的窗口已经开着了"}
+        rec = None
+        for p in (DATA.get("packages") or []):
+            if str(p.get("id")) == pid:
+                rec = p
+                break
+        if not rec or not ((rec.get("ui") or {}).get("embed")):
+            return {"ok": False, "msg": "这个包没有内嵌界面，弹不出来"}
+        title = _pkg_title(rec) or ("moss · " + pid)
+        try:
+            x = int(window.x) + 40
+            y = int(window.y) + 40
+        except Exception:                                              # noqa: BLE001
+            x = y = None
+        try:
+            w = webview.create_window(title, _PAGE_URL + "#float=" + pid, js_api=_API,
+                                      width=960, height=720, x=x, y=y,
+                                      min_size=(520, 380), text_select=True)
+        except Exception as e:                                         # noqa: BLE001
+            return {"ok": False, "msg": "开窗口失败：%s" % e}
+        if w is None:
+            return {"ok": False, "msg": "开窗口失败（pywebview 没给窗口）"}
+        with _FLOAT_LOCK:
+            _FLOAT[pid] = w
+        _wire_float(pid, w, title)
+        _note("float: :%s 弹出为窗口「%s」" % (pid, title))
+        return {"ok": True, "msg": "已弹出为窗口（点最小化就收回）"}
+
+    def ui_dock(self, pid):
+        """把浮动窗口**收回**主窗口那张选项卡（后端继续跑）。"""
+        pid = str(pid)
+        if _float_win(pid) is None:
+            return {"ok": True, "msg": "本来就没弹出"}
+        _dock_float(pid, "点了收回")
+        return {"ok": True, "msg": "已收回"}
+
+    def ui_float_stop(self, pid):
+        """浮动窗口里的「停止」：**停掉后端 + 关掉窗口** —— 和那颗 X 一个意思（`V-194`）。"""
+        pid = str(pid)
+        _close_float_quiet(pid)                 # 先摘记录，免得关闭事件又当一次"用户关的"
+        r = self.embed_stop(pid)
+        _js(window, "window.__mossFloatClosed && window.__mossFloatClosed(%s)" % json.dumps(pid))
+        return {"ok": True, "msg": (r or {}).get("msg") or "已停掉"}
+
+    def set_win_icon(self, pid, png_b64):
+        """把浮动窗口的图标换成**这个包自己的图标**（`V-195`）。
+
+        ★ 为什么要绕"页面光栅化 → 这里收 PNG"这一圈：Windows 的窗口图标要的是 **HICON**，
+          而包图标大多是 **svg**（`icon.svg`，`currentColor` 的线条画），系统不认 svg。
+          页面那边本来就是个浏览器 —— 顺手把 svg 画进 canvas 导出 PNG 最省事
+          （不用为这一个功能引 svg 渲染库）。
+        ★ 收到 PNG 之后存成一面**多尺寸 .ico**（16/32/48/256）再 `LoadImageW` ——
+          多尺寸 Windows 才会按 DPI / 任务栏自己挑一张，不会糊。
+        """
+        pid = str(pid)
+        w = _float_win(pid)
+        if w is None:
+            return {"ok": False, "msg": "这个包的浮动窗口已经没了"}
+        try:
+            import base64 as _b64                                       # noqa: PLC0415
+            png = _b64.b64decode(str(png_b64 or ""))
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "图标数据坏了：%s" % e}
+        if len(png) < 64:
+            return {"ok": False, "msg": "图标数据太小了"}
+        _ICON_DIR.mkdir(parents=True, exist_ok=True)
+        ico = _ICON_DIR / (pid + ".ico")
+        try:
+            _png_to_ico(png, ico)
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "转 ico 失败：%s" % e}
+        hicon = _load_icon_file(ico)
+        if not hicon:
+            return {"ok": False, "msg": "系统读不了这个 ico"}
+        hwnd = _hwnd_of(w) or _hwnd_by_title(getattr(w, "title", "") or "")
+        if not hwnd:
+            return {"ok": False, "msg": "找不到那个窗口的句柄"}
+        _wm_set_icon(hwnd, hicon)
+        return {"ok": True, "msg": "图标换好了"}
+
     def embed_url(self, pid):
         """这个包的界面该从哪个地址加载（`V-55` ✅）。
 
@@ -2417,8 +2518,9 @@ class Api:
         return {"ok": True}
 
     def embed_stop(self, pid):
-        """停掉这个包的内嵌进程（界面上的「停止」）。"""
+        """停掉这个包的内嵌进程（界面上的「停止」）。浮动窗口也一起关掉（`V-192`）。"""
         pid = str(pid)
+        _close_float_quiet(pid)             # 别留一张"后端已经没了"的死窗口
         with EMBED_LOCK:
             rec = EMBED.get(pid)
         if not rec:
@@ -2769,10 +2871,13 @@ _ICON_KEEP = []          # 保住 LoadImage 出来的句柄：窗口还在用它
 
 
 def _moss_hwnds():
-    """本进程里那个标题叫 `moss` 的顶层窗口（找不到就退回"本进程所有可见顶层窗"）。"""
+    """本进程**所有可见的顶层窗口**（主窗口 + 浮动窗口们）。
+    ★ 从 `V-192` 起不按标题挑了：浮动窗口的标题是**包名**，按 "moss" 挑就只挑得到主窗口，
+      浮动窗口会一直顶着 python 的 logo。反正是我们自己进程的窗口，一次全换最省心
+      （有属主的窗口在 `_top_windows` 里已经被滤掉了）。
+    """
     me = os.getpid()
-    mine = [w for w in _top_windows() if w["pid"] == me and w["visible"]]
-    return [w["hwnd"] for w in mine if w["title"] == "moss"] or [w["hwnd"] for w in mine]
+    return [w["hwnd"] for w in _top_windows() if w["pid"] == me and w["visible"]]
 
 
 def _apply_window_icon(win=None):
@@ -2812,10 +2917,219 @@ def _apply_window_icon(win=None):
         return False
 
 
+# ================================================================ 浮动窗口（`V-192` / `V-194`）
+# 一句话：**把内嵌那一帧"弹出"成 moss 自己的另一个窗口** —— 后端进程一步都不动，
+# 变的只是"这一帧显示在哪个窗口里"。
+#
+# ★ 为什么这么设计（`V-190` ❌ 的教训）：一开始我想的是"独立窗口 = 包自己开的那个窗口"，
+#   于是要解决"两个进程之间怎么搬家"（通道 / 单实例 / 状态接力，一大堆）。
+#   其实**根本不用**：只要 moss 自己开第二个窗口、把同一帧搬过去，就没有第二个进程。
+#   代价只有一处 —— 那一帧是新文档（前端状态重来），后端状态原样还在。
+#
+# ★ 三颗按钮的语义（你定的，`V-194`）：
+#     · **最小化 ＝ 收回内嵌**（窗口消失、内容回主窗口那张选项卡，后端继续跑）
+#     · **关闭　 ＝ 结束**（停掉后端 + 关窗）
+#   最小化那条靠 pywebview 的窗口事件实现 —— Windows 后端本来就在 `Resize` 里发
+#   `events.minimized`（`platforms/winforms.py:365`），不用无边框、不用自绘标题栏。
+_FLOAT = {}                       # 包 id → pywebview 窗口对象（同一时刻一个包最多一个）
+_FLOAT_LOCK = threading.Lock()
+
+#: 浮动窗口的图标（`V-195`）：包自己的 `icon.*` 光栅化之后存这儿，一面多尺寸 .ico。
+#: ★ 放 `user_data/state/` 下：可再生、不用备份（下次弹出会重画一遍）。
+_ICON_DIR = USER_DATA / "state" / "_win_icons"
+
+
+def _png_to_ico(png_bytes, out_path):
+    """一张 PNG → 一面多尺寸 .ico（16/32/48/256）。
+
+    ★ 有 PIL 就用它（自带运行时里有）；没有就退化成一个**单帧**的 PNG 型 ico ——
+      ICO 容器本身很简单（6 字节头 + 每帧 16 字节目录 + 数据），Vista 起允许帧里直接放 PNG，
+      所以不引依赖也做得出来，只是少几档尺寸（Windows 会自己缩）。
+    """
+    try:
+        from io import BytesIO                                      # noqa: PLC0415
+        from PIL import Image                                       # noqa: PLC0415
+        im = Image.open(BytesIO(png_bytes)).convert("RGBA")
+        if max(im.size) < 256:                                      # 给足最大那档，别让小图放大后糊
+            im = im.resize((256, 256), Image.LANCZOS)
+        im.save(str(out_path), format="ICO",
+                sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (256, 256)])
+        return
+    except ImportError:
+        pass
+    import struct                                                   # noqa: PLC0415
+    header = struct.pack("<HHH", 0, 1, 1)                            # reserved / type=icon / 1 帧
+    entry = struct.pack("<BBBBHHII", 0, 0, 0, 0, 1, 32, len(png_bytes), 6 + 16)
+    out_path.write_bytes(header + entry + png_bytes)
+
+
+def _load_icon_file(path):
+    """用我们自己的那份 ico 换窗口图标（`V-182` 那套，只是文件来自包自己）。"""
+    try:
+        u32 = ctypes.WinDLL("user32", use_last_error=True)
+        u32.LoadImageW.argtypes = [wt.HINSTANCE, wt.LPCWSTR, wt.UINT, ctypes.c_int,
+                                   ctypes.c_int, wt.UINT]
+        u32.LoadImageW.restype = wt.HANDLE
+        # IMAGE_ICON | LR_LOADFROMFILE | LR_DEFAULTSIZE：让系统按 DPI 从多尺寸里挑
+        hicon = u32.LoadImageW(None, str(path), 1, 0, 0, 0x00000010 | 0x00000040)
+        if hicon:
+            _ICON_KEEP.append(hicon)
+        return hicon
+    except Exception:                                                  # noqa: BLE001
+        return 0
+
+
+def _hwnd_of(win):
+    """pywebview 窗口对象的原生句柄（拿不到给 0）。
+
+    ★ 能直接问 native 就别去猜：`window.native` 在 Windows 后端就是那个 WinForms `Form`，
+      `.Handle` 就是 HWND。按标题找窗口是退路（标题可能和别的窗口撞）。
+    """
+    try:
+        h = win.native.Handle
+    except Exception:                                                  # noqa: BLE001
+        return 0
+    for cast in ("ToInt64", "ToInt32"):
+        try:
+            return int(getattr(h, cast)())
+        except Exception:                                              # noqa: BLE001
+            continue
+    try:
+        return int(h)
+    except Exception:                                                  # noqa: BLE001
+        return 0
+
+
+def _hwnd_by_title(title):
+    if not title:
+        return 0
+    for w in _top_windows():
+        if w["pid"] == os.getpid() and w["visible"] and w["title"] == title:
+            return w["hwnd"]
+    return 0
+
+
+def _wm_set_icon(hwnd, hicon):
+    """大图标（标题栏 + 任务栏）和小图标（Alt+Tab）都指过去。"""
+    try:
+        u32 = ctypes.WinDLL("user32", use_last_error=True)
+        u32.SendMessageTimeoutW.argtypes = [ctypes.c_void_p, wt.UINT, wt.WPARAM, wt.LPARAM,
+                                            wt.UINT, wt.UINT,
+                                            ctypes.POINTER(ctypes.c_size_t)]
+        for which in (1, 0):                                           # ICON_BIG / ICON_SMALL
+            r = ctypes.c_size_t(0)
+            u32.SendMessageTimeoutW(hwnd, 0x0080, which, hicon,
+                                    0x0002, 2000, ctypes.byref(r))     # SMTO_ABORTIFHUNG
+        return True
+    except Exception:                                                  # noqa: BLE001
+        return False
+
+
+def _js(win, code):
+    """往某个窗口里塞一段 JS（塞不进去就当没事 —— 窗口可能刚被关掉）。"""
+    try:
+        win.evaluate_js(code)
+        return True
+    except Exception:                                                  # noqa: BLE001
+        return False
+
+
+def _float_win(pid):
+    with _FLOAT_LOCK:
+        return _FLOAT.get(str(pid))
+
+
+def _pkg_title(rec):
+    """包标题：`ui.title` 优先（多语言取 zh-CN 或第一个），否则包自己的 name。"""
+    def pick(v):
+        if isinstance(v, dict):
+            return str(v.get("zh-CN") or next(iter(v.values()), "") or "")
+        return str(v or "")
+    ui = (rec or {}).get("ui") or {}
+    return (pick(ui.get("title")) or pick((rec or {}).get("name")) or "").strip()
+
+
+def _destroy_soon(win, delay=0.25):
+    """过一小会儿再销毁窗口。
+
+    ★ 为什么要延后：这个函数经常是**在它自己的 js_api 调用里**被触发的（浮动窗口点
+      「收回」/「停止」时，调用者就是那个窗口）—— 立刻销毁会让那次调用的回包没有落地的地方。
+      让回包先回去，再关窗。
+    """
+    def run():
+        try:
+            win.destroy()
+        except Exception:                                              # noqa: BLE001
+            pass
+    try:
+        threading.Timer(delay, run).start()
+    except Exception:                                                  # noqa: BLE001
+        run()
+
+
+def _close_float_quiet(pid):
+    """把某个包的浮动窗口关掉（不触发"关闭＝结束"那套 —— 调用方自己在收尾）。"""
+    with _FLOAT_LOCK:
+        w = _FLOAT.pop(str(pid), None)
+    if w is not None:
+        _destroy_soon(w)
+    return w is not None
+
+
+def _dock_float(pid, why=""):
+    """收回：告诉主窗口那一页把帧建回来，然后销毁浮动窗口。**后端一点不动。**"""
+    pid = str(pid)
+    with _FLOAT_LOCK:
+        w = _FLOAT.pop(pid, None)
+    _js(window, "window.__mossFloatDock && window.__mossFloatDock(%s)" % json.dumps(pid))
+    if w is not None:
+        _destroy_soon(w)
+    _note("float: :%s 收回（%s）" % (pid, why or "？"))
+
+
+def _float_closed(pid):
+    """浮动窗口**被用户关掉**了 ⇒ 按约定 X ＝ 结束：停掉后端 + 告诉主窗口那一页。
+
+    ★ 我们自己收回/停掉时会**先把记录摘掉**，所以这里摘不到记录＝不是用户关的，
+      直接返回（免得"收回"被当成"结束"把后端杀了）。
+    """
+    pid = str(pid)
+    with _FLOAT_LOCK:
+        w = _FLOAT.pop(pid, None)
+    if w is None:
+        return
+    try:
+        Api().embed_stop(pid)
+    except Exception as e:                                             # noqa: BLE001
+        _note("float: :%s 关闭时停后端失败（%r）" % (pid, e))
+    _js(window, "window.__mossFloatClosed && window.__mossFloatClosed(%s)" % json.dumps(pid))
+    _note("float: :%s 被关掉 → 按约定当作结束" % pid)
+
+
+def _wire_float(pid, win, title):
+    """给浮动窗口挂三件事：窗口图标、最小化＝收回、关闭＝结束（`V-182` / `V-194`）。
+
+    ★ 事件回调跑在 pywebview 自己起的线程里 —— `V-182` 的教训是"别在那个线程里直接动窗口"
+      （那次换图标把界面整个卡死了）。所以这里每一件都丢给一个普通后台线程去做。
+    """
+    pid = str(pid)
+
+    def later(fn, *a):
+        threading.Thread(target=fn, args=a, daemon=True).start()
+
+    win.events.minimized += lambda *a: later(_dock_float, pid, "点了最小化")
+    win.events.closed += lambda *a: later(_float_closed, pid)
+    win.events.shown += lambda *a: later(_apply_window_icon)
+    _ = title          # 标题已经由 create_window 定好（winforms 后端不会让网页标题盖掉它）
+
+
+_PAGE_URL = _page_url()          # 主窗口那一页的地址；浮动窗口用同一个，只多一个 #float=<id>
+_API = Api()                     # 两个窗口共用同一个 js_api 实例（浮动窗口里也要能用 embed_*）
+
 window = webview.create_window(
     "moss",
-    _page_url(),
-    js_api=Api(),
+    _PAGE_URL,
+    js_api=_API,
     width=1280,
     height=860,
     min_size=(900, 600),

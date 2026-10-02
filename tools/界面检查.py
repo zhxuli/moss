@@ -52,6 +52,21 @@ r = subprocess.run(["node", "--check", str(tmp_js)], capture_output=True, text=T
                    encoding="utf-8", errors="replace")
 chk("node --check  JS 语法", r.returncode == 0, (r.stderr or "").strip()[:500])
 
+# ---------------- 1b. 模板里的 HTML 注释不许有反引号（`V-195` 加的一道闸）----------------
+# ★ 为什么值得单列一条：Vue 组件的 `template:` 是**模板字符串**，里面每一对反引号都会
+#   提前结束这个字符串 —— 而"在 HTML 注释里引用一下 `V-194`"这种写法我**踩了三次**
+#   （`node --check` 报的是一句莫名其妙的 `Unexpected identifier`，得往回找才知道是注释）。
+#   这条闸把话说在前面：`<!-- ... `xxx` ... -->` 一律拦下。
+_tpl_backtick = []
+for _name, _src in js_by_file.items():
+    for _m in re.finditer(r"<!--(?:(?!-->).)*-->", _src, re.S):
+        if "`" in _m.group(0):
+            _line = _src.count("\n", 0, _m.start()) + 1
+            _tpl_backtick.append("%s:%d" % (_name, _line))
+chk("模板里的 HTML 注释没有反引号", not _tpl_backtick,
+    ("反引号会提前结束 template 字符串 —— 改掉：%s" % _tpl_backtick) if _tpl_backtick
+    else "（反引号会提前结束模板字符串）")
+
 # ---------------- 2. id 唯一 ----------------
 ids = re.findall(r'\bid="([^"]+)"', html)
 dup = [k for k, v in Counter(ids).items() if v > 1]

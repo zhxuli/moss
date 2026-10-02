@@ -1,6 +1,34 @@
 /* moss 界面 · app.js —— 从 index.html 拆出来的（`V-67`），内容与拆分前一致。 */
 /* ---------------------------------------------------------------- 启动 */
 
+/* 浮动窗口模式（`V-192`）：宿主**开的第二个窗口**加载的是同一份页面，地址上只多一个
+   `#float=<包id>`。这一页就只画那个包的那一帧，别的（顶栏 / 左侧栏 / 选项卡 / 状态栏）全藏起来
+   （CSS 里那些 `body.float …`）。
+   ★ 为什么要复用**同一份页面**而不是另写一个小页：`embed.js` 那条
+     `postMessage → embed_send → 后端子进程 stdin` 一个字都不用改，后端也完全不知道
+     自己"被搬了窗口"。 */
+const FLOAT_PID = (function(){
+  const m = /^#float=([A-Za-z0-9_-]{1,32})$/.exec(location.hash || "");
+  return m ? m[1] : "";
+})();
+if (FLOAT_PID) document.body.classList.add("float");
+
+/* 浮动窗口的启动：不跑那一整套主界面流程，只要"选中这个包 + 把帧开起来"。 */
+async function initFloatMode(){
+  const p = (DATA.packages || []).find(x => String(x.id) === FLOAT_PID);
+  if (!p){
+    document.body.innerHTML = '<div style="padding:24px;font:14px system-ui">' +
+      '这个窗口是给包 :' + FLOAT_PID + ' 开的，但没找到它。</div>';
+    return;
+  }
+  document.title = (p.name || p.id) + " · moss";
+  select(p.id);                 // 让详情/界面这些面板有上下文（`select` 会顺手切到详情，下面再切回界面）
+  await embedOpen(p);           // 起后端（已经起着就复用）+ 建那一帧
+  await pushWindowIcon(p);      // `V-195`：窗口左上角换成本包自己的图标
+  uiLog("[浮动窗口] :" + p.id + " 帧=" + (embedRunning(p.id) ? "ok" : "没起来") +
+        " 图标=" + ((p.icon_svg || p.icon) ? "有" : "没有") + " 地址=" + location.href);
+}
+
 /* 启动诊断（`V-76` / `V-81`）：往 `user_data/state/_ui_drop.log` 写一行 —— 界面要是
    空白，我读这行就知道是哪种情况（包 0 个 / 画不出来 / 脚本没跑），不用你找控制台。
    ★ 只能在**列表和历史都画完之后**调：这两个列表是 Vue 组件画的，`renderList()` 只举牌、
@@ -20,6 +48,8 @@ function writeStartDiag(){
 async function init(){
   setStatus("就绪");        // 状态栏（`V-61`）：还没干任何事时它是空的，给一句起点
   DATA = await pywebview.api.state();
+  // ★ 浮动窗口（`V-192`）：只要那一帧，别跑主界面那一整套（列表 / 历史 / 文件管理都不用）。
+  if (FLOAT_PID){ await initFloatMode(); return; }
   $("#meta").textContent =
     DATA.packages.length + " 个包 · 启动方式：" + DATA.launch_kind + " · " + DATA.home;
   renderList(); paintStates();

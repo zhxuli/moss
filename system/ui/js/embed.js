@@ -14,7 +14,10 @@
    ★ **切走不关**（你要的那条）：切到别的选项卡、甚至切去开**另一个包**的界面，
      这一帧都只是被藏起来（`display:none`），页面和后端进程都照旧 ——
      所以这里是**一个包一帧**（`EMB.alive`），不是共用一帧。 */
-const EMB = {alive: {}, tick: null};
+const EMB = {alive: {}, tick: null, floated: {}};
+/* `EMB.floated[pid]` = 这一帧被**弹出成窗口**了（`V-192`）：
+   主窗口这边不再持有帧（同一个后端不能有两个帧 —— `EMB.alive[pid].frame` 是单帧引用），
+   给个占位让人点一下收回。浮动窗口那边是 `FLOAT_PID`（见 app.js），它持有帧。 */
 
 function embedSupported(p){ return !!(p && p.ui && p.ui.embed); }
 /* 包界面该从哪个地址加载 —— **问宿主**（`V-55` ✅）。
@@ -80,9 +83,10 @@ async function embedStop(pid, quiet){
   const rec = EMB.alive[pid];
   if (rec && rec.frame) rec.frame.remove();     // 这一帧也撤掉（进程都停了，留着没意义）
   delete EMB.alive[pid];
+  delete EMB.floated[pid];                      // 停掉了就不再是"弹出去了"（`V-192`）
   if (!Object.keys(EMB.alive).length) embedTick(false);
   embedShow(Object.keys(EMB.alive)[0] || null);  // 还有别的在跑就接着显示它
-  paintEmbedTab(); paintActions(selObj());
+  paintEmbedTab(); paintActions(selObj()); EMBR.rev++;
 }
 function embedRunning(pid){ return !!EMB.alive[String(pid)]; }
 
@@ -114,10 +118,37 @@ window.__mossEmbedGone = function(pid, code){
     const rec = EMB.alive[pid];
     if (rec.frame) rec.frame.remove();
     delete EMB.alive[pid];
+    delete EMB.floated[pid];
     if (!Object.keys(EMB.alive).length) embedTick(false);
     toast("这个包的内嵌进程结束了（退出码 " + code + "）", code !== 0);
-    paintEmbedTab(); paintActions(selObj());
+    paintEmbedTab(); paintActions(selObj()); EMBR.rev++;
   }
+};
+
+/* ---------------------------------------------------------------- 浮动窗口（`V-192` / `V-194`）
+   宿主开第二个窗口、把这一帧搬过去 —— **后端进程一步不动**。这里只做两件收尾：
+     · 被人点了最小化 → 宿主喊 `__mossFloatDock`：把帧建回主窗口这一页；
+     · 窗口被人关掉（或按了停止）→ 宿主喊 `__mossFloatClosed`：那一帧没了、后端也停了。 */
+window.__mossFloatDock = async function(pid){
+  pid = String(pid);
+  EMB.floated[pid] = false;
+  EMBR.rev++;
+  const p = (DATA.packages || []).find(x => String(x.id) === pid);
+  if (p && embedSupported(p) && !EMB.alive[pid]){
+    await embedOpen(p, {keepTab: true});       // 后端还活着 ⇒ `embed_start` 直接复用
+    toast("已收回主窗口");
+  }
+};
+window.__mossFloatClosed = function(pid){
+  pid = String(pid);
+  EMB.floated[pid] = false;
+  const rec = EMB.alive[pid];
+  if (rec && rec.frame) rec.frame.remove();
+  delete EMB.alive[pid];
+  if (!Object.keys(EMB.alive).length) embedTick(false);
+  embedShow(Object.keys(EMB.alive)[0] || null);
+  paintEmbedTab(); paintActions(selObj()); EMBR.rev++;
+  toast("这个包已经停了（关掉窗口 ＝ 结束）");
 };
 /* 帧里发过来的（垫片的请求 + ready）：靠 `ev.source` 认出是哪一帧 */
 window.addEventListener("message", async (ev) => {
@@ -173,10 +204,17 @@ const MossEmbed = {
     p(){ this.R.rev; return embedSupported(cur) ? cur : null; },
     title(){ this.R.rev; const p = this.p; return p ? (p.ui.title || p.name || "界面") : "界面"; },
     aliveN(){ this.R.rev; return Object.keys(EMB.alive).length; },
+    // 这一页是**浮动窗口**那一份吗（`V-192`：同一份页面，靠 `#float=<id>` 分流）
+    isFloat(){ return !!FLOAT_PID; },
+    // 当前这个包的帧是不是已经被弹到窗口里去了（主窗口这一侧显示占位）
+    floatedHere(){ this.R.rev; const p = this.p; return !!(p && EMB.floated[p.id]); },
     info(){
       this.R.rev;
       const p = this.p;
       if (!p) return "";
+      if (FLOAT_PID)                      // 浮动窗口：说清那两颗按钮是什么意思
+        return embedRunning(p.id) ? "浮动窗口 · 点最小化＝收回主窗口，点关闭＝结束这个包" : "还没起";
+      if (EMB.floated[p.id]) return "已经弹到窗口里去了（那边最小化就回来）";
       if (!embedRunning(p.id)) return "还没跑 —— 点右上角「运行」就起";
       const n = this.aliveN;
       return "后端 :" + p.id + " 在内嵌运行 · 切走也不会停" +
@@ -189,12 +227,42 @@ const MossEmbed = {
       const rec = cur && EMB.alive[cur.id];
       if (rec && rec.frame) rec.frame.src = rec.frame.src;
     },
-    // 在独立窗口里打开它（和这个选项卡并存）
-    openWindow(){
-      if (!cur) return;
-      pywebview.api.open_ui(cur.id, argsInput() ? argsInput().value : "").then(r => {
-        if (r && r.msg) toast(r.msg, !r.ok);
-      });
+    /* 弹出为窗口（`V-192`）：**先拆掉这一页的帧**，再让宿主开第二个窗口 —— 后端一步不动。
+       顺序不能反：同一个后端只许有一个帧（`EMB.alive[pid].frame` 是单帧引用）。 */
+    async floatOut(){
+      const p = this.p;
+      if (!p) return;
+      const rec = EMB.alive[p.id];
+      if (rec && rec.frame) rec.frame.remove();
+      delete EMB.alive[p.id];
+      if (!Object.keys(EMB.alive).length) embedTick(false);
+      EMB.floated[p.id] = true;
+      EMBR.rev++;
+      const r = await pywebview.api.ui_float(p.id);
+      if (!r || !r.ok){                     // 开不出来就恢复原样，别让人对着一块空的
+        EMB.floated[p.id] = false;
+        toast("✗ " + ((r && r.msg) || "弹不出来"), true);
+        await embedOpen(p, {keepTab: true});
+        return;
+      }
+      toast(r.msg);
+      paintEmbedTab(); EMBR.rev++;
+    },
+    /* 收回：让宿主把那扇窗关掉，然后这边把帧建回来（后端还活着 ⇒ 直接复用） */
+    async floatBack(){
+      const p = this.p;
+      if (!p) return;
+      const r = await pywebview.api.ui_dock(p.id);
+      EMB.floated[p.id] = false;
+      await embedOpen(p, {keepTab: true});
+      if (r && r.msg) toast(r.msg);
+    },
+    /* 浮动窗口里的「停止」＝ 结束（和那颗 X 一个意思，`V-194`） */
+    async floatStop(){
+      const p = this.p;
+      if (!p) return;
+      const r = await pywebview.api.ui_float_stop(p.id);
+      if (r && r.msg) toast(r.msg);
     },
   },
   template: `
@@ -202,16 +270,56 @@ const MossEmbed = {
       <span id="embed-title">{{ title }}</span>
       <span id="embed-info" class="dim">{{ info }}</span>
       <span style="flex:1"></span>
+      <!-- 浮动窗口里**整条都不显示**（CSS：body.float #embed-bar{display:none}）——
+           那一页就是一扇"这个包自己的窗口"：窗口标题上已经有名字，
+           最小化＝收回主窗口、关闭＝结束这个包（V-194），不需要再摆一条。 -->
       <button id="btn-embed-reload" class="iconbtn" title="重新加载这一页"
               v-html='ico("refresh-cw", "i")' @click="reload()"></button>
-      <button id="btn-embed-window" class="iconbtn"
-              title="在独立窗口里打开它（和这个选项卡并存）"
-              v-html='ico("app-window", "i")' @click="openWindow()"></button>
+      <button v-if="!isFloat" id="btn-embed-window" class="iconbtn"
+              title="弹出为窗口（在那边点最小化就收回、点关闭就结束）"
+              v-html='ico("app-window", "i")' @click="floatOut()"></button>
     </div>
     <div id="embed-wrap">
-      <div id="embed-empty" class="empty" v-show="!aliveN">还没跑 —— 点右上角「运行」就在这一页里开起来</div>
+      <div id="embed-floated" v-if="floatedHere" @click="floatBack()">
+        <span v-html='ico("app-window", "i")'></span>
+        <span>已经弹到窗口里了 —— 点这里收回（或点那个窗口的最小化）</span>
+      </div>
+      <div id="embed-empty" class="empty" v-show="!aliveN && !floatedHere">
+        还没跑 —— 点右上角「运行」就在这一页里开起来</div>
     </div>`,
 };
+/* 把**包自己的图标**光栅化成 PNG 交给宿主，当浮动窗口的窗口图标（`V-195`）。
+   ★ 为什么在页面这边画：Windows 的窗口图标只认 HICON，而包图标大多是 **svg**
+     （`icon.svg`，`currentColor` 的线条画）—— 浏览器正好是个现成的光栅化器，
+     省得为这一个功能引 svg 渲染库。宿主收到再存成多尺寸 .ico 交给 `LoadImageW`。
+   ★ 图标是锦上添花：任何一步失败都**不吭声**（窗口照开，只是顶着 moss 的图标）。 */
+async function pushWindowIcon(p){
+  try{
+    if (!p) return;
+    let src = "";
+    if (p.icon_svg){
+      // svg 里是 `currentColor`：放进 <img> 会被当成黑色，深色任务栏上就看不见了 ——
+      // 换成主题强调色。顺带把 width/height 提到 256，让浏览器**按 256 光栅化**（不糊）。
+      const svg = String(p.icon_svg)
+        .replace(/currentColor/g, "#0071e3")
+        .replace(/width="24"/, 'width="256"').replace(/height="24"/, 'height="256"');
+      src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    } else if (p.icon){
+      src = p.icon;                       // 非 svg 的包图标，宿主已经给成 data URI 了
+    }
+    if (!src) return;
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = src; });
+    const S = 256, pad = Math.round(S * 0.06);
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = S;
+    const g = cv.getContext("2d");
+    g.drawImage(img, pad, pad, S - pad * 2, S - pad * 2);
+    const b64 = (cv.toDataURL("image/png").split(",")[1] || "");
+    if (b64) await pywebview.api.set_win_icon(p.id, b64);
+  }catch(e){}
+}
+
 /* 后端那些"不是消息"的输出（宿主横幅、包自己的 print）→ 捞进命令行面板 */
 async function embedPollConsole(){
   const ids = Object.keys(EMB.alive);

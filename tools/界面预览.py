@@ -73,7 +73,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "settings-bad", "settings-warn", "settings-tip",
           "settings-ai", "settings-ai-tpl", "settings-ai-new", "settings-ai-empty",
           "hist", "hist-console", "hist-file",
-          "edit-manifest", "edit-manifest-detail"]
+          "edit-manifest", "edit-manifest-detail", "float-window"]
 
 
 def browser():
@@ -597,6 +597,19 @@ MOCK_JS = r"""
                    '"choices":[{"delta":{"content":"收到"}}]}'};
     },
     open_ui: async () => ({ok: true, msg: "(预览) 已打开"}),
+    // 浮动窗口（`V-192`）：预览里开不出第二个窗口，只把三个接口垫出来，
+    // 让页面那条路（拆帧 → 开窗 → 收回/结束的回调）能整条跑一遍。
+    ui_float: async (pid) => { (M.floats = M.floats || []).push({pid: pid, op: "float"});
+                               return {ok: true, msg: "(预览) 已弹出为窗口"}; },
+    ui_dock: async (pid) => { (M.floats = M.floats || []).push({pid: pid, op: "dock"});
+                              return {ok: true, msg: "(预览) 已收回"}; },
+    ui_float_stop: async (pid) => { (M.floats = M.floats || []).push({pid: pid, op: "stop"});
+                                    return {ok: true, msg: "(预览) 已停止"}; },
+    // 浮动窗口的图标（`V-195`）：页面把包图标光栅化成 PNG 送过来，这里只记一下多大
+    set_win_icon: async (pid, b64) => {
+      (M.winIcons = M.winIcons || []).push({pid: pid, len: String(b64 || "").length});
+      return {ok: true, msg: "(预览) 图标换好了"};
+    },
     pkg_stop: async () => ({ok: true, msg: "(预览) 已停止"}),
     pkg_hide: async () => ({ok: true, msg: "(预览) 已隐藏"}),
     pkg_show: async () => ({ok: true, msg: "(预览) 已显示"}),
@@ -2619,6 +2632,72 @@ MOCK_JS = r"""
         dz.className = "";
         if (ok) setTab("console");
         document.title = ok ? "READY" : "DROPEXT-FAIL";
+      }
+      // ★ `V-192` / `V-194`：浮动窗口那条线（真机是两个窗口，预览里只能验页面这一侧）
+      if (h === "float-window"){
+        const disp = sel => {
+          const el = document.querySelector(sel);
+          return el ? getComputedStyle(el).display : "（没有这个元素）";
+        };
+        // ① 浮动窗口模式就是 `body.float`（CSS 把别的都藏了）—— 验它真藏住了
+        document.body.classList.add("float");
+        await sleep(200);
+        const hidden = {header: disp("header"), aside: disp("aside"),
+                        statusbar: disp("#statusbar"), tabs: disp("#tabs"),
+                        bar: disp("#embed-bar"),          // ★ `V-195`：那条也不该显示
+                        detail: disp("#pane-detail"), console: disp("#pane-console"),
+                        file: disp("#pane-file")};
+        const allHidden = Object.keys(hidden).every(k => hidden[k] === "none");
+        // 包图标光栅化（`V-195`）：拿一个真有 svg 图标的包走一遍 canvas → PNG
+        await window.pushWindowIcon(state.packages.find(x => x.id === "md5"));
+        await sleep(300);
+        const ic = (M.winIcons || [])[0] || {};
+        const iconOk = ic.pid === "md5" && ic.len > 1000;      // 256×256 的 PNG 不可能几十字节
+        document.body.classList.remove("float");
+        await sleep(150);
+        // ② 正常模式：界面那一页有「弹出为窗口」那颗按钮
+        select("bmi");
+        setTab("embed");
+        await sleep(400);
+        const floatBtn = !!document.querySelector("#btn-embed-window");
+        // ③ 弹出：先拆帧、再叫宿主开窗（`M.floats` 记下来了）
+        await embedOpen(state.packages.find(x => x.id === "bmi"));
+        await sleep(300);
+        const before = Object.keys(EMB.alive).length;
+        const comp = (document.querySelector("#pane-embed").__vue__ || {});   // 拿不到就只验状态
+        EMB.floated["bmi"] = true; EMBR.rev++;
+        await sleep(200);
+        const placeholder = !!document.querySelector("#embed-floated");
+        // ④ 宿主喊"收回"（＝用户点了最小化）：帧要建回来、占位要消失
+        window.__mossFloatDock("bmi");
+        await sleep(500);
+        const docked = !EMB.floated["bmi"] && !!EMB.alive["bmi"] &&
+                       !document.querySelector("#embed-floated");
+        // ⑤ 宿主喊"关了"（＝结束）：帧和状态都要清干净
+        EMB.floated["bmi"] = true; EMBR.rev++;
+        window.__mossFloatClosed("bmi");
+        await sleep(300);
+        const closed = !EMB.floated["bmi"] && !EMB.alive["bmi"] &&
+                       !document.querySelector("#embed-floated");
+        const ok = allHidden && floatBtn && placeholder && docked && closed && iconOk;
+        document.querySelector("#out").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n① body.float 藏住别的（每项都该是 none）=" + JSON.stringify(hidden) +
+          "\n   ★ 说明条也藏了 = " + (hidden.bar === "none") +
+          "\n   ★ 包图标光栅化（md5 的 svg → PNG）= " + iconOk +
+          " 送来 " + (ic.len || 0) + " 字节 base64" +
+          "\n② 正常模式有「弹出为窗口」= " + floatBtn +
+          "\n③ 占位出现（帧被弹走）= " + placeholder + "（弹出前后帧数 " + before + " → " +
+          Object.keys(EMB.alive).length + "）" +
+          "\n④ 收回：帧回来了、占位没了 = " + docked +
+          "\n⑤ 关闭（＝结束）：帧和状态清干净 = " + closed;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 藏=" + (allHidden ? 1 : 0) +
+          " 图标=" + (iconOk ? 1 : 0) +
+          " 钮=" + (floatBtn ? 1 : 0) + " 占位=" + (placeholder ? 1 : 0) +
+          " 收=" + (docked ? 1 : 0) + " 关=" + (closed ? 1 : 0);
+        if (ok) setTab("console");
+        document.title = ok ? "READY" : "FLOAT-FAIL";
       }
       // ★ 报错这条路本身也要能自证（`V-81`）：故意造一个"计算属性里抛错"的组件（和
       //   `MossList.rows` 读 `DATA.packages` 抛的那个是同一类），看它有没有被

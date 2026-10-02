@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     fill="none" stroke="currentColor" stroke-width="1.5"
+     stroke-linecap="round" stroke-linejoin="round">
+  <!-- moss 包图标 · BMI 计算（健康 / 体重仪表） · 24×24 / 1.5 描边 / currentColor：
+       界面可以跟随主题色，深浅模式都不用重画。形状取自 lucide 的 `gauge`（ISC 许可）。
+       一个仪表盘 + 指针 —— BMI 本来就是「读数」这件事，仪表比体重秤更好认，16px 下也不糊。 -->
+  <path d="m12 14 4-4" />
+  <path d="M3.34 19a10 10 0 1 1 17.32 0" />
+</svg>
