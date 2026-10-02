@@ -323,6 +323,15 @@ _pkg_hidden = {}         # 包 id -> [被藏起来的窗口句柄]（显示时�
 EMBED = {}
 EMBED_LOCK = threading.Lock()
 
+#: 这个界面服务**不许发**的路径（相对安装根，`V-170`）。
+#: ★ 为什么：服务的根是整个安装根，而界面真正需要的只有 `system/ui/**` 和自包含页面 ——
+#:   配置（明文 key）、快照库、命令历史、各包运行期数据没理由经一个 HTTP 端口发出去。
+#:   `user_data/state/` 里那份 `_ui_inline.html` 是例外（它就是界面本身）。
+_EMBED_DENY = ("user_data/config.toml", "user_data/backups/", "user_data/history/",
+               "user_data/state/", "user_data/trash/", "user_data/snapshot.ignore",
+               "user_data/runners.json", ".git/", "core/", "venv/")
+_EMBED_ALLOW = ("user_data/state/_ui_inline.html",)
+
 #: 给包界面用的**本地 HTTP 服务**（`V-55` ✅）：`{httpd, port, token}`。
 #: ★ 为什么要这么绕一圈：**WebView2 里不能 iframe 一个 `file://` 页面**
 #:   （实测：父页也是 file:// 也一样 —— 帧建出来了、却压根不导航，一片空白；
@@ -986,6 +995,33 @@ class _EmbedHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(403, "bad token")
             return
         super().do_HEAD()
+
+    def _rel_of(self, path):
+        """把请求路径变成"相对安装根的 posix 路径"（先剥掉 token 那一段）。"""
+        p = str(path or "").split("?", 1)[0].split("#", 1)[0]
+        tk = _EMBED_SRV["token"]
+        if tk and p.startswith("/" + tk + "/"):
+            p = p[len(tk) + 1:]
+        return p.lstrip("/")
+
+    def _blocked(self, rel):
+        """敏感路径一律挡住（`V-170`）；目录也不给列（要拿文件得知道确切路径）。"""
+        if rel in _EMBED_ALLOW:
+            return None
+        for d in _EMBED_DENY:
+            if rel == d or rel.startswith(d):
+                return "denied"
+        if (HOME / rel).is_dir():
+            return "no listing"
+        return None
+
+    def send_head(self):
+        rel = self._rel_of(self.path)
+        why = self._blocked(rel)
+        if why:
+            self.send_error(403 if why == "denied" else 404, why)
+            return None
+        return super().send_head()
 
     def translate_path(self, path):
         tk = _EMBED_SRV["token"]

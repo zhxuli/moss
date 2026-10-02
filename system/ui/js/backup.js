@@ -931,11 +931,12 @@ const MossFileSnap = {
            :data-bk="it.id">
         <div class="bk-tl-dot"></div>
         <div class="bk-card" @click="open(it.id, it.group)">
-          <div class="bk-card-top">
-            <b :title="it.note || it.title">{{ it.title }}</b>
-            <span class="bk-time">{{ shortTime(it.created_text) }}</span>
-          </div>
-          <div class="bk-card-sub">{{ it.files }} 项 · {{ humanSize(it.bytes) }}</div>
+          <!-- ★ V-177：一条快照 = 一行。常态「名字 靠左 + N项/大小/时间 靠右（完整显示）」；
+               hover 才展开成两行（标题+按钮 / 项目数+大小 靠左、时间靠右）。布局靠 grid 换 areas，见 CSS。 -->
+          <b class="bk-t" :title="it.note || it.title">{{ it.title }}</b>
+          <span class="bk-cnt">{{ it.files }} 项</span>
+          <span class="bk-size">{{ humanSize(it.bytes) }}</span>
+          <span class="bk-time">{{ shortTime(it.created_text) }}</span>
           <div class="bk-card-act">
             <button class="iconbtn b-bkrestore" data-bk-act="restore" @click.stop="restore(it)"
                     title="恢复（git restore）：把快照里的写回来 —— 缺的补上、不一样的回退（覆盖前留 .bak）；现在多出来的一个都不动"

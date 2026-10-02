@@ -2026,7 +2026,7 @@ MOCK_JS = r"""
         await sleep(900);
         const nodes1 = document.querySelectorAll(".bk-snap .bk-tl-item").length;   // 含"当前工作区"
         // ★ 时间轴第一条**永远是**「当前工作区」（那张卡没有 `data-bk`），所以标题要挑有 id 的那条
-        const firstTitle = (document.querySelector(".bk-snap .bk-tl-item[data-bk] .bk-card-top b")
+        const firstTitle = (document.querySelector(".bk-snap .bk-tl-item[data-bk] .bk-card .bk-t")
                             || {}).textContent || "";
         const tip1 = (document.querySelector(".bk-snap-foot .bk-hint") || {}).title || "";
         // ② 展开它看文件（存完自己就展开了 → 已经开着就别再点，再点一下是"收起"）
@@ -2244,7 +2244,7 @@ MOCK_JS = r"""
         setTab("file");
         await sleep(900);
         const aNodes2 = document.querySelectorAll(".bk-snap .bk-tl-item").length;
-        const aTitle = (document.querySelector(".bk-snap .bk-tl-item[data-bk] .bk-card-top b")
+        const aTitle = (document.querySelector(".bk-snap .bk-tl-item[data-bk] .bk-card .bk-t")
                         || {}).textContent || "";
         // 删掉 A 这一组（foot 那颗垃圾桶）
         (document.querySelector(".bk-snap .b-bkdropgroup") || {click(){}}).click();

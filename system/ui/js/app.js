@@ -66,6 +66,7 @@ function paintStaticIcons(){
     if (b) b.innerHTML = ico(tabs[k][0], "i") + '<span>' + tabs[k][1] + '</span>';
   });
   $("#btn-selfcheck").innerHTML = ico("activity", "i");
+  $("#btn-aside-mini").innerHTML = ico("chevron-right", "i");   // `V-171`：收起 / 展开
   // 左侧顶部：插件 / 历史 切换 + 新建包
   $("#sw-pkg").innerHTML  = ico("package", "i") + '<span>插件</span>';
   // ★ 历史用 Lucide 那个**带表针的 history**（lucide-static 1.48.0，见 vendor/README.md）。
@@ -188,6 +189,49 @@ $("#btn-selfcheck").onclick = async () => {
 };
 
 paintStaticIcons();
+
+/* 左侧栏收起 / 展开（`V-171`）：收起只剩图标，选择记在 localStorage，下次开还是这样。
+   ★ 宽度不改：收起时用 CSS（`main.mini > aside{width:56px !important}`）压住，
+     展开时把那层压盖去掉 ⇒ 你拖出来的宽度**原样还在**。 */
+function asideMiniOn(){ return $("main").classList.contains("mini"); }
+function setAsideMini(on){
+  // ★ 先记宽度**再**加类（`V-174`）：加完 `mini` 它就已经缩成 56px 了，
+  //   那时候去记只会把弹出宽度记成 56 —— 表现就是"hover 了也不展开"。
+  if (on) rememberAsideW();
+  $("main").classList.toggle("mini", !!on);
+  $("main").classList.remove("hover-aside");
+  try{ localStorage.setItem("moss.asideMini", on ? "1" : "0"); }catch(e){}
+}
+/* 把"你拖出来的宽度"记进 `--aside-w`（弹出时用它），并**存进 localStorage**。
+   ★ 只在"正常宽度"时记：已经缩成图标条（≤60px）时读到的是 56，那不算数。 */
+function rememberAsideW(){
+  const a = $("main > aside");
+  if (!a) return;
+  const box = Math.round(a.getBoundingClientRect().width);
+  const inline = parseInt(a.style.width, 10);
+  const w = (inline > 60 ? inline : (box > 60 ? box : 0));
+  if (!w) return;
+  $("main").style.setProperty("--aside-w", w + "px");
+  try{ localStorage.setItem("moss.asideW", String(w)); }catch(e){}
+}
+$("#btn-aside-mini").onclick = () => setAsideMini(!asideMiniOn());
+/* 悬停进出：收起状态下鼠标放上去就弹出来（浮在内容上），移开就缩回去 */
+{
+  const a = $("main > aside");
+  if (a){
+    a.addEventListener("mouseenter", () => {
+      if (asideMiniOn()){ rememberAsideW(); $("main").classList.add("hover-aside"); }
+    });
+    a.addEventListener("mouseleave", () => $("main").classList.remove("hover-aside"));
+    /* 拖完记住新宽度（拖动那条线在 aside 里，pointerup 会冒泡上来） */
+    a.addEventListener("pointerup", () => { if (asideMiniOn()) rememberAsideW(); });
+  }
+}
+try{
+  const savedW = parseInt(localStorage.getItem("moss.asideW"), 10);
+  if (savedW > 60) $("main").style.setProperty("--aside-w", savedW + "px");
+  setAsideMini(localStorage.getItem("moss.asideMini") === "1");
+}catch(e){}
 
 /* 左侧那一列也能拖宽（`V-92`）：细线在它右边缘上（`index.html` 里的 `#grip-aside`），
    往右拖变宽；双击回到 300。上限按窗口宽度算（最多占一半）。 */

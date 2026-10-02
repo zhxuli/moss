@@ -88,11 +88,17 @@ header{display:flex;align-items:center;gap:10px;padding:9px 14px;
 #q::placeholder{color:var(--ph)}
 .meta{flex:1;color:var(--dim2);font-size:11.5px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;text-align:right;letter-spacing:.01em}
-main{flex:1;display:flex;min-height:0}
+/* `position:relative` 是给"收起态那条浮动侧栏"当定位父级用的（`V-171` 起） */
+main{flex:1;display:flex;min-height:0;position:relative}
 /* `V-92`：能拖着调宽的那条细线（左侧列表 / 版本快照边栏各一条，见 `core.js` 的 `bindColResize`）。
    故意做得"看不见"：只有一个光标 + hover 时极淡的一层底色，不占视觉。 */
-.grip{position:absolute;top:0;bottom:0;width:7px;z-index:60;cursor:col-resize;
+/* ★ V-171：拖动条从 7px 加宽到 10px，并在**常态**就画一条极淡的竖线 ——
+   以前完全透明（只有 hover 才有一层底色），所以"能拖"这件事根本没人发现。 */
+.grip{position:absolute;top:0;bottom:0;width:10px;z-index:60;cursor:col-resize;
   background:transparent;transition:background .12s ease-out}
+.grip::before{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:2px;height:34px;border-radius:2px;background:var(--line2);transition:background .12s}
+.grip:hover::before,.grip.on::before{background:var(--accent)}
 .grip:hover,.grip.on{background:var(--field-focus)}
 #grip-aside{right:-4px}
 .bk-snap .b-bkgrip{left:-4px}
@@ -101,6 +107,42 @@ body.colres{cursor:col-resize;user-select:none}
 aside{position:relative}
 aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--panel);
   display:flex;flex-direction:column;min-height:0}
+/* 收起 = **自动隐藏**（`V-171` / `V-172`）：不悬停时缩成一条 56px 图标条（文字全藏、图标留着）；
+   鼠标一放上去就"弹出来"，宽度用你拖出来的那个，而且是**浮在内容上面**（不把右边挤走）。
+   ★ 所有"缩起来"的规则都挂在 `main.mini:not(.hover-aside)` 上 —— 一悬停就整套让开，回到正常长相。 */
+/* ★ 常态就让它**浮着**（`position:absolute` + 56px），右边用 `margin-left` 固定留出那一条 ——
+   这样"悬停弹出来"只是把它自己变宽盖上去，**右边的内容一点都不动**（不然每次 hover 都晃一下）。 */
+main.mini > aside{position:absolute;left:0;top:0;bottom:0;z-index:40;
+  width:56px !important;transition:width .16s ease;overflow:hidden}
+/* ★ `V-176`：右侧**跟着让位**（不是被浮层盖住）—— 之前只给固定 56px 的左边距，
+   侧栏一展开就把「详情 / 命令行 / 文件管理」那三个标签盖住了。
+   现在留白跟着侧栏宽度一起动（同一条 `transition`，0.16s ease），所以是"推开"而不是"盖住"，
+   而且两边同步动，不会有错位感。 */
+main.mini > #right{margin-left:56px;transition:margin-left .16s ease}
+main.mini.hover-aside > #right{margin-left:var(--aside-w,300px)}
+main.mini:not(.hover-aside) .grip{display:none}
+/* ★ `V-175`：收起时**内容只"看不见"，盒子留在原地** ——
+   ① 顶排（插件/历史/新建/刷新）不再 display:none，否则它一出现/消失，下面整个列表会上下跳；
+   ② 行里的文字不换行、也不改行高，宽度动画期间**不参与重排**（不然会挤在 56px 里换行再摊开；
+   行首的图标也不再从"居中"跳到"靠左"）。
+   悬停时等宽度快到位了再淡入（延迟 .1s）。 */
+main.mini > aside #sideswitch,
+main.mini > aside .item > div,
+main.mini > aside .hitem .hmain{white-space:nowrap;overflow:hidden;
+  transition:opacity .12s ease}
+main.mini:not(.hover-aside) > aside #sideswitch,
+main.mini:not(.hover-aside) > aside .item > div,
+main.mini:not(.hover-aside) > aside .hitem .hmain,
+main.mini:not(.hover-aside) > aside .rowstat{opacity:0;pointer-events:none}
+main.mini.hover-aside > aside #sideswitch,
+main.mini.hover-aside > aside .item > div,
+main.mini.hover-aside > aside .hitem .hmain,
+main.mini.hover-aside > aside .rowstat{opacity:1;transition:opacity .12s ease .1s}
+/* 悬停：展开到你拖出来的宽度，盖在内容上面 */
+main.mini.hover-aside > aside{width:var(--aside-w,300px) !important;
+  box-shadow:0 12px 34px rgba(0,0,0,.18)}
+#btn-aside-mini svg{transition:transform .18s ease}
+main.mini #btn-aside-mini svg{transform:rotate(180deg)}
 #list{flex:1;overflow:auto;min-height:0}
 #hist{flex:1;overflow:auto;min-height:0}
 /* 左侧顶部那排：插件/历史 切换 + 新建 */
@@ -395,10 +437,26 @@ table.fb td.dim{color:var(--dim)}
 .bk-card-top{display:flex;gap:6px;align-items:baseline;justify-content:space-between}
 .bk-card-top b{font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap}
+/* ★ `V-177`：快照那一条 = 一行（常态）/ 两行（hover）。
+   列：名字吃掉剩下的宽度（超出省略）；右边三块 auto ⇒ **完整显示、绝不被压**。
+   hover 时 areas 换成 "名字+按钮" / "项目数 大小 . 时间"。 */
+.bk-card:not(.flat){display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;
+  align-items:center;gap:1px 8px;grid-template-areas:"t cnt size time"}
+.bk-card:not(.flat) .bk-t{grid-area:t;font-size:12.5px;font-weight:600;min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bk-card:not(.flat) .bk-cnt{grid-area:cnt;font-size:11px;color:var(--dim);white-space:nowrap}
+.bk-card:not(.flat) .bk-size{grid-area:size;font-size:11px;color:var(--dim);white-space:nowrap}
+.bk-card:not(.flat):hover{grid-template-areas:"t t t acts" "cnt size . time"}
+.bk-card:not(.flat):hover .bk-t{white-space:normal;overflow:visible}
 .bk-time{font-size:10.5px;color:var(--dim);font-family:var(--mono);flex:none}
+.bk-card:not(.flat) .bk-time{grid-area:time;justify-self:end;align-self:center}
 .bk-card-sub{font-size:11px;color:var(--dim);margin-top:3px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 .bk-card-act{display:flex;gap:4px;margin-top:6px}
+/* 三颗按钮：平时不占位、鼠标放上去（或键盘走到里面）才出现，摆在标题那一行右端 */
+.bk-card:not(.flat) .bk-card-act{grid-area:acts;display:none;margin:0;justify-self:end}
+.bk-card:not(.flat):hover .bk-card-act,
+.bk-card:not(.flat):focus-within .bk-card-act{display:flex}
 .bk-card-act .btn{height:22px;padding:0 8px;font-size:11.5px}
 .bk-card-act .iconbtn{padding:2px 5px;min-width:24px}
 /* 展开的文件列表 */
