@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>moss</title>
+<!-- 窗口图标（`V-181`）：**根路径、绝对地址**，别写成 `favicon.ico`。
+     页面自己的地址是 `/<token>/user_data/state/_ui_inline.html`，相对写法会被拼成
+     `/<token>/user_data/state/favicon.ico` —— 那条路径正好在 `_EMBED_DENY` 的
+     `user_data/state/` 底下，403。写绝对路径才落到服务专门开的那条 `/favicon.ico` 上
+     （图标文件和构建时嵌进 exe 的是同一份：`system/icon/moss.ico`）。 -->
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
 <!-- 样式全在两份外部表里：`css/app.css`（外壳）+ `css/settings.css`（设置面板）。
      原来这里还内联着一份 650 行的**旧副本**，同名选择器和 app.css 互相压（后加载的赢），
      "改了一处样式却不生效"就是这么来的 —— `V-92` 查出来删掉了。 -->
@@ -26,13 +32,40 @@
       <button id="btn-aside-mini" class="iconbtn" title="收起 / 展开左侧栏（收起后只留图标）"></button>
       <button id="sw-pkg" class="on" title="已安装的包"></button>
       <button id="sw-hist" title="最近跑过的路径调用（点一下重跑）"></button>
-      <button id="btn-newpkg" class="iconbtn" title="新建一个包（moss --new）"></button>
+
       <!-- ⟳ 刷新（`V-99`）：挪到「插件 / 历史」这一行的右侧、新建的右边 —— 它刷的就是这两份列表，
            放在顶栏（那条只管搜索和状态）离得太远。 -->
-      <button id="btn-refresh" class="iconbtn" title="刷新：重新读一遍插件列表和历史"></button>
+
     </div>
     <!-- 拖动中的一条提示（`V-39`）：只列收得下它的包 -->
     <div id="dragbar" hidden></div>
+    <!-- 列表工具条（`V-178`）：分类 + 排序。跟着各自列表显示/隐藏 -->
+    <!-- 工具条（`V-178` / `V-179`）：一排图标按钮，鼠标停上去出名字；中间 `|` 分开"分类 | 排序" -->
+    <div class="listbar" id="bar-list">
+      <button class="lb" data-g="filt" data-v="all" title="全部（系统 + 用户）"></button>
+      <button class="lb" data-g="filt" data-v="system" title="只看系统包"></button>
+      <button class="lb" data-g="filt" data-v="user" title="只看用户包"></button>
+      <span class="lb-sep"></span>
+      <button class="lb" data-g="sort" data-v="name" title="按名字排"></button>
+      <button class="lb" data-g="sort" data-v="born" title="按加入时间排（包目录最后改动的时间）"></button>
+      <button class="lb" data-g="sort" data-v="run" title="按最后运行排（这个界面自己记的，跑过才有）"></button>
+      <span class="lb-sep"></span>
+      <button id="btn-refresh" class="lb" title="刷新：重新读一遍插件列表和历史"></button>
+      <button id="btn-newpkg" class="lb" title="新建一个包（moss --new）"></button>
+    </div>
+    <div class="listbar" id="bar-hist" hidden>
+      <button class="lb" data-g="hfilt" data-v="all" title="全部"></button>
+      <button class="lb" data-g="hfilt" data-v="path" title="只看路径调用"></button>
+      <button class="lb" data-g="hfilt" data-v="pkg" title="只看包调用"></button>
+      <span class="lb-sep"></span>
+      <button class="lb" data-g="hsort" data-v="time" title="按时间排（新的在前）"></button>
+      <button class="lb" data-g="hsort" data-v="name" title="按名字排"></button>
+      <button class="lb" data-g="hsort" data-v="kind" title="按类型排"></button>
+      <span class="lb-sep"></span>
+      <button id="btn-refresh-h" class="lb" title="刷新：重新读一遍插件列表和历史"></button>
+      <button id="btn-openfile" class="lb"
+              title="打开一个可执行文件并运行（等于手敲 moss &lt;文件&gt;：工作目录是它所在的文件夹，也会记进历史）"></button>
+    </div>
     <div id="list"></div>
     <div id="hist" hidden></div>
     <!-- 右侧那条"拖我调宽"的细线（`V-92`）：拖动改这一个列的宽度，双击复原。

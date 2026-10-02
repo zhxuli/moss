@@ -203,6 +203,12 @@ function rowStateOf(id){
 }
 
 function paintRowStats(){
+  /* `V-178`：顺手记一笔"最后运行"（工具条那个排序要用）—— host 没有这个字段，
+     所以只能由界面**看着它跑**时记下来。 */
+  try{
+    const runningIds = Object.keys(PST || {}).filter(k => (PST[k] || {}).running);
+    if (typeof noteRunning === "function") noteRunning(runningIds);
+  }catch(e){}
   document.querySelectorAll(".item").forEach(el => {
     const id = el.dataset.id;
     const box = el.querySelector(".rowstat");

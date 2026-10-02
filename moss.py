@@ -11,7 +11,7 @@ r"""moss 入口。
  打包命令（留在这里一份，方便直接看、直接粘）
 ════════════════════════════════════════════════════════════════════════
 
-    venv\Scripts\python.exe -m nuitka --onefile --lto=yes --remove-output --assume-yes-for-downloads --onefile-tempdir-spec="{CACHE_DIR}/moss_build/{TIME}" --windows-icon-from-ico=icon.ico --windows-console-mode=hide --include-package=core -o moss moss.py
+    venv\Scripts\python.exe -m nuitka --onefile --lto=yes --remove-output --assume-yes-for-downloads --onefile-tempdir-spec="{CACHE_DIR}/moss_build/{TIME}" --windows-icon-from-ico=system/icon/moss.ico --windows-console-mode=hide --include-package=core -o moss moss.py
 
 ★ 上面这一行和 `tools\build.py` 里实际执行的是**同一条命令**。
   `build.py` 每次开工前会**自动核对这一行**：对不上就直接报错停下，

@@ -13,6 +13,7 @@
 所以这里**绝不**用白名单重建字典 —— 只在原始字典上补默认值。
 """
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -102,22 +103,70 @@ def normalize(raw, pid=None):
 #:    交给宿主时要过一次 `shlex` —— **不加引号的 `C:\a\b.ico` 会被吃掉所有反斜杠**
 #:    （实测：`shlex.split(r"C:\Users\x\y.ico")` → `['C:Usersxy.ico']`），包那边就当成
 #:    一段字符串了。要"原样不引号"的包，写 `"quote": false` 明说。
+#:  ★ `ext`（`V-183` ✅）只写在 `file` 那一项里：**"我只收这几种扩展名"**。
+#:    不写 = 什么文件都收（老包一个字都不用改）。`md5` 这种不限的就不写；
+#:    `img` 写 `["jpg","jpeg","png","bmp","gif","tiff","webp"]` ⇒ 拖个 .txt 进窗口时
+#:    它**不再亮起来**（以前它和 md5 一起亮，松手还会去跑一个处理不了的图）。
+#:    匹配在**界面那侧**做（拖动时只能拿到"文件叫什么"，见 `system/ui/js/drop.js`）；
+#:    宿主只负责把声明原样带到界面的 payload 里。
 _DROP_KINDS = ("file", "dir")
-_DROP_KEYS = ("cwd", "param", "quote", "base")
+_DROP_KEYS = ("cwd", "param", "quote", "base", "ext")
+_DROP_BOOL_KEYS = ("cwd", "param", "quote", "base")
+
+#: 扩展名里允许的字符。点会在归一化时去掉，空格 / 斜杠 / 通配符都不行 ——
+#: 带这些的基本都是写错了，报一声再丢掉，别留一条永远匹配不上的规则。
+_EXT_OK = re.compile(r"^[a-z0-9_+-]+$")
 
 
-def _norm_drop_rule(rule, where):
+def _norm_ext(raw, where):
+    """把 `ext` 归一化成"小写、不带点"的列表（`V-183`）。
+
+    ★ **不写 / 空 / 全是垃圾 = `[]` = 什么文件都收**（向后兼容）。
+      为什么不把空数组当成"什么都不收"：那样写错一个字（`"ext": []`）会让整个包
+      **静默地**不再收任何文件 —— 这种哑巴失败最难查。真要不收文件，写 `"file": false`。
+    ★ `"*"` = 明确写"什么都收"，意思和 `[]` 一样（写出来更像人话）。
+    """
+    if raw is None or raw == "" or raw is False:
+        return []
+    items = raw if isinstance(raw, list) else [raw]          # 写成单个字符串也认
+    out = []
+    for it in items:
+        if not isinstance(it, str):
+            print("[警告] %s 里的扩展名应该是字符串，已忽略：%r" % (where, it), file=sys.stderr)
+            continue
+        e = it.strip().lower().lstrip(".")
+        if not e:
+            continue
+        if e == "*":
+            print("[提示] %s 里写了 *（什么都收）—— 和「不写 ext」是一回事" % where,
+                  file=sys.stderr)
+            return []
+        if not _EXT_OK.match(e):
+            print("[警告] %s 里的扩展名 %r 含有不认识的字符（点/空格/斜杠都不行），已忽略"
+                  % (where, it), file=sys.stderr)
+            continue
+        if e not in out:
+            out.append(e)
+    return out
+
+
+def _norm_drop_rule(rule, where, kind):
     """`file` / `dir` 里那一条。`False` / 空 → None（这一种不收）。"""
     if rule is None or rule is False or rule == "":
         return None
     if rule is True:                       # `"dir": true` → 收，但没说怎么用 → 当"进参数"
-        return {"cwd": False, "param": True, "quote": True, "base": False}
+        return {"cwd": False, "param": True, "quote": True, "base": False, "ext": []}
     if not isinstance(rule, dict):
         print("[警告] %s 里的这一项应该是对象或 false，已忽略：%r" % (where, rule),
               file=sys.stderr)
         return None
-    out = dict((k, bool(rule.get(k))) for k in _DROP_KEYS)
+    out = dict((k, bool(rule.get(k))) for k in _DROP_BOOL_KEYS)
     out["quote"] = True if rule.get("quote") is None else bool(rule.get("quote"))
+    if kind == "file":
+        out["ext"] = _norm_ext(rule.get("ext"), where)
+    elif "ext" in rule:
+        print("[提示] %s 是文件夹那一项，写 ext 没意义（文件夹没有扩展名），已忽略" % where,
+              file=sys.stderr)
     for k in rule:
         if k not in _DROP_KEYS:
             print("[提示] %s 里多了一个不认识的键 %r，已忽略" % (where, k), file=sys.stderr)
@@ -144,7 +193,7 @@ def normalize_drop(raw):
             continue
         cmd = {"label": str(it.get("label") or "运行")}
         for kind in _DROP_KINDS:
-            cmd[kind] = _norm_drop_rule(it.get(kind), where)
+            cmd[kind] = _norm_drop_rule(it.get(kind), where, kind)
         if cmd["file"] is None and cmd["dir"] is None:
             print("[警告] %s 里 file / dir 一个都没写（或都写了 false），这条命令没用，"
                   "已忽略" % where, file=sys.stderr)

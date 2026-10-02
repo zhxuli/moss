@@ -33,11 +33,7 @@
   "ai": {
     "expose": false
   },
-  "drop": {
-    "file": {
-      "param": true
-    }
-  }, 
+  "_dropWhy": "V-186：这里原来写着 drop.file（收文件拖入），但这个包**一个 params 都没声明** —— 拖进来的路径走不到任何地方，纯粹是个假能力，还让拖文件时多亮一个不该亮的包。整套 drop 拿掉（＝不收拖入）。样板包更不该演示一个用不上的声明。",
   "docs": {
     "zh-CN": "这个包是拿来当**样板**的：一份界面代码（ui/index.html + ui/app.js，Vue 3），两种跑法 ——\n\n  moss :bmi          独立开一个窗口（不依赖 moss 的界面）\n  在 moss 里点「运行」 内嵌到「界面」选项卡里跑\n\n界面跟后端说话全部经过 ui/moss-embed.js 这个垫片；业务（BMI 怎么算、时间是多少）全在 main.py 里。"
   }

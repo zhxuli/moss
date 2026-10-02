@@ -173,7 +173,108 @@ function rerunLast(){
      普通 `let`（整个被重新赋值），改成响应式要动一圈别的模块；原来的代码本来就在"数据变了"的地方
      显式调 `renderList()` / `renderHist()`，所以**保留那几个函数名当门面**、让它们举牌最省事，
      行为也一字不变（外部调用点一个都不用改）。 */
-const LISTR = Vue.reactive({rev: 0, ready: false});
+/* ★ `V-178`：列表的工具条状态（分类 / 排序）与"加入时间"缓存。
+   `born` = 包目录的 mtime（用现成的 `fs_list` 拿，两次调用就够：system/pkgs 与 user/pkgs）；
+   `run`  = 最后一次看到它在跑（本界面自己记的 —— host 没有这个字段，所以只从这次开始算）。 */
+const LISTR = Vue.reactive({rev: 0, ready: false, filt: "all", sort: "name",
+                            hfilt: "all", hsort: "time", born: {}});
+
+function _ls(k, d){ try{ return localStorage.getItem(k) || d; }catch(e){ return d; } }
+function _lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
+
+function lastRunOf(id){
+  const v = parseInt(_ls("moss.lastrun." + id, "0"), 10) || 0;
+  return v;
+}
+function noteRunning(ids){
+  // 看着它跑 → 记一笔"最后运行"。同一个包 5 秒内不重复写（省点 localStorage 抖动）
+  const now = Date.now();
+  (ids || []).forEach(id => {
+    if (now - lastRunOf(id) > 5000) _lsSet("moss.lastrun." + id, String(now));
+  });
+}
+/* 拉一次"加入时间"（包目录的 mtime）：键用目录名（`dir` 是绝对路径，取最后一段最稳） */
+async function loadBornTimes(){
+  const out = {};
+  for (const rel of ["system/pkgs", "user/pkgs"]){
+    try{
+      const r = await pywebview.api.fs_list(rel);
+      ((r && r.entries) || []).forEach(e => { if (e.dir) out[e.name] = e.mtime || 0; });
+    }catch(e){}
+  }
+  LISTR.born = out;
+  bumpLists();
+}
+/* 图标表（`V-179`）：分组 → 取值 → 图标名（都在我们那 86 个图标里，不会回退成默认） */
+const LB_ICONS = {
+  filt:  {all: "layers", system: "package", user: "home"},
+  sort:  {name: "list-tree", born: "history", run: "activity"},
+  hfilt: {all: "layers", path: "file-code", pkg: "package"},
+  hsort: {time: "history", name: "list-tree", kind: "file-type"},
+};
+const LB_LS = {filt: "moss.filt", sort: "moss.sort", hfilt: "moss.hfilt", hsort: "moss.hsort"};
+
+function paintListBars(){
+  ["#bar-list", "#bar-hist"].forEach(sel => {
+    const bar = $(sel);
+    if (!bar) return;
+    bar.querySelectorAll(".lb").forEach(b => {
+      const g = b.dataset.g, v = b.dataset.v;
+      // ★ 第三组那几颗（刷新 / 新建 / 打开文件）没有 data-g，别给它们打"选中"标记（V-180）
+      if (!g || !v) return;
+      const ic = (LB_ICONS[g] || {})[v];
+      if (ic && !b.querySelector("svg")) b.innerHTML = ico(ic, "i");
+      b.classList.toggle("on", LISTR[g] === v);
+    });
+  });
+}
+
+/* 工具条第三组那几颗（`V-180`）：刷新 / 新建包 / 打开文件并运行 */
+function paintBarActs(){
+  const put = (sel, ic) => { const b = $(sel); if (b && !b.querySelector("svg")) b.innerHTML = ico(ic, "i"); };
+  put("#btn-refresh", "refresh-cw");
+  put("#btn-newpkg", "file-plus");
+  put("#btn-refresh-h", "refresh-cw");
+  put("#btn-openfile", "play-circle");
+  const rh = $("#btn-refresh-h"), r = $("#btn-refresh");
+  if (rh && r) rh.onclick = () => r.click();          // 两个刷新干的是同一件事
+  const of = $("#btn-openfile");
+  if (of) of.onclick = () => openFileAndRun();
+}
+
+/* 挑一个文件 → 直接运行：工作目录 = 它所在的文件夹（＝手敲 moss <那个文件>，一样进历史） */
+async function openFileAndRun(){
+  let r;
+  try{ r = await pywebview.api.pick_file(); }
+  catch(e){ toast("挑文件失败：" + (e && e.message || e), true); return; }
+  if (!r || !r.ok){ if (r && r.msg && r.msg.indexOf("取消") < 0) toast(r.msg, true); return; }
+  const p = String(r.path || "");
+  const name = p.split(/[\\/]/).pop() || p;
+  const cwd = p.replace(/[\\/][^\\/]*$/, "");
+  // 复用"重跑一条历史"那条链路：控制台、轮询、跑完刷新列表/历史，全都有
+  rerunHist({name: name, target: p, cwd: cwd, args: "", ts: new Date().toISOString(),
+             kind: "path", key: "__openfile:" + p}, "");
+}
+function initListBars(){
+  LISTR.filt = _ls("moss.filt", "all");    LISTR.sort = _ls("moss.sort", "name");
+  LISTR.hfilt = _ls("moss.hfilt", "all");  LISTR.hsort = _ls("moss.hsort", "time");
+  ["#bar-list", "#bar-hist"].forEach(sel => {
+    const bar = $(sel);
+    if (!bar) return;
+    bar.querySelectorAll(".lb").forEach(b => {
+      b.onclick = () => {
+        LISTR[b.dataset.g] = b.dataset.v;         // 一下点到位（以前下拉要两下）
+        _lsSet(LB_LS[b.dataset.g] || "moss.lb", b.dataset.v);
+        paintListBars();
+        bumpLists();
+        if (b.dataset.g === "sort" && b.dataset.v === "born") loadBornTimes();
+      };
+    });
+  });
+  paintListBars();
+  paintBarActs();
+  loadBornTimes();
+}
 function bumpLists(){ LISTR.rev++; }
 
 function renderList(){
@@ -578,14 +679,33 @@ const MossList = {
       const all = DATA.packages.filter(p => !f ||
         [p.id, p.name, p.desc, (p.tags||[]).join(" "), (p.aliases||[]).join(" ")]
           .join(" ").toLowerCase().includes(f));
+      // `V-178`：工具条的分类（全部 / 系统 / 用户）
+      const byLayer = this.R.filt === "all" ? all : all.filter(p => p.layer === this.R.filt);
+      // `V-178`：工具条的排序（名字 / 加入时间 / 最后运行，都是倒序看得舒服的先大后小）
+      const dirName = p => String(p.name || p.id || "").toLowerCase();
+      const bornOf = p => this.R.born[(p.dir || "").split(/[\\/]/).pop()] || 0;
+      const sortKey = this.R.sort;
+      const sorted = byLayer.slice().sort((a, b) => {
+        if (sortKey === "born"){
+          const d = bornOf(b) - bornOf(a);
+          if (d) return d;
+        } else if (sortKey === "run"){
+          const d = lastRunOf(b.id) - lastRunOf(a.id);
+          if (d) return d;
+        }
+        return dirName(a) < dirName(b) ? -1 : (dirName(a) > dirName(b) ? 1 : 0);
+      });
       // ★ 正拖着东西的时候：**只列收得下它的包**（`V-39`）—— 不支持对应操作的先藏起来
-      return DRAG.on ? all.filter(p => dropAccepts(p, DRAG.kind)) : all;
+      //   `V-183` 起"收得下"还包括扩展名（拖 .txt 时 :img 不该出现），判断都用 DRAG.items
+      return DRAG.on ? sorted.filter(p => dropAccepts(p, DRAG.items)) : sorted;
     },
     emptyHTML(){
       // ★ 同 `V-83` 那个坑：`DRAG` 是普通对象（非响应式）—— 不登记 `R.rev` 的话，
       //   开始拖动（列表被筛空）时这句提示不会更新。
       this.R.rev;
-      return DRAG.on ? ("没有包收「" + dropKindName(DRAG.kind) + "」") : "没有匹配的包";
+      return DRAG.on
+        ? ("没有包收「" + dropKindName(DRAG.kind) + "」" + dropWhyNone(DRAG.items))
+        : "没有匹配的包";
     },
   },
   methods: {
@@ -617,8 +737,20 @@ const MossHist = {
     rows(){
       this.R.rev;                                  // 同上：举牌就重算
       const f = $("#q").value.trim().toLowerCase();
-      return HIST.filter(it => !f ||
+      const hit = HIST.filter(it => !f ||
         [it.name, it.target, it.args, it.cwd].join(" ").toLowerCase().includes(f));
+      // `V-178`：分类（全部 / 路径调用 / 包调用）+ 排序（时间 / 名字 / 类型）
+      const kindOf = it => (it.kind === "pkg" || it.kind === "plugin") ? "pkg" : "path";
+      const byKind = this.R.hfilt === "all" ? hit : hit.filter(it => kindOf(it) === this.R.hfilt);
+      const key = this.R.hsort;
+      return byKind.slice().sort((a, b) => {
+        if (key === "time" || key === "kind"){          // 时间：新的在前
+          const ta = String(a.ts || ""), tb = String(b.ts || "");
+          if (ta !== tb) return ta < tb ? 1 : -1;
+        }
+        const na = String(a.name || "").toLowerCase(), nb = String(b.name || "").toLowerCase();
+        return na < nb ? -1 : (na > nb ? 1 : 0);
+      });
     },
     emptyHTML(){
       this.R.rev;              // 同上：`HIST` 也是普通数组，得靠举牌信号才会重算
@@ -678,3 +810,15 @@ const MossDetail = {
   template: '<div style="display:contents" v-html="html"></div>',
 };
 mountVue(MossDetail, "#pane-detail");
+
+
+/* `V-178`：工具条跟着"插件 / 历史"一起显示/隐藏（挂在 window 上，app.js 里那两个切换按钮顺手调） */
+window.syncListBars = function(){
+  const pkg = !$("#list").hidden;
+  const bl = $("#bar-list"), bh = $("#bar-hist");
+  if (bl) bl.hidden = !pkg;
+  if (bh) bh.hidden = pkg;
+  initListBarsOnce();
+};
+let _barsDone = false;
+function initListBarsOnce(){ if (_barsDone) return; _barsDone = true; try{ initListBars(); }catch(e){} }

@@ -81,9 +81,47 @@
       "additionalProperties": true
     },
     "docs": { "type": "object", "description": "readme / agent 指向文件", "additionalProperties": true },
-    "accepts": { "type": "object", "description": "能接受什么输入（拖放匹配用）", "additionalProperties": true }
+    "drop": {
+      "description": "拖进来收不收、怎么收（V-38）。单个对象或数组都行（数组＝多条拖入命令）。不写＝完全不收拖入。",
+      "oneOf": [
+        { "$ref": "#/$defs/dropCmd" },
+        { "type": "array", "items": { "$ref": "#/$defs/dropCmd" } }
+      ]
+    },
+    "accepts": { "type": "object", "description": "更宽的「能接受什么输入」（打开方式 / AI 选取那类用途）。拖放这块已由 drop 承担，这里只是坑位（F-25 未定）", "additionalProperties": true }
   },
   "$defs": {
+    "dropCmd": {
+      "type": "object",
+      "description": "一条「拖进来」命令：收文件还是文件夹、路径往哪儿放",
+      "additionalProperties": true,
+      "properties": {
+        "label": { "type": "string", "description": "投放框上写的字，默认「运行」" },
+        "file": { "$ref": "#/$defs/dropRule" },
+        "dir": { "$ref": "#/$defs/dropRule" }
+      }
+    },
+    "dropRule": {
+      "description": "收这一种（file / dir）时怎么用这个路径；false＝这一种不收",
+      "oneOf": [
+        { "type": "boolean" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "cwd": { "type": "boolean", "description": "把拖进来的文件夹当工作目录（拖文件＝它所在的文件夹）" },
+            "param": { "type": "boolean", "description": "把路径追加到参数串末尾" },
+            "quote": { "type": "boolean", "description": "加双引号，默认 true（不加引号的 Windows 路径会被 shlex 吃光反斜杠）" },
+            "base": { "type": "boolean", "description": "只给文件名，不给完整路径" },
+            "ext": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "★ 只收这几种扩展名（V-183，只对 file 有意义）：小写、不带点。不写＝什么文件都收；[] 或 [\"*\"] 也＝什么都收（空数组不表示什么都不收）"
+            }
+          }
+        }
+      ]
+    },
     "i18n": {
       "description": "多语言文本：短文本用内联对象，也可以只有一个字符串（F-23）",
       "oneOf": [

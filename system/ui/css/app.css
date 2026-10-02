@@ -130,6 +130,9 @@ main.mini > aside #sideswitch,
 main.mini > aside .item > div,
 main.mini > aside .hitem .hmain{white-space:nowrap;overflow:hidden;
   transition:opacity .12s ease}
+/* 折叠时：顶排**只留那颗「展开」按钮**（插件/历史/新建/刷新都藏），工具条也一起藏 */
+main.mini:not(.hover-aside) #sideswitch > *:not(#btn-aside-mini){opacity:0;pointer-events:none}
+main.mini:not(.hover-aside) .listbar{opacity:0;pointer-events:none}
 main.mini:not(.hover-aside) > aside #sideswitch,
 main.mini:not(.hover-aside) > aside .item > div,
 main.mini:not(.hover-aside) > aside .hitem .hmain,
@@ -143,6 +146,23 @@ main.mini.hover-aside > aside{width:var(--aside-w,300px) !important;
   box-shadow:0 12px 34px rgba(0,0,0,.18)}
 #btn-aside-mini svg{transition:transform .18s ease}
 main.mini #btn-aside-mini svg{transform:rotate(180deg)}
+/* 工具条（`V-178`）：一排两个下拉，跟列表同一宽度 */
+.listbar{display:flex;gap:3px;align-items:center;flex-wrap:wrap;padding:6px 8px;flex:none;
+  border-bottom:1px solid var(--line2)}
+.listbar[hidden]{display:none}
+/* 图标按钮（`V-179`）：一下点到位；选中的那一颗有底色，鼠标停上去出名字（title） */
+.listbar .lb{width:23px;height:22px;flex:none;display:inline-flex;align-items:center;
+  justify-content:center;border:0;border-radius:6px;background:transparent;color:var(--dim);
+  cursor:pointer;padding:0;transition:background .12s,color .12s}
+.listbar .lb:hover{background:var(--hover);color:var(--fg)}
+.listbar .lb:active{transform:scale(.94)}
+.listbar .lb.on{background:var(--fill);color:var(--accent)}
+.listbar .lb svg{width:14px;height:14px}
+/* 分类 | 排序 之间那条分隔 */
+.listbar .lb-sep{width:1px;height:14px;flex:none;background:var(--line2);margin:0 3px}
+/* ★ 折叠态（`V-178`）：列表能上下滚，但**不许出现滚动条**（横的竖的都不要） */
+main.mini #list,main.mini #hist{overflow-x:hidden;scrollbar-width:none}
+main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;height:0;display:none}
 #list{flex:1;overflow:auto;min-height:0}
 #hist{flex:1;overflow:auto;min-height:0}
 /* 左侧顶部那排：插件/历史 切换 + 新建 */

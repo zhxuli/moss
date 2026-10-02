@@ -332,6 +332,25 @@ _EMBED_DENY = ("user_data/config.toml", "user_data/backups/", "user_data/history
                "user_data/runners.json", ".git/", "core/", "venv/")
 _EMBED_ALLOW = ("user_data/state/_ui_inline.html",)
 
+#: 界面窗口的 favicon（`V-181`）：**一份图标，两个消费者** —— 构建时嵌进 exe 的
+#: `--windows-icon-from-ico`（`tools/build.py` 里的 `ICON_REL`）和这里发出去的
+#: `/favicon.ico`，指的是**同一个文件**。
+#: ★ 为什么单独开这条路：浏览器/WebView 一进页面就会自己去要 `/favicon.ico`，
+#:   而它**不知道 token**（token 在页面地址里，favicon 是浏览器自己拼的根路径），
+#:   于是以前一律 403，控制台里就留一行"没有 favicon.ico"的抱怨 —— 不是错误，
+#:   但看着像坏了。图标本身不是秘密（发行物里就有），放行这一个路径不损 `V-170`。
+#:   第二个名字是搬家前的老位置，纯兜底：老安装根里那份也认。
+_FAVICON_RELS = ("system/icon/moss.ico", "icon.ico")
+
+
+def _favicon_file():
+    """按新旧顺序找那份图标；一个都没有就返回 None。"""
+    for rel in _FAVICON_RELS:
+        f = HOME / rel
+        if f.is_file():
+            return f
+    return None
+
 #: 给包界面用的**本地 HTTP 服务**（`V-55` ✅）：`{httpd, port, token}`。
 #: ★ 为什么要这么绕一圈：**WebView2 里不能 iframe 一个 `file://` 页面**
 #:   （实测：父页也是 file:// 也一样 —— 帧建出来了、却压根不导航，一片空白；
@@ -984,13 +1003,38 @@ class _EmbedHandler(http.server.SimpleHTTPRequestHandler):
         tk = _EMBED_SRV["token"]
         return bool(tk) and self.path.startswith("/" + tk + "/")
 
+    def _serve_favicon(self):
+        """`/favicon.ico` 特例（`V-181`）：**不带 token 也发**。已处理返回 True。"""
+        p = str(self.path or "").split("?", 1)[0].split("#", 1)[0]
+        if p not in ("/favicon.ico", "/favicon.png"):
+            return False
+        try:
+            f = _favicon_file()
+            data = f.read_bytes() if f else b""
+        except OSError:
+            data = b""
+        if not data:
+            self.send_error(404, "no favicon")
+            return True
+        self.send_response(200)
+        self.send_header("Content-Type", "image/x-icon")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+        return True
+
     def do_GET(self):                                                    # noqa: N802
+        if self._serve_favicon():
+            return
         if not self._token_ok():
             self.send_error(403, "bad token")
             return
         super().do_GET()
 
     def do_HEAD(self):                                                   # noqa: N802
+        if self._serve_favicon():
+            return
         if not self._token_ok():
             self.send_error(403, "bad token")
             return
@@ -2225,6 +2269,40 @@ class Api:
         except Exception as e:                                      # noqa: BLE001
             return {"ok": False, "msg": "挑文件夹失败：%s" % e}
 
+    def pick_file(self, start=""):
+        """弹系统对话框让用户挑一个**文件**（`V-180`：历史那边的"打开文件并运行"用）。
+
+        只给"能跑的东西"做过滤（py/pyw/go/exe/html/ps1/bat/cmd），也留一个"所有文件"。
+        """
+        try:
+            import webview as _wv
+            wins = list(getattr(_wv, "windows", None) or [])
+            if not wins:
+                return {"ok": False, "msg": "窗口还没准备好，稍一下再试"}
+            kind = None
+            fd = getattr(_wv, "FileDialog", None)
+            if fd is not None:
+                kind = getattr(fd, "OPEN", None)
+            if kind is None:
+                kind = getattr(_wv, "OPEN_DIALOG", None)
+                if callable(kind):
+                    kind = kind()
+            if not kind:
+                return {"ok": False, "msg": "这个 pywebview 版本不支持挑文件"}
+            types = ("可执行文件 (*.py;*.pyw;*.go;*.exe;*.html;*.htm;*.ps1;*.bat;*.cmd)",
+                     "所有文件 (*.*)")
+            start_dir = str(start or "").strip() or str(HOME)
+            try:
+                res = wins[0].create_file_dialog(kind, directory=start_dir, file_types=types)
+            except TypeError:
+                res = wins[0].create_file_dialog(kind, start_dir, types)
+            if not res:
+                return {"ok": False, "msg": "没有选（取消）"}
+            p = res[0] if isinstance(res, (list, tuple)) else res
+            return {"ok": True, "path": str(p)}
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": "挑文件失败：%s" % e}
+
     def backup_delete(self, bid, group=""):
         """删掉一次备份，然后**在这一组里**回收没人引用的对象。"""
         try:
@@ -2651,13 +2729,87 @@ def _page_url():
         try:
             rel = inlined.resolve().relative_to(HOME.resolve())
             url = "http://127.0.0.1:%d/%s/%s" % (port, token, rel.as_posix())
-            _note("page: 界面从 %s 加载（自包含，子资源 0 个）" % url)
+            _note("page: 界面从 %s 加载（自包含：css/js 已内联）" % url)
             return url
         except (OSError, ValueError):
             _note("page: 展开后的页面不在安装根下面，用原始页面")
     url = "http://127.0.0.1:%d/%s/%s" % (port, token, rel.as_posix())
     _note("page: 界面从 %s 加载" % url)
     return url
+
+
+# ================================================================ 窗口图标（`V-182`）
+# ★ 症状：打包之后跑起来，窗口**左上角那颗还是 python 的 logo**，不是我们的 ico。
+# ★ 根因（和"图标有没有嵌进 exe"是两件不相干的事，所以嵌了也没用）：pywebview 的
+#   Windows 后端**造窗时自己就把窗口图标设成了"当前解释器 exe 的图标"** ——
+#   `webview/platforms/winforms.py`：
+#       handle = kernel32.GetModuleHandleW(None)
+#       icon_handle = windll.shell32.ExtractIconW(handle, sys.executable, 0)
+#       if icon_handle != 0: self.Icon = Icon.FromHandle(...).Clone()
+#   而界面是**自带运行时**跑的（`core/ui.py` ⇒ `system/runtimes/python/3.12/python.exe`），
+#   那个 exe 的图标正是 python 的 logo ⇒ 窗口左上角、任务栏、Alt+Tab 全是它。
+#   官方那条 `webview.start(icon=...)` 参数文档里写明 **只在 GTK/QT 上有效**，
+#   Windows 这条路走不通。（实测对照：不换的时候 `WM_GETICON` 回来的句柄就是
+#   python.exe 那个图标；`ExtractIconW(python.exe)` 拿到的正是它。）
+# ★ 怎么换：等窗口在了，拿 **`WM_SETICON`** 把大 / 小图标都指到我们那份 ico
+#   （大图标 = 标题栏 + 任务栏，小图标 = Alt+Tab、标题栏小尺寸）。图标用的是
+#   **和构建时嵌进 exe 的同一份文件**（`system/icon/moss.ico`，见 `_favicon_file`）。
+# ★★ 两个坑，都是实测踩出来的（`V-182`）：
+#   ① **不许从 pywebview 的事件回调里换** —— `window.events.shown/loaded += …` 那条路
+#      看着最自然（"窗口刚建出来就换"），实测**会把界面整个卡死**：事件处理函数是
+#      pywebview 起的一个**后台线程**里跑的（`webview/event.py` 的 `Event.set` 里
+#      `threading.Thread(target=execute).start()`），在那个线程里去动窗口，界面从此
+#      一帧都不再抽消息（探针实测：`WM_NULL` 一直超时、日志停在换图标那一行为止）。
+#      改成 **`webview.start(func)` 给的那个线程**（`_arm_file_drop`，人家本来就在跟
+#      窗口打交道：挂 drop 监听）就一切正常。
+#   ② **用 `SendMessageTimeoutW` 而不是 `SendMessageW`** —— 跨线程/跨进程的同步
+#      `SendMessage` 一旦对面不抽消息就是**无限等**（我第一版探针就这么把自己和目标
+#      窗口一起等死了）。带上 2 秒超时，最坏情况也只是这次没换上，卡不住人。
+_ICON_KEEP = []          # 保住 LoadImage 出来的句柄：窗口还在用它，别让它被回收
+
+
+def _moss_hwnds():
+    """本进程里那个标题叫 `moss` 的顶层窗口（找不到就退回"本进程所有可见顶层窗"）。"""
+    me = os.getpid()
+    mine = [w for w in _top_windows() if w["pid"] == me and w["visible"]]
+    return [w["hwnd"] for w in mine if w["title"] == "moss"] or [w["hwnd"] for w in mine]
+
+
+def _apply_window_icon(win=None):
+    """把界面窗口的图标换成我们那份 ico（`V-182`）。成功返回 True。
+
+    ★ 只在 `_arm_file_drop` 那个线程里叫它（见上面①②两条）。
+    """
+    ico = _favicon_file()
+    if ico is None:
+        _note("icon: 找不到 %s，窗口图标保持系统那个" % (_FAVICON_RELS[0],))
+        return False
+    try:
+        u32 = ctypes.WinDLL("user32", use_last_error=True)
+        u32.LoadImageW.argtypes = [wt.HINSTANCE, wt.LPCWSTR, wt.UINT, ctypes.c_int,
+                                   ctypes.c_int, wt.UINT]
+        u32.LoadImageW.restype = wt.HANDLE
+        u32.SendMessageTimeoutW.argtypes = [ctypes.c_void_p, wt.UINT, wt.WPARAM,
+                                            wt.LPARAM, wt.UINT, wt.UINT,
+                                            ctypes.POINTER(ctypes.c_size_t)]
+        u32.SendMessageTimeoutW.restype = wt.LPARAM
+        # IMAGE_ICON | LR_LOADFROMFILE | LR_DEFAULTSIZE：让系统按 DPI 自己挑尺寸
+        hicon = u32.LoadImageW(None, str(ico), 1, 0, 0, 0x00000010 | 0x00000040)
+        if not hicon:
+            _note("icon: LoadImageW 没读出 %s" % ico)
+            return False
+        _ICON_KEEP.append(hicon)
+        hwnds = _moss_hwnds()
+        for hwnd in hwnds:
+            for which in (1, 0):                                       # ICON_BIG / ICON_SMALL
+                r = ctypes.c_size_t(0)
+                u32.SendMessageTimeoutW(hwnd, 0x0080, which, hicon,        # WM_SETICON
+                                        0x0002, 2000, ctypes.byref(r))     # SMTO_ABORTIFHUNG
+        _note("icon: 窗口图标换成 %s（%d 个窗口）" % (ico.name, len(hwnds)))
+        return bool(hwnds)
+    except Exception as e:                                             # noqa: BLE001
+        _note("icon: 换窗口图标失败（%r）" % (e,))
+        return False
 
 
 window = webview.create_window(
@@ -2760,6 +2912,7 @@ def _arm_file_drop():
     try:
         from webview.dom import DOMEventHandler                 # noqa: PLC0415
         window.events.loaded.wait(20)
+        _apply_window_icon(window)          # `V-182`：窗口这时一定在了，换成我们那份 ico
         window.dom.document.events.drop += DOMEventHandler(
             _on_files_dropped, prevent_default=True, stop_propagation=True)
         drop_log("armed: 监听挂在 document 上（num_listeners 应该 > 0 了）")

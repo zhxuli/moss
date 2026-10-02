@@ -1001,7 +1001,13 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape" && $("#modal").classList.contains("on")) closeModal();
   // 「设置」面板也认 Esc（`V-60`）：确认框那条路在上面 —— 两个不会同时在
-  if (e.key === "Escape" && $("#settings").classList.contains("on")) closeSettings();
+  // ★ 要判空（`V-188` 查出来的真报错）：`#settings` 是**设置组件挂载时**才建出来的
+  //   （settings.js 的模板里有它，挂载前 getElementById 拿到的是 null）—— 没打开过设置
+  //   就按 Esc，这里原来是 `null.classList` ⇒ 每次都在 `_ui_drop.log` 里留一条
+  //   「Cannot read properties of null (reading 'classList')」。平时不显眼，拖东西时
+  //   按 Esc 取消就会撞上（正好是用户最常见的动作），把后面的处理一起打断。
+  const setBox = $("#settings");
+  if (e.key === "Escape" && setBox && setBox.classList.contains("on")) closeSettings();
 });
 document.addEventListener("click", (e) => { if (!e.target.closest("#ctxmenu")) hideCtx(); });
 window.addEventListener("blur", hideCtx);

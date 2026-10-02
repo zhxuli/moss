@@ -13,33 +13,173 @@
      - `param` = 把路径**追加到参数串末尾**（强制末尾，你定的）
      - `quote` = 加双引号（路径里有空白时无论如何都会加，不然宿主按空格拆词就拆坏了）
      - `base`  = 只给文件名，不给完整路径（配合 `cwd` 用）
+     - `ext`   = **只收这几种扩展名**（`V-183` ✅，写在 `file` 里）。不写 = 什么文件都收。
+       于是拖一个 .txt 进窗口时，`md5`（不限）亮、`img`（只收图片）**不亮** ——
+       以前两个都亮，松手还会把 .txt 交给 img 去"处理"，纯属白跑一趟。
      **没写 `drop` 的包 = 完全不收拖入**（比如快捷翻译）—— 拖动时它连列表都不出现。 */
-const DRAG = {on: false, kind: null, depth: 0, cmd: 0, hits: 0};
+const DRAG = {on: false, kind: null, items: null, depth: 0, cmd: 0, hits: 0};
 /* 上一次**拖进来**塞进参数框的那一段（"包 id + 那一段原文"）。
    为什么要记：拖进来的那一段是追加在末尾的，连着拖两次就会叠成一串 —— 实测叠起来之后
    md5 收到两条路径，于是判成字符串、算了个错的 MD5。下一次拖入时先把这一段摘掉。 */
 const DROP_ARGS = {id: null, piece: ""};
 
-/* 拖进来的到底是文件还是文件夹：Chromium 的 `webkitGetAsEntry()` 在拖动过程中就能看。
-   认不出来（有些来源不给）→ null = "不知道"，那就按"两种都收的包"筛，别把人挡住。 */
-function dragKind(e){
+/* 文件名 → 扩展名（小写、不带点）。认不出来给空串。
+   ★ 点在**开头**的（`.gitignore`）算"没有扩展名"，不算扩展名 `gitignore` ——
+     这是 Windows 资源管理器同一套规矩，照抄省得两边判得不一样。 */
+function extOf(name){
+  const n = String(name || "");
+  const i = n.lastIndexOf(".");
+  return i <= 0 ? "" : n.slice(i + 1).toLowerCase();
+}
+/* 这一条 `file` 规则收不收这个文件（`V-183`）。没写 `ext` = 什么都收。 */
+function ruleTakesFile(rule, name){
+  const ext = (rule && rule.ext) || [];
+  if (!ext.length) return true;
+  const e = extOf(name);
+  return !!e && ext.indexOf(e) >= 0;
+}
+/* 这次拖的到底是什么：尽量读出每个 item 的 {name, isDir}。
+   ★ 拖动过程中页面**拿不到真实路径**（Chromium 的安全设计），但**名字**通常拿得到 ——
+     扩展名判断就靠它。
+   ★★ `V-188` 的真机教训（`_ui_drop.log` 里白纸黑字）：**WebView2 在 `dragenter` 那一刻
+     什么都给不出来**（日志：`drag begin kind=unknown items=null`），于是"只收文件夹"的
+     `tree` / `mark` / `sync` 全都露在列表里 —— 你看到的就是这个。所以：
+     ① 三个来源挨个试：`webkitGetAsEntry()` → `getAsFile()`（这个名字是有的）→ `files`；
+     ② **一项都读不出来就返回 null，并且过一会儿在 `dragover` 里再试一次**（见 `dragRetry`）
+        —— Chromium 常常是到 `dragover` 才把内容填上；
+     ③ 名字读到了但**分不清是文件还是文件夹**时，`isDir` 记 `null`（不是 false！）——
+        `dropAccepts` 对 `null` 是"两种都算"，免得把拖文件夹的人挡住。
+   有一个 item 完全读不出来 → 整个返回 null（宁可这次不筛，也别拿半份信息乱筛）。 */
+/* 扩展名 ↔ 浏览器给的类型（`V-189`）。真机探针实录：
+     items=1 [{file|text/x-python|entry=null|file=null}] files=0 []
+   —— 拖动中 WebView2 **只给 `kind` 和 `type`**，名字/entry/File 全是空的。所以：
+     · **拖动时**按 `type`（MIME）判；**松手后**宿主给真名字，再按扩展名判一次（更准）。
+     · 先把"类型 → 扩展名"表写清楚；表里没有的按大类兜底（image/ text/ audio/ video/）。 */
+const MIME_EXT = {
+  "text/plain": ["txt", "log", "ini", "cfg", "conf", "text", "bat", "cmd", "ps1", "sh"],
+  "text/csv": ["csv"], "text/markdown": ["md", "markdown"],
+  "text/x-python": ["py", "pyw"], "text/html": ["html", "htm"], "text/css": ["css"],
+  "text/javascript": ["js", "mjs"], "application/json": ["json"],
+  "application/xml": ["xml"], "text/xml": ["xml"],
+  "image/png": ["png"], "image/jpeg": ["jpg", "jpeg"], "image/gif": ["gif"],
+  "image/webp": ["webp"], "image/bmp": ["bmp"], "image/tiff": ["tif", "tiff"],
+  "image/svg+xml": ["svg"], "image/x-icon": ["ico"], "image/vnd.microsoft.icon": ["ico"],
+  "application/pdf": ["pdf"], "application/zip": ["zip"],
+  "application/x-msdownload": ["exe", "dll"], "application/x-msdos-program": ["exe"],
+  "application/msword": ["doc"], "application/vnd.ms-excel": ["xls"],
+  "audio/mpeg": ["mp3"], "video/mp4": ["mp4"],
+};
+const MIME_GROUP = [
+  ["image/", ["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "tif", "tiff", "svg", "avif", "heic"]],
+  ["text/", ["txt", "log", "ini", "cfg", "md", "markdown", "csv", "json", "xml", "yml", "yaml",
+             "toml", "py", "pyw", "js", "mjs", "ts", "html", "htm", "css", "c", "h", "cpp",
+             "hpp", "java", "go", "rs", "sh", "bat", "cmd", "ps1", "sql", "vue"]],
+  ["audio/", ["mp3", "wav", "flac", "aac", "ogg", "m4a"]],
+  ["video/", ["mp4", "mkv", "avi", "mov", "webm", "wmv", "flv"]],
+];
+/* 这个类型算不算 `extList` 里的扩展名。判不了返回 null（没有类型信息）。 */
+function typeTakesExt(extList, mime){
+  if (!mime) return null;
+  const exact = MIME_EXT[mime];
+  if (exact) return exact.some(e => extList.indexOf(e) >= 0);
+  for (let i = 0; i < MIME_GROUP.length; i++){
+    if (mime.indexOf(MIME_GROUP[i][0]) === 0)
+      return MIME_GROUP[i][1].some(e => extList.indexOf(e) >= 0);
+  }
+  return false;                    // 类型认识、但不属于任何一类 ⇒ 不收（保守）
+}
+
+function entryOf(it){
   try{
-    const items = e.dataTransfer && e.dataTransfer.items;
-    if (items && items.length && items[0].webkitGetAsEntry){
-      const en = items[0].webkitGetAsEntry();
-      if (en) return en.isDirectory ? "dir" : "file";
-    }
+    const en = it && it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
+    if (en) return {name: en.name || "", isDir: !!en.isDirectory};
+  }catch(err){}
+  try{
+    const f = it && it.getAsFile ? it.getAsFile() : null;
+    if (f) return {name: f.name || "", isDir: false};      // 有 File ⇒ 确实是文件
   }catch(err){}
   return null;
+}
+function dropItems(e){
+  try{
+    const dt = e.dataTransfer;
+    if (!dt) return null;
+    const out = [];
+    const items = dt.items || [];
+    for (let i = 0; i < items.length; i++){
+      const it = items[i] || {};
+      const mime = String(it.type || "").toLowerCase();
+      const got = entryOf(it);
+      if (got) out.push({name: got.name, isDir: got.isDir, mime: mime});
+      // ★ `V-189`：真机就是这一条 —— 拿不到名字/entry/File，但**类型是有的**
+      //   （`.py` 给 `text/x-python`）。有类型就说明它是个**文件**，按类型筛得了。
+      else if (it.kind === "file") out.push({name: "", isDir: null, mime: mime});
+      else return null;
+    }
+    if (!out.length){
+      const fs = dt.files || [];
+      for (let i = 0; i < fs.length; i++) out.push({name: fs[i].name || "", isDir: false, mime: ""});
+    }
+    return out.length ? out : null;
+  }catch(err){ return null; }
+}
+/* 拖动过程中到底能读到什么 —— 一行字，写进 `_ui_drop.log`（`V-188`）。
+   下次真机上再拖一次，这一行就能说清"是没内容、还是没名字、还是分不清类型"。 */
+function dropProbe(e){
+  try{
+    const dt = e.dataTransfer || {};
+    const items = dt.items || [];
+    const bits = [];
+    for (let i = 0; i < Math.min(items.length, 6); i++){
+      const it = items[i] || {};
+      let en = null, f = null;
+      try{ en = it.webkitGetAsEntry ? it.webkitGetAsEntry() : null; }catch(err){}
+      try{ f = it.getAsFile ? it.getAsFile() : null; }catch(err){}
+      bits.push("{" + (it.kind || "?") + "|" + (it.type || "-") + "|entry=" +
+                (en ? (en.isDirectory ? "dir:" : "file:") + en.name : "null") +
+                "|file=" + (f ? f.name : "null") + "}");
+    }
+    const fs = dt.files || [];
+    return "items=" + items.length + " [" + bits.join(" ") + "] files=" + fs.length +
+           " [" + [].slice.call(fs, 0, 6).map(x => x.name).join(" ") + "]";
+  }catch(err){ return "probe 自己也炸了: " + err; }
+}
+/* 拖的是文件、文件夹，还是两样都有（说不清给 null）。
+   `V-189`：真机拿不到名字，但只要 `type` 有值就说明**是文件**。 */
+function dropKindOf(items){
+  if (!items || !items.length) return null;
+  const isFile = it => it.isDir === false || (it.isDir === null && !!it.mime);
+  if (items.some(it => it.isDir === null && !it.mime)) return null;   // 类型都没有 → 说不清
+  const dir = items.some(it => it.isDir === true), file = items.some(isFile);
+  return (dir && file) ? null : (dir ? "dir" : "file");
 }
 function dragHasFiles(e){
   return !!(e.dataTransfer && (e.dataTransfer.types || []).indexOf("Files") >= 0);
 }
-function dropAccepts(p, kind){
+/* 一条命令收不收**这一个** item（`V-189`）。三种情况分清楚：
+   · 知道是文件夹 → 只看 `dir`；
+   · 知道是文件（有名字，或只有 MIME 也算知道是文件）→ 只看 `file` + 扩展名/类型；
+   · 什么都不知道（连类型都没有，多半是文件夹）→ 只有当它收文件夹时才算亮。 */
+function itemAccepts(cmd, it){
+  if (!cmd) return false;
+  if (it.isDir === true) return !!cmd.dir;
+  const rule = cmd.file;
+  const mime = it.mime || "";
+  if (it.isDir === false) return !!rule && ruleTakesFile(rule, it.name);   // 名字说了算
+  if (mime && !rule) return false;                    // 有类型 ⇒ 是文件；这包不收文件
+  if (rule && !((rule.ext || []).length)) return true; // 不限扩展名 ⇒ 是文件就收
+  if (rule && mime){
+    const ok = typeTakesExt(rule.ext || [], mime);
+    if (ok !== null) return ok;                       // 类型明确 ⇒ 就按它判
+  }
+  return !!cmd.dir;      // 判不了 ⇒ 收文件夹的包才亮（别把"拖文件夹"的人挡住）
+}
+/* 这个包收不收"这一次拖的东西"。`items` 为 null（读不出来）时一律算收 —— 宁可多列几个，
+   也别在认不出来的时候把人挡住。`V-183` 起扩展名/类型也算进来：**每一个**都得对得上。 */
+function dropAccepts(p, items){
   if (!p || !p.drop || !p.drop.length) return false;
-  if (kind === "dir") return p.drop.some(c => c.dir);
-  if (kind === "file") return p.drop.some(c => c.file);
-  return true;                                  // 不知道拖的是什么 → 两种都算
+  if (!items || !items.length) return true;      // 不知道拖的是什么 → 两种都算
+  return p.drop.some(c => items.every(it => itemAccepts(c, it)));
 }
 /* 这个包对"拖进来的是文件/文件夹"能做什么。以后一个包可以有多条命令（多个投放框）。 */
 function dropCommandsFor(p, isDir){
@@ -47,25 +187,62 @@ function dropCommandsFor(p, isDir){
   return ((p && p.drop) || []).filter(c => c[k]).map(c => ({label: c.label || "运行", rule: c[k]}));
 }
 function dropKindName(kind){ return kind === "dir" ? "文件夹" : (kind === "file" ? "文件" : "文件/文件夹"); }
+/* 一个包都没收的时候，说人话解释"差在哪"（`V-183`）—— 最典型的就是"只差扩展名"：
+   拖个 .txt 进窗口，md5 收、img 不收，得让人一眼看出 img 为什么没出现。 */
+function dropWhyNone(items){
+  // `V-189`：真机上拿不到名字，所以不能只看"有没有扩展名" —— 只要拖的里有**文件**项，
+  // 就把"只收某几种"的那些包点出来，让人知道差在哪。
+  if (!(items || []).some(it => it.isDir !== true)) return "";
+  const said = [];
+  for (const p of ((DATA && DATA.packages) || [])){
+    const c = ((p && p.drop) || []).find(x => x.file && x.file.ext && x.file.ext.length);
+    if (!c) continue;
+    said.push(":" + p.id + " 只收 " + c.file.ext.join(" / "));
+    if (said.length >= 2) break;
+  }
+  return said.length ? "（" + said.join("；") + "）" : "";
+}
 
 /* ---- 拖动的开始 / 结束 ---- */
 function dragBegin(e){
   if (DRAG.on) return;
   DRAG.on = true;
-  DRAG.kind = dragKind(e);
+  DRAG.items = dropItems(e);                    // [{name, isDir}]（isDir 可能是 null）或 null
+  DRAG.kind = dropKindOf(DRAG.items);
   DRAG.hits = 0;
   DRAG.cmd = 0;
+  DRAG.probed = false;
   document.body.classList.add("dragging");
   uiLog("drag begin kind=" + (DRAG.kind || "unknown") +
-        " accepts=" + DATA.packages.filter(p => dropAccepts(p, DRAG.kind)).length);
+        " items=" + JSON.stringify(DRAG.items) +
+        " accepts=" + DATA.packages.filter(p => dropAccepts(p, DRAG.items)).length +
+        "   探针 " + dropProbe(e));              // `V-188`：真机上到底读得到什么
   renderList();                                 // ★ 只列收得下它的包
   paintDragBar();
   // 当前这个包要是就收得下，投放框**立刻**出现（不用等你先划到别处再划回来）
   paintDropZone(false);
 }
+/* `V-188`：`dragenter` 那一刻 WebView2 什么都给不出来（真机日志：`items=null`），
+   而 Chromium 往往要等到 `dragover` 才把内容填上 —— 所以**每次 dragover 都再试一次**，
+   一读到就立刻重筛列表、重画（只读到时记一次日志，免得日志长成山）。 */
+function dragRetry(e){
+  if (!DRAG.on || DRAG.items) return;
+  const got = dropItems(e);
+  if (!got) return;
+  DRAG.items = got;
+  DRAG.kind = dropKindOf(got);
+  if (!DRAG.probed){
+    DRAG.probed = true;
+    uiLog("drag 补读到 kind=" + (DRAG.kind || "unknown") + " items=" + JSON.stringify(got) +
+          " accepts=" + DATA.packages.filter(p => dropAccepts(p, got)).length);
+  }
+  renderList();
+  paintDragBar();
+  paintDropZone(false);
+}
 function dragEnd(){
   if (!DRAG.on){ paintDropZone(false); return; }
-  DRAG.on = false; DRAG.kind = null; DRAG.depth = 0; DRAG.cmd = 0;
+  DRAG.on = false; DRAG.kind = null; DRAG.items = null; DRAG.depth = 0; DRAG.cmd = 0;
   document.body.classList.remove("dragging");
   renderList();
   paintDragBar();
@@ -90,7 +267,7 @@ function paintDropZone(over, isDir, kind){
   const k = (kind !== undefined && kind !== null) ? kind : (isDir ? "dir" : DRAG.kind);
   DRAGR.kind = k;
   const cmds = DRAG.on && p ? dropCommandsFor(p, k === "dir") : [];
-  const want = !!(DRAG.on && cmds.length);
+  const want = !!(DRAG.on && cmds.length && dropAccepts(p, DRAG.items));   // `V-183`：扩展名不对也不出框
   DRAGR.rev++;                                  // 框里的内容（`.dz-box` 那几个）由组件画
   // ★ 下面这几处 class 挂在**别的元素**上（`#dropzone` 自己 / 详情页 / 右上角那颗「运行」）——
   //   它们不是组件的根，维持命令式，和改造前逐行一致。
@@ -106,8 +283,10 @@ function dropZoneWhy(p, rule, kind){
   const what = rule.cwd && rule.param ? "当工作目录，并把这个路径追加到参数末尾"
              : (rule.cwd ? "当工作目录" : "追加到参数末尾");
   const which = kind === "dir" ? "这个文件夹" : (kind === "file" ? "这个文件" : "它");
+  // `V-183`：框上顺便说清"它只收哪几种"——松手前就知道，别等跑起来才发现格式不对
+  const only = (rule.ext && rule.ext.length) ? "（只收 " + rule.ext.join(" / ") + "）" : "";
   return ":" + p.id + " —— 把" + which + what +
-         (rule.base ? "（只给文件名）" : "") + (rule.quote ? "（加引号）" : "");
+         (rule.base ? "（只给文件名）" : "") + (rule.quote ? "（加引号）" : "") + only;
 }
 
 /* 拖拽那两块的组件（`V-85`）—— 一个画左边那条提示，一个画详情页上的投放框。
@@ -119,10 +298,15 @@ const MossDragBar = {
     html(){
       this.R.rev;
       if (!DRAG.on) return "";
-      const n = DATA ? DATA.packages.filter(p => dropAccepts(p, DRAG.kind)).length : 0;
+      const n = DATA ? DATA.packages.filter(p => dropAccepts(p, DRAG.items)).length : 0;
+      // `V-188`：这一次到底读没读到 —— 读不到就**明说**，别让人以为筛选坏了
+      if (!DRAG.items) return ico("copy", "i") +
+        '<span>这次没读出拖的是什么（读不到文件名）：先把收拖入的 <b>' + n +
+        '</b> 个包都列出来，松手时会再判一次</span>';
       return ico("copy", "i") +
         '<span>拖进来的是<b>' + dropKindName(DRAG.kind) + '</b>：只列出收得下它的 <b>' + n +
-        '</b> 个包' + (n ? " —— 划过哪个就选哪个" : "（一个都没有）") + '</span>';
+        '</b> 个包' + (n ? " —— 划过哪个就选哪个" : "（一个都没有）" + dropWhyNone(DRAG.items)) +
+        '</span>';
     },
   },
   // `display:contents`：这层壳不参与布局（`#dragbar` 是 flex，多一层会改变量）
@@ -168,6 +352,7 @@ function bindDropZone(){
     if (!dragHasFiles(e)) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    dragRetry(e);                 // `V-188`：dragenter 读不到就在这里补读（这一下是关键）
   });
   // 松手之后把界面收拾干净（不管落在哪儿）。真正的路径由宿主从另一条路送进
   // `window.__mossDrop`，这里只负责"别留着一堆高亮"。
@@ -241,6 +426,17 @@ window.__mossDrop = function(items){
   const p = cur;
   const it = items[0];
   uiLog("host drop: " + JSON.stringify(items));
+  // ★ `V-183`：真路径到手之后**再判一次**。拖动时那次筛有认不出来的时候（拿不到文件名
+  //   就一律放行），这里用的是宿主给的**真实名字**，判得准 —— 不匹配就说清为什么，
+  //   绝不把 .txt 塞给"只收图片"的 img 去白跑一趟。
+  const asItems = items.map(x => ({name: x.name || x.path || "", isDir: !!x.isDir}));
+  if (p && p.drop && p.drop.length && !dropAccepts(p, asItems)){
+    const c = (p.drop || []).find(x => x.file && x.file.ext && x.file.ext.length);
+    toast("✗ :" + p.id + " 不收 " + asItems.map(x => x.name).join("、").slice(0, 48) +
+          (c ? " —— 它只收 " + c.file.ext.join(" / ") : ""), true);
+    DROP_ARGS.id = null;
+    return;
+  }
   if (items.length > 1)
     toast("拖进来 " + items.length + " 个，先用第一个：" + (it.name || it.path));
   const cmds = dropCommandsFor(p, it.isDir);

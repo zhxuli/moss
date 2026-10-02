@@ -67,7 +67,7 @@ BROWSERS = [
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "btn-detail", "err-path", "args-clear", "backup", "backup-restore", "backup-sync", "backup-export", "backup-groups",
-          "drop-hot", "drop-dir", "drop-file", "console-input", "embed", "pane-resize",
+          "drop-hot", "drop-dir", "drop-file", "drop-ext", "console-input", "embed", "pane-resize",
           "flat-buttons", "backup-diff", "refresh-keep-ctx", "compare", "hist-snap", "modal-kinds", "snap-modal",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
@@ -2374,10 +2374,14 @@ MOCK_JS = r"""
         const wantId = isDirDrag ? "tree" : "md5";
         const pane = document.querySelector("#pane-detail");
         const dz = document.querySelector("#dropzone");
+        // ★ `V-183`：拖动时页面只能看到**文件名** —— 所以这里给真名字（含扩展名），
+        //   筛选也要按新规矩判（`dropAccepts(p, items)`，扩展名算在里面）。
+        const dragName = isDirDrag ? "一个 带空格的文件夹" : "一个 带空格的图片.png";
+        const dragItems = [{name: dragName, isDir: isDirDrag}];
         const dragEv = (t, isDir) => {
           const e = new Event(t, {bubbles: true});
           e.dataTransfer = {types: ["Files"], dropEffect: "",
-            items: [{webkitGetAsEntry: () => ({isDirectory: isDir, name: "x"})}]};
+            items: [{webkitGetAsEntry: () => ({isDirectory: isDir, name: dragName})}]};
           return e;
         };
         // 先站在一个**不收**这类东西的包上（快捷翻译没有参数、也不收拖入）
@@ -2393,7 +2397,7 @@ MOCK_JS = r"""
                            .map(e => e.dataset.id);
         const filtered = afterIds.length > 0 && afterIds.every(id => {
           const p = state.packages.find(x => x.id === id);
-          return p && p.drop && p.drop.some(c => isDirDrag ? c.dir : c.file);
+          return p && window.dropAccepts(p, dragItems);
         });
         const hidFanyi = afterIds.indexOf("fanyi") < 0;
         const bar = document.querySelector("#dragbar");
@@ -2469,6 +2473,152 @@ MOCK_JS = r"""
         document.querySelector("#dropzone").className = "";
         if (ok) setTab("console");
         document.title = ok ? "READY" : "DROP-FAIL";
+      }
+      // ★ `V-183`：**扩展名**这条规矩（拖 .txt 时 :img 不该亮、拖 .png 该亮）
+      if (h === "drop-ext"){
+        const dz = document.querySelector("#dropzone");
+        const listIds = () => [].slice.call(document.querySelectorAll("#list .item"))
+                                .map(e => e.dataset.id);
+        const mkDrag = (name, isDir) => {
+          const e = new Event("dragenter", {bubbles: true});
+          e.dataTransfer = {types: ["Files"], dropEffect: "",
+            items: (isDir ? [1, 2] : [1]).map(() =>
+              ({webkitGetAsEntry: () => ({isDirectory: !!isDir, name: name})}))};
+          return e;
+        };
+        const img = state.packages.find(x => x.id === "img");
+        const imgExt = (((img || {}).drop || [])[0] || {}).file || {};
+        const hasExt = !!(imgExt.ext && imgExt.ext.length);
+        // ① 拖一个 .txt：img 不出现、md5 出现，左边那条提示要说清 img 为什么没来
+        document.dispatchEvent(mkDrag("note.txt", false));
+        await sleep(350);
+        const idsTxt = listIds();
+        const imgOut = idsTxt.indexOf("img") < 0;
+        const md5In = idsTxt.indexOf("md5") >= 0;
+        // ★ `V-186`：只收文件夹的包（tree / mark / sync / path）在不收拖入的包（bmi）
+        //   都不该出现在"拖文件"的列表里 —— 这是这次收紧的回归测试
+        const onlyDir = ["tree", "mark", "sync", "path"];
+        const noDirOnly = onlyDir.every(id => idsTxt.indexOf(id) < 0);
+        const noBmi = idsTxt.indexOf("bmi") < 0;
+        const barTxt = ((document.querySelector("#dragbar") || {}).textContent || "")
+                         .replace(/\s+/g, " ");
+        const saidWhy = barTxt.indexOf("img") >= 0 && barTxt.indexOf("只收") >= 0;
+        dragEnd();
+        await sleep(200);
+        // ② 拖一张 .PNG（大写）：img 该出现（扩展名不分大小写）
+        document.dispatchEvent(mkDrag("照 片.PNG", false));
+        await sleep(350);
+        const idsPng = listIds();
+        const imgIn = idsPng.indexOf("img") >= 0;
+        const upperOk = (window.extOf("a.PNG") === "png") && (window.extOf(".gitignore") === "");
+        dragEnd();
+        await sleep(200);
+        // ③ 拖一个**名字里带点的文件夹**：img 收文件夹，扩展名规矩不该管到它
+        document.dispatchEvent(mkDrag("我 的.照片", true));
+        await sleep(350);
+        const dirIn = listIds().indexOf("img") >= 0;
+        dragEnd();
+        await sleep(250);
+        // ④ 站在 img 上、硬塞一个 .txt 给它：**不许跑**，而且要说人话
+        select("img");
+        await sleep(350);
+        const runsBefore = (M.runs || []).length;
+        window.__mossDrop([{path: "D:\\x\\note.txt", isDir: false, dir: "D:\\x",
+                            name: "note.txt"}]);
+        await sleep(500);
+        const noRun = (M.runs || []).length === runsBefore;
+        const toastTxt = ((document.querySelector("#toasts") || {}).textContent || "")
+                           .replace(/\s+/g, " ");
+        const toastSaid = toastTxt.indexOf("不收") >= 0 && toastTxt.indexOf("png") >= 0;
+        // ⑤ 换成 .png 再塞一次：该跑（否定那一半不能把正常路也堵死）
+        window.__mossDrop([{path: "D:\\x\\photo.png", isDir: false, dir: "D:\\x",
+                            name: "photo.png"}]);
+        await sleep(700);
+        const run = (M.runs || [])[M.runs.length - 1] || {};
+        const ranOk = (M.runs || []).length === runsBefore + 1 && run.pid === "img";
+        // ⑥ `V-188`：**真机就是这样**（`_ui_drop.log` 里 `drag begin … items=null`）——
+        //     `dragenter` 什么都读不到、到 `dragover` 才补上。这条路径必须也能筛干净。
+        dragEnd();
+        await sleep(200);
+        const blindEnter = new Event("dragenter", {bubbles: true});
+        blindEnter.dataTransfer = {types: ["Files"], dropEffect: "", items: []};
+        document.dispatchEvent(blindEnter);
+        await sleep(250);
+        const idsBlind = listIds();                  // 读不到 → 先按"两种都收"全列
+        const lateDrag = new Event("dragover", {bubbles: true});
+        lateDrag.dataTransfer = {types: ["Files"], dropEffect: "",
+          items: [{webkitGetAsEntry: () => ({isDirectory: false, name: "moss.py"})}]};
+        document.dispatchEvent(lateDrag);
+        await sleep(300);
+        const idsLate = listIds();                   // 补读到 .py → 该筛干净
+        const lateOk = idsLate.indexOf("md5") >= 0 && idsLate.indexOf("open") >= 0 &&
+                       idsLate.indexOf("img") < 0 &&
+                       onlyDir.concat(["bmi"]).every(id => idsLate.indexOf(id) < 0);
+        dragEnd();
+        await sleep(200);
+        // ⑦ `V-189`：**真机探针实录的形状** —— 只有 kind + type，名字/entry/File 全空
+        //    （`items=1 [{file|text/x-python|entry=null|file=null}] files=0 []`）。
+        //    这条才是真机上"拖 moss.py"的那一下：必须按 MIME 筛干净。
+        const mimeDrag = (mime, kind) => {
+          const e = new Event("dragenter", {bubbles: true});
+          e.dataTransfer = {types: ["Files"], dropEffect: "",
+            items: [{kind: kind || "file", type: mime,
+                     webkitGetAsEntry: () => null, getAsFile: () => null}]};
+          return e;
+        };
+        document.dispatchEvent(mimeDrag("text/x-python"));
+        await sleep(300);
+        const idsMime = listIds();
+        const mimeOk = idsMime.indexOf("md5") >= 0 && idsMime.indexOf("open") >= 0 &&
+                       idsMime.indexOf("img") < 0 &&
+                       onlyDir.concat(["bmi"]).every(id => idsMime.indexOf(id) < 0);
+        dragEnd();
+        await sleep(200);
+        // ⑧ 同一个形状、但类型是图片：img 该回来（别把正常路也堵死）
+        document.dispatchEvent(mimeDrag("image/png"));
+        await sleep(300);
+        const idsMimeImg = listIds();
+        const mimeImgOk = idsMimeImg.indexOf("img") >= 0 && idsMimeImg.indexOf("md5") >= 0 &&
+                          onlyDir.every(id => idsMimeImg.indexOf(id) < 0);
+        dragEnd();
+        await sleep(200);
+        // ⑨ 类型是空的（多半是文件夹，也可能是认不出类型的文件）：收文件夹的包要亮
+        document.dispatchEvent(mimeDrag(""));
+        await sleep(300);
+        const idsBlank = listIds();
+        const blankOk = ["img", "tree", "mark", "sync", "path", "md5", "open"]
+                          .every(id => idsBlank.indexOf(id) >= 0);
+        dragEnd();
+        await sleep(200);
+        const ok = hasExt && imgOut && md5In && saidWhy && imgIn && upperOk && dirIn &&
+                   noRun && toastSaid && ranOk && noDirOnly && noBmi && lateOk &&
+                   mimeOk && mimeImgOk && blankOk;
+        const diag = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\nimg 声明    = " + JSON.stringify(imgExt.ext || []) +
+          "\n① .txt 后列表 = " + idsTxt.join(",") +
+          "\n   img 藏起来=" + imgOut + "   md5 还在=" + md5In +
+          "   提示说了原因=" + saidWhy +
+          "\n   只收文件夹的包都没出现=" + noDirOnly + "（" + onlyDir.join("/") + "）" +
+          "   不收拖入的 bmi 也没出现=" + noBmi +
+          "\n   提示原文  = " + barTxt.slice(0, 90) +
+          "\n② .PNG 后 img 出现=" + imgIn + "   大小写/无扩展名判定=" + upperOk +
+          "\n③ 文件夹「我 的.照片」img 还收=" + dirIn +
+          "\n④ 硬塞 .txt：没跑=" + noRun + "  弹的提示=" + JSON.stringify(toastTxt.slice(0, 90)) +
+          "\n⑤ 换成 .png 照跑=" + ranOk + "（pid=" + (run.pid || "-") + "）" +
+          "\n⑥ 真机那样（enter 读不到 / dragover 才补上）：先全列=" + idsBlind.length +
+          " 个，补读后 = " + idsLate.join(",") + "  筛干净=" + lateOk +
+          "\n⑦ 真机形状（只有 kind+type=text/x-python，名字全空）= " + idsMime.join(",") +
+          "  筛干净=" + mimeOk +
+          "\n⑧ 同形状但 image/png = " + idsMimeImg.join(",") + "  img 回来了=" + mimeImgOk +
+          "\n⑨ 类型为空（多半是文件夹）= " + idsBlank.length + " 个  收文件夹的都亮=" + blankOk;
+        document.querySelector("#out").textContent = diag;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 筛=" + (imgOut && md5In ? 1 : 0) +
+          " 反向=" + (imgIn && dirIn ? 1 : 0) + " 拦=" + (noRun ? 1 : 0) +
+          " 跑=" + (ranOk ? 1 : 0);
+        dz.className = "";
+        if (ok) setTab("console");
+        document.title = ok ? "READY" : "DROPEXT-FAIL";
       }
       // ★ 报错这条路本身也要能自证（`V-81`）：故意造一个"计算属性里抛错"的组件（和
       //   `MossList.rows` 读 `DATA.packages` 抛的那个是同一类），看它有没有被

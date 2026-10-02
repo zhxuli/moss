@@ -74,6 +74,16 @@ REQUIRED = (3, 12)
 DOC_SOURCE = "moss.py"          # 注释里留了一份命令的那个文件
 DOC_MARKER = "-m nuitka"
 
+#: 图标（`V-181`）：**一份，放在 `system/` 里**。两处消费它 ——
+#:   ① 构建时嵌进 exe（`--windows-icon-from-ico`）；
+#:   ② 界面服务拿它当 `/favicon.ico` 发（`system/ui/main.py` 里同一路径）。
+#: ★ 为什么从仓库根搬进 `system/`：`system/` 是**发行目录**（`moss.exe` + `system/`），
+#:   图标属于发行物、不属于源码树；放根上还有第二个坏处 —— 发行包往别处一拷，
+#:   图标就跟安装根脱钩了。**用相对路径**（nuitka 的 cwd 是安装根，实测 build.py
+#:   里就是 `cwd=str(HOME)`），这样 `moss.py` 注释里那份命令不绑死本机盘符。
+ICON_REL = "system/icon/moss.ico"
+ICON = HOME / ICON_REL
+
 
 def die(msg, code=1):
     print("[错误] %s" % msg)
@@ -138,8 +148,9 @@ def preflight():
 
     if not (HOME / "moss.py").is_file():
         return None, die("找不到 moss.py")
-    if not (HOME / "icon.ico").is_file():
-        return None, die("找不到 icon.ico（仓库根的图标文件，构建时嵌进 exe 的那个）")
+    if not ICON.is_file():
+        return None, die("找不到 %s（图标文件，构建时嵌进 exe 的那个；"
+                         "界面窗口的 favicon 也用它）" % ICON_REL)
 
     print("  构建器 : Python %d.%d.%d" % sys.version_info[:3])
     if sys.version_info[:2] != REQUIRED:
@@ -163,7 +174,7 @@ def preflight():
         # 非交互环境下它会自动答 "no" 然后失败，所以必须加这个开关。
         "--assume-yes-for-downloads",
         '--onefile-tempdir-spec={CACHE_DIR}/moss_build/{TIME}',
-        "--windows-icon-from-ico=icon.ico",
+        "--windows-icon-from-ico=" + ICON_REL,
         # 一个 exe 同时当命令行程序和界面程序（G-18 ✅）：**控制台子系统**（终端里
         # 一切照旧，shell 也会照常等它跑完），但那个控制台窗口如果是**为它新建的**
         # （双击 / 快捷方式 / 快速启动栏），bootstrap 会把它藏起来 —— 所以双击不弹

@@ -94,8 +94,10 @@ $("#btn-refresh").onclick = async () => {
          "<br><br>列表已经是最新的了。",
          {tip: "这一条只是回执：哪怕什么都没变，也说明按钮是好的"});
 };
-$("#sw-pkg").onclick = () => setSide("pkg");
-$("#sw-hist").onclick = () => setSide("hist");
+/* `V-178`：切换插件/历史时，**工具条也跟着换**（各有一排分类+排序） */
+$("#sw-pkg").onclick = () => { setSide("pkg"); window.syncListBars && window.syncListBars(); };
+$("#sw-hist").onclick = () => { setSide("hist"); window.syncListBars && window.syncListBars(); };
+window.syncListBars && window.syncListBars();       // 开机先摆一次（插件那条默认在）
 $("#btn-newpkg").onclick = cmdNewPkg;
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
   if (b.dataset.tab === "file") fmSelect(fmCtxKey());
