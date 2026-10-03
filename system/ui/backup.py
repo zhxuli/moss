@@ -606,7 +606,8 @@ class BackupStore:
         return False
 
     # ---------------------------------------------------------------- 新建
-    def create(self, sources, title="", note="", excludes=None, group=None):
+    def create(self, sources, title="", note="", excludes=None, group=None,
+               by="", by_task=""):
         """备份一批目录/文件。
 
         `sources` 是**绝对路径**列表（目录会递归；单个文件也行）。
@@ -630,11 +631,11 @@ class BackupStore:
         saved_ex = self.excludes
         self.excludes = ex
         try:
-            return self._create(sources, title, note, g)
+            return self._create(sources, title, note, g, by=by, by_task=by_task)
         finally:
             self.excludes = saved_ex
 
-    def _create(self, sources, title, note, group):
+    def _create(self, sources, title, note, group, by="", by_task=""):
         bid = new_id()
         files = []
         empty_dirs = []
@@ -692,6 +693,14 @@ class BackupStore:
             "group": group,
             "title": (title or "").strip() or ("备份 " + _now_text()),
             "note": (note or "").strip(),
+            # ★ `V-236`：**这条快照是谁存的**。空串 = 人存的；"ai" = AI 工作台自动存的。
+            #   为什么必须是清单里的**真字段**（而不是标题前缀）：你要能"一眼分辨 + 只清 AI 的"，
+            #   而标题/注释是给你看的文案（能改、能留空），拿它当判据迟早失准。
+            #   为什么不用 tag：`tags.json` 是 tag→id 的**映射**（一个 tag 只能指一条），
+            #   AI 跑第二趟就把上一趟的标记顶掉了。
+            "by": str(by or "").strip(),
+            #: AI 那一次的**任务原文**（你说要的："这样我就知道是干啥之前的代码了"）
+            "by_task": str(by_task or "").strip(),
             "created": time.time(),
             "created_text": _now_text(),
             "hash": HASH_NAME,
@@ -798,6 +807,8 @@ class BackupStore:
                 st = m.get("stats") or {}
                 out.append({"id": bid, "group": m.get("group") or g,
                             "title": m.get("title") or bid, "note": m.get("note") or "",
+                            # `V-236`：谁存的 + 那次的任务原文（界面靠这两样分辨 / 清理）
+                            "by": m.get("by") or "", "by_task": m.get("by_task") or "",
                             "created": m.get("created"),
                             "created_text": m.get("created_text") or "",
                             "sources": m.get("sources") or [],
@@ -1181,6 +1192,46 @@ class BackupStore:
                 "msg": "已删掉分组「%s」：%d 次备份、%s" % (g, backups, size)}
 
     # ---------------------------------------------------------------- 删 + 回收
+    def delete_ai(self, bid=None, group=None):
+        """**只删 AI 存的那条**（`V-236`）—— 那是"结构性"的闸，不是"提醒 AI 别删"。
+
+        你要的规矩是「**AI 只能清它自己生成的，我的一律不许碰**」。靠提示词写"不要删用户的"
+        是**劝**；这个函数是**拦**：它先看清单里的 `by` 字段，不是 `"ai"` 就**直接拒绝**，
+        所以哪怕 AI 拿到这个工具、传了你的快照 id，也删不动。
+
+        `bid` 不填 = 把这一组里**所有** `by == "ai"` 的都删掉（`group` 必填，免得手一抖清全库）。
+        返回 `{ok, deleted:[…], skipped:[…], msg}`。
+        """
+        self.ensure_layout()
+        if not bid and not group:
+            return {"ok": False, "deleted": [], "skipped": [],
+                    "msg": "不给 id 就必须给 group（不许「顺手清全库」）"}
+        targets = []
+        if bid:
+            g = self._group_of(bid, group)
+            m = self.manifest(bid, g)
+            targets = [(bid, g, m)]
+        else:
+            g = safe_group(group)
+            for one in self._ids_in(self.root / g):
+                try:
+                    targets.append((one, g, self.manifest(one, g)))
+                except Exception:                                       # noqa: BLE001
+                    continue
+        deleted, skipped = [], []
+        for one, g, m in targets:
+            if str(m.get("by") or "") != "ai":
+                skipped.append(one)          # ← 人存的：**碰都不碰**
+                continue
+            self.delete(one, g)
+            deleted.append(one)
+        if not deleted:
+            return {"ok": True, "deleted": [], "skipped": skipped,
+                    "msg": ("没有 AI 存的快照可清" + ("（跳过 %d 条你存的）" % len(skipped) if skipped else ""))}
+        return {"ok": True, "deleted": deleted, "skipped": skipped,
+                "msg": "清掉 %d 条 AI 存的快照%s"
+                       % (len(deleted), ("（你存的 %d 条一条没动）" % len(skipped)) if skipped else "")}
+
     def delete(self, bid, group=None):
         """删掉一次备份，然后**在这一组里**标记-清除回收没人引用的对象。"""
         g = self._group_of(bid, group)

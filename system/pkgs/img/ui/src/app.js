@@ -39,6 +39,8 @@ const MODE_LABELS = { folder: '文件夹', files: '文件清单' };
 const MODE_TITLES = { folder: '处理一个文件夹里的图片', files: '只处理手挑出来的这几个文件' };
 
 import { svg, mountIcons } from './icons.js';
+/* 后端桥（`V-225`）：位置参数 → 后端的字段名，两种跑法（内嵌 / 独立窗口）都在 bridge.js 里分流 */
+import { makeApi, isEmbedded, onHostDrop, onHostEvent } from './bridge.js';
 
 const DEFAULTS = { save_mode: 'separate', output_format: 'jpg', quality: 80, width: '', ico_sizes: [] };
 
@@ -66,11 +68,9 @@ const state = {
 };
 
 /* ------------------------------------------------------------------ 桥 */
+/* 拿到 api 对象（方法名/签名跟以前一样，参数怎么发由 bridge.js 决定） */
 function apiReady() {
-  return new Promise((resolve) => {
-    if (window.pywebview && window.pywebview.api) return resolve(window.pywebview.api);
-    window.addEventListener('pywebviewready', () => resolve(window.pywebview.api), { once: true });
-  });
+  return makeApi();
 }
 
 /* ------------------------------------------------------------------ 小工具 */
@@ -522,7 +522,8 @@ function syncTitle() {
   if (title === lastTitle) return;
   lastTitle = title;
   document.title = title;
-  if (state.api && state.api.set_title) state.api.set_title(title);
+  /* 内嵌时**没有自己的窗口标题栏**（窗口是 moss 的），别去写它（`V-225`） */
+  if (!state.embedded && state.api && state.api.set_title) state.api.set_title(title);
 }
 
 /* 格式 / 保存模式一变，整块跟着更新 */
@@ -944,6 +945,9 @@ async function start() {
    位置在 dragover 时记下来，drop 到达时直接用 —— 后端只把路径递过来，
    不带坐标，所以这个判断必须在前端做。 */
 let dropZone = 'source';
+/* 内嵌时：这一次拖放的**落点**先记着 —— 真路径要等宿主那条（`onHostDrop`）才到
+   （浏览器不给页面 `File.path`，只有宿主拿得到；见契约 §8）。 */
+let pendingZone = null;
 
 function setDropZone(zone) {
   if (dropZone === zone) return;
@@ -957,11 +961,9 @@ function setDropZone(zone) {
   }
 }
 
-function onDropEvent() {
-  $('outDirWrap').classList.remove('over');
-  hideVeil();
-  const zone = dropZone;
-  dropZone = 'source';
+/* 向后端要"这次拖进来的路径" —— 独立窗口那条路：pywebview 把路径塞进后端篮子，
+   页面轮询取走（后端顺手判文件夹/清单、按配置过滤、记历史）。 */
+function pollTakeDrop(zone) {
   let tries = 0;
   const tick = async () => {
     tries += 1;
@@ -971,6 +973,16 @@ function onDropEvent() {
     else toast('没拿到拖进来的内容（拖放可能没接上）。', true);
   };
   tick();
+}
+
+/* 松手那一下。**内嵌时这里不轮询** —— 真路径只有宿主拿得到，它作为 `drop` 事件
+   送到页面（`onHostDrop`），我们先把"落点"记下，等那条路到了再往后端塞。 */
+function onDropEvent() {
+  clearDragHint();
+  const zone = dropZone;
+  dropZone = 'source';
+  if (isEmbedded()) { pendingZone = zone; return; }
+  pollTakeDrop(zone);
 }
 
 async function applyDrop(got, zone) {
@@ -1016,23 +1028,64 @@ async function applyDrop(got, zone) {
 function showVeil() { $('dropVeil').hidden = false; }
 function hideVeil() { $('dropVeil').hidden = true; }
 
+/* 拖放那层提示（大遮罩 + 「输出」那一格的高亮）全收掉。
+   ★ 内嵌时**这是唯一可靠的出口**：宿主铺了罩子接住这一拖之后，页面就再也收不到
+     `drop`（被罩子接走了），而 `dragleave` 收到的那次是"假的"（罩子盖上来引起的）。
+     所以"松手之后提示要消失"这件事，只能由宿主的 `dragend` 来通知（`V-226`）。 */
+function clearDragHint() {
+  hideVeil();
+  const wrap = $('outDirWrap');
+  if (wrap) wrap.classList.remove('over');
+}
+
 function bindDrop() {
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
-  /* dragover 必须 preventDefault，否则浏览器根本不派发 drop。
-     顺便在这里判定落点 —— 输出那一格优先。 */
+  /* ★ `V-205` / `V-226`：内嵌时宿主会铺一张透明罩子把这一拖接住（真路径只有它那侧
+     拿得到）—— 罩子一盖上来，这一帧立刻会收到一次 `dragleave`（鼠标底下的元素被换掉了），
+     那是**假**的"拖走了"。信了它，提示会被白白收掉；而罩子把 drop 接走之后页面又再也
+     收不到 `drop` —— 两头一凑，就是"松手之后提示一直挂在那儿"。
+     规矩（和 `path` / `bmi` 两份垫片同一个口径）：
+       captured 到 dragend 之间：不认 `dragleave`；
+       dragend（宿主说拖完了）/ 我们自己收到 drop：把提示收掉。 */
+  let captured = false;
+  /* ★ 只认**系统文件**（`dataTransfer.types` 里有 `Files`）—— 页面里拖选文字 / 拖别的东西
+     不该把"松手就转换"那层提示叫出来（`path` 的口径；`V-228` 补上）。 */
+  const hasFiles = (e) => !!(e.dataTransfer && (e.dataTransfer.types || []).indexOf('Files') >= 0);
   window.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
     stop(e);
     const wrap = $('outDirWrap');
     const overOutput = !wrap.hidden && wrap.contains(e.target);
     setDropZone(overOutput ? 'output' : 'source');
     if (!overOutput) showVeil();
   });
-  window.addEventListener('dragenter', (e) => { stop(e); });
+  window.addEventListener('dragenter', (e) => { if (hasFiles(e)) stop(e); });
   window.addEventListener('dragleave', (e) => {
+    if (!hasFiles(e)) return;
     stop(e);
-    if (e.relatedTarget === null) { hideVeil(); $('outDirWrap').classList.remove('over'); }
+    if (captured) return;                       // 罩子盖上来引起的那次 leave 不算
+    if (e.relatedTarget === null) clearDragHint();
   });
   window.addEventListener('drop', (e) => { stop(e); onDropEvent(); });
+  /* 拖出窗口 / 取消（Esc）/ 窗口失焦：提示也得收干净（独立窗口那条路主要靠这个）。 */
+  window.addEventListener('dragend', () => { captured = false; clearDragHint(); });
+  window.addEventListener('blur', () => { captured = false; clearDragHint(); });
+  /* ★ `V-225`：内嵌时挂上宿主那条拖放 —— 宿主给的是**真路径**，
+     我们把它塞回后端（`push_drop`），后面那条 take_drop 管线原样复用。 */
+  onHostEvent('captured', () => { captured = true; });
+  onHostEvent('dragend', () => { captured = false; clearDragHint(); });
+  onHostDrop(async (paths) => {
+    const zone = pendingZone || 'source';
+    pendingZone = null;
+    clearDragHint();                            // 松手了，提示该收了（`V-226`）
+    try {
+      await state.api.push_drop(paths);
+    } catch (err) {
+      toast('拖进来的路径没能交给后端：' + (err && err.message ? err.message : err), true);
+      return;
+    }
+    pollTakeDrop(zone);
+  });
 }
 
 /* ------------------------------------------------------------------ 事件 */
@@ -1194,11 +1247,22 @@ let bootStage = '启动';
 function reportFailure(where, e) {
   const raw = (e && e.message) ? e.message : String(e);
   toast(`界面初始化失败（${where}）：${raw}`, true);
+  reportToBackend(`${where}: ${raw}\n${(e && e.stack) || ''}`);
+}
+
+/* ★ 报错通道**不能再把自己的失败再报一遍**（`V-225` 真踩到）：
+   桥不可用时（垫片没加载上 / 后端已经死了），`report_error` 自己会抛 ⇒ 那次失败又触发
+   `unhandledrejection` ⇒ 又调 `report_error` ⇒ **无限循环**，页面彻底卡死
+   （实测：无头浏览器被卡 120 秒超时）。所以这里只认第一次失败，之后闭嘴。 */
+function reportToBackend(text) {
+  if (state.reportBroken) return;
   try {
-    if (state.api && state.api.report_error) {
-      state.api.report_error(`${where}: ${raw}\n${(e && e.stack) || ''}`);
-    }
-  } catch (_) { /* 报错通道本身不能再抛 */ }
+    if (!state.api || !state.api.report_error) return;
+    const p = state.api.report_error(text);
+    if (p && typeof p.catch === 'function') p.catch(() => { state.reportBroken = true; });
+  } catch (_) {
+    state.reportBroken = true;      // 报错通道本身坏了：别再往里灌
+  }
 }
 
 async function boot() {
@@ -1211,6 +1275,7 @@ async function boot() {
 
   bootStage = '应用外观';
   applyAppearance(r);
+  state.embedded = !!r.embedded;      // `V-225`：内嵌时没有自己的窗口标题可写
   state.cfg = r.config;
   state.history = r.history || [];
   state.meta = { formats: r.formats, saveModes: r.saveModes, icoSizes: r.icoSizes,
@@ -1254,21 +1319,13 @@ boot().catch((e) => reportFailure(bootStage, e));
 window.addEventListener('error', (e) => {
   const where = '脚本运行时';
   toast(`界面脚本出错：${e.message || e.type}`, true);
-  try {
-    if (state.api && state.api.report_error) {
-      state.api.report_error(`${where}: ${e.message || e.type}\n${e.filename || ''}:${e.lineno || 0}`);
-    }
-  } catch (_) { /* ignore */ }
+  reportToBackend(`${where}: ${e.message || e.type}\n${e.filename || ''}:${e.lineno || 0}`);
 });
 window.addEventListener('unhandledrejection', (e) => {
   const r = e && e.reason;
   const raw = (r && r.message) ? r.message : String(r);
   toast(`界面有个异步操作失败了：${raw}`, true);
-  try {
-    if (state.api && state.api.report_error) {
-      state.api.report_error(`未处理的 Promise 拒绝: ${raw}\n${(r && r.stack) || ''}`);
-    }
-  } catch (_) { /* ignore */ }
+  reportToBackend(`未处理的 Promise 拒绝: ${raw}\n${(r && r.stack) || ''}`);
 });
 
 /* 调试口子：开 MOSS_IMG_DEBUG=1 起窗口后，可以在 devtools 里直接看状态。 */

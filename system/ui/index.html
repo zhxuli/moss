@@ -77,6 +77,7 @@
       <button class="tab active" data-tab="detail">详情</button>
       <button class="tab" data-tab="console">命令行</button>
       <button class="tab" data-tab="file">文件管理</button>
+      <button class="tab" data-tab="ai">AI</button>
       <button class="tab" data-tab="embed" hidden>界面</button>
       <!-- ★ 运行/停止 + 显示/隐藏，钉在选项卡这一行的最右边：不用先点开「详情」。
            状态**只有两种**：运行中 = 绿色停止图标，没在跑 = 普通播放图标（不再有红/黄）。 -->
@@ -97,6 +98,11 @@
       <div id="fm-bar"></div>
       <div class="fmwrap" id="fm-body"></div>
     </section>
+
+    <!-- 第五个选项卡：**AI 工作台**（`V-233`）—— 让它自己写/改包。
+         这一页是宿主界面的一部分（不是包），要贴着"当前选中的包"，
+         所以状态全在 `system/ui/ai/`（loop + 工具 + 提示词）。挂载点在这儿。 -->
+    <section class="pane" id="pane-ai"></section>
 
     <!-- 第四个选项卡：包自己的界面（`V-48` ✅；`V-84` 起这一页也是 **Vue 组件**：
          `js/embed.js` 的 `MossEmbed`）—— 顶上那一小条 + 下面那块 `#embed-wrap` 的标记
@@ -232,6 +238,7 @@
 <script src="js/modal.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/compare.js"></script>
+<script src="js/ai.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

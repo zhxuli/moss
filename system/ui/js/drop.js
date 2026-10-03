@@ -26,7 +26,12 @@ const DROP_ARGS = {id: null, piece: ""};
 /* 文件名 → 扩展名（小写、不带点）。认不出来给空串。
    ★ 点在**开头**的（`.gitignore`）算"没有扩展名"，不算扩展名 `gitignore` ——
      这是 Windows 资源管理器同一套规矩，照抄省得两边判得不一样。 */
-function extOf(name){
+/* ★ 名字**不能**叫 `extOf` —— `core.js` 里已经有一个 `extOf(entry)`（收对象、返回
+   `{i,c,l}` 图标/配色/语言三件套）。经典脚本共享全局，这个文件又排在 `core.js`
+   后面 ⇒ 后定义的那个会把前一个**整个盖掉**，而且不报错：`String({...})` 得到
+   `"[object Object]"`，`lastIndexOf(".")` 是 -1，于是所有文件都判成"没有扩展名"，
+   高亮语言永远是 `plaintext`、图标配色也一起丢（`V-249`，实测就是这么坏的）。 */
+function extFromName(name){
   const n = String(name || "");
   const i = n.lastIndexOf(".");
   return i <= 0 ? "" : n.slice(i + 1).toLowerCase();
@@ -35,7 +40,7 @@ function extOf(name){
 function ruleTakesFile(rule, name){
   const ext = (rule && rule.ext) || [];
   if (!ext.length) return true;
-  const e = extOf(name);
+  const e = extFromName(name);
   return !!e && ext.indexOf(e) >= 0;
 }
 /* 这次拖的到底是什么：尽量读出每个 item 的 {name, isDir}。
@@ -220,15 +225,20 @@ function frameDrag(pid, phase){
     //   `dragleave`（鼠标下的元素被换掉了）—— 它照着报 `out`，我们就收罩子；罩子一收，
     //   它又收到 `dragenter` 再报 `over` ⇒ **来回抖**（你看到的"有时候"就是这个）。
     pushEmbedEvent(pid, "captured", {});
+    // ★ `V-227`：**把我们自己那个投放框收掉**。这一拖是给那一帧的，不是给我们跑命令行的；
+    //   那个框（`.dz-box`，z-index 70）盖在 iframe 上，和帧里页面自己画的提示**同时可见**
+    //   ⇒ 用户看到**两个"松手"框**（`V-206` 只解决了罩子那一个，这个漏了）。
     if (DRAG.on){
       renderList();          // 这一拖是冲着**那一帧**去的 ⇒ 左边列表**不筛**（`V-205`）
       paintDragBar();        // 条上改说"松手就交给 :pid 的界面"
+      paintDropZone(false);  // 我们那颗"松手 = 运行 …"的框：这一拖不归它，收起来
     }
     uiLog("frame drag: :" + pid + " 上有人在拖 —— 铺罩子接住（真实路径只有我们这侧拿得到）");
   } else {
     el.classList.remove("on");
     if (DRAG.framePid === pid) DRAG.framePid = null;
-    if (DRAG.on){ renderList(); paintDragBar(); }   // 回到"按声明筛"的正常行为
+    // 离开那一帧了：回到"按声明筛"的正常行为，投放框也按当前选中的包重新算
+    if (DRAG.on){ renderList(); paintDragBar(); paintDropZone(false); }
     uiLog("frame drag: :" + pid + " 上没东西了 —— 收罩子");
   }
 }
@@ -321,7 +331,11 @@ function paintDropZone(over, isDir, kind){
   const k = (kind !== undefined && kind !== null) ? kind : (isDir ? "dir" : DRAG.kind);
   DRAGR.kind = k;
   const cmds = DRAG.on && p ? dropCommandsFor(p, k === "dir") : [];
-  const want = !!(DRAG.on && cmds.length && dropAccepts(p, DRAG.items));   // `V-183`：扩展名不对也不出框
+  // ★ `V-227`：`DRAG.framePid` 有值时，这一拖是**给那一帧的界面**的（罩子那条路）——
+  //   我们这颗"松手 = 运行 …"的框**必须收起来**：它盖在 iframe 上（z-index 70），
+  //   和帧里页面自己画的提示同时可见，用户看到的就是**两个"松手"框**。
+  //   放在这里（而不是每处调用点）是因为 `dragover` 里还会反复重算 —— 单点判最稳。
+  const want = !!(DRAG.on && !DRAG.framePid && cmds.length && dropAccepts(p, DRAG.items));  // `V-183`：扩展名不对也不出框
   DRAGR.rev++;                                  // 框里的内容（`.dz-box` 那几个）由组件画
   // ★ 下面这几处 class 挂在**别的元素**上（`#dropzone` 自己 / 详情页 / 右上角那颗「运行」）——
   //   它们不是组件的根，维持命令式，和改造前逐行一致。

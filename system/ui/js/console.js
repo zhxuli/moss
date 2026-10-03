@@ -215,7 +215,8 @@ function paintRowStats(){
     if (!box) return;
     const running = rowStateOf(id) === "running";
     box.innerHTML = running
-      ? '<button class="ic-run" title="正在运行 —— 点这里停掉它">' + ico("square", "i") + '</button>'
+      ? '<button class="ic-run" title="正在运行 —— 点这里停掉它' + esc(runningHint(id)) + '">' +
+        ico("square", "i") + '</button>'
       : '<button class="idle" title="运行这个包（:﻿' + esc(id) + '）">' + ico("play", "i") + '</button>';
     const b = box.querySelector("button");
     if (b) b.onclick = (ev) => {
@@ -235,18 +236,36 @@ async function runFromList(id){
   startRun(p, "");
 }
 
-/* 列表里直接停掉：是这里起的就走 run_stop（好把输出收尾），否则按进程停 */
+/* 列表里直接停掉：别管是谁起的，**显示「停止」就得真停**（`V-216`）——
+   是这里起的 run 就走 run_stop（好把输出收尾）、内嵌那把走 embed_stop、
+   其余（孤儿 / 从终端开的）按进程停。 */
 async function stopFromList(id){
   let r;
   if (RUNS[id]){
     r = await pywebview.api.run_stop(RUNS[id].rid);
     RUNS[id].stopped = true;
+  } else if (typeof embedRunning === "function" && embedRunning(id)){
+    await embedStop(id);
+    return;
   } else {
     r = await pywebview.api.pkg_stop(id);
     paintRowStats();
   }
   toast(r.msg, !r.ok);
   setTimeout(refreshAllStates, 400);
+}
+
+/* 「到底是谁在跑」—— 把宿主编好的 pid / 起始时间 / 命令行摆进 tooltip（`V-216`）。
+   ★ 为什么值得摆：这一条能让人一眼看出"这是昨天那个孤儿"，而不是"我刚跑的那次没结束"。
+   没有 procs 信息（老宿主）就退回原来那句。 */
+function runningHint(id){
+  const st = PST[id] || {};
+  const ps = st.procs || [];
+  if (!ps.length) return "";
+  const p = ps[0];
+  const more = ps.length > 1 ? (" …还有 " + (ps.length - 1) + " 个") : "";
+  return "\n· pid " + p.pid + (p.started ? "（起于 " + p.started + "）" : "") +
+         "\n· " + String(p.cmd || "").slice(0, 120) + more;
 }
 
 /* 状态灯 + 运行/停止 + 显示/隐藏：**一个控件**（灯就在按钮里）。
@@ -282,7 +301,7 @@ function paintActions(p){
   b.innerHTML = ico(running ? "square" : "play", running ? "i ic-run" : "i") +
                 '<span>' + (running ? "停止" : "运行") + '</span>';
   b.title = !p ? "先在左边选一个包或一条历史"
-               : (running ? "停掉它（连同它拉起的子进程）"
+               : (running ? ("停掉它（连同它拉起的子进程）" + runningHint(p.id))
                           : "运行这个包，输出进「命令行」");
   b.classList.toggle("warn", running);
   v.disabled = !p || !st.windows;

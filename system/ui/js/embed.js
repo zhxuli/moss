@@ -87,6 +87,7 @@ async function embedStop(pid, quiet){
   if (!Object.keys(EMB.alive).length) embedTick(false);
   embedShow(Object.keys(EMB.alive)[0] || null);  // 还有别的在跑就接着显示它
   paintEmbedTab(); paintActions(selObj()); EMBR.rev++;
+  setTimeout(refreshAllStates, 400);            // ★ `V-216`：停完立刻对一次状态，别等 2.5 秒那一轮
 }
 function embedRunning(pid){ return !!EMB.alive[String(pid)]; }
 
@@ -351,14 +352,25 @@ async function clickRun(p){
     rerunHist(p, argsInput() ? argsInput().value : undefined);
     return;
   }
-  // ★ 带内嵌界面的包（`V-48`）：这里的「运行」= 起它的内嵌后端 + 亮出「界面」选项卡。
-  //   不去开独立窗口 —— 那件事交给「在独立窗口打开」那颗按钮（两条路并存）。
+  const st0 = PST[p.id] || {};
+  // ★ `V-216`（用户报的"提示跑完了、界面还显示在运行"）：**按钮显示「停止」就得真能停**。
+  //   以前这里是「带内嵌界面的包：没起过就 embedOpen，起过就 embedStop」—— 于是**别的路径**
+  //   留下的进程（更早那次启动的孤儿、从终端开的、我这侧起的 run）会让按钮显示「停止」，
+  //   而点下去**不去停它、反而把内嵌后端又起了一个** ⇒ 那个包就永远停在"运行中"、按不掉。
+  //   现在按"谁在跑"依次认：我这侧的 run → 内嵌后端 → 别人的进程 → 都没有才起界面。
+  if (RUNS[p.id]){ await stopRun(p.id); return; }
   if (embedSupported(p)){
     if (embedRunning(p.id)){ await embedStop(p.id); return; }
+    if (st0.running){                      // 不是内嵌那把（孤儿 / 别处起的）：按进程停
+      const r = await pywebview.api.pkg_stop(p.id);
+      toast(r.msg, !r.ok);
+      paintRowStats();
+      setTimeout(refreshAllStates, 400);
+      return;
+    }
     await embedOpen(p);
     return;
   }
-  if (RUNS[p.id]){ await stopRun(p.id); return; }
   const st = PST[p.id] || {};
   if (st.running){                       // 别处启动的：直接停掉它的进程
     const r = await pywebview.api.pkg_stop(p.id);

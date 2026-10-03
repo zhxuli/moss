@@ -1,147 +1,369 @@
-/* PATH 管理 —— 界面样式（`V-201`）。
-   ★ 配色照抄 moss 主界面那套设计令牌（`system/ui/css/app.css`），深浅跟随系统 ——
-     内嵌在 moss 的「界面」选项卡里时，看起来就是同一套东西。
-   ★ 布局：**左右两栏** —— 左边宽（PATH 列表，主战场）、右边窄（备份/恢复，随手可用）。
-     窄屏（选项卡被拖窄了）自动落成一栏，右边的备份排到下面去。
-   ★ 图标全部走 `icons.js` 的 `icon()`（lucide，24×24 / 1.5 描边 / currentColor）。 */
+/* PATH 管理 —— 界面样式（`V-213`：照另一版设计稿一比一重做）。
+   ★ **不带 Tailwind CDN**：moss 是要能离线跑的，包只从自己目录取资源 —— 所以设计稿里那些
+     工具类（`p-4` / `rounded-xl` / `text-sm` / `bg-zinc-50` / `duration-300` …）在这里
+     **按同一套数值手写成组件 CSS**（Tailwind 的默认刻度：p-4=16px、p-6=24px、gap-6=24px、
+     rounded-xl=12px、rounded-lg=8px、rounded-md=6px、text-sm=14px、text-xs=12px…）。
+     配色就是那套 zinc（50/100/200/…/900）+ red/emerald/blue，一个数都没改。
+   ★ 字体：设计稿用 Google Fonts 的 Inter / JetBrains Mono —— 同样不能联网，所以
+     栈里**先写这两个名字**（本机装了就直接用），后面跟系统字体兜底（Windows 上就是 Segoe UI /
+     微软雅黑、Consolas）。
+   ★ 深浅：设计稿是纯浅色。这里把颜色都收进变量，深色模式只是**同一套结构换一组变量**
+     （zinc 反过来），结构、间距、字号一模一样。 */
 :root{
-  --bg:#f5f5f7; --panel:#fff; --panel2:#fbfbfd; --line:#f0f0f0; --line2:#e8e8ed;
-  --ctl:#c6c6cc; --ctl-in:#9a9aa2;
-  --fg:#1d1d1f; --fg2:#515154; --dim:#86868b; --dim2:#a1a1a6; --ph:#8e8e96;
-  --tag:#e8e8ed;
-  --accent:#0071e3; --accent-fg:#fff;
-  --hover:#f5f5f7; --sel:#e8f1ff; --fill:rgba(120,120,128,.10);
-  --warn:#a35b00; --warn-bg:#fdf3e3; --ok:#1a7f45;
-  --mono: ui-monospace,"Cascadia Mono",Consolas,monospace;
-  --r:10px;
+  /* 设计稿那套 zinc（一个数没改） */
+  --z50:#fafafa; --z100:#f4f4f5; --z200:#e4e4e7; --z300:#d4d4d8; --z400:#a1a1aa;
+  --z500:#71717a; --z600:#52525b; --z700:#3f3f46; --z800:#27272a; --z900:#18181b;
+  --red50:#fef2f2; --red100:#fee2e2; --red400:#f87171; --red500:#ef4444; --red600:#dc2626; --red700:#b91c1c;
+  --em50:#ecfdf5; --em100:#d1fae5; --em400:#34d399; --em500:#10b981; --em600:#059669; --em700:#047857;
+  --blue50:#eff6ff; --blue100:#dbeafe; --blue500:#3b82f6; --blue600:#2563eb; --blue700:#1d4ed8;
+  /* 语义变量：浅色 = 上面那些 zinc 的取值 */
+  --bg:var(--z50); --panel:#fff; --panel2:rgba(250,250,250,.8); --panel3:rgba(244,244,245,.5);
+  --line:var(--z100); --line2:var(--z200); --line260:rgba(228,228,231,.6); --line250:rgba(228,228,231,.5);
+  --fg:var(--z900); --fg2:var(--z800); --fg3:var(--z700); --fg4:var(--z600); --fg5:var(--z500);
+  --fg6:var(--z400); --ph:var(--z400);
+  --hover:var(--z100); --hover2:var(--z50); --inbg:rgba(250,250,250,.5);
+  --ring:#fafafa;
+  --sans:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --sh-sm:0 1px 2px 0 rgb(0 0 0/.05);
+  --sh-md:0 4px 6px -1px rgb(0 0 0/.1),0 2px 4px -2px rgb(0 0 0/.1);
+  --sh-toast:0 20px 25px -5px rgb(24 24 27/.2),0 8px 10px -6px rgb(24 24 27/.2);
+  --stripes:repeating-linear-gradient(45deg,var(--red50) 0,var(--red50) 2px,transparent 2px,transparent 8px);
 }
 @media (prefers-color-scheme: dark){
   :root{
-    --bg:#151517; --panel:#1c1c1e; --panel2:#232326; --line:#2c2c30; --line2:#2c2c30;
-    --ctl:#4a4a52; --ctl-in:#6e6e78;
-    --fg:#f5f5f7; --fg2:#d1d1d6; --dim:#a1a1a6; --dim2:#7c7c82; --ph:#8e8e96;
-    --tag:#3a3a3f;
-    --accent:#0a84ff; --hover:#2a2a2e; --sel:#1f2c3d; --fill:rgba(120,120,128,.22);
-    --warn:#e5a44f; --warn-bg:#2a2118; --ok:#54c07d;
+    --bg:#09090b; --panel:var(--z900); --panel2:rgba(24,24,27,.8); --panel3:rgba(39,39,42,.5);
+    --line:var(--z800); --line2:var(--z700); --line260:rgba(63,63,70,.6); --line250:rgba(63,63,70,.5);
+    --fg:var(--z50); --fg2:var(--z100); --fg3:var(--z200); --fg4:var(--z300); --fg5:var(--z400);
+    --fg6:var(--z500); --ph:var(--z500);
+    --hover:var(--z800); --hover2:#1f1f23; --inbg:rgba(39,39,42,.5);
+    --ring:#09090b;
+    --stripes:repeating-linear-gradient(45deg,rgba(127,29,29,.35) 0,rgba(127,29,29,.35) 2px,transparent 2px,transparent 8px);
   }
 }
 *{box-sizing:border-box}
 html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--fg);
-  font:13px/1.55 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/20px var(--sans);
+  overflow:hidden;-webkit-font-smoothing:antialiased}
+::selection{background:var(--z200);color:var(--z900)}
 #app{height:100%;display:flex;flex-direction:column;position:relative}
-.sp{flex:1}
-.dim2{color:var(--dim2)}
-.small{font-size:12px}
+.i{width:16px;height:16px;flex:none;display:block}
 .mono{font-family:var(--mono)}
-.warn{color:var(--warn)}
-svg.i{width:15px;height:15px;flex:none;display:block}
+.dim{color:var(--fg5)}
+.warn{color:var(--red600)}
+.plus{color:var(--em600)}
+.minus{color:var(--red600)}
+.sp{flex:1}
 
-/* ---------------------------------------------------------------- 顶栏 */
-.hd{display:flex;align-items:center;gap:10px;padding:10px 14px;flex:none;
-  background:var(--panel);border-bottom:1px solid var(--line2)}
-.hd .logo{width:26px;height:26px;flex:none;opacity:.9}
-.hd .who{display:flex;flex-direction:column;line-height:1.25;min-width:0}
-.hd .who b{font-size:14px}
-.hd .sub{font-size:11.5px;color:var(--dim)}
+/* 滚动条：6px、透明轨道（设计稿就是这么写的） */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--z200);border-radius:10px}
+::-webkit-scrollbar-thumb:hover{background:var(--z300)}
+@media (prefers-color-scheme: dark){
+  ::-webkit-scrollbar-thumb{background:var(--z700)}
+  ::-webkit-scrollbar-thumb:hover{background:var(--z600)}
+}
 
-/* 按钮：小图标 + 文字，hover 才有底色（moss 里那套 `.t` / `.iconbtn` 的合体） */
-.btn{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;font:inherit;font-size:12.5px;
-  color:var(--fg2);cursor:pointer;background:transparent;border:1px solid transparent;border-radius:8px;
-  transition:background .12s,color .12s,border-color .12s;white-space:nowrap}
-.btn:hover{background:var(--hover);color:var(--fg)}
-.btn:disabled{opacity:.45;cursor:default;background:transparent}
-.btn.primary{background:var(--accent);color:var(--accent-fg)}
-.btn.primary:hover{filter:brightness(1.06);color:var(--accent-fg)}
-.btn.primary:disabled{opacity:.5}
-.btn.small{padding:3px 8px;font-size:12px}
-.btn.danger:hover{color:#d64545;background:var(--hover)}
-.btn svg.i{width:14px;height:14px}
+/* ---------------------------------------------------------------- 外壳：两栏
+   ★ `V-215`：**永远是左右两栏**，不做"窄了落成一栏"那种自适应（你要的就是左右结构）；
+     右边（备份）**固定 360px**，左边把剩下的都吃掉。 */
+.wrap{width:100%;max-width:1400px;margin:0 auto;height:100%;padding:16px;
+  display:flex;flex-direction:row;gap:24px;min-height:0}
+.card{display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line2);
+  border-radius:12px;box-shadow:var(--sh-sm);overflow:hidden;min-width:0;min-height:0}
+.main{flex:1 1 auto;min-width:0}
+.aside{flex:0 0 360px;width:360px;background:var(--panel2)}
+@media (min-width:1024px){ .wrap{padding:24px} }
 
-/* ---------------------------------------------------------------- 两栏 */
-.cols{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 320px}
-.pane{min-width:0;min-height:0;display:flex;flex-direction:column;position:relative}
-.left{background:var(--panel)}
-.right{background:var(--panel2);border-left:1px solid var(--line2)}
+/* ---------------------------------------------------------------- 左：顶栏 */
+.hd{padding:20px 24px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;
+  gap:20px;background:var(--panel);flex:none;z-index:10}
+.hdrow{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.title h1{margin:0;font-size:18px;line-height:28px;font-weight:600;letter-spacing:-.025em;
+  color:var(--fg);display:flex;align-items:center;gap:8px}
+.title h1 .i{width:20px;height:20px;color:var(--fg3)}
+.title p{margin:2px 0 0;font-size:14px;line-height:20px;color:var(--fg5)}
+.hdact{display:flex;align-items:center;gap:8px;height:36px;flex:none}
 
-/* 左：添加行 */
-.addrow{display:flex;gap:8px;align-items:center;padding:10px 14px;flex:none;
-  border-bottom:1px solid var(--line)}
-.fi{flex:1;min-width:0;display:flex;align-items:center;gap:8px;padding:0 10px;
-  background:var(--bg);border:1px solid var(--ctl-in);border-radius:var(--r)}
-.fi:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--fill)}
-.fi > i{display:flex;color:var(--dim2)}
-.fi input{flex:1;min-width:0;padding:7px 0;font:inherit;color:var(--fg);background:transparent;border:0;outline:0}
-.fi input::placeholder{color:var(--ph)}
+/* 图标按钮（刷新）—— 设计稿里没有"刷新"，但那是我们真有的功能，做成一颗不起眼的图标按钮 */
+.iconbtn{width:32px;height:32px;display:flex;align-items:center;justify-content:center;
+  color:var(--fg6);background:transparent;border:0;border-radius:6px;cursor:pointer;
+  transition:background .2s,color .2s}
+.iconbtn:hover{background-color:var(--blue50);color:var(--blue700);box-shadow:var(--sh-sm)}
+.iconbtn:disabled{opacity:.45;cursor:default;background:transparent;box-shadow:none}
+.iconbtn .i{width:17px;height:17px}
 
-/* 左：列表 */
-.list{flex:1;min-height:0;overflow:auto}
-.row{display:flex;align-items:center;gap:9px;padding:7px 12px 7px 14px;border-bottom:1px solid var(--line)}
-.row:hover{background:var(--hover)}
-.row .idx{width:20px;flex:none;text-align:right;font-size:11px;color:var(--dim2);
-  font-variant-numeric:tabular-nums}
-.row .p{flex:1;min-width:0;font-family:var(--mono);font-size:12.5px;
+/* 「去重 / 清理失效 / 撤销 / 保存修改」这一组：**有事才出现**（设计稿的核心点子） */
+.actgroup{display:none;align-items:center;gap:4px;padding:4px;border-radius:8px;
+  background:rgba(244,244,245,.8);border:1px solid rgba(228,228,231,.8);
+  transition:all .3s}
+.actgroup.on{display:flex}
+@media (prefers-color-scheme: dark){ .actgroup{background:rgba(39,39,42,.8);border-color:rgba(63,63,70,.8)} }
+.actbtn{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;font:500 14px/20px var(--sans);
+  color:var(--fg4);background:transparent;border:0;border-radius:6px;cursor:pointer;
+  white-space:nowrap;box-shadow:var(--sh-sm);transition:all .2s}
+.actbtn .i{width:16px;height:16px;color:var(--fg6)}
+.actbtn:hover{color:var(--fg);background-color:var(--panel);box-shadow:var(--sh-md)}
+.actbtn:active{transform:scale(.95)}
+.actbtn:hover .i{color:var(--fg3)}
+.actbtn.danger:hover{color:var(--red700);background-color:var(--red50);border-color:var(--red100)}
+.actbtn.danger:hover .i{color:var(--red600)}
+.actbtn:disabled{opacity:.5;cursor:default}
+.actdiv{width:1px;height:16px;background:var(--z300);margin:0 4px}
+/* 「保存修改」：明亮的蓝（`V-214` 你说黑色不好看）—— 一屏里最显眼的那颗 */
+.actsave{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;font:500 14px/20px var(--sans);
+  color:#fff;background-color:var(--blue600);border:0;border-radius:6px;cursor:pointer;white-space:nowrap;
+  box-shadow:var(--sh-sm);transition:all .2s}
+.actsave .i{width:16px;height:16px;opacity:.9}
+.actsave:hover{background-color:var(--blue700);box-shadow:var(--sh-md)}
+.actsave:active{transform:scale(.95)}
+.actsave:disabled{opacity:.5;cursor:default}
+@media (prefers-color-scheme: dark){
+  .actsave{background-color:var(--blue500)}
+  .actsave:hover{background-color:var(--blue600)}
+}
+
+/* 输入 + 添加：一条"无缝复合组" */
+.compound{display:flex;border:1px solid var(--line2);border-radius:8px;background:var(--panel);
+  overflow:hidden;box-shadow:var(--sh-sm);transition:border-color .2s,box-shadow .2s}
+.compound:focus-within{border-color:var(--z900);box-shadow:0 0 0 1px var(--z900)}
+@media (prefers-color-scheme: dark){ .compound:focus-within{border-color:var(--z300);box-shadow:0 0 0 1px var(--z300)} }
+.inputwrap{position:relative;flex:1;min-width:0;display:flex;align-items:center;background:var(--inbg)}
+.lead{position:absolute;left:12px;display:flex;color:var(--fg6);pointer-events:none;transition:color .2s}
+.compound:focus-within .lead{color:var(--fg4)}
+.inputwrap input{width:100%;padding:10px 64px 10px 36px;font:400 14px/20px var(--mono);
+  color:var(--fg);background:transparent;border:0;outline:0}
+.inputwrap input::placeholder{color:var(--ph)}
+.inputwrap input.bad{color:var(--red500)}
+.warnicon{position:absolute;right:32px;display:flex;color:var(--red500);animation:pulse 2s cubic-bezier(.4,0,.6,1) infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.clearbtn{position:absolute;right:6px;padding:6px;display:flex;align-items:center;justify-content:center;
+  color:var(--fg6);background:var(--panel);border:1px solid transparent;border-radius:6px;cursor:pointer;
+  box-shadow:var(--sh-sm);transition:all .2s}
+.clearbtn:hover{color:var(--blue700);background-color:var(--blue50);border-color:var(--blue100)}
+.clearbtn .i{width:14px;height:14px}
+.vline{width:1px;background:var(--line2);flex:none}
+.addbtn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;flex:none;
+  font:500 14px/20px var(--sans);color:var(--fg2);background:var(--hover2);border:0;cursor:pointer;
+  transition:background .2s}
+.addbtn .i{width:16px;height:16px;color:var(--fg5)}
+.addbtn:hover{background-color:var(--blue600);color:#fff}
+.addbtn:hover .i{color:#fff}
+.addbtn:active{background-color:var(--blue700)}
+.addbtn:disabled{opacity:.5;cursor:default}
+.addbtn:disabled:hover{background-color:var(--hover2);color:var(--fg2)}
+.addbtn:disabled:hover .i{color:var(--fg5)}
+@media (prefers-color-scheme: dark){ .addbtn:active{background:var(--z700)} }
+
+/* ---------------------------------------------------------------- 左：列表 */
+.listwrap{flex:1;min-height:0;overflow-y:auto;background:var(--panel);position:relative}
+.plist{list-style:none;margin:0;padding:0 0 24px;display:flex;flex-direction:column}
+/* ★ `V-215`：把手和右边那三颗**都浮在行上**（`position:absolute`），**不占宽度** ——
+   不 hover 的时候，这一行从左到右整条都留给路径（以前那三颗一直占着 ~200px，
+   窄一点路径就被截断了，白白浪费）。 */
+.row{position:relative;display:flex;align-items:center;padding:12px 16px 12px 24px;
+  border-bottom:1px solid var(--line);
+  max-height:200px;transition:background .3s ease-out,max-height .3s ease-out,padding .3s ease-out,
+  opacity .3s ease-out,transform .3s ease-out,border-width .3s ease-out;overflow:hidden;background:var(--panel)}
+.row:hover{background:var(--hover2)}
+.row.invalid{background-color:rgba(254,242,242,.3);background-image:var(--stripes);border-color:var(--red100)}
+.row.invalid:hover{background-color:rgba(254,242,242,.8)}
+.grip{position:absolute;left:3px;top:0;bottom:0;width:18px;display:flex;align-items:center;
+  justify-content:center;color:var(--fg6);opacity:0;cursor:grab;transition:opacity .3s;background:transparent}
+.grip:hover{color:var(--fg)}
+.row:hover .grip{opacity:1}
+.row.dragging{opacity:.4;background:var(--hover)}
+.row.over{box-shadow:inset 0 2px 0 0 var(--z900)}
+.row.removing{max-height:0;padding-top:0;padding-bottom:0;border-bottom-width:0;opacity:0;
+  transform:scale(.95) translateX(-20px)}
+/* 新加进来、还没保存的（`V-211` 的"一直亮着"）—— 用设计稿自己的语义色：新条目 = emerald */
+.row.fresh{background-color:rgba(236,253,245,.55);box-shadow:inset 3px 0 0 var(--em500)}
+.row.fresh:hover{background-color:var(--em50)}
+.row.fresh.invalid{background-color:rgba(254,242,242,.3)}
+@media (prefers-color-scheme: dark){
+  .row.fresh{background-color:rgba(6,78,59,.28)}
+  .row.fresh:hover{background-color:rgba(6,78,59,.42)}
+  .row.invalid{background-color:rgba(127,29,29,.22)}
+}
+@keyframes rowIn{from{opacity:0;transform:translateY(-20px);max-height:0;padding-top:0;padding-bottom:0}}
+.row.fresh{animation:rowIn .3s ease-out}
+.pcell{flex:1;min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden}
+.pico{width:16px;height:16px;flex:none;color:var(--red500)}
+.ptext{font:400 13px/20px var(--mono);letter-spacing:-.025em;color:var(--fg3);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row.gone .p{color:var(--warn)}
-.row .x{width:24px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;
-  color:var(--dim2);cursor:pointer;background:transparent;border:0;border-radius:7px;
-  opacity:0;transition:opacity .12s,background .12s,color .12s}
-.row:hover .x{opacity:1}
-.row .x:hover{background:var(--fill);color:var(--fg)}
-
-/* 小标签 */
-.chip{display:inline-flex;align-items:center;gap:4px;flex:none;font-size:11px;padding:1px 7px;
-  border-radius:999px;background:var(--tag);color:var(--fg2);white-space:nowrap}
-.chip.bad{background:var(--warn-bg);color:var(--warn)}
-.chip svg.i{width:11px;height:11px}
-.plus{color:var(--ok)}
-.minus{color:var(--warn)}
-
+.row.invalid .ptext{color:var(--red600)}
+/* 三颗工具**浮在行右侧**（半透明 + 毛玻璃，下面的路径看不真切也无妨 —— 这会儿你要的是按钮），
+   不 hover 时它们是 `opacity:0` 且**不占宽度**（`V-215`） */
+.racts{position:absolute;right:6px;top:50%;display:flex;align-items:center;gap:4px;padding:3px 5px;
+  border-radius:8px;background-color:color-mix(in srgb, var(--panel) 88%, transparent);
+  backdrop-filter:blur(3px);box-shadow:var(--sh-sm);
+  opacity:0;transform:translateY(-50%) translateX(12px);transition:all .2s ease-out}
+.row:hover .racts{opacity:1;transform:translateY(-50%) translateX(0)}
+/* 每行那三颗：**图标 + 文字**（`V-214`：你说要跟别的按钮一个长相），hover 底色给足 */
+.ract{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;
+  font:500 11px/16px var(--sans);color:var(--fg5);background:transparent;border:1px solid transparent;
+  border-radius:6px;cursor:pointer;white-space:nowrap;transition:all .18s}
+.ract .i{width:12px;height:12px}
+.ract:hover{color:var(--blue700);background-color:var(--blue50);border-color:var(--blue100)}
+.ract:active{transform:scale(.95)}
+.ract.del:hover{color:var(--red700);background-color:var(--red50);border-color:var(--red100)}
+.ract.pin.on{color:#fff;background-color:var(--blue600);border-color:var(--blue600)}
+/* 小标签（设计稿里"几条"那个小胶囊，本包/未保存跟着它走） */
+.chip{display:inline-flex;align-items:center;gap:4px;flex:none;font:500 10px/16px var(--sans);
+  padding:1px 6px;border-radius:4px;background:var(--hover);color:var(--fg4);white-space:nowrap}
+.chip.new{background:var(--em50);color:var(--em700)}
+@media (prefers-color-scheme: dark){
+  .chip.new{background:rgba(6,78,59,.5);color:var(--em400)}
+  .ract:hover{background:var(--z700)}
+  .ract.del:hover{background:rgba(127,29,29,.4)}
+}
+/* 拖到底（放到列表最后）—— 只有拖着的时候才出现 */
+.dropend{height:28px;margin:0 16px;border-radius:6px;border:1px dashed transparent}
+.dropend.on{border-color:var(--line2)}
+.dropend.over{border-color:var(--z900);background:var(--hover)}
 /* 空状态 */
 .empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:44px 20px;
-  color:var(--dim2);text-align:center}
-.empty svg.i{width:26px;height:26px;opacity:.6}
-.empty b{color:var(--fg2);font-size:13px;font-weight:500}
+  color:var(--fg6);text-align:center}
+.empty .i{width:26px;height:26px;opacity:.6}
+.empty b{color:var(--fg4);font-size:13px;font-weight:500}
 .empty span{font-size:12px;line-height:1.6}
+/* 从系统拖文件夹进来时铺的那层提示 */
+.dropmask{position:absolute;inset:12px;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:8px;pointer-events:none;color:var(--fg3);border-radius:10px;
+  background:color-mix(in srgb, var(--z50) 82%, transparent);border:2px dashed var(--line2)}
+.dropmask .i{width:30px;height:30px;color:var(--fg5)}
+.dropmask b{font-size:14px;font-weight:500}
+.dropmask span{font-size:12px;color:var(--fg5)}
 
-/* 拖动中：铺一层提示（不吃鼠标事件，drop 由监听收） */
-.dropmask{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
-  justify-content:center;gap:8px;pointer-events:none;color:var(--accent);
-  background:color-mix(in srgb, var(--accent) 8%, var(--panel));
-  border:2px dashed var(--accent);border-radius:12px;margin:10px}
-.dropmask svg.i{width:30px;height:30px}
-.dropmask b{font-size:13px}
-.dropmask span{font-size:12px;color:var(--dim)}
-#app.dragging .left{background:var(--panel)}
+/* 底栏：左边一句状态、右边一句提示（+ 后端自证） */
+.statusbar{flex:none;display:flex;justify-content:space-between;align-items:center;gap:12px;
+  padding:8px 16px;background:var(--bg);border-top:1px solid var(--line);
+  font-size:12px;line-height:16px;color:var(--fg5)}
+.statusbar .r{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.statusbar .proof{font-family:var(--mono);font-size:11px;color:var(--fg6)}
 
-/* ---------------------------------------------------------------- 右：备份 */
-.rhd{display:flex;align-items:center;gap:7px;padding:12px 14px 8px;flex:none;color:var(--fg2)}
-.rhd > i{display:flex;color:var(--dim)}
-.rhd b{font-size:12.5px;color:var(--fg)}
-.blist{flex:1;min-height:0;overflow:auto;padding:0 12px 12px}
-.bcard{background:var(--panel);border:1px solid var(--line2);border-radius:var(--r);
-  padding:9px 11px;margin-bottom:8px;cursor:pointer;transition:border-color .12s,box-shadow .12s}
-.bcard:hover{border-color:var(--ctl)}
-.bcard.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--fill)}
-.brow{display:flex;align-items:center;gap:6px}
-.brow .when{font-size:12.5px;font-variant-numeric:tabular-nums}
-.bacts{display:flex;gap:6px;margin-top:8px}
-.bdiff{margin-top:9px;padding-top:8px;border-top:1px solid var(--line2)}
-.bdiff .dh{font-size:11px;color:var(--dim);margin:4px 0 2px}
-.bdiff .dl{font-family:var(--mono);font-size:11.5px;color:var(--fg2);
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* ---------------------------------------------------------------- 右：备份时间线 */
+.rhd{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;flex:none;
+  background:var(--panel3);border-bottom:1px solid var(--line260)}
+.rhd h2{margin:0;display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--fg2)}
+.rhd h2 .i{color:var(--fg5)}
+.ghostbtn{display:inline-flex;align-items:center;gap:4px;padding:6px 10px;font:500 12px/16px var(--sans);
+  color:var(--fg3);background:var(--panel);border:1px solid var(--line2);border-radius:6px;
+  cursor:pointer;box-shadow:var(--sh-sm);transition:all .2s}
+.ghostbtn:hover{border-color:var(--blue600);color:var(--blue700);background-color:var(--blue50);box-shadow:var(--sh-md)}
+.ghostbtn:hover .i{color:var(--blue600)}
+.ghostbtn:active{transform:scale(.95)}
+.ghostbtn:disabled{opacity:.5;cursor:default}
+.ghostbtn .i{width:14px;height:14px;color:var(--fg5)}
+/* 起名 / 改名那一行（`V-209`）：跟设计稿的"备注输入框"一个长相 */
+.nameRow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:12px 20px 4px;flex:none}
+.fi2{flex:1;min-width:0;display:flex;align-items:center;gap:6px;padding:0 8px;
+  background:var(--panel);border:1px solid var(--line2);border-radius:6px;transition:all .2s}
+.fi2:focus-within{border-color:var(--z900);box-shadow:0 0 0 1px var(--z900)}
+.fi2 .i{width:14px;height:14px;color:var(--fg6)}
+.fi2 input{flex:1;min-width:0;padding:6px 0;font:400 13px/18px var(--sans);color:var(--fg);
+  background:transparent;border:0;outline:0}
+.minibtn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:5px 9px;
+  font:500 12px/16px var(--sans);color:var(--fg4);background:var(--panel);border:1px solid var(--line2);
+  border-radius:6px;cursor:pointer;box-shadow:var(--sh-sm);transition:all .2s}
+.minibtn:hover{border-color:var(--blue600);color:var(--blue700);background-color:var(--blue50)}
+.minibtn:active{transform:scale(.95)}
+.minibtn.solid{background-color:var(--blue600);color:#fff;border-color:var(--blue600)}
+.minibtn.solid:hover{background-color:var(--blue700);color:#fff;border-color:var(--blue700)}
+.minibtn.danger:hover{color:var(--red700);border-color:var(--red100);background-color:var(--red50)}
+.minibtn .i{width:14px;height:14px}
+.hintline{flex-basis:100%;font-size:11px;line-height:16px;color:var(--fg6)}
+@media (prefers-color-scheme: dark){ .minibtn.solid:hover{background:var(--blue500);border-color:var(--blue500)} }
 
-/* ---------------------------------------------------------------- 底栏 */
-.ft{display:flex;align-items:center;gap:10px;padding:7px 14px;flex:none;
-  background:var(--panel);border-top:1px solid var(--line2)}
-.msg{display:flex;align-items:center;gap:6px;min-width:0;color:var(--fg2);
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.msg svg.i{width:13px;height:13px;color:var(--dim)}
-.msg.bad{color:var(--warn)}
-.msg.bad svg.i{color:var(--warn)}
-
-/* 窄了（选项卡拖窄 / 小窗）就落成一栏：备份排到下面 */
-@media (max-width: 760px){
-  .cols{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,42%)}
-  .right{border-left:0;border-top:1px solid var(--line2)}
+.blistwrap{flex:1;min-height:0;overflow-y:auto;padding:20px;position:relative}
+.axis{position:absolute;left:27px;top:24px;bottom:16px;width:1px;background:var(--line2)}
+.blist{position:relative;display:flex;flex-direction:column}
+.bentry{display:flex;gap:16px;position:relative}
+.bentry + .bentry{margin-top:24px}
+.dot{width:10px;height:10px;border-radius:9999px;flex:none;margin-top:6px;z-index:10;
+  background:var(--z300);border:2px solid var(--ring);box-shadow:0 0 0 4px var(--ring);
+  transition:background .3s}
+.dot.latest{background:var(--z900)}
+@media (prefers-color-scheme: dark){ .dot.latest{background:var(--z100)} }
+.bcard{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line260);border-radius:8px;
+  box-shadow:var(--sh-sm);overflow:hidden;display:flex;flex-direction:column;transition:box-shadow .3s}
+.bentry:hover .bcard{box-shadow:var(--sh-md)}
+.bbody{padding:12px;background:var(--panel);position:relative;z-index:10}
+.brow1{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:8px}
+.btime{font:400 12px/16px var(--mono);color:var(--fg5)}
+.bname{margin-bottom:8px;display:flex}
+/* 名字：平时就是一行字，**双击**才变成输入框（`V-211` 你要的）；长相跟设计稿那个备注框一致 */
+.namelabel{display:block;width:100%;font:500 14px/20px var(--sans);color:var(--fg2);
+  padding:2px 4px;margin-left:-4px;border-radius:4px;border:1px solid transparent;
+  cursor:text;transition:all .2s;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.namelabel:hover{background:var(--hover)}
+.namelabel.custom{font-weight:600}
+.nameinput{width:100%;font:500 14px/20px var(--sans);color:var(--fg2);padding:2px 4px;
+  margin-left:-4px;background:var(--panel);border:0;border-radius:4px;outline:0;
+  box-shadow:0 0 0 1px var(--z300)}
+.bmeta{display:flex;align-items:center;gap:6px;font-size:11px;line-height:16px;color:var(--fg5)}
+/* 备份卡片上那三颗：**也浮在卡片右下角**（`V-215`：不 hover 时不该占那条高度/宽度），
+   固定住（`open`）时一直露着；`background-color` 给一层半透明底，压在图上也看得清 */
+.bacts{position:absolute;right:8px;bottom:7px;display:flex;gap:4px;padding:2px 4px;border-radius:8px;
+  background-color:color-mix(in srgb, var(--panel) 90%, transparent);
+  backdrop-filter:blur(3px);box-shadow:var(--sh-sm);
+  opacity:0;transform:translateY(4px);transition:all .2s}
+.bentry:hover .bacts, .bentry.open .bacts{opacity:1;transform:translateY(0)}
+.bact{display:inline-flex;align-items:center;gap:4px;padding:3px 7px;
+  font:500 11px/16px var(--sans);color:var(--fg5);background:transparent;border:1px solid transparent;
+  border-radius:6px;cursor:pointer;white-space:nowrap;transition:all .18s}
+.bact .i{width:12px;height:12px}
+.bact:hover{color:var(--blue700);background-color:var(--blue50);border-color:var(--blue100)}
+.bact:active{transform:scale(.95)}
+.bact.danger:hover{color:var(--red700);background-color:var(--red50);border-color:var(--red100)}
+.bact.on{color:#fff;background-color:var(--blue600);border-color:var(--blue600)}
+/* 差异面板：设计稿那套 grid-rows 0fr→1fr 的展开动画 */
+.bdiff{display:grid;grid-template-rows:0fr;opacity:0;background:rgba(250,250,250,.5);
+  transition:grid-template-rows .4s ease-in-out,opacity .4s ease-in-out}
+.bdiff.open{grid-template-rows:1fr;opacity:1}
+@media (prefers-color-scheme: dark){ .bdiff{background:rgba(24,24,27,.5)} }
+.bdiffin{overflow:hidden;min-height:0;display:flex;flex-direction:column}
+.bdiffhd{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;
+  background:var(--panel3);border-top:1px solid var(--line250);border-bottom:1px solid var(--line250)}
+.bdiffhd > span{font:600 10px/16px var(--sans);color:var(--fg5)}
+.difftoggle{font:500 10px/16px var(--sans);color:var(--fg5);background:var(--panel);
+  border:1px solid var(--line2);border-radius:4px;padding:2px 6px;cursor:pointer;
+  box-shadow:var(--sh-sm);transition:all .18s}
+.difftoggle:hover{color:var(--blue700);background-color:var(--blue50);border-color:var(--blue100)}
+.difftoggle:active{transform:scale(.95)}
+.difflist{list-style:none;margin:0;padding:6px;display:flex;flex-direction:column;gap:2px;
+  max-height:192px;overflow-y:auto}
+.ditem{display:flex;align-items:flex-start;gap:6px;padding:6px;border-radius:4px;
+  font:400 10px/16px var(--mono);border:1px solid transparent}
+.ditem .tag{flex:none;width:44px;text-align:center;font-weight:600;border-radius:4px;padding:2px 0;margin-top:2px}
+.ditem .dp{word-break:break-all}
+.ditem.add{background:var(--em50);color:var(--em700);border-color:rgba(209,250,229,.5)}
+.ditem.add .tag{color:var(--em600);background:rgba(209,250,229,.6)}
+.ditem.del{background:var(--red50);color:var(--red700);border-color:rgba(254,226,226,.5)}
+.ditem.del .tag{color:var(--red600);background:rgba(254,226,226,.6)}
+.ditem.del .dp{text-decoration:line-through;opacity:.7}
+.ditem.same{color:var(--fg5)}
+.ditem.same .tag{color:var(--fg5);background:rgba(228,228,231,.6)}
+.bnote{padding:10px 2px;text-align:center;font-size:10px;line-height:16px;color:var(--fg6);font-family:var(--sans)}
+@media (prefers-color-scheme: dark){
+  .ditem.add{background:rgba(6,78,59,.35);color:var(--em400);border-color:rgba(6,78,59,.5)}
+  .ditem.add .tag{color:var(--em400);background:rgba(6,78,59,.6)}
+  .ditem.del{background:rgba(127,29,29,.3);color:var(--red400);border-color:rgba(127,29,29,.5)}
+  .ditem.del .tag{color:var(--red400);background:rgba(127,29,29,.6)}
+  .ditem.same .tag{background:rgba(63,63,70,.6)}
 }
+
+/* ---------------------------------------------------------------- Toast（设计稿那套） */
+.toasts{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);display:flex;
+  flex-direction:column;align-items:center;gap:12px;z-index:50;pointer-events:none}
+.toast{display:flex;align-items:center;gap:8px;padding:10px 16px;border-radius:8px;
+  font:500 14px/20px var(--sans);color:#fff;background:var(--z900);box-shadow:var(--sh-toast);
+  pointer-events:auto;max-width:min(680px,calc(100vw - 48px))}
+.toast .i{width:16px;height:16px;flex:none}
+.toast.error{background:var(--red600);box-shadow:0 20px 25px -5px rgb(220 38 38/.2),0 8px 10px -6px rgb(220 38 38/.2)}
+.toast .ok{color:var(--em400)}
+.toast-enter-from{opacity:0;transform:translateY(40px) scale(.9)}
+.toast-leave-to{opacity:0;transform:translateY(16px) scale(.95)}
+.toast-enter-active,.toast-leave-active{transition:all .4s ease-out}

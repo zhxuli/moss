@@ -1,14 +1,19 @@
 # -*- coding: utf-8 -*-
 """图片工具 —— 入口 / 模式选择。
 
-一个包，两种用法（`CLI-01`）：
+一个包，三种用法：
 
     moss :img                              不带参数 → 打开界面
     moss :img webp 60% 1200 *.png          带参数   → 走命令行
+    （宿主内嵌）                            MOSS_UI_EMBED=1 → 在 stdio 上答 JSON 行（`V-225`）
 
 界面优先 WebView（和 exec 同一套外观：pywebview + WebView2 + 设计令牌），
 WebView2 或 pywebview 起不来时**自动退回** Tkinter 界面，
 保证在没装 WebView2 Runtime 的机器上照样能用。
+
+★ 「一份界面两种跑法」（`V-48` / `V-225`）：同一份 `ui/` 页面，既能被嵌进 moss 的
+  「界面」选项卡（宿主给 `MOSS_UI_EMBED=1`，见 `embed.py`），也能自己开一扇窗
+  （`gui_web.py`）；两条路共用同一份 `gui_web.Api`。
 
 调试用的强制开关：
     moss :img --tk          即使带了参数也开 Tkinter 界面
@@ -77,6 +82,15 @@ def open_ui(tokens):
 
 
 def main():
+    # ★ `V-225`：宿主让我们跑"内嵌界面"时**绝不开窗** —— 在 stdio 上说 JSON 行就行。
+    #   （放最前面：这条路上参数一个都不用看。）
+    try:
+        from embed import Embedded, embedded_now
+        if embedded_now():
+            return Embedded().loop()
+    except ImportError:
+        pass
+
     text = raw_args()
 
     # 没参数 → 界面。这就是「一个包两种用法」的分岔点，只此一处。

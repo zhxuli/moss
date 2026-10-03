@@ -15,10 +15,13 @@
   --mono: ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,monospace;
   --fill:rgba(120,120,128,.10); --fill2:rgba(120,120,128,.18);
   --group:#fff; --hair:rgba(60,60,67,.10);
-  /* 差异视图（`V-94`）的四个状态色：变了=琥珀（谁大谁更深）/ 只有快照里有=红 /
-     只有现在有=绿 / 空文件=灰。深浅两档要**肉眼分得开**，不然"哪边更大"就白标了。 */
-  --df-chg:#a35b00; --df-chg-soft:#c98a3c; --df-gone:#d64545; --df-new:#1a7f45;
-  --df-empty:#a1a1a6;
+  /* 差异视图（`V-94` / `V-250`）的状态色。你 2026-10-04 重新定的规矩：
+       · 内容变了（变大/变小）= **同一个琥珀色**，谁大谁**更深**；
+       · 增删（添加/缺少）  = **同一个蓝**，也是深浅两档分方向；
+       · **没变化 = 灰**（"表示没变化"）；空文件也是灰（但没有箭头）。
+     深浅两档要**肉眼分得开**，不然"哪边更大"就白标了。方向另有 +/-/上下箭头（`df-mark`）。 */
+  --df-chg:#a35b00; --df-chg-soft:#c98a3c; --df-empty:#a1a1a6;
+  --df-add:#1c6dd0; --df-add-soft:#6b9fd4; --df-same:#9a9aa0;
   /* 语法配色照抄 exec（GitHub 那套浅/深色） */
   --syn-comment:#6e7781; --syn-keyword:#cf222e; --syn-string:#0a3069;
   --syn-number:#0550ae;  --syn-title:#8250df;   --syn-builtin:#953800;
@@ -37,8 +40,8 @@
   --drop-bg:rgba(28,28,30,.94);
          --fill:rgba(120,120,128,.22); --fill2:rgba(120,120,128,.34);
          --group:#1c1c1e; --hair:rgba(255,255,255,.09);
-         --df-chg:#e5a44f; --df-chg-soft:#9c7638; --df-gone:#ff6b6b; --df-new:#54c07d;
-         --df-empty:#7c7c82;
+         --df-chg:#e5a44f; --df-chg-soft:#9c7638; --df-empty:#7c7c82;
+         --df-add:#5aa9e6; --df-add-soft:#3f7fae; --df-same:#77777d;
          --syn-comment:#8b949e; --syn-keyword:#ff7b72; --syn-string:#a5d6ff;
          --syn-number:#79c0ff;  --syn-title:#d2a8ff;   --syn-builtin:#ffa657;
          --syn-attr:#79c0ff;    --syn-meta:#8b949e; }
@@ -520,22 +523,31 @@ table.fb td.dim{color:var(--dim)}
 .bk-files-top .bk-q:focus{background:var(--panel);box-shadow:0 0 0 3px var(--field-focus)}
 .bk-file{display:flex;gap:4px;align-items:center;padding:3px 7px;font-size:11.5px}
 .bk-file:hover{background:var(--hover)}
+/* 一条文件的图标（**和文件管理那张表同一个** `fileIconHTML()`，`V-250` 你那句
+   "你都应该显示图标哦 和文件管理这里的图标一样就可以了"）+ 方向记号（+/-/↑/↓）。 */
+.bk-fico{display:flex;flex:none;margin-right:1px}
+.bk-fmark{flex:none;min-width:9px;text-align:center;font-weight:600}
 .bk-fname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bk-fsize{color:var(--dim);font-size:10.5px;flex:none}
 .bk-file .iconbtn{padding:1px 4px;min-width:22px}
-/* 差异视图（`V-94`）：左边（文件管理那张表）和右边（快照边栏）共用这四组状态色。
-   `.df-deep` / `.df-soft` 是"同一个琥珀色的深浅两档" —— 谁大谁更深，两侧由 JS 分配。 */
+/* 差异视图（`V-94` / `V-250`）：左边（文件管理那张表）和右边（快照边栏）共用这几组状态色。
+   · `.df-chg`  = 内容变了（变大/变小）：同一个琥珀，`.df-deep` / `.df-soft` 分深浅
+   · `.df-new`  = 添加（现在有、快照没有）：蓝的深档
+   · `.df-gone` = 缺少（快照有、现在没了）：**同一个蓝**的浅档
+   · `.df-same` = 没变化 → 灰（只在快照边栏用；左边那张表不变色，不然满屏都灰） */
 .df-chg{color:var(--df-chg)}
 .df-chg.df-soft{color:var(--df-chg-soft)}
-.df-gone{color:var(--df-gone)}
-.df-new{color:var(--df-new)}
+.df-new{color:var(--df-add)}
+.df-gone{color:var(--df-add-soft)}
+.df-same{color:var(--df-same)}
 .df-empty{color:var(--df-empty)}
+.df-mark{font-weight:600;margin-left:3px}
 .bk-file .bk-fsize.dim{color:var(--df-empty)}
 /* 左边那张表：整行上色（名字/时间/类型/大小一起），一眼能扫出哪几行变了 */
 table.fb tr.row.df-chg td{color:var(--df-chg)}
 table.fb tr.row.df-chg.df-soft td{color:var(--df-chg-soft)}
-table.fb tr.row.df-gone td{color:var(--df-gone)}
-table.fb tr.row.df-new td{color:var(--df-new)}
+table.fb tr.row.df-gone td{color:var(--df-add-soft)}
+table.fb tr.row.df-new td{color:var(--df-add)}
 table.fb tr.row.df-empty td{color:var(--df-empty)}
 table.fb tr.row.df-chg td.nmcell span{font-weight:600}
 .bk-files-top .bk-mpath{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
@@ -686,8 +698,13 @@ table.bk-tbl td.dim{color:var(--dim)}
    · 外边距 40 → 24、块内边距 22/24 → 16/20、块间距 20 → 14、属性行距 16 → 11。 */
 #pane-detail{overflow:auto;padding:0}
 /* 内容坐在一张白卡上：浅灰的图标块和浅灰的小节卡都要靠它当对照面。
-   `V-93`：卡本身的 1px 描边也去掉 —— 靠阴影和底色跟背景分开就够了。 */
-.dwrap{max-width:760px;margin:20px auto;padding:24px 28px;background:var(--panel);
+   `V-93`：卡本身的 1px 描边也去掉 —— 靠阴影和底色跟背景分开就够了。
+   ★ `V-224`：**跟着窗口长大**。原来卡死 `max-width:760px` + `margin:auto`（居中），
+     窗口一放大两边全是空的 ——「详情页很小、没自适应」就是它。命令行 / 文件管理 / 界面
+     那三页本来就是自适应的，只有详情这两张卡（包详情 + 历史详情，同一个 `.dwrap`）没有。
+     现在填满可用宽度（只留外边距），宽度相关的几处（标题、标签列、参数框）也跟着放宽 ——
+     见下面那几个 `clamp()`：**在默认的 1280 窗口下基本还是老样子，越宽越放宽**。 */
+.dwrap{max-width:none;margin:20px;padding:24px 28px;background:var(--panel);
   border:0;border-radius:16px;
   box-shadow:0 4px 24px rgba(0,0,0,.05)}
 
@@ -711,7 +728,8 @@ table.bk-tbl td.dim{color:var(--dim)}
   background:var(--tile);border-radius:12px;color:var(--fg2)}
 .dicon svg,.dicon img{width:22px;height:22px}
 h1.dtitle{grid-area:3 / 1 / 4 / 2;align-self:baseline;text-align:center;font-size:21px;
-  font-weight:600;line-height:1.25;letter-spacing:.2px;margin:0;max-width:200px;
+  font-weight:600;line-height:1.25;letter-spacing:.2px;margin:0;
+  max-width:clamp(200px,16vw,420px);      /* `V-224`：宽窗口给名字多一点地方 */
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ddesc{grid-area:1 / 2 / 3 / 3;align-self:center;margin:0;font-size:13.5px;
   line-height:1.6;color:var(--fg2);word-break:break-word;
@@ -739,7 +757,8 @@ h1.dtitle{grid-area:3 / 1 / 4 / 2;align-self:baseline;text-align:center;font-siz
   border-bottom:1px solid var(--line)}
 .prop:last-child{padding-bottom:0;border-bottom:none}
 .prop + .prop{padding-top:11px}
-.prop-k{width:96px;flex:none;font-size:13.5px;color:var(--dim);line-height:1.5;padding-top:1px}
+.prop-k{width:clamp(96px,8vw,160px);flex:none;font-size:13.5px;color:var(--dim);
+  line-height:1.5;padding-top:1px}      /* `V-224`：宽窗口里标签列也放宽一点 */
 .prop-v{flex:1;min-width:0;font-size:13.5px;font-weight:500;color:var(--fg);line-height:1.5;
   word-break:break-all}
 .prop-v .soft{font-weight:400;color:var(--dim)}
@@ -813,7 +832,8 @@ table.p th{color:var(--dim);font-weight:500}
 /* ★ 参数框右边那颗"一键清空"（`V-86`）：`#args` / `#hargs` 外面套一层 `.argbox` 定位，
    按钮悬浮在框内右侧；**只在框里有内容时**才出现（`hidden` 由 `wireDetail()` 管）。
    `padding-right` 给按钮让出地方，免得长参数压到它下面。 */
-.argbox{position:relative;display:flex;flex:1;min-width:180px;max-width:620px}
+.argbox{position:relative;display:flex;flex:1;min-width:180px;
+  max-width:clamp(620px,46vw,1400px)}    /* `V-224`：窗口宽了，参数框也跟着宽 */
 /* ★ 右内边距得用 ID 选择器写：上面那条 `#args,#hargs{…}` 是 ID 级，
    `.argbox > input` 那条（类+标签）压不过它 —— 否则长参数会钻到按钮下面。 */
 .argbox > #args,.argbox > #hargs{flex:1;min-width:0;padding-right:32px}
@@ -959,3 +979,116 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
   border-top:1px solid var(--line2);background:var(--panel2)}
 .bk-snap .bk-folded{cursor:pointer;color:var(--dim)}
 .bk-snap .b-bkfoldfiles.folded svg{transform:rotate(90deg)}
+
+/* ============================================================================
+   AI 工作台那一页（`V-230`~`V-233`）—— 详情页的第五个选项卡。
+   风格跟别处一致：卡片/分隔线用现成的变量，正文 12-13px，代码路径走 --mono。
+   ★ 步骤流刻意做得"像终端"（等宽、每行一条）：这是这一页的主视图 ——
+     用户要看的不是"AI 说了什么漂亮话"，而是"它一步干了什么"。
+   ========================================================================== */
+.aiwrap{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;padding:14px 20px;
+  overflow:auto}
+.ai-head{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--fg2);
+  border-bottom:1px solid var(--line);padding-bottom:8px}
+.ai-head .ai-model{font-weight:600;color:var(--fg)}
+.ai-head .ai-model.bad{color:#c98a3c}
+.ai-head .ai-where{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+.ai-warn{margin:0;font-size:12.5px;line-height:1.6;color:#a35b00;background:rgba(201,138,60,.10);
+  border:1px solid rgba(201,138,60,.28);border-radius:8px;padding:7px 10px}
+.ai-warn code{font-family:var(--mono);font-size:11.5px}
+.ai-target{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--fg2)}
+.ai-target select{height:28px;border-radius:7px;border:1px solid var(--line2);background:var(--panel);
+  color:var(--fg);padding:0 8px;font-size:12.5px}
+/* 输入区：和模态框那个多行输入一套语言（`#m-textarea`）—— **border:0 + 一层浅底**，
+   聚焦时底色变白 + 一圈淡蓝。别用 1px 描边：`flat-buttons` 那条场景管着"输入框也不许有框"。 */
+.ai-task{width:100%;box-sizing:border-box;min-height:74px;max-height:200px;resize:vertical;
+  border:0;border-radius:10px;background:var(--fill);color:var(--fg);
+  padding:10px 12px;font-size:13px;line-height:1.65;font-family:inherit}
+.ai-task:focus{outline:none;background:var(--panel);box-shadow:0 0 0 3px var(--field-focus)}
+.ai-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+/* ★ 按钮一律借用现成的 `.btn`（`V-92` 定的：无底色、无描边，靠文字颜色分主次）——
+   别在这儿自己给 `.primary` 加 padding/描边：那样会多出一个"浏览器默认按钮"的灰框
+   （`tools/界面预览.py flat-buttons` 那条场景就是抓这个的，`V-233` 当场踩到）。 */
+.ai-actions .btn{flex:none}
+.ai-steps{border:1px solid var(--line2);border-radius:10px;background:var(--panel);
+  overflow:auto;max-height:44vh}
+.ai-step{display:flex;gap:8px;align-items:baseline;padding:4px 10px;font-family:var(--mono);
+  font-size:11.8px;line-height:1.6;border-bottom:1px solid var(--line)}
+.ai-step:last-child{border-bottom:none}
+.ai-step .ai-n{color:var(--dim2);min-width:18px;text-align:right}
+.ai-step b{color:var(--accent);font-weight:600;min-width:66px}
+.ai-step .ai-brief{color:var(--fg2);word-break:break-all;flex:1}
+.ai-step .ai-note{color:var(--dim);word-break:break-all;max-width:46%}
+.ai-result{border:1px solid var(--line2);border-radius:10px;padding:10px 12px;background:var(--panel)}
+.ai-result.ok{border-color:rgba(26,127,69,.35);background:rgba(26,127,69,.05)}
+.ai-result.bad{border-color:rgba(214,69,69,.35);background:rgba(214,69,69,.05)}
+.ai-rhead{font-weight:600;font-size:12.5px}
+.ai-rsum{white-space:pre-wrap;font-size:12.5px;line-height:1.7;margin:6px 0 0}
+.ai-rcav{font-size:12px;line-height:1.7;color:#a35b00;margin:6px 0 0}
+.ai-rfiles{font-family:var(--mono);font-size:11.5px;color:var(--fg2);margin-top:6px;word-break:break-all}
+.ai-rtok{font-size:11.5px;color:var(--dim);margin-top:6px;font-family:var(--mono)}
+
+/* `V-236`：结果卡里那条"开工前已存快照 + 回退"。 */
+.ai-rsnap{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;
+  font-size:12px;color:var(--fg2)}
+.ai-rsnap code{font-family:var(--mono);font-size:11.5px;background:var(--tag);
+  padding:1px 6px;border-radius:4px}
+/* `V-236`：快照列表顶上那条"谁存的"筛选 + 清 AI 的 */
+.bk-bybar{display:flex;align-items:center;gap:6px;padding:6px 2px 2px;font-size:12px}
+.bk-byf{color:var(--dim);padding:2px 8px;border-radius:999px;cursor:pointer}
+.bk-byf:hover{background:var(--hover);color:var(--fg)}
+.bk-byf.on{background:var(--sel);color:var(--accent);font-weight:600}
+.bk-byc{color:#a35b00;cursor:pointer;padding:2px 8px;border-radius:999px}
+.bk-byc:hover{background:rgba(201,138,60,.12)}
+/* 标题后面那个「AI」小徽章（人一眼分辨；判据是清单里的 by 字段） */
+.bk-ai{margin-left:6px;font-size:10.5px;font-weight:600;color:#a35b00;
+  background:rgba(201,138,60,.14);border-radius:4px;padding:1px 5px;vertical-align:1px}
+
+/* `V-238`：预算那两格 —— 刻意做小（一行里塞得下），不抢主界面的地方。 */
+.ai-bud{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--dim);
+  white-space:nowrap}
+.ai-bud input{width:58px;height:22px;padding:0 6px;border:0;border-radius:6px;
+  background:var(--fill);color:var(--fg);font-family:var(--mono);font-size:12px;text-align:center}
+.ai-bud input:focus{outline:none;background:var(--panel);box-shadow:0 0 0 3px var(--field-focus)}
+.ai-bud input:disabled{opacity:.45}
+.ai-bud .ai-bud-n{width:64px;font-weight:600}
+
+/* `V-241`：历史压缩那个安静的标记（曾经每步刷一行"(压缩)"，看着像一直在压）。 */
+.ai-folded{color:var(--dim2)}
+
+/* `V-243`：AI 那一页不再"简陋" —— 例子芯片 / 步骤分类配色 + 耗时 / 任务记录列表。 */
+.ai-egs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--dim);
+  margin-top:-4px}
+.ai-eg{cursor:pointer;padding:2px 8px;border-radius:999px;background:var(--fill);color:var(--fg2)}
+.ai-eg:hover{background:var(--sel);color:var(--accent)}
+/* 步骤分类：读/写/跑/契约/收尾 各一色（左边缘那条细线 + 那个小字标） */
+.ai-step{border-left:3px solid transparent}
+.ai-step .ai-ico{width:15px;text-align:center;font-size:10.5px;border-radius:4px;flex:none;
+  background:var(--fill);color:var(--fg2)}
+.ai-step.k-read{border-left-color:#8aa4c8}
+.ai-step.k-write{border-left-color:#4c9a6a}
+.ai-step.k-run{border-left-color:#c98a3c}
+.ai-step.k-spec{border-left-color:#8b7bc8}
+.ai-step.k-done{border-left-color:#3f9d5a}
+.ai-step.k-snap{border-left-color:#b98cc0}
+.ai-step.k-misc{border-left-color:var(--line2)}
+.ai-step.k-write .ai-ico{background:rgba(76,154,106,.16);color:#2f7a4f}
+.ai-step.k-run .ai-ico{background:rgba(201,138,60,.16);color:#a35b00}
+.ai-step.k-spec .ai-ico{background:rgba(139,123,200,.16);color:#6a58b0}
+.ai-ms{color:var(--dim2);flex:none}
+/* 任务记录列表 */
+.ai-runs{border:1px solid var(--line2);border-radius:10px;background:var(--panel);overflow:auto;
+  max-height:26vh}
+.ai-runs-h{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;
+  border-bottom:1px solid var(--line);color:var(--fg2)}
+.ai-run{display:flex;align-items:center;gap:8px;padding:4px 10px;font-size:12px;
+  border-bottom:1px solid var(--line)}
+.ai-run:last-child{border-bottom:none}
+.ai-run.on{background:var(--sel)}
+.ai-run-t{font-family:var(--mono);font-size:11.5px;color:var(--fg2);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;flex:1}
+.ai-old{font-size:10.5px;background:var(--tag);color:var(--fg2);border-radius:4px;
+  padding:1px 6px;margin-right:6px}
+
+/* `V-244`：上下文用量（对着"到 80% 才折"那条线看） */
+.ai-ctx{color:var(--dim2)}

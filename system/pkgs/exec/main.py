@@ -10,8 +10,11 @@
 数据位置：宿主 moss 注入的 MOSS_PLUGIN_DATA_DIR/cmds/<别名>.json
 （= user_data/state/exec/cmds）；老 pa 的 PA_* 与插件自身目录作兜底。
 
-界面说明：主界面是 WebView2（Apple 风格，见 gui_web.py）；若本机缺 pywebview
-或 WebView2 运行时，自动退回 tkinter 基础界面（gui_tk.py）。
+界面说明：**一份界面两种跑法**（`V-48` / `V-222`）——
+  · 内嵌进 moss 的「界面」选项卡：宿主用 `MOSS_UI_EMBED=1` 把它起成后端进程，
+    不开窗口，在 stdin/stdout 上说 JSON 行（见 `embed.py`）；
+  · 独立窗口：主界面是 WebView2（Apple 风格，见 `gui_web.py`）；
+  · 再兜底：本机缺 pywebview / WebView2 时退回 tkinter 基础界面（`gui_tk.py`）。
 """
 import sys
 
@@ -79,6 +82,15 @@ def _moss_args():
 
 
 def main():
+    # ★ `V-222`：宿主让我们跑"内嵌界面"时**绝不开窗** —— 在 stdio 上说 JSON 行就行。
+    #   （放在最前面：这条路上 `sys.argv` / 参数全都不用看。）
+    try:
+        from embed import Embedded, embedded_now
+        if embedded_now():
+            return Embedded().loop()
+    except ImportError:
+        pass
+
     # pa 会把插件参数拼成一个字符串传进来，这里拆回参数列表。
     # 用 core.split_args 而不是 shlex —— shlex 会吃掉 Windows 路径里的反斜杠。
     clean_args = _moss_args()

@@ -1,13 +1,20 @@
 @echo off
-echo 正在关闭 Windows 资源管理器...
-taskkill /f /im explorer.exe
+setlocal
 
-echo 正在删除图标缓存文件...
-cd /d %userprofile%\AppData\Local
-del IconCache.db /a
+echo Killing Explorer...
+taskkill /f /im explorer.exe >nul 2>&1
 
-echo 操作完成，正在重启资源管理器...
-start explorer.exe
-echo.
-echo 缓存已清空！
-pause
+echo Waiting...
+timeout /t 2 /nobreak >nul
+
+echo Deleting icon cache...
+del /f /q /a "%LocalAppData%\IconCache.db" >nul 2>&1
+del /f /q /a "%LocalAppData%\Microsoft\Windows\Explorer\iconcache*" >nul 2>&1
+del /f /q /a "%LocalAppData%\Microsoft\Windows\Explorer\thumbcache*" >nul 2>&1
+
+echo Restarting Explorer...
+tasklist /fi "imagename eq explorer.exe" | find /i "explorer.exe" >nul
+if errorlevel 1 start "" explorer.exe
+
+echo Done.
+endlocal

@@ -248,7 +248,8 @@ async function openFileAndRun(){
   let r;
   try{ r = await pywebview.api.pick_file(); }
   catch(e){ toast("挑文件失败：" + (e && e.message || e), true); return; }
-  if (!r || !r.ok){ if (r && r.msg && r.msg.indexOf("取消") < 0) toast(r.msg, true); return; }
+  // 取消 = 不吭声（宿主回 `cancelled:true`；老宿主只有一句"没有选（取消）"，就认那句话）
+  if (!r || !r.ok){ if (r && !r.cancelled && r.msg && r.msg.indexOf("取消") < 0) toast(r.msg, true); return; }
   const p = String(r.path || "");
   const name = p.split(/[\\/]/).pop() || p;
   const cwd = p.replace(/[\\/][^\\/]*$/, "");

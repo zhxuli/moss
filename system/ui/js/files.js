@@ -197,12 +197,75 @@ function fmHome(){
   if (s.rel === def){ toast("已经在默认目录了：" + (s.path || def)); return; }
   fmGoto(def);
 }
-function fmRefresh(){
+/* `quiet`：别抢顶层选项卡（谁在刷新就用谁的位置），而且**别把正开着的那一页关掉** ——
+   AI 干完活自动刷的时候要它（`V-249`：`fmGoto` 会把 `s.active` 打回 `__browse__`，
+   于是"刷一下"顺手就把你看的那个文件页收起来了）。 */
+function fmRefresh(quiet){
   const s = fmState(FM.ctx);
   if (!s.rel) return;
   // 手动刷新时顺便重问一遍"另一层有没有这个包的目录"（比如刚复制过去）
   fmProbeLayers(FM.ctx).then(layers => { s.layers = layers; });
-  fmGoto(s.rel, false);
+  const was = s.active;
+  fmGoto(s.rel, false, !!quiet).then(ok => {
+    // 那一页还在（没被删掉）就把它放回来 —— 内容由 `fmReloadPages()` 负责刷新
+    if (ok && quiet && was !== "__browse__" && s.tabs.some(t => t.rel === was)){
+      s.active = was;
+      fmRender();
+    }
+  });
+}
+/* 盘上的文件被**别人**改了 —— AI 工作台干完活、恢复快照、或者你在外面拿别的编辑器改的。
+   ============================================================================
+   ★ 为什么非要有这个（`V-249`，你报的"AI 改完文件后「文件管理」页不自动刷新"）：
+     文件管理是"列一遍、把清单和文件内容记在 `FM.st` 里"的 —— 盘上变了它不知道。
+     你切过去看到的还是**改之前**那份清单、**改之前**的内容，得自己按一下 ⟳；
+     更糟的是接着一存，就把新内容又盖回旧的。
+   做三件事：① 每个包的目录缓存一律作废（AI 到底动了哪个包不一定知道）；
+            ② 动到 `pkg.json` ⇒ 左边那份包表也重问一遍（名字/版本会变）；
+            ③ 开着的那几页：**没改过**的重新读盘上的内容；改过的只提醒、不硬盖。
+   `rels`：这一次盘上变了哪些文件 —— 收**绝对路径**（AI 给的是绝对路径），
+   也收页面 rel（恢复快照那边给的是 `user/...`）；两边都先过一遍 `dirRel` 归一。
+   ★★ 刷新**不许把顶层选项卡抢走**（`fmRefresh(true)`）：AI 那一页正跑着，
+      你盯着步骤流，它干完活把你甩到「文件管理」上是不能接受的。 */
+function diskChanged(rels){
+  const list = (rels || []).map(r => dirRel(r) || String(r || ""));
+  try{
+    Object.keys(FM.st).forEach(k => { FM.st[k].stale = true; });
+    FM.rev++;
+    if (list.some(isPkgManifest) && typeof refreshPkgs === "function")
+      refreshPkgs((cur && cur.id) || undefined, true);
+    fmReloadPages(list);
+    fmRefresh(true);
+    // ★ `V-250`：快照那一列也重列/重算一遍（盘上变了 ⇒ "这次快照对比当前"整个变了）
+    if (typeof bkRefresh === "function") bkRefresh();
+  }catch(e){}
+  return list;
+}
+/* 开着的那几页里，凡是**盘上被改过**的：没改过的重读一遍，改过的只提醒（不硬盖）。
+   返回"被提醒"的那些 rel（有未保存改动的那些）—— 探针要看这个数。 */
+function fmReloadPages(rels){
+  const dirty = [];
+  const want = (rels || []).filter(Boolean);
+  if (!want.length) return dirty;
+  Object.keys(FM.st).forEach(k => {
+    ((FM.st[k] || {}).tabs || []).forEach(t => {
+      if (want.indexOf(t.rel) < 0) return;
+      if (isDirty(t)){ dirty.push(t.rel); return; }   // 手里有没保存的改动 ⇒ 不硬盖
+      pywebview.api.fs_read(t.rel).then(r => {
+        if (!r || !r.ok) return;
+        t.text = r.text || ""; t.original = r.text || "";
+        t.binary = !!(r.binary || r.too_big);
+        t.note = r.binary ? "binary" : (r.too_big ? r.msg : "");
+        // 编码/BOM 照读进来的原样带上（不然存回去就把 GBK 写成 UTF-8 了）
+        t.encoding = r.encoding || "utf-8"; t.bom = r.bom || "";
+        fmRender();
+      }).catch(() => {});
+    });
+  });
+  if (dirty.length)
+    toast("盘上这几个文件被改了，而你手里有没保存的改动 —— 先看一眼再存：" +
+          dirty.join("、"), true);
+  return dirty;
 }
 /* 能不能再往上：两个根走到顶就没了；`abs/` 那边走到**盘根**（`abs/D:/`）就到顶 ——
    再往上会得到 `abs` 那个光秃秃的前缀，宿主会拒（它不是绝对路径）。
@@ -478,6 +541,13 @@ const MossFilePage = {
   data(){
     return {_hlTimer: null};       // 输入停下 120ms 再高亮（原来那套防抖，一个字没改）
   },
+  watch: {
+    /* ★ `V-249`：`t.text` 不一定是**在这儿**改的 —— AI 干完活、恢复快照、
+       或者外面动了盘上的文件之后，`fmReloadPages()` 会把内容重新读进来。
+       以前只有 `onInput` 会重画高亮层，于是"字换了、颜色还是旧的"（或者干脆全白）。
+       所以改成盯住 `t.text`：不管谁改的，都会重画。 */
+    "t.text"(){ this.scheduleHl(); },
+  },
   computed: {
     // 后缀 → 图标 / 颜色 / 语言（`core.js` 的 `EXT` / `NO_EXT`，只有一份）
     meta(){ return extOf({name: this.t.name, ext: (this.t.name.split(".").pop() || "").toLowerCase()}); },
@@ -499,12 +569,16 @@ const MossFilePage = {
   beforeUnmount(){ clearTimeout(this._hlTimer); },
   methods: {
     /* ---- 编辑器：输入 / 滚动 / 快捷键 ---- */
-    onInput(ev){
-      this.t.text = ev.target.value;
+    /* 高亮层重画的**唯一**入口（输入、Tab 补空格、外面换了内容都走它） */
+    scheduleHl(){
       clearTimeout(this._hlTimer);
       this._hlTimer = setTimeout(() => {
         if (this.$refs.code) hlInto(this.t, this.$refs.code);
       }, 120);
+    },
+    onInput(ev){
+      this.t.text = ev.target.value;
+      this.scheduleHl();
     },
     onScroll(){
       // 高亮层和输入层是**两张叠在一起的层**，滚动得手动同步（原来也这样）
@@ -642,7 +716,8 @@ const MossFileBrowse = {
         <td class="nmcell" v-html="fileIconHTML(e, false) + '<span>' + esc(e.name) + '</span>'"></td>
         <td class="dim">{{ fmtTime(e.mtime) }}</td>
         <td class="dim">{{ typeLabel(e) }}</td>
-        <td class="num">{{ e.dir ? "" : humanSize(e.size) }}<button v-if="!e.dir && bkHasSnap(e.rel)"
+        <td class="num">{{ e.dir ? "" : humanSize(e.size) }}<span
+            class="df-mark">{{ bkDiffMark(e.rel) }}</span><button v-if="!e.dir && bkHasSnap(e.rel)"
             class="iconbtn cmpbtn" title="和快照里那一份对比（弹出来两栏看）"
             @click.stop="cmp(e)" v-html='ico("git-branch", "i")'></button></td>
       </tr>
@@ -704,6 +779,7 @@ const MossFileBrowse = {
          直接写 `bkDiffRow(e.rel)` 会得到 "bkDiffRow is not a function"（`pkg-file` 场景当场抓到）。 */
     bkDiffRow: rel => bkDiffRow(rel),
     bkDiffWhy: rel => bkDiffWhy(rel),
+    bkDiffMark: rel => bkDiffMark(rel),
     bkHasSnap: rel => bkHasSnap(rel),
     cmp(e){ bkCompareOpen(e.rel); },
     /* ---- 表头排序 ---- */

@@ -26,15 +26,50 @@ import winreg
 from datetime import datetime
 from pathlib import Path
 
-#: 这个包自己的目录（"注册自身目录"那颗按钮用的就是它）
-SELF_DIR = os.path.dirname(os.path.abspath(__file__))
+#: 这个包自己的目录（"注册自身目录"那颗按钮用的就是它）。
+#: ★ 打包成 exe 之后 `__file__` 指向**临时解包目录**（nuitka onefile 会把东西解到 %TEMP% 下的
+#:   一次性目录），拿它算出来的路径既不稳、也不是用户看到的那个 —— 冻结之后一律用
+#:   **exe 所在的目录**（`V-207`）。
+if getattr(sys, 'frozen', False):
+    SELF_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    SELF_DIR = os.path.dirname(os.path.abspath(__file__))
 
-#: 宿主注入的插件数据目录；独立运行时退回 `user_data/state/path`
-DATA_DIR = Path(
-    os.environ.get('MOSS_PLUGIN_DATA_DIR')
-    or os.environ.get('PA_PLUGIN_DATA_DIR')
-    or (Path(os.environ.get('MOSS_HOME') or Path.home()) / 'user_data' / 'state' / 'path')
-)
+
+def _ui_file():
+    """界面文件 `ui/index.html` 在哪（找不到返回空串）。
+
+    ★ 打包之后它也**得跟着一起发**：onedir 放 exe 旁边、onefile 用
+      `--include-data-dir=ui=ui` 打进包里（运行时在解包目录）—— 所以这里把两处都试一遍。
+      两处都没有 ⇒ 调用方给一句人话，别开一扇空窗（那种最难查）。
+    """
+    for c in (Path(SELF_DIR) / 'ui' / 'index.html',
+              Path(os.path.dirname(os.path.abspath(__file__))) / 'ui' / 'index.html'):
+        if c.is_file():
+            return str(c)
+    return ""
+
+
+UI_FILE = _ui_file()
+
+#: 宿主注入的插件数据目录；独立运行时（直接 `python main.py` / 打包的 exe）按这个顺序退：
+#: `PA_PLUGIN_DATA_DIR` → `MOSS_HOME/user_data/state/path` → **打包的 exe 就放在自己旁边**
+#: → 最后才是家目录（并说一声数据放哪了，免得用户找不到备份）。
+def _data_dir():
+    for env in ('MOSS_PLUGIN_DATA_DIR', 'PA_PLUGIN_DATA_DIR'):
+        v = os.environ.get(env)
+        if v:
+            return Path(v)
+    home = os.environ.get('MOSS_HOME')
+    if home:
+        return Path(home) / 'user_data' / 'state' / 'path'
+    if getattr(sys, 'frozen', False):
+        return Path(SELF_DIR) / 'user_data' / 'state' / 'path'
+    # 直接 `python main.py` 调试：放家目录（界面上右下角会把实际路径显示出来，AGENT.md 也写了）
+    return Path.home() / 'user_data' / 'state' / 'path'
+
+
+DATA_DIR = _data_dir()
 
 #: 备份放这儿（`V-200`：按契约用 `data/`——持久、要备份的东西放这里）
 BACKUP_DIR = DATA_DIR / 'data' / 'backups'
@@ -42,7 +77,6 @@ BACKUP_DIR = DATA_DIR / 'data' / 'backups'
 LEGACY_BACKUP_DIR = DATA_DIR / '.path_editor' / 'path_bak'
 
 TITLE = 'PATH 管理'
-UI_FILE = os.path.join(SELF_DIR, 'ui', 'index.html')
 
 
 # ---------------------------------------------------------------- 备份
@@ -59,20 +93,78 @@ class BackupManager:
         self.backup_prefix = "path_backup_"
         self.time_format = "%Y%m%d_%H%M%S"
 
+    # ---- 名字（`V-209`）
+    #: Windows 文件名里不许出现的字符（还有控制字符，见下面过滤）
+    _BAD = set('\\/:*?"<>|')
+
+    def clean_name(self, name, fallback=""):
+        """把用户起的名字洗成**能当文件名**的样子（`V-209`）。
+
+        ★ 只洗"文件系统不接受"的东西，**不动中文/空格/下划线/横线** —— 备份名是给人看的，
+          "改注册表之前" 这种中文名就该原样留着。空 / 全被洗掉就退回 `fallback`。
+        """
+        s = "".join(ch for ch in str(name or "") if ch not in self._BAD and ord(ch) >= 32)
+        s = s.strip().rstrip(".")                      # 结尾的空格和点在 Windows 上不收
+        s = s.strip()
+        return (s or fallback)[:60].strip()
+
+    def _unique(self, folder, stem):
+        """在 `folder` 里找一个没被占用的 `<stem>.txt`（重名就加 ` (2)`、` (3)`…）。"""
+        f = folder / (stem + ".txt")
+        n = 2
+        while f.exists():
+            f = folder / ("%s (%d).txt" % (stem, n))
+            n += 1
+        return f
+
+    def _resolve(self, filepath):
+        """只认自己那两个目录里的文件（别让界面通过这条路动别的文件）。"""
+        p = Path(str(filepath or "")).resolve()
+        for folder in (self.backup_dir, self.legacy_dir):
+            try:
+                if p.parent.resolve() == folder.resolve() and p.is_file():
+                    return p
+            except OSError:
+                continue
+        return None
+
     # ---- 写
-    def create_backup(self, paths):
-        """返回 (ok, 说明, 文件路径)。空 PATH 不备份（没有意义）。"""
+    def create_backup(self, paths, name=""):
+        """存一份备份。返回 (ok, 说明, 文件路径)。
+
+        ★ 默认名字还是**时间戳**（`path_backup_20261003_012345.txt`）—— 自动、不会重名、
+          也方便按时间排；`name` 给了就用**用户起的名字**（`V-209`：你说"可以修改名字"）。
+        ★ 空 PATH 不备份（没有意义）。
+        """
         if not paths:
             return False, "当前 PATH 是空的，没什么可备份", ""
         stamp = datetime.now().strftime(self.time_format)
-        f = self.backup_dir / ("%s%s.txt" % (self.backup_prefix, stamp))
+        stem = self.clean_name(name, "") or ("%s%s" % (self.backup_prefix, stamp))
         try:
             self.backup_dir.mkdir(parents=True, exist_ok=True)     # 懒加载：真要写才建目录
+            f = self._unique(self.backup_dir, stem)
             with open(f, 'w', encoding='utf-8') as fh:
                 fh.write("\n".join(paths) + "\n")
-            return True, "已备份 %d 条到 %s" % (len(paths), f), str(f)
+            return True, "已备份 %d 条到 %s" % (len(paths), f.name), str(f)
         except OSError as e:
             return False, "备份失败：%s" % e, ""
+
+    def rename(self, filepath, name):
+        """给一份备份**改名**（同目录、同格式，只换文件名）。返回 (ok, 说明, 新路径)。"""
+        p = self._resolve(filepath)
+        if p is None:
+            return False, "这个文件不在备份目录里，没动它", ""
+        stem = self.clean_name(name, "")
+        if not stem:
+            return False, "名字不能是空的", ""
+        if stem == p.stem:                             # 改回同一个名字：什么都不做（别变成 (2)）
+            return True, "名字没变（还是 %s）" % p.name, str(p)
+        target = self._unique(p.parent, stem)
+        try:
+            p.rename(target)
+            return True, "已改名为：%s" % target.name, str(target)
+        except OSError as e:
+            return False, "改名失败：%s" % e, ""
 
     # ---- 读
     def read(self, filepath):
@@ -83,21 +175,35 @@ class BackupManager:
             return []
 
     def _scan(self, folder, legacy):
+        """扫一个目录里的备份。
+
+        ★ `V-209` 起**不再要求文件名里有时间戳**：以前是 `glob("path_backup_*.txt")` 再
+          `strptime`，解析不出来就 `continue` —— 那样"用户起了名字"的备份会**在列表里凭空消失**
+          （写了文件、界面看不见，最坏的一种 bug）。现在：一个目录里的 `.txt` 都算，
+          时间取**文件的修改时间**，名字里能解析出时间戳的就当默认名、解析不出的当自定义名。
+        """
         out = []
         try:
-            files = list(folder.glob("%s*.txt" % self.backup_prefix))
+            files = sorted(folder.glob("*.txt"))
         except OSError:
             return out
         for f in files:
             try:
-                stamp = f.stem.replace(self.backup_prefix, '')
-                when = datetime.strptime(stamp, self.time_format)
-            except ValueError:
+                mtime = datetime.fromtimestamp(f.stat().st_mtime)
+            except OSError:
                 continue
+            stem = f.stem
+            custom, when = stem, mtime
+            if stem.startswith(self.backup_prefix):
+                try:                                    # 老格式：名字里就是时间
+                    when = datetime.strptime(stem[len(self.backup_prefix):], self.time_format)
+                    custom = ""                         # 默认名 → 卡片上只显示时间
+                except ValueError:
+                    pass
             paths = self.read(str(f))
-            out.append({"file": str(f), "time": when.strftime("%Y-%m-%d %H:%M:%S"),
-                        "stamp": stamp, "total": len(paths), "paths": paths,
-                        "legacy": bool(legacy)})
+            out.append({"file": str(f), "name": custom, "time": when.strftime("%Y-%m-%d %H:%M:%S"),
+                        "sort": when.strftime(self.time_format), "total": len(paths),
+                        "paths": paths, "legacy": bool(legacy)})
         return out
 
     def list_backups(self, current_paths):
@@ -108,7 +214,7 @@ class BackupManager:
             bset = {os.path.normpath(p).lower() for p in b["paths"]}
             b["add"] = len(bset - cur)
             b["remove"] = len(cur - bset)
-        return sorted(out, key=lambda x: x["stamp"], reverse=True)
+        return sorted(out, key=lambda x: x["sort"], reverse=True)
 
     def diff(self, backup_paths, current_paths):
         """这份备份和现在比：会**新增**哪些、会**移除**哪些。"""
@@ -120,15 +226,14 @@ class BackupManager:
 
     def delete(self, filepath):
         """删一份备份。只认自己那两个目录里的（别让界面把任意文件删了）。"""
-        p = Path(filepath).resolve()
-        for folder in (self.backup_dir, self.legacy_dir):
-            try:
-                if p.parent.resolve() == folder.resolve() and p.is_file():
-                    p.unlink()
-                    return True, "已删除备份：%s" % p.name
-            except OSError as e:
-                return False, "删除失败：%s" % e
-        return False, "这个文件不在备份目录里，没动它"
+        p = self._resolve(filepath)
+        if p is None:
+            return False, "这个文件不在备份目录里，没动它"
+        try:
+            p.unlink()
+            return True, "已删除备份：%s" % p.name
+        except OSError as e:
+            return False, "删除失败：%s" % e
 
 
 # ---------------------------------------------------------------- PATH（注册表）
@@ -215,6 +320,16 @@ class PathManager:
 
 
 # ---------------------------------------------------------------- 界面能调的东西
+#: 两个干活的对象**放在模块级**，`Api` 身上一个数据属性都不留。
+#: ★ 为什么（`V-207`，真踩过）：pywebview 会把 `js_api` 实例的属性**挨个递归序列化**给 JS
+#:   （`get_functions` 用 `dir(obj)` 往下走，只按类型挑，**不看下划线**）。我原来写成
+#:   `self.pm = PathManager()`，里面全是 `pathlib.Path` —— 于是独立窗口一开就刷一屏
+#:   `[pywebview] Error while processing bm.backup_dir._drv: 'WindowsPath' object has no attribute '_drv'`。
+#:   把这俩挪走之后，`dir(Api())` 里只剩方法，桥那一侧干干净净。
+PATHM = PathManager()
+BACKUPM = BackupManager()
+
+
 class Api:
     """界面里 `moss.call("名字", {...})` 就能调到下面这些方法。
 
@@ -222,26 +337,70 @@ class Api:
       "一份界面两种跑法"能成立的原因（照抄 bmi）。
     ★ 约定：真要干活儿的方法返回 `{"ok": bool, "msg": "...", "state": {...}}` ——
       带上**改完之后**的完整状态，界面一次往返就能重画（不用再问一遍）。
+    ★ **身上别挂数据**（尤其别挂 `Path` / 窗口 / 锁这类对象）：见上面 `PATHM` 那段注释。
     """
 
-    def __init__(self):
-        self.pm = PathManager()
-        self.bm = BackupManager()
 
     # ---- 状态
     def state(self, params=None):
-        paths = self.pm.get_user_path_list()
+        """当前的完整状态。
+
+        ★ `paths` 是**注册表里的原始顺序**（`V-211`）：界面**照这个顺序显示**（编号就是 PATH
+          里的位次）、也照这个顺序**保存**回去 —— PATH 是有先后的（同名命令谁在前谁赢），
+          界面绝不顺手按字母重排。上一版这里返回的是排好序的，界面又拿它当"要写回去的清单"，
+          等于**一存就把用户的 PATH 重排了一遍**（改"先改后存"时才发现的）。
+        """
+        paths = PATHM.get_user_path_list()
         return {
             "ok": True,
             "count": len(paths),
-            "paths": sorted(paths, key=str.lower),
+            "paths": paths,
             "self_dir": SELF_DIR,
-            "self_registered": self.pm.is_registered(SELF_DIR),
+            "self_registered": PATHM.is_registered(SELF_DIR),
             "data_dir": str(DATA_DIR),
-            "backup_dir": str(self.bm.backup_dir),
-            "legacy_dir": str(self.bm.legacy_dir),
+            "backup_dir": str(BACKUPM.backup_dir),
+            "legacy_dir": str(BACKUPM.legacy_dir),
             "missing": [p for p in paths if '%' not in p and not os.path.isdir(p)],
         }
+
+    def probe_path(self, params=None):
+        """看一眼这个路径是什么（`V-211`）：界面那个「添加」按钮靠它决定怎么处理。
+
+        空 / 不存在 / 是文件 / 是目录 —— 四种情况界面各有一套说法（是文件就加它所在的目录，
+        不存在就报错且**不动输入框**）。只读，绝不写注册表。
+        """
+        raw = str((params or {}).get("path") or "").strip().strip('"')
+        if not raw:
+            return {"ok": False, "kind": "empty", "msg": "先给一个目录"}
+        p = os.path.normpath(raw)
+        if os.path.isdir(p):
+            return {"ok": True, "kind": "dir", "path": p, "msg": "目录"}
+        if os.path.isfile(p):
+            d = os.path.dirname(p)
+            return {"ok": True, "kind": "file", "path": d, "msg": "这是文件，加的是它所在的目录：%s" % d}
+        return {"ok": False, "kind": "none", "path": p, "msg": "这个路径不存在：%s" % p}
+
+    def save(self, params=None):
+        """把界面那份**清单**整串写回注册表（`V-211`：先改后存）。
+
+        ★ 界面上的增删只是**改界面上的草稿**，攒够了一次性写、广播一次 —— 这比"每点一下就
+          改一次系统环境变量"稳得多（也不会在拖 5 个目录时广播 5 次）。
+        ★ 顺序**按界面给的来**（界面保留了注册表的原顺序，新加的排后面）。
+        ★ **原样写**：这里只做"去掉空串 + `normpath`"，**不替用户去重、不排序**（探针逮到过）——
+          注册表里本来就可能有一模一样的两条（大小写不同），界面也照样画两行；"保存"要是顺手
+          给它去一条，就等于**用户没按过「去重」，数据却被改了**（而且界面显示的"改动处数"也
+          对不上）。去重是界面那颗「去重」按钮的事，用户按了才做。
+        """
+        raw = list((params or {}).get("paths") or [])
+        out = []
+        for it in raw:
+            p = str(it or "").strip().strip('"')
+            if not p:
+                continue
+            out.append(os.path.normpath(p))
+        ok, msg = PATHM.write(out, "已保存 %d 条到当前用户的 PATH（已广播）" % len(out))
+        print('[path] %s（Python 改的注册表）' % msg, flush=True)
+        return {"ok": ok, "msg": msg, "state": self.state()}
 
     def info(self, params=None):
         """自证：这些数字是 Python 报的（`V-54` 那条"让后端证明它在干活"）。"""
@@ -252,11 +411,15 @@ class Api:
                 "embedded": bool(os.environ.get('MOSS_UI_EMBED'))}
 
     # ---- 改 PATH
+    #: ★ 这几个（`add` / `add_many` / `remove` / `dedup` / `drop_missing`）是**马上写注册表**的
+    #:   老接口（`V-211` 之前界面就是这么点的）。现在**界面不再用它们**了 —— 界面走
+    #:   `probe_path` 看路 + `save` 一次性写（先改后存，没保存的还高亮着）。留着是给脚本 /
+    #:   命令行那种"就要立刻生效"的用法，语义仍然是"调用即写、即广播"。
     def add(self, params=None):
         p = str((params or {}).get("path") or "").strip()
         if not p:
             return {"ok": False, "msg": "先给一个目录", "state": self.state()}
-        ok, msg = self.pm.add(p)
+        ok, msg = PATHM.add(p)
         print('[path] %s（Python 改的注册表）' % msg, flush=True)
         return {"ok": ok, "msg": msg, "state": self.state()}
 
@@ -267,7 +430,7 @@ class Api:
         ★ 拖进来的是**文件** ⇒ 用**它所在的目录**（老 tkinter 界面就是这个规矩）。
         """
         raw = list((params or {}).get("paths") or [])
-        cur = self.pm.get_user_path_list()
+        cur = PATHM.get_user_path_list()
         seen = {os.path.normpath(p).lower() for p in cur}
         added, dup, bad = [], [], []
         for item in raw:
@@ -295,7 +458,7 @@ class Api:
             why = "、".join(bits) or "没拿到可用的目录"
             print('[path] 没加任何东西：%s' % why, flush=True)
             return {"ok": False, "msg": why, "state": self.state()}
-        ok, msg = self.pm.write(cur + added, "加进 PATH %d 条：%s"
+        ok, msg = PATHM.write(cur + added, "加进 PATH %d 条：%s"
                                 % (len(added), "；".join(added[:2]) + ("…" if len(added) > 2 else "")))
         if dup or bad:
             msg += "（跳过 %d 条重复 / %d 条不存在）" % (len(dup), len(bad))
@@ -304,25 +467,25 @@ class Api:
 
     def remove(self, params=None):
         p = str((params or {}).get("path") or "").strip()
-        ok, msg = self.pm.remove(p)
+        ok, msg = PATHM.remove(p)
         print('[path] %s（Python 改的注册表）' % msg, flush=True)
         return {"ok": ok, "msg": msg, "state": self.state()}
 
     def toggle_self(self, params=None):
         """注册 / 反注册**这个包自己的目录**。"""
-        if self.pm.is_registered(SELF_DIR):
-            ok, msg = self.pm.remove(SELF_DIR)
+        if PATHM.is_registered(SELF_DIR):
+            ok, msg = PATHM.remove(SELF_DIR)
         else:
-            ok, msg = self.pm.add(SELF_DIR)
+            ok, msg = PATHM.add(SELF_DIR)
         print('[path] %s' % msg, flush=True)
         return {"ok": ok, "msg": msg, "state": self.state()}
 
     def dedup(self, params=None):
-        ok, msg = self.pm.dedup()
+        ok, msg = PATHM.dedup()
         return {"ok": ok, "msg": msg, "state": self.state()}
 
     def drop_missing(self, params=None):
-        ok, msg = self.pm.drop_missing()
+        ok, msg = PATHM.drop_missing()
         return {"ok": ok, "msg": msg, "state": self.state()}
 
     def pick_dir(self, params=None):
@@ -332,7 +495,7 @@ class Api:
           内嵌：我们**没有自己的窗口**（窗口是 moss 的）⇒ 退回 tkinter 的 askdirectory。
           界面那边通常会先问 moss 主界面要（那边有正规的对话框），这条路是兜底。
         """
-        start = str((params or {}).get("start") or "").strip() or (self.pm.get_user_path_list() or [SELF_DIR])[0]
+        start = str((params or {}).get("start") or "").strip() or (PATHM.get_user_path_list() or [SELF_DIR])[0]
         try:
             import webview as _wv
             wins = list(getattr(_wv, "windows", None) or [])
@@ -367,36 +530,50 @@ class Api:
 
     # ---- 备份 / 恢复
     def backup_create(self, params=None):
-        ok, msg, f = self.bm.create_backup(self.pm.get_user_path_list())
+        """存一份备份。`name` 给了就用它当文件名，不给就用时间戳（`V-209`）。"""
+        name = str((params or {}).get("name") or "")
+        ok, msg, f = BACKUPM.create_backup(PATHM.get_user_path_list(), name)
+        print('[path] %s' % msg, flush=True)
+        return {"ok": ok, "msg": msg, "file": f, "state": self.state()}
+
+    def backup_rename(self, params=None):
+        """给一份备份改名（`V-209`）。只换文件名，内容一个字不动。"""
+        p = params or {}
+        ok, msg, f = BACKUPM.rename(str(p.get("file") or ""), str(p.get("name") or ""))
         print('[path] %s' % msg, flush=True)
         return {"ok": ok, "msg": msg, "file": f, "state": self.state()}
 
     def backup_list(self, params=None):
-        return {"ok": True, "items": self.bm.list_backups(self.pm.get_user_path_list()),
+        return {"ok": True, "items": BACKUPM.list_backups(PATHM.get_user_path_list()),
                 "state": self.state()}
 
     def backup_preview(self, params=None):
-        """恢复前先看清楚：会加什么、会去掉什么。"""
+        """这份备份和**注册表里现在那份**比：会加什么、会去掉什么。
+
+        ★ `V-214` 起**界面不走这条路了**：界面上的对比是拿它和**你正在编辑的那份清单**比的
+          （存没存都算），而且是本地算的（一 hover 就能立刻展开，不用先问一趟）。这个方法留着
+          给脚本 / 命令行那种"就想跟注册表比一比"的用法。
+        """
         f = str((params or {}).get("file") or "")
-        paths = self.bm.read(f)
+        paths = BACKUPM.read(f)
         if not paths:
             return {"ok": False, "msg": "这份备份读不出来（文件没了？）", "state": self.state()}
-        add, gone = self.bm.diff(paths, self.pm.get_user_path_list())
+        add, gone = BACKUPM.diff(paths, PATHM.get_user_path_list())
         return {"ok": True, "add": add, "remove": gone, "paths": paths,
                 "msg": "会加 %d 条、去掉 %d 条" % (len(add), len(gone)), "state": self.state()}
 
     def backup_restore(self, params=None):
         f = str((params or {}).get("file") or "")
-        paths = self.bm.read(f)
+        paths = BACKUPM.read(f)
         if not paths:
             return {"ok": False, "msg": "这份备份读不出来（文件没了？）", "state": self.state()}
-        ok, msg = self.pm.write(paths, "已恢复成 %s 那份备份（%d 条）"
-                                % (Path(f).stem.replace(self.bm.backup_prefix, ""), len(paths)))
+        ok, msg = PATHM.write(paths, "已恢复成 %s 那份备份（%d 条）"
+                                % (Path(f).stem.replace(BACKUPM.backup_prefix, ""), len(paths)))
         print('[path] %s（Python 改的注册表）' % msg, flush=True)
         return {"ok": ok, "msg": msg, "state": self.state()}
 
     def backup_delete(self, params=None):
-        ok, msg = self.bm.delete(str((params or {}).get("file") or ""))
+        ok, msg = BACKUPM.delete(str((params or {}).get("file") or ""))
         return {"ok": ok, "msg": msg, "state": self.state()}
 
 
@@ -442,8 +619,20 @@ class Embedded:
 
 # ---------------------------------------------------------------- 独立窗口
 def run_window():
-    """自己开一扇窗（`moss :path`）。界面文件和内嵌时**是同一份**。"""
-    import webview
+    """自己开一扇窗（`moss :path`，或者直接 `python main.py` / 打包的 exe）。"""
+    if not UI_FILE:
+        print("[错误] 找不到界面文件 ui/index.html —— 打包时它得跟着一起发：\n"
+              "       onedir：把 ui\\ 放在 exe 旁边；onefile：加 --include-data-dir=ui=ui\n"
+              "       命令行不受影响：help / add / remove 照常能用", file=sys.stderr)
+        return 2
+    try:
+        import webview
+    except ImportError as e:
+        print("[错误] 这个程序里没有 pywebview，界面开不了（%s）\n"
+              "       两个办法：① 用 moss 跑它（`moss :path`）—— 自带运行时里 pywebview 是齐的；\n"
+              "                 ② 自己打包时把它带上：--include-package=webview（还要 WebView2 运行时）\n"
+              "       只跑命令行不受影响：help / add / remove" % e, file=sys.stderr)
+        return 2
 
     api = Api()
     window = webview.create_window(TITLE, url=UI_FILE, js_api=api,

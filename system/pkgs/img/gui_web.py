@@ -47,6 +47,15 @@ def appearance():
 
 # ---------------------------------------------------------------- JS 桥
 class Api:
+    """界面能调的方法 —— **内嵌（stdio）和独立窗口（js_api）共用同一份**（`V-225`）。
+
+    ★ 参数约定：**每个方法只收一个 dict**（`params`），字段按名字取。为什么：
+      moss 的垫片 `ui/moss-embed.js` 两种环境都只传一个参数（内嵌是把
+      `{id, method, params}` 送进后端进程的 stdin）。以前这里是位置参数
+      （`scan(dir)` / `thumbs(paths)`），只有"页面直接调 `pywebview.api`"那条路能用，
+      一内嵌就走不通。**别改回位置参数** —— 页面那侧 `ui/src/bridge.js` 就是按字段名发的。
+    """
+
     def __init__(self):
         self._window = None
         self._lock = threading.Lock()
@@ -55,6 +64,11 @@ class Api:
         self._history = []
         self._drop = []          # 拖放进来的路径；由 drop 回调所在的线程写，前端轮询取走
         self._thumbs = {}        # (路径, mtime) -> data URL
+
+    @staticmethod
+    def _p(params):
+        """把 `params` 归一成一个 dict（没给 / 给错形状都当空）。"""
+        return params if isinstance(params, dict) else {}
 
     def attach(self, window):
         self._window = window
@@ -78,7 +92,7 @@ class Api:
                 got['history'] = self._history
         return got
 
-    def bootstrap(self):
+    def bootstrap(self, params=None):
         cfg, message = core.load_config()
         self._cfg = cfg
         self._history = list(cfg.get('history') or [])
@@ -107,11 +121,15 @@ class Api:
             'theme': look['theme'],
             'accent': look['accent'],
             'log': message,
+            # ★ `V-225`：内嵌时告诉页面"你没有自己的窗口"（页面据此跳过 `set_title`、
+            #   拖放改走宿主那条路），也是给探针看的自证
+            'embedded': bool(os.environ.get('MOSS_UI_EMBED')),
         }
 
     # -- 系统交互 ------------------------------------------------------
-    def pick_dir(self, initial=''):
+    def pick_dir(self, params=None):
         """打开系统「选择文件夹」对话框。"""
+        initial = str(self._p(params).get('start') or '')
         w = self._window
         if not w:
             return {'ok': False, 'message': '窗口未就绪。'}
@@ -128,8 +146,9 @@ class Api:
         first = picked[0] if isinstance(picked, (list, tuple)) else picked
         return {'ok': True, 'path': str(first)}
 
-    def pick_files(self, initial=''):
+    def pick_files(self, params=None):
         """打开系统「选择文件」对话框（可多选）。"""
+        initial = str(self._p(params).get('start') or '')
         w = self._window
         if not w:
             return {'ok': False, 'message': '窗口未就绪。'}
@@ -154,7 +173,7 @@ class Api:
             self._remember(files[0]['dir'])
         return {'ok': True, 'files': files}
 
-    def help(self):
+    def help(self, params=None):
         """帮助面板要显示的内容。
 
         ★ 用法文本**直接从 cli.py 取**，不在这里再抄一份 ——
@@ -169,8 +188,9 @@ class Api:
             'description': '带参数＝命令行模式；不带参数＝打开这个界面。',
         }
 
-    def copy(self, text):
+    def copy(self, params=None):
         """把文本放进剪贴板（帮助面板的「复制用法」）。"""
+        text = self._p(params).get('text') or ''
         try:
             import pyperclip
             pyperclip.copy(str(text or ''))
@@ -178,26 +198,29 @@ class Api:
         except Exception as e:
             return {'ok': False, 'message': '写入剪贴板失败：%s' % e}
 
-    def check_path(self, path):
+    def check_path(self, params=None):
         """问一下某个路径是文件还是目录 —— 拖放落点要靠它判断怎么处理。
 
         拖进来的可能是文件夹（直接当输出目录 / 当源目录），
         也可能是文件（那就取它所在的目录）。
         """
+        path = self._p(params).get('path') or ''
         p = str(path or '')
         return {'ok': True, 'path': p,
                 'isdir': os.path.isdir(p), 'isfile': os.path.isfile(p),
                 'parent': os.path.dirname(p)}
 
-    def scan_files(self, paths):
+    def scan_files(self, params=None):
         """重新核一遍文件清单（「刷新」用）：还在不在、多大。"""
+        paths = list(self._p(params).get('paths') or [])
         return {'ok': True, 'files': core.describe_files(paths or [])}
 
-    def thumbs(self, paths):
+    def thumbs(self, params=None):
         """生成缩略图。前端分批要（一次 20 张），这样界面立刻出来、后面慢慢补齐。
 
         按 (路径, mtime) 缓存 —— 刷新、切模式、重开窗口都不用重新解码。
         """
+        paths = list(self._p(params).get('paths') or [])
         out = []
         with self._lock:
             cache = self._thumbs
@@ -219,8 +242,9 @@ class Api:
             out.append({'path': p, 'data': got})
         return {'ok': True, 'thumbs': out}
 
-    def file_info(self, path):
+    def file_info(self, params=None):
         """悬停时按需取一个文件的详情（宽高 / 格式 / 大小 / 修改时间）。"""
+        path = self._p(params).get('path') or ''
         path = str(path or '')
         if not path:
             return {'ok': False, 'message': '没有路径。'}
@@ -229,12 +253,13 @@ class Api:
                                          'name': os.path.basename(path)}}
         return {'ok': True, 'info': core.file_info(path)}
 
-    def report_error(self, text):
+    def report_error(self, params=None):
         """前端把脚本异常报回来，落到 DATA_DIR 下的 ui-error.log。
 
         为什么要走这一趟：WebView 里没有控制台，界面上一句红字用户看不懂、
         也没法贴给我，窗口一关线索就没了。写进文件就能查。
         """
+        text = self._p(params).get('text') or ''
         try:
             import time as _time
             if not os.path.isdir(core.DATA_DIR):
@@ -246,8 +271,9 @@ class Api:
         except Exception:
             return {'ok': False}
 
-    def set_title(self, text):
+    def set_title(self, params=None):
         """把当前目录/状态写进**窗口标题栏** —— 这样顶栏那一行就可以整条去掉。"""
+        text = self._p(params).get('title') or ''
         if self._window is None:
             return {'ok': False}
         try:
@@ -256,8 +282,9 @@ class Api:
             return {'ok': False, 'message': str(e)}
         return {'ok': True}
 
-    def open_file(self, path):
+    def open_file(self, params=None):
         """双击缩略图 = 用系统默认程序打开它。"""
+        path = self._p(params).get('path') or ''
         path = str(path or '')
         if not os.path.isfile(path):
             return {'ok': False, 'message': '文件不在了：%s' % path}
@@ -267,11 +294,12 @@ class Api:
             return {'ok': False, 'message': '打不开：%s' % e}
         return {'ok': True}
 
-    def scan(self, source_dir):
+    def scan(self, params=None):
         """换目录时前端要重新生成「源文件过滤」那一排，结果由这里给。"""
+        source_dir = self._p(params).get('dir') or ''
         return self._scan(source_dir)
 
-    def reveal(self, path):
+    def reveal(self, params=None):
         """在资源管理器里打开输出目录。
 
         ★ 目录**还没生成**时不要报"不存在" —— 往上一层找第一个存在的打开就行。
@@ -279,6 +307,7 @@ class Api:
           这时候用户真正想看的是**源目录**（用户指出）。
           自定输出目录 D:\\out\\sub 还没建时，打开 D:\\out 也同样是想要的。
         """
+        path = self._p(params).get('target') or ''
         raw = str(path or '')
         if not raw:
             return {'ok': False, 'message': '还不知道输出目录。'}
@@ -309,13 +338,14 @@ class Api:
         return self._history
 
     # -- 拖放 ----------------------------------------------------------
-    def push_drop(self, paths):
+    def push_drop(self, params=None):
         """由 drop 回调（跑在 pywebview 的线程里）调用，只往篮子里放，不做别的。"""
+        paths = list(self._p(params).get('paths') or [])
         with self._lock:
             self._drop.extend(str(p) for p in (paths or []) if p)
         return True
 
-    def take_drop(self):
+    def take_drop(self, params=None):
         """前端轮询取走拖放进来的路径。
 
         ★ 为什么用轮询而不是后端 evaluate_js 推给前端：
@@ -342,7 +372,8 @@ class Api:
         }
 
     # -- 配置 ----------------------------------------------------------
-    def save_config(self, cfg):
+    def save_config(self, params=None):
+        cfg = self._p(params).get('config') or {}
         cfg = core.normalize_config(cfg or {})
         cfg['history'] = self._history
         ok, message = core.save_config(cfg)
@@ -350,8 +381,9 @@ class Api:
         return {'ok': ok, 'message': message}
 
     # -- 干活 ----------------------------------------------------------
-    def start(self, state):
+    def start(self, params=None):
         """开始处理。state 是前端的完整界面状态（未规范化）。"""
+        state = self._p(params).get('payload') or {}
         state = state or {}
         cfg = core.normalize_config(state)
         mode = 'files' if state.get('mode') == 'files' else 'folder'
@@ -407,7 +439,8 @@ class Api:
         job.start()
         return {'ok': True, 'job': job.id, 'history': self._history, 'outputDir': out_dir}
 
-    def poll(self, job_id):
+    def poll(self, params=None):
+        job_id = self._p(params).get('id') or ''
         with self._lock:
             job = self._jobs.get(str(job_id))
         if not job:
@@ -416,7 +449,8 @@ class Api:
         got['ok'] = True
         return got
 
-    def cancel(self, job_id):
+    def cancel(self, params=None):
+        job_id = self._p(params).get('id') or ''
         with self._lock:
             job = self._jobs.get(str(job_id))
         if not job:

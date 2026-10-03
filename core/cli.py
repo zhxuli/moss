@@ -99,6 +99,19 @@ def _coerce(spec, value):
     return str(value)
 
 
+def _looks_like_kv_token(k):
+    """`k` 像不像一个参数名（`^[A-Za-z_][A-Za-z0-9_]*$`）。
+
+    ★ 为什么还要这一道：参数名是包自己声明的，理论上都合法；但万一某个包声明了个怪名字
+      （带空格之类），`a = 3` 这种公式左边就可能撞上 —— 那时宁可当位置参数（公式）处理。
+    """
+    if not k:
+        return False
+    if not (k[0].isalpha() or k[0] == "_"):
+        return False
+    return all(ch.isalnum() or ch == "_" for ch in k)
+
+
 def parse_params(pkg, args):
     """把命令行参数映射到包声明的 params 上（类型化参数，F-08）。
 
@@ -113,11 +126,16 @@ def parse_params(pkg, args):
       `rest` 参数应当声明在 params 的**最后**（它后面再写位置参数就永远轮不到）。
     """
     spec = pkg.get("params") or []
+    names = {str(p.get("name") or "").strip() for p in spec}
     named, positional = {}, []
     for a in args:
-        if "=" in a and not a.startswith("="):
-            k, _, v = a.partition("=")
-            named[k.strip()] = v
+        # ★ 2026-10-04 修：**只有"左边确实是这个包声明的参数名"才算 key=value**。
+        #   起因：`calc` 那种"公式里本来就有等号"的包（`a = 3; b = 4; hypot(a,b)`、`x == 1`、
+        #   `x >= 2`）原来会被无条件当成 kv ⇒ 公式被吞掉，只剩一句用法。
+        #   旧写法是 `if "=" in a and not a.startswith("=")`（太宽）。
+        k = a.partition("=")[0].strip() if ("=" in a and not a.startswith("=")) else ""
+        if k and (k in names) and _looks_like_kv_token(k):
+            named[k] = a.partition("=")[2]
         else:
             positional.append(a)
 

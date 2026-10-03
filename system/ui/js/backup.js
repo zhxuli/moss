@@ -22,6 +22,8 @@ const BK = Vue.reactive({
   view: null,                          // {rel, fp, binary, text, size, truncated} 或 null
   filter: "", busy: "", checkRows: null,
   formOpen: false, title: "", note: "",
+  /* `V-236`：快照列表按"谁存的"筛 —— `""` 全部 / `"me"` 我存的 / `"ai"` AI 存的 */
+  byFilter: "",
   collapsed: false,                    // 边栏收起（窄窗口时默认收）
   exportTo: "", exportBak: false, dropOver: false,   // 导出（`V-88`）
   fps: {}, fresh: {},                   // 现读磁盘：指纹 + 现大小 + 目录子树（`V-94`，不信界面缓存）
@@ -31,6 +33,13 @@ const BK = Vue.reactive({
   folded: {},                          // 哪些快照的文件列表被收起了（`V-122`）
   presets: null,                       // 预设过滤规则 + 命中数（`V-121`）                            // 过滤规则（`V-105`）：文件在哪、现在生效哪些
 });
+
+/* ★ `V-250`：**外面**（AI 工作台 / 盘上文件变了）要能喊一声"快照那边刷新一下"。
+   为什么用"举牌"（和 `CONSOLER` / `DRAGR` / `AIR` 一个套路）：刷新是组件的方法，
+   而调用的人在别的脚本里（`js/ai.js` / `js/files.js`）—— 它们拿不到组件实例。
+   `bkRefresh()` 只 +1 一个响应式版本号，组件 watch 它。 */
+const BKR = Vue.reactive({rev: 0});
+function bkRefresh(){ BKR.rev++; }
 
 /* ================================================================ 差异视图（`V-94`）
    你的要求（2026-09-30）：「下面的路径这里 请按照原本的文件 文件夹来展示 并且 时刻保持和左侧同步
@@ -140,6 +149,9 @@ function bkDiffModel(){
     if (st === "same" && !nowDir && nowSize === 0) st = "empty";
     return {
       name: n, dir: nowDir || (sDirSize !== undefined), rel: nw ? nw.rel : ((rel ? rel + "/" : "") + n),
+      // ★ `V-250`：带上扩展名 —— 边栏那一行要和**文件管理同一套图标**（`fileIconHTML(e)` 就是
+      //   按 `entry.ext` 查 `core.js` 的 `EXT` 表的）。不带的话每个文件都是那张灰的默认图标。
+      ext: extFromName(n),
       now: nw ? {size: nowSize, dir: nowDir} : null,
       snap: inSnap ? {size: snapSize, fp: fp} : null,
       size: sFile ? (sFile.size || 0) : 0, fp: fp,          // 给"看内容 / 只恢复这一个"用
@@ -227,6 +239,14 @@ const MossFileSnap = {
   // ★ 模板里够不着模块级的 BK（Vue 模板只认实例上的东西）—— 显式交出去。
   data(){ return { BK: BK, BKD: BKD }; },   // ★ BKD（差异容器）是 core.js 里的 const，模板看不见它，得这样递进去
   computed: {
+    /* ★ `V-236`：列表按"谁存的"筛（全部 / 我存的 / AI 存的）。
+       判据是清单真字段 `it.by`（AI = "ai"），**不是**标题里有没有"AI"两个字。 */
+    shownItems(){
+      const f = BK.byFilter;
+      if (!f) return BK.items;
+      return (BK.items || []).filter(it => (f === "ai" ? it.by === "ai" : it.by !== "ai"));
+    },
+    aiCount(){ return (BK.items || []).filter(it => it.by === "ai").length; },
     ctxKey(){ void FM.rev; void FM.st; return (FM.ctx || "__all__") + "|" + bkScopeRels().join(","); },
     ctxLabel(){ void FM.rev; void FM.st; return bkCtxLabel(); },
     /* 盘上那个文件夹叫什么（= 分组名 = 包 id；没选包就是 `@user`）—— 和 `ctxLabel` 分开：
@@ -259,14 +279,15 @@ const MossFileSnap = {
              "\n内置（永远生效）：" + builtin +
              "\n写法：*.log 按名字 / build/ 只排目录 / user/pkgs/old/ 按路径 / !keep.log 反向保留";
     },
-    /* 差异视图（`V-94`）：行 = 当前目录这一层的"左边（现在）+ 右边（快照）" */
-    /* ★ 快照那一列**只列快照里真有的东西**："只有现在有"的那些（绿色）只出现在**左边**那张表里。
-       你 2026-09-30 反馈的第一条就是它 —— 新建一个 `untitled.py`，快照里怎么也冒出来了。 */
+    /* 差异视图（`V-94`）：行 = 当前目录这一层的"左边（现在）+ 右边（快照）"。
+       ★ `V-250` 推翻了 `V-94` 里那条"快照那一列只列快照里真有的东西"：你要的是
+         "**这次备份对比当前有什么变化**"，把"只有现在有"的藏起来，就永远看不到"多了什么"。
+         现在全列出来，用记号分：`+` 添加 / `−` 缺少 / `↑↓` 变大变小 / 无记号 = 一样。 */
     foldedNow(){ void BK.folded; return !!BK.folded[BK.sel || ""]; },
     mirrorRows(){
       void BKD.diff;
       if (this.foldedNow) return [];
-      return ((BKD.diff && BKD.diff.entries) || []).filter(e => e.state !== "now-only");
+      return (BKD.diff && BKD.diff.entries) || [];
     },
     mirrorPath(){
       void FM.rev;
@@ -277,16 +298,16 @@ const MossFileSnap = {
       return "跟着左边的文件管理走：左侧进哪个目录，这里就对照哪个目录\n" +
              "左边 = 现在的工作区（" + (bkCurDir() || "根目录") + "）\n" +
              "右边 = 这次快照里的同一个目录\n" +
-             "颜色：一致=正常 · 两边都有但不一样=琥珀（谁大谁更深）· " +
-             "只有快照里有=红 · 只有现在有=绿 · 空文件=灰";
+             "记号：+ 添加 · − 缺少 · ↑ 变大了 · ↓ 变小了 · 没有记号 = 一样（灰）\n" +
+             "颜色：变了=琥珀（谁大谁更深）· 增删=蓝（添加深、缺了浅）· 一样/空文件=灰";
     },
     mirrorCount(){
       void BKD.diff;
       const es = (BKD.diff && BKD.diff.entries) || [];
       const n = s => es.filter(e => e.state === s).length;
       const d = n("diff"), g = n("snap-only"), w = n("now-only");
-      return es.length + " 项" + (d ? " · 变 " + d : "") + (g ? " · 缺 " + g : "") +
-             (w ? " · 多 " + w : "");
+      return es.length + " 项" + (d ? " · 变了 " + d : "") + (g ? " · 缺 " + g : "") +
+             (w ? " · 多 " + w : "") + ((es.length - d - g - w) ? " · 一样 " + (es.length - d - g - w) : "");
     },
     mirrorCountTip(){
       void BKD.diff;
@@ -319,10 +340,19 @@ const MossFileSnap = {
       return "快照的来源：\n" + bkScopeRels().join("\n") +
              "\n（按这组来源算出来的分组就是 " + bkGroupForCtx() + "）";
     },
+    /* ★ `V-250`：外面（AI / 盘上变了）喊刷新用的那面旗。读它 = 登记依赖，
+       `watch: bkrRev` 才会被叫醒。 */
+    bkrRev(){ return BKR.rev; },
   },
   watch: {
     ctxKey(){ this.switchCtx(); },        // 换了对象 ⇒ 换一组快照
     mirrorKey(){ this.reloadMirror(); },  // 换了目录 / 换了选中的快照 ⇒ 重算对照
+    /* ★ `V-250`：外面喊了一声（AI 干完活 / 存了快照 / 盘上文件变了）⇒ 重列一遍。
+       为什么要它：AI 存快照是**宿主后台线程**干的，界面这边**没有任何事件**，
+       不刷新就"存是存了、你看不见"（你报的原话）。
+       读法说明：`BKR` 是模块级的响应式对象，模板/计算属性得先把它读进 `bkrRev`，
+       依赖才登记得上（直接写 `"BKR.rev"` 那种路径式 watch 找不到它，不会触发）。 */
+    bkrRev(){ this.refresh(); },
   },
   mounted(){
     this.refresh();
@@ -353,18 +383,25 @@ const MossFileSnap = {
   methods: {
     humanSize: n => humanSize(n),
     /* 差异视图（`V-94`）的渲染小工具 —— 侧栏这一列是"右边（快照）"，深浅和左边**反过来**：
-       快照那份更大 ⇒ 这里更深。 */
+       快照那份更大 ⇒ 这里更深。
+       ★ `V-250`：增删也归到**同一族色**（蓝的深/浅两档），**没变化给灰**（你说的"表示没变化"）。 */
     mirrorCls(e){
       if (e.state === "snap-only") return {"df-gone": true};
       if (e.state === "now-only") return {"df-new": true};
       if (e.state === "empty") return {"df-empty": true};
       if (e.state === "diff") return e.deep === "snap" ? {"df-chg": true, "df-deep": true}
                                                       : {"df-chg": true, "df-soft": true};
+      if (e.state === "same") return {"df-same": true};
       return null;
     },
+    /* 方向记号（`V-250`）：和左边那张表**同一个**函数，两边不会各说各话 */
+    mirrorMark(e){ return bkDiffMark(e.rel); },
+    /* 图标（`V-250`）：和文件管理那张表**同一个** `fileIconHTML()` —— 你说"和文件管理
+       这里的图标一样就可以了"。按扩展名给图标 + 颜色，目录给文件夹图标。 */
+    mirrorIcon(e){ return fileIconHTML(e, false); },
     mirrorSize(e){
-      if (e.snap === null) return "—";
-      if (e.dir) return humanSize(e.snap.size);
+      // 只有现在有的（添加）：右边那一份根本不存在，给现在的大小 + 一个 +
+      if (e.snap === null) return e.now ? humanSize(e.now.size) : "—";
       return humanSize(e.snap.size);
     },
     mirrorSizeCls(e){
@@ -819,6 +856,30 @@ const MossFileSnap = {
           });
       });
     },
+    /* ★ `V-236`：清掉 **AI 存的**那几条（`by == "ai"`）。
+       ★ 为什么敢给一颗按钮：后端走的是 `delete_ai()` —— 它在清单里逐条看 `by`，
+         **不是 "ai" 的直接跳过**。所以这条路**结构上**就删不到你自己存的快照。 */
+    async cleanAi(){
+      const n = (BK.items || []).filter(x => x.by === "ai").length;
+      if (!n){ toast("这一组里没有 AI 存的快照"); return; }
+      askConfirm("清掉 AI 存的快照",
+        "要清掉 <b>" + n + "</b> 条<b> AI 存的</b>快照（标题带「AI」徽章那种）。<br>" +
+        "你自己存的那些<b>一条都不会动</b> —— 后端只删清单里 <code>by=ai</code> 的。<br>不可撤销。",
+        async () => {
+          BK.busy = "清理中…";
+          try{
+            const g = bkGroupForCtx();
+            const r = await pywebview.api.backup_rm_ai(g || "");
+            if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "清不掉"), true); return; }
+            toast(r.msg || "清完了");
+            if (BK.sel && (r.deleted || []).indexOf(BK.sel) >= 0){
+              BK.sel = null; BK.man = null; BK.view = null;
+            }
+            await this.refresh();
+          }catch(e){ reportError("清 AI 快照失败", String((e && e.message) || e)); }
+          finally{ BK.busy = ""; }
+        });
+    },
     async del(id, title){
       askConfirm("删掉这个快照",
         "「" + esc(title || id) + "」<br>删完会把没人再引用的内容块一并回收。<br>不可撤销。",
@@ -927,13 +988,25 @@ const MossFileSnap = {
       <div v-if="BK.loading" class="bk-empty">读快照…</div>
       <div v-else-if="!BK.items.length" class="bk-empty">还没有快照 —— 点上面的 ＋</div>
 
-      <div v-for="it in BK.items" :key="it.id" class="bk-tl-item" :class="{on: it.id === BK.sel}"
+      <!-- ★ V-236：**谁存的**要能一眼分辨 + 只清 AI 的。
+           判据是清单里的真字段 by（AI = "ai"），标题只是给人看的。
+           （★ 这条注释里不许出现反引号 —— 模板字符串会被它提前截断，契约 §8 第 9 条。） -->
+      <div class="bk-bybar" v-if="!BK.loading && BK.items.length">
+        <span class="bk-byf" :class="{on: BK.byFilter === ''}" @click="BK.byFilter = ''">全部</span>
+        <span class="bk-byf" :class="{on: BK.byFilter === 'me'}" @click="BK.byFilter = 'me'">我存的</span>
+        <span class="bk-byf" :class="{on: BK.byFilter === 'ai'}" @click="BK.byFilter = 'ai'">AI 存的</span>
+        <span class="sp"></span>
+        <span class="bk-byc" v-if="aiCount" :title="'只删 AI 存的（by=ai）—— 你自己存的一条都不会动'"
+              @click="cleanAi()">清掉 AI 的（{{ aiCount }}）</span>
+      </div>
+      <div v-for="it in shownItems" :key="it.id" class="bk-tl-item" :class="{on: it.id === BK.sel}"
            :data-bk="it.id">
         <div class="bk-tl-dot"></div>
         <div class="bk-card" @click="open(it.id, it.group)">
           <!-- ★ V-177：一条快照 = 一行。常态「名字 靠左 + N项/大小/时间 靠右（完整显示）」；
                hover 才展开成两行（标题+按钮 / 项目数+大小 靠左、时间靠右）。布局靠 grid 换 areas，见 CSS。 -->
-          <b class="bk-t" :title="it.note || it.title">{{ it.title }}</b>
+          <b class="bk-t">{{ it.title }}<span v-if="it.by === 'ai'" class="bk-ai"
+             :title="'AI 存的 · 那次的任务：' + (it.by_task || '（没记）')">AI</span></b>
           <span class="bk-cnt">{{ it.files }} 项</span>
           <span class="bk-size">{{ humanSize(it.bytes) }}</span>
           <span class="bk-time">{{ shortTime(it.created_text) }}</span>
@@ -967,6 +1040,9 @@ const MossFileSnap = {
           </div>
           <div v-for="e in mirrorRows" :key="e.name" class="bk-file" :class="mirrorCls(e)"
                :data-rel="e.rel" :data-dir="e.dir ? 1 : 0" :data-state="e.state" :title="e.why">
+            <!-- ★ V-250：记号（+ / − / ↑ / ↓）和图标（和文件管理那张表同一个 fileIconHTML） -->
+            <span class="bk-fmark">{{ mirrorMark(e) }}</span>
+            <span class="bk-fico" v-html="mirrorIcon(e)"></span>
             <span class="bk-fname" :class="{isdf: e.dir}">{{ e.name }}{{ e.dir ? "/" : "" }}</span>
             <span class="bk-fsize" :class="mirrorSizeCls(e)">{{ mirrorSize(e) }}</span>
             <button v-if="e.snap && !e.dir" class="iconbtn b-bkview" title="看快照里这份的内容"

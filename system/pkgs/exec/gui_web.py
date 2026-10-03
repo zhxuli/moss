@@ -161,6 +161,16 @@ def appearance():
 
 # ---------------------------------------------------------------- JS 桥
 class Api:
+    """界面能调的这些方法 —— **内嵌（stdio）和独立窗口（js_api）共用同一份**。
+
+    ★ 参数约定（`V-222`）：**每个方法只收一个 dict**（`params`），字段按名字取。
+      为什么：moss 的垫片 `ui/moss-embed.js` 两种环境都只传一个参数 ——
+      独立窗口是 `fn(params)`，内嵌是把 `{id, method, params}` 送进后端进程。
+      以前这里是位置参数（`cmd_save(item, original_alias)`），只有"页面直接调
+      `pywebview.api.xxx(...)`"那条路能用；一内嵌就走不通了。改成 dict 之后
+      一份 Api 两种跑法都吃（`path` / `bmi` 那两个包也是这个约定）。
+    """
+
     def __init__(self):
         self._window = None
         self._runs = {}
@@ -169,8 +179,12 @@ class Api:
     def attach(self, window):
         self._window = window
 
+    @staticmethod
+    def _p(params):
+        return params if isinstance(params, dict) else {}
+
     # -- 启动数据 ------------------------------------------------------
-    def bootstrap(self):
+    def bootstrap(self, params=None):
         core.init_cmds_dir()
         look = appearance()
         return {
@@ -187,39 +201,46 @@ class Api:
             'dataDir': core.CMDS_DIR,
             'theme': look['theme'],
             'accent': look,
+            # `V-222`：内嵌时告诉页面"你没有自己的窗口"（页面据此把"在新控制台运行"之类的
+            # 文案/行为摆正，也是给探针看的自证）
+            'embedded': bool(os.environ.get('MOSS_UI_EMBED')),
         }
 
-    def cmd_list(self):
+    def cmd_list(self, params=None):
         core.init_cmds_dir()
         return {'ok': True, 'commands': core.load_all_commands()}
 
     # -- 增删改 --------------------------------------------------------
-    def cmd_save(self, item, original_alias=None):
-        ok, payload = core.save_command(item or {}, original_alias)
+    def cmd_save(self, params=None):
+        p = self._p(params)
+        ok, payload = core.save_command(p.get('item') or {}, p.get('original_alias'))
         if not ok:
             return {'ok': False, 'message': payload}
         return {'ok': True, 'alias': payload}
 
-    def cmd_remove(self, alias):
-        ok, payload = core.delete_command(alias)
+    def cmd_remove(self, params=None):
+        ok, payload = core.delete_command(self._p(params).get('alias'))
         if not ok:
             return {'ok': False, 'message': payload}
         return {'ok': True, 'alias': payload}
 
     # -- 运行 ----------------------------------------------------------
-    def run_start(self, alias, args=''):
+    def run_start(self, params=None):
+        p = self._p(params)
+        alias = p.get('alias')
         item = core.load_command(alias)
         if not item:
             return {'ok': False, 'message': "命令 '%s' 不存在。" % alias}
         try:
-            session = core.session_for(item, args)
+            session = core.session_for(item, p.get('args') or '')
         except Exception as e:
             return {'ok': False, 'message': '无法启动：%s' % e}
         with self._lock:
             self._runs[session.id] = session
         return {'ok': True, 'id': session.id}
 
-    def run_poll(self, run_id):
+    def run_poll(self, params=None):
+        run_id = self._p(params).get('id')
         with self._lock:
             session = self._runs.get(run_id)
         if not session:
@@ -228,19 +249,21 @@ class Api:
         state['ok'] = True
         return state
 
-    def run_stop(self, run_id):
+    def run_stop(self, params=None):
+        run_id = self._p(params).get('id')
         with self._lock:
             session = self._runs.get(run_id)
         if session:
             session.stop()
         return {'ok': True}
 
-    def run_console(self, alias, args=''):
-        ok, payload = core.open_in_new_console(alias, args)
+    def run_console(self, params=None):
+        p = self._p(params)
+        ok, payload = core.open_in_new_console(p.get('alias'), p.get('args') or '')
         return {'ok': ok, 'message': None if ok else payload}
 
     # -- 其它 ----------------------------------------------------------
-    def sys_reveal(self):
+    def sys_reveal(self, params=None):
         try:
             core.ensure_cmds_dir()
             os.startfile(core.CMDS_DIR)
@@ -248,29 +271,55 @@ class Api:
         except Exception as e:
             return {'ok': False, 'message': str(e)}
 
-    def sys_copy(self, text):
-        ok = core.clipboard_set(text or '')
+    def sys_copy(self, params=None):
+        ok = core.clipboard_set(self._p(params).get('text') or '')
         return {'ok': ok, 'message': None if ok else '写入剪贴板失败。'}
 
-    def sys_pick_path(self, kind='file'):
-        """打开系统文件/文件夹选择框。kind: file | dir"""
+    #: 内嵌模式下内核态不支持**取消**这个语义时用（`V-212` 的口径）：用户取消 → `cancelled`
+    def sys_pick_path(self, params=None):
+        """打开系统文件/文件夹选择框。`kind`: file | dir
+
+        ★ 独立窗口：用 pywebview 挂在自己那扇窗上的对话框。
+        ★ 内嵌（我们**没有自己的窗口**）：退回 tkinter 的对话框 —— 页面那边通常会先问
+          moss 主界面要（那边有正规的对话框，还会回 `cancelled`），这条路是兜底。
+        """
+        kind = (self._p(params).get('kind') or 'file')
         w = self._window
-        if not w:
-            return {'ok': False, 'message': '窗口未就绪。'}
+        if w:
+            try:
+                import webview
+                if kind == 'dir':
+                    picked = w.create_file_dialog(webview.FOLDER_DIALOG)
+                else:
+                    picked = w.create_file_dialog(
+                        webview.OPEN_DIALOG, allow_multiple=False,
+                        file_types=('Python 文件 (*.py)', '所有文件 (*.*)'))
+            except Exception as e:
+                return {'ok': False, 'message': '打开选择框失败：%s' % e}
+            if not picked:
+                return {'ok': True, 'path': '', 'cancelled': True}
+            first = picked[0] if isinstance(picked, (list, tuple)) else picked
+            return {'ok': True, 'path': str(first)}
+        return self._pick_tk(kind)
+
+    @staticmethod
+    def _pick_tk(kind):
+        """没有窗口时的兜底：借 tkinter 弹一个框（弹完就还回去，不留空窗）。"""
         try:
-            import webview
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
             if kind == 'dir':
-                picked = w.create_file_dialog(webview.FOLDER_DIALOG)
+                got = filedialog.askdirectory(title='选一个目录')
             else:
-                picked = w.create_file_dialog(
-                    webview.OPEN_DIALOG, allow_multiple=False,
-                    file_types=('Python 文件 (*.py)', '所有文件 (*.*)'))
-        except Exception as e:
-            return {'ok': False, 'message': '打开选择框失败：%s' % e}
-        if not picked:
-            return {'ok': True, 'path': ''}
-        first = picked[0] if isinstance(picked, (list, tuple)) else picked
-        return {'ok': True, 'path': str(first)}
+                got = filedialog.askopenfilename(title='选一个文件')
+            root.destroy()
+        except Exception as e:                                          # noqa: BLE001
+            return {'ok': False, 'message': '这个环境里开不了选择框：%s' % e}
+        if not got:
+            return {'ok': True, 'path': '', 'cancelled': True}
+        return {'ok': True, 'path': str(got)}
 
 
 def run_gui():

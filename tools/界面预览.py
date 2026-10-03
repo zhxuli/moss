@@ -37,6 +37,9 @@
     edit-manifest    打开 md5 的 pkg.json → 改名 → 保存（看左边列表有没有跟着变）
     edit-manifest-detail  同上，最后停在「详情」
 
+★ `ai-disk-refresh`（`V-249`）：交个任务给「AI」→ 跑完 ⇒「文件管理」自动重列 + 重读
+  开着的那一页 + 重画高亮，而且**顶层选项卡没被抢走**（干完活还停在 AI 那一页）。
+
 ★ 它**不替代**人肉点一遍：假 API 只喂了够渲染的数据，真正的运行/停止/写文件
   还是要在真界面里试。
 """
@@ -73,7 +76,9 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "settings-bad", "settings-warn", "settings-tip",
           "settings-ai", "settings-ai-tpl", "settings-ai-new", "settings-ai-empty",
           "hist", "hist-console", "hist-file",
-          "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui"]
+          "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
+          "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "detail-fill", "ai-pane", "snap-by",
+          "ai-disk-refresh", "ai-snap-refresh"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
 #: 是场景（或它的假数据）跟不上 —— 待办记在账本 `V-203`。
@@ -371,9 +376,96 @@ MOCK_JS = r"""
       const out = {};
       (ids || []).forEach((id, i) => { out[id] = {running: i === 1 || i === 4,
         windows: i === 1 ? 1 : 0, visible: false}; });
+      // `V-216` 那个场景要一个"别的路径留下的进程"（孤儿），按需覆盖
+      if (M.stateOverride) Object.assign(out, M.stateOverride);
       return {ok: true, states: out};
     },
     pkg_state: async () => ({ok: true, running: false, windows: 0, visible: false}),
+    // ---- AI 工作台那一页（`V-233`）—— 假后端按剧本吐"步骤流"和一份结果，
+    //      这样"页面会不会画步骤 / 会不会显示验收结论和 token"是能验的 ----
+    ai_info: async (workdir) => ({ok: true, running: false, home: state.home,
+      // ★ 路径里**只写一个反斜杠**（`V-249`）：`MOCK_JS` 是 raw 字符串，写 `\\\\` 到 JS 里
+      //   就成了**两个**反斜杠 —— 真宿主的路径只有一个。以前 `canWrite` 就是被这个坑的：
+      //   明明选的是 `user_data/pkgs` 里的包，那一页却显示"⚠ 这个包改不了"（假数据在骗人）。
+      write_root: state.home + "\\user_data\\pkgs", workdir: workdir || "",
+      model: "deepseek-flash", base_url: "https://api.deepseek.com/v1", has_key: true,
+      prompts: ["system.md", "edit.md", "new_pkg.md"], missing_prompts: [],
+      prompt_bytes: 4096, steps: 0,
+      // `V-240`：预算（界面上那一格，单位是百万 ⇒ 100 = 1 亿）
+      max_tokens: 100000000, warn_tokens: 80000000}),
+    // `V-238`：那两格改完立刻存（真后端写 user_data/ai/budget.json）
+    ai_set_budget: async (maxTokens) => {
+      M.bud = maxTokens;
+      if (!(maxTokens >= 5000)) return {ok: false, msg: "太小了（最小 5000）"};
+      return {ok: true, max_tokens: maxTokens, warn: Math.round(maxTokens * 0.8)};
+    },
+    ai_start: async (task, workdir, steps) => {
+      M.aiRun = {task: task, workdir: workdir, maxSteps: steps};
+      M.aiN = 0;
+      // ★ `V-250`：真宿主**动手之前**就给这个包存一条快照（`ai_snap.snapshot_before`，
+      //   `by="ai"` + `by_task`），然后**马上**通知界面刷新「版本快照」那一列。
+      //   预览这里照做一遍（不然"存完看不见"这个 bug 在预览里永远演不出来）。
+      M.aiSnap = null;
+      const rel = dirRel(String(workdir || ""));
+      if (rel && rel.indexOf("pkgs/") > 0){
+        const files = [], seen = new Set();
+        bkWalk(rel, files, seen);
+        const id = "20261004-0312-ai" + String((M.aiRunN = (M.aiRunN || 0) + 1));
+        M.bk = M.bk || [];
+        M.bk.push({id: id, group: bkGroupOf([rel]),
+                   title: "AI · 动手前：" + String(task || "").slice(0, 40),
+                   note: String(task || ""), by: "ai", by_task: String(task || ""),
+                   created: Date.now() / 1000, created_text: "(预览) AI 动手前",
+                   sources: [rel], files: files, new_objects: files.length, new_bytes: 0});
+        M.aiSnap = {id: id, group: bkGroupOf([rel])};
+      }
+      return {ok: true, workdir: workdir, model: "deepseek-flash"};
+    },
+    ai_poll: async () => {
+      // ★ 没交过任务就老老实实说"闲着"（`V-233`）：否则页面一挂载那次轮询
+      //   就会以为"已经在跑"，「开始」当场变灰 —— 场景里我先踩了这个坑。
+      if (!M.aiRun) return {ok: true, running: false, idle: true, steps: [], say: []};
+      const script = [
+        {n: 1, tool: "spec", brief: '{"section": "pkg.json"}', note: "《3. pkg.json 字段表》"},
+        {n: 2, tool: "edit_file", brief: '{"path": "…\\\\run.py"}', note: "改好了：换了 1 处"},
+        {n: 3, tool: "run_moss", brief: '{"args": ":md5 abc"}', note: "退出码 0"},
+        {n: 4, tool: "done", brief: '{"summary": "加了 --dry-run"}', note: "收到。"},
+      ];
+      M.aiN = Math.min(script.length, (M.aiN || 0) + 1);
+      const running = M.aiN < script.length;
+      return {ok: true, running: running, task: (M.aiRun || {}).task || "",
+              steps: script.slice(0, M.aiN), say: [], seconds: 3.5,
+              max_tokens: 100000000,
+              // `V-250`：开工前那条快照 —— 存好了就报（第一条轮询就给，不等跑完）
+              snapshot: (M.aiN >= 1 ? (M.aiSnap || null) : null),
+              result: running ? null : {ok: true, reason: "验收通过", summary: "给 :md5 加了 --dry-run：只打印不落盘。",
+                caveats: "没测中文参数那条路。",
+                // 动了哪个文件：**照这次干活的地方算**（真后端也是绝对路径）——
+                // `ai-disk-refresh` 那条场景要靠它才认得出"盘上变了"的是哪一页
+                files: [String((M.aiRun || {}).workdir || "") + "\\run.py"],
+                folded: 0, snapshot: {id: "20261003-2130-ab12", group: "md5"},
+                usage: {prompt_tokens: 1200, completion_tokens: 90, total_tokens: 1290}}};
+    },
+    ai_stop: async () => ({ok: true, msg: "(预览) 已经让它停在下一轮"}),
+    // `V-243`：任务记录（真后端存 user_data/ai/runs/，重启还有个回顾）
+    ai_runs: async () => ({ok: true, runs: [
+      {id: "r-old", task: "给 :calc 支持指数和开方", steps: 6, ok: true,
+       reason: "验收通过", started_text: "2026-10-04 00:12:33",
+       usage: {prompt_tokens: 30000, completion_tokens: 1400, total_tokens: 31400},
+       files: [], summary: ""},
+      {id: "r-old2", task: "帮我补一下 agent.md", steps: 58, ok: false,
+       reason: "用户按了停止", started_text: "2026-10-03 23:40:02",
+       usage: {prompt_tokens: 90000, completion_tokens: 3000, total_tokens: 93000},
+       files: [], summary: ""}]}),
+    ai_run: async (id) => ({ok: true, run: {id: id, task: "给 :calc 支持指数和开方",
+      ok: true, reason: "验收通过", summary: "本来就有，写法：2^10 / sqrt(16) / 27^(1/3)",
+      caveats: "", files: [], usage: {prompt_tokens: 30000, completion_tokens: 1400,
+      total_tokens: 31400}, steps: [
+        {n: 1, tool: "spec", brief: '{"section": "pkg.json"}', note: "《3. pkg.json 字段表》", ms: 3},
+        {n: 2, tool: "read_file", brief: '{"path": "…/run.py"}', note: "共 395 行", ms: 5},
+        {n: 3, tool: "run_moss", brief: '{"args": ":calc 2^10"}', note: "退出码 0", ms: 900},
+        {n: 4, tool: "done", brief: '{"summary": "本来就有"}', note: "收到。", ms: 1}]}}),
+    ai_run_forget: async (id, all) => ({ok: true, removed: 1}),
     run_start: async (pid, args, cwd) => {
       (M.runs = M.runs || []).push({pid: pid, args: args, cwd: cwd});
       return {ok: true, run_id: "r1", pid: 1};
@@ -386,6 +478,7 @@ MOCK_JS = r"""
     // ---- 内嵌界面（`V-48`）那四个接口。预览里"包的后端"是假的：就地回几条，
     //      协议跟真的一模一样（真后端是那个包的进程，在 stdio 上说 JSON 行）----
     embed_start: async (pid) => {
+      (M.embedStarts = M.embedStarts || []).push(pid);
       M.embed = {pid: pid, t: setInterval(() => {
         const d = new Date();
         window.__mossEmbedFromBackend(pid, JSON.stringify({event: "time", data: {
@@ -397,13 +490,49 @@ MOCK_JS = r"""
     },
     embed_send: async (pid, line) => {
       let req = {};
-      try { req = JSON.parse(line); } catch(e){}
-      // `V-200`：记下"哪个包、调了什么" —— 场景靠它证明"页面真的转起来了"（iframe 是
+      try { req = JSON.parse(line); } catch(e){}      // `V-200`：记下"哪个包、调了什么" —— 场景靠它证明"页面真的转起来了"（iframe 是
       // 别的源，父页面读不到里面，只能从这一侧看）
       (M.embedCalls = M.embedCalls || []).push({pid: pid, method: req.method});
       const reply = (result) => window.__mossEmbedFromBackend(pid, JSON.stringify(
         {id: req.id, ok: true, result: result}));
       const d = new Date();
+      // ---- img 那个包（`V-225`）：内嵌界面的假后端（bootstrap / scan / 拖放）
+      const IMG_SCAN = {ok: true, dir: "(预览)", count: 0, exts: [], files: [], message: ""};
+      const IMG_BOOT = {
+        ok: true, apiVersion: 1, embedded: true, sourceDir: "(预览)", scan: IMG_SCAN,
+        dataDir: "(预览) state/img", history: [],
+        config: {save_mode: "separate", output_format: "jpg", quality: 80, width: "",
+                 ico_sizes: [16, 32, 48, 256], output_dir: "", source_filter: {}, history: []},
+        formats: ["jpg", "png", "webp", "ico"],
+        saveModes: ["separate", "source", "source_delete"],
+        icoSizes: [16, 32, 48, 256], supportedExts: [".jpg", ".png", ".webp"],
+        maxExpand: 50, thumbLimit: 100, thumbBox: 240, historyLimit: 20,
+        theme: "light",
+        accent: {accent: "#0078d4", "accent-fg": "#ffffff", "accent-press": "#0065b3",
+                 ring: "rgba(0,120,212,.45)", "field-focus": "rgba(0,120,212,.15)"},
+        log: ""};
+      // ---- dazi（打字练习）：内嵌时页面第一件事就是问 bootstrap / stats
+      //      （和 exec / img 一样，走「一份界面两种跑法」那条路）
+      const DAZI_STATS = {
+        ok: true, embedded: true, apiVersion: 1, version: "0.1.0（预览）",
+        modes: [{id: "level", label: "闯关", desc: "(预览) 一关一关来", timed: false, duration_ms: 0},
+                {id: "blitz", label: "60 秒挑战", desc: "(预览)", timed: true, duration_ms: 60000},
+                {id: "code", label: "代码符号", desc: "(预览)", timed: true, duration_ms: 60000},
+                {id: "number", label: "数字键位", desc: "(预览)", timed: true, duration_ms: 60000}],
+        levels: Array.from({length: 12}, (_, i) => ({level: i + 1, words: 13 + i,
+                 target_wpm: 15 + 3 * i, stars: i < 2 ? 2 : 0})),
+        max_level: 12, cleared: 2, stars: {"1": 2, "2": 1}, modes_stat: {},
+        best: {wpm: 42.5, acc: 0.97, score: 410, combo: 18},
+        totals: {rounds: 12, chars: 1800, keys: 1900, errors: 100, ms: 600000},
+        settings: {auto_next: true, sound: false},
+        recent: [{at: "10-03 20:15", mode: "level", level: 2, wpm: 42.5, acc: 0.97,
+                  score: 410, stars: 2, chars: 150, sec: 32.0}],
+        top_mistakes: [{ch: "t", n: 9}, {ch: ";", n: 4}],
+        bank: {words: [100, 200, 300, 400], code: 50, number: "每组 4~7 位"},
+        data_dir: "(预览) state/dazi/data", updated: "2026-10-03 20:15:00",
+        host: {pid: 4242, python: "3.12（预览）", cwd: "(预览)"},
+        appearance: {theme: "light", accent: "#0078d4"}};
+
       // ---- path 那个包（`V-200`）：一份假的 PATH 状态，够页面画出来
       const pstate = () => ({
         ok: true, count: 4,
@@ -421,22 +550,79 @@ MOCK_JS = r"""
       else if (req.method === "add" || req.method === "remove" || req.method === "dedup" ||
                req.method === "drop_missing")
         reply({ok: true, msg: "(预览) " + req.method, state: pstate()});
+      else if (req.method === "probe_path") {
+        // `V-211`：页面那颗「添加」/ 拖放先进这里问"这是啥" —— 拖进来的目录**只进草稿**，
+        //   所以这个场景要看到 `probe_path`、**不该**看到任何写注册表的调用。
+        (M.probed = M.probed || []).push(req.params.path);
+        reply({ok: true, kind: "dir", path: req.params.path, msg: "目录"});
+      }
+      else if (req.method === "save") {
+        (M.savedPaths = M.savedPaths || []).push(req.params.paths || []);
+        reply({ok: true, msg: "(预览) 已保存 " + ((req.params.paths || []).length) + " 条",
+               state: pstate()});
+      }
       else if (req.method === "add_many")
         reply({ok: true, msg: "(预览) 加了 " + ((req.params.paths || []).length) + " 条",
                state: pstate()});
       else if (req.method === "pick_dir") reply({ok: true, path: "D:\\\\预览选的目录"});
-      else if (req.method === "backup_create")
+      else if (req.method === "backup_create") {
+        // `V-209`：把"用户起的名字"记下来（场景要断言起名那条路）
+        (M.madeBackups = M.madeBackups || []).push(req.params.name || "");
         reply({ok: true, msg: "(预览) 已备份 4 条", file: "(预览)", state: pstate()});
+      }
+      else if (req.method === "backup_rename") {
+        (M.renamed = M.renamed || []).push({file: req.params.file, name: req.params.name});
+        reply({ok: true, msg: "(预览) 已改名为：" + req.params.name, state: pstate()});
+      }
       else if (req.method === "backup_list") reply({ok: true, state: pstate(), items: [
-        {file: "(预览) path_backup_20261002_120000.txt", time: "2026-10-02 12:00:00",
-         stamp: "20261002_120000", total: 4, add: 1, remove: 0, legacy: false, paths: []},
-        {file: "(预览) path_backup_20250101_010101.txt", time: "2025-01-01 01:01:01",
-         stamp: "20250101_010101", total: 3, add: 0, remove: 1, legacy: true, paths: []}]});
+        {file: "(预览) 改注册表之前.txt", name: "改注册表之前", time: "2026-10-03 01:20:00",
+         sort: "20261003_012000", total: 4, add: 1, remove: 0, legacy: false, paths: []},
+        {file: "(预览) path_backup_20261002_120000.txt", name: "", time: "2026-10-02 12:00:00",
+         sort: "20261002_120000", total: 4, add: 1, remove: 0, legacy: false, paths: []},
+        {file: "(预览) path_backup_20250101_010101.txt", name: "", time: "2025-01-01 01:01:01",
+         sort: "20250101_010101", total: 3, add: 0, remove: 1, legacy: true, paths: []}]});
       else if (req.method === "backup_preview")
         reply({ok: true, add: ["D:\\\\tools\\\\bin"], remove: ["D:\\\\已经没了的目录\\\\bin"],
                paths: [], msg: "会加 1 条、去掉 1 条", state: pstate()});
       else if (req.method === "backup_restore" || req.method === "backup_delete")
         reply({ok: true, msg: "(预览) " + req.method, state: pstate()});
+      // ---- dazi（打字练习）：真形状的假后端（少了字段页面会在 mounted 里抛）
+      else if (pid === "dazi" && (req.method === "bootstrap" || req.method === "stats"))
+        reply(DAZI_STATS);
+      else if (pid === "dazi" && req.method === "new_round")
+        reply({ok: true, round_id: "preview-1", mode: "level", level: 1,
+               words: ["cat", "dog", "sun"], duration_ms: 0,
+               target: {wpm: 15, acc: 0.9}, total: 3});
+      else if (pid === "dazi" && req.method === "tick")
+        reply({ok: true, wpm: 38.5, acc: 0.94, score: 290, combo: 2,
+               elapsed_ms: (req.params || {}).elapsed_ms || 0, remain_ms: 0, over: false});
+      else if (pid === "dazi" && req.method === "info")
+        reply({ok: true, pid: 4242, python: "3.12（预览）", cwd: "(预览)", embedded: true});
+      // ---- exec / img 那两个包（`V-222` / `V-225`）：内嵌时页面**第一件事**就是问 bootstrap，
+      //      回一份真形状的（少了它页面会抛错 —— 那也正是这个场景要盯的）。
+      //      ★ 两个包的 `bootstrap` 长得**不一样**（img 的 formats 是数组、exec 的是对象目录），
+      //        所以按 `pid` 分开回 —— 回错了页面就在 boot 里炸（踩过一次）。
+      else if (req.method === "bootstrap")
+        reply(pid === "img" ? IMG_BOOT : {
+          ok: true, apiVersion: 2, embedded: true, dataDir: "(预览) state/exec/cmds",
+          theme: "light",
+          accent: {theme: "light", accent: "#0078d4", "accent-fg": "#ffffff",
+                   "accent-press": "#0065b3", ring: "rgba(0,120,212,.45)",
+                   "field-focus": "rgba(0,120,212,.15)"},
+          picker: [{id: "command", label: "命令行", types: ["shell"], icon: "terminal"}],
+          pickerDefault: {command: "shell"},
+          newTypes: [{id: "shell", label: "CMD 命令", icon: "terminal", hint: "(预览)"}],
+          types: {shell: {label: "CMD 命令", kind: "proc", lang: "bash", multiline: true,
+                          payload: "命令", hint: "(预览)"}},
+          afterActions: [{id: "none", label: "什么都不做"}],
+          placeholders: [{token: "{args}", desc: "本次输入的参数"}],
+          commands: [{alias: "ping", type: "shell", description: "(预览) 测延迟",
+                      code: "ping -n 2 127.0.0.1", codes: {shell: "ping -n 2 127.0.0.1"},
+                      cwd: "", env: "", elevated: false, after: "none"}]});
+      else if (req.method === "cmd_list") reply({ok: true, commands: []});
+      else if (req.method === "scan") reply(IMG_SCAN);
+      else if (req.method === "take_drop") reply({ok: true, pending: false});
+      else if (req.method === "push_drop") reply({ok: true});
       // ---- bmi 那个包
       else if (req.method === "now") reply({text: d.toTimeString().slice(0, 8),
         date: d.toISOString().slice(0, 10), week: "一二三四五六日"[d.getDay()],
@@ -659,7 +845,8 @@ MOCK_JS = r"""
       (M.winIcons = M.winIcons || []).push({pid: pid, len: String(b64 || "").length});
       return {ok: true, msg: "(预览) 图标换好了"};
     },
-    pkg_stop: async () => ({ok: true, msg: "(预览) 已停止"}),
+    pkg_stop: async (pid) => { (M.pkgStops = M.pkgStops || []).push(pid);
+                               return {ok: true, msg: "(预览) 已停止"}; },
     pkg_hide: async () => ({ok: true, msg: "(预览) 已隐藏"}),
     pkg_show: async () => ({ok: true, msg: "(预览) 已显示"}),
     fs_list: async (rel) => {
@@ -763,10 +950,13 @@ MOCK_JS = r"""
     fs_roots: async () => ({roots: []}),
     // ---- 备份（`V-87`）-----------------------------------------------------
     backup_list: async (group) => {
+      M.bkCalls = (M.bkCalls || 0) + 1;          // `V-250`：数一下"问过几次快照列表"（场景要看刷新）
       const gwant = String(group || "");
       const all = (M.bk || []).filter(b => !gwant || (b.group || "@misc") === gwant);
       const items = all.map(b => ({
         id: b.id, group: b.group || "@misc", title: b.title, note: b.note, created: b.created,
+        // `V-236`：谁存的 + 那次的任务原文（界面靠它画「AI」徽章、筛选、清 AI 的那颗按钮）
+        by: b.by || "", by_task: b.by_task || "",
         created_text: b.created_text, sources: b.sources,
         files: b.files.length, bytes: b.files.reduce((s, e) => s + e.size, 0),
         new_objects: b.new_objects, new_bytes: b.new_bytes, skipped: 0, errors: 0}));
@@ -956,8 +1146,7 @@ MOCK_JS = r"""
     pick_dir: async () => ({ok: true, path: "D:\\预览选的目录"}),
     // 点路径里某一段（`V-198`）：真后端是 os.startfile 打开那一级；这里记下来给场景断言
     open_path: async (p) => { (M.opened = M.opened || []).push(String(p)); return {ok: true}; },
-    backup_delete: async (id) => {
-      M.bk = M.bk || [];
+    backup_delete: async (id) => {      M.bk = M.bk || [];
       const at = M.bk.findIndex(x => x.id === id);
       if (at < 0) return {ok: false, msg: "(预览) 没有这次备份：" + id};
       M.bk.splice(at, 1);
@@ -966,6 +1155,15 @@ MOCK_JS = r"""
       return r;
     },
     backup_gc: async (dryRun) => bkSweep(!!dryRun),
+    // `V-236`：只删 AI 存的（真后端走 `BackupStore.delete_ai()`，逐条看 `by`）
+    backup_rm_ai: async (group) => {
+      (M.rmAi = M.rmAi || []).push(String(group || ""));
+      const mine = (M.bk || []).filter(b => (b.by || "") !== "ai");
+      const gone = (M.bk || []).filter(b => (b.by || "") === "ai").map(b => b.id);
+      M.bk = mine;
+      return {ok: true, deleted: gone, skipped: mine.map(b => b.id),
+              msg: "清掉 " + gone.length + " 条 AI 存的快照（你存的 " + mine.length + " 条一条没动）"};
+    },
     backup_check: async (id) => {
       const objs = M.bkObj || {};
       const rows = (M.bk || []).filter(b => !id || b.id === id).map(b => {
@@ -1017,6 +1215,30 @@ MOCK_JS = r"""
                   setTab("file");
           await sleep(350);
           await fmOpenPage("system/pkgs/md5/run.py");
+          await sleep(500);
+          {   // 高亮（`V-249`）：`extOf` 认出来的语言 + 真画上去的 `<span>`
+            //   ★ 只查 `window.hljs` 是抓不住的 —— 库里在、`getLanguage("python")` 也给对象，
+            //     但 `lang` 是 `plaintext` 时它一个字都不上色。所以两条都断言：
+            //     ① `extOf({name,ext}).l` 判对语言；② 编辑器里真有上色用的 `<span>`。
+            const t0 = (typeof fmActiveTab === "function") ? fmActiveTab() : null;
+            const code = document.querySelector(".editor pre code") ||
+                         document.querySelector("pre code.hljs") || document.querySelector("pre code");
+            const ePy = extOf({name: "run.py", ext: "py"});
+            const eMd = extOf({name: "README.md", ext: "md"});
+            const eJs = extOf({name: "a.json", ext: "json"});
+            const spans = code ? code.querySelectorAll("span").length : -1;
+            const hit = code ? code.querySelectorAll("span[class^='hljs-']").length : -1;
+            const ok = (t0 && t0.lang === "python") && spans > 0 && hit > 0 &&
+                       ePy.l === "python" && eMd.l === "markdown" && eJs.l === "json";
+            document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+              " extOf=" + [ePy.l, eMd.l, eJs.l].join("/") +
+              " lang=" + (t0 ? t0.lang : "无页") + " span=" + spans + " hljs-span=" + hit +
+              (code ? " 字数=" + code.textContent.length : " 无 code");
+            document.title = ok ? "READY"
+              : ("HL-FAIL extOf=" + [ePy.l, eMd.l, eJs.l].join("/") +
+                 " lang=" + (t0 ? t0.lang : "无页") + " span=" + spans + " hljs=" + hit);
+            return;
+          }
         }
         if (h === "pkg-console") setTab("console");
         if (h === "edit-manifest" || h === "edit-manifest-detail"){
@@ -1469,38 +1691,99 @@ MOCK_JS = r"""
         bkSet("#snapwin #snap-title", "差异用");
         (document.querySelector("#snapwin #snap-save") || {click(){}}).click();
         await sleep(1200);
-        // ② 造四种状态：变大的 / 快照里有现在没了的 / 后加的 / 空的（空的已在快照里）
+        // ② 造五种状态：变大的 / 变小的 / 快照里有现在没了的 / 后加的 / 空的（空的已在快照里）
         big.size = (big.size || 0) + 4096;
+        // 找一个"两边都有、要让它变小"的（和被删那个、大的、空的都错开）
         const gone = es.find(e => !e.dir && e.name !== big.name && e.name !== "空的.txt");
         FS[rel].entries = FS[rel].entries.filter(e => e !== gone);
+        const small = FS[rel].entries.find(e => !e.dir && e.name !== big.name && e.name !== "空的.txt");
+        if (small) small.size = Math.max(1, (small.size || 800) - 500);
+        // 再造一个"两边都一样"的（快照里没动、盘上也没动）—— 它该是灰的
+        const same = FS[rel].entries.find(e => !e.dir && e.name !== big.name &&
+                                               e.name !== "空的.txt" && e !== small);
         FS[rel].entries.push({name: "新加的.txt", rel: rel + "/新加的.txt", dir: false,
                               size: 12, mtime: 0, ext: "txt"});
         fmRefresh();
         await sleep(1500);
         const q = s => document.querySelector(s);
         const cls = s => ((q(s) || {}).className || "");
-        const deepLeft = cls('#fm-body tr.row[data-rel$="/' + big.name + '"]');
-        const deepRight = cls('.bk-snap .bk-file[data-rel$="/' + big.name + '"]');
-        const goneRight = cls('.bk-snap .bk-file[data-rel$="/' + gone.name + '"]');
-        const goneLeft = cls('#fm-body tr.row[data-rel$="/' + gone.name + '"]');
-        const newLeft = cls('#fm-body tr.row[data-rel$="/新加的.txt"]');
-        const newRight = cls('.bk-snap .bk-file[data-rel$="/新加的.txt"]');
-        const emptyBoth = cls('.bk-snap .bk-file[data-rel$="/空的.txt"]');
+        const sel = (base, name) => base + '[data-rel$="/' + name + '"]';
+        const L = n => sel("#fm-body tr.row", n), R = n => sel(".bk-snap .bk-file", n);
+        const deepLeft = cls(L(big.name));
+        const deepRight = cls(R(big.name));
+        const goneRight = cls(R(gone.name));
+        const goneLeft = cls(L(gone.name));
+        const newLeft = cls(L("新加的.txt"));
+        const newRight = cls(R("新加的.txt"));
+        const emptyBoth = cls(R("空的.txt"));
         const path = (q(".bk-snap .bk-mpath") || {}).textContent || "";
         const has = (s, c) => (" " + s + " ").indexOf(" " + c + " ") >= 0;
+        // ★ `V-250`：**按你的话把颜色当数字量出来**（不看截图）——
+        //   · 变大/变小：同一个琥珀，谁大谁更深（比 hsl 的 l）
+        //   · 添加/缺少：**同一个蓝**（比 hue），深浅不同（比 l）
+        //   · 变化那一族 和 增删那一族：**不同色**（比 hue 差 > 60°）
+        //   · 没变化：灰（饱和度接近 0）
+        const rgb = s => (String(s).match(/\d+/g) || [0, 0, 0]).map(Number).slice(0, 3);
+        const hsl = ([r, g, b]) => {
+          r /= 255; g /= 255; b /= 255;
+          const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+          let h = 0, sa = 0;
+          if (mx !== mn){
+            const d = mx - mn;
+            sa = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+            h = mx === r ? ((g - b) / d + (g < b ? 6 : 0)) : (mx === g ? ((b - r) / d + 2) : ((r - g) / d + 4));
+            h *= 60;
+          }
+          return {h: Math.round(h), s: +sa.toFixed(2), l: +l.toFixed(2)};
+        };
+        const colOf = s => { const el = q(s); return el ? hsl(rgb(getComputedStyle(el).color)) : null; };
+        const nearHue = (a, b, tol) => !!a && !!b &&
+              (Math.abs(a.h - b.h) <= tol || Math.abs(a.h - b.h) >= 360 - tol);
+        const mark = s => { const el = q(s + " .bk-fmark"); return el ? el.textContent.trim() : "（缺）"; };
+        const cBigL = colOf(L(big.name)), cBigR = colOf(R(big.name));
+        const cSmlL = colOf(L(small.name)), cSmlR = colOf(R(small.name));
+        const cNewL = colOf(L("新加的.txt")), cNewR = colOf(R("新加的.txt"));
+        const cGoneR = colOf(R(gone.name));
+        const cSameR = colOf(R(same.name));
+        const cEmptyR = colOf(R("空的.txt"));
+        // 图标：边栏那一行和文件管理那张表**同一张图**（都出自 fileIconHTML）
+        const icoL = (q(L(big.name) + " .nmcell span[style]") || {}).getAttribute
+                       ? q(L(big.name) + " .nmcell span[style]").getAttribute("style") : "";
+        const icoR = q(R(big.name) + " .bk-fico span[style]")
+                       ? q(R(big.name) + " .bk-fico span[style]").getAttribute("style") : "";
+        const icoOk = !!q(R(big.name) + " .bk-fico svg") && !!icoL && icoL === icoR;
+        const marks = [mark(R("新加的.txt")), mark(R(gone.name)), mark(R(big.name)),
+                       mark(R(small.name)), mark(R(same.name))].join("");
         const ok = path.indexOf(rel) >= 0 &&
+                   // ① 变了：同一个琥珀、谁大谁更深（"更深" = 明度更低，见 `--df-chg` / `--df-chg-soft`）
                    has(deepLeft, "df-chg") && has(deepLeft, "df-deep") &&
                    has(deepRight, "df-chg") && has(deepRight, "df-soft") &&
-                   has(goneRight, "df-gone") && !goneLeft &&
-                   has(newLeft, "df-new") && !newRight &&
-                   has(emptyBoth, "df-empty");
+                   nearHue(cBigL, cBigR, 6) && cBigL.l < cBigR.l &&
+                   nearHue(cSmlL, cSmlR, 6) && cSmlR.l < cSmlL.l &&
+                   // ② 增删：同一个蓝（添加深、缺了浅），而且和"变了"那一族不同色
+                   has(newLeft, "df-new") && has(newRight, "df-new") && has(goneRight, "df-gone") &&
+                   !goneLeft && nearHue(cNewL, cGoneR, 14) && cNewR.l < cGoneR.l &&
+                   !nearHue(cBigL, cNewL, 40) &&
+                   // ③ 没变化 = 灰；空文件也是灰
+                   has(cls(R(same.name)), "df-same") && cSameR.s <= 0.15 && cEmptyR.s <= 0.15 &&
+                   has(emptyBoth, "df-empty") &&
+                   // ④ 记号：+ − ↑ ↓，没变化的没有记号
+                   marks === "+−↑↓" &&
+                   // ⑤ 图标（和文件管理同一套）
+                   icoOk;
+        const fmt = c => c ? (c.h + "°/" + c.s + "/" + c.l) : "无";
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 路径=" + JSON.stringify(path) +
-          " 变大(左/右)=" + JSON.stringify([deepLeft, deepRight]) +
-          " 快照独有(右)=" + JSON.stringify(goneRight) +
-          " 后加(左/右)=" + JSON.stringify([newLeft, newRight]) +
-          " 空文件(右)=" + JSON.stringify(emptyBoth);
-        document.title = ok ? "READY" : "DIFF-FAIL";
+          "\n变大 左/右 = " + JSON.stringify([deepLeft, deepRight]) + "  色 " + fmt(cBigL) + " → " + fmt(cBigR) +
+          "\n变小 左/右 = " + JSON.stringify([cls(L(small.name)), cls(R(small.name))]) +
+            "  色 " + fmt(cSmlL) + " → " + fmt(cSmlR) +
+          "\n添加 左/右 = " + JSON.stringify([newLeft, newRight]) + "  色 " + fmt(cNewL) + " → " + fmt(cNewR) +
+          "\n缺少 右 = " + JSON.stringify(goneRight) + "  色 " + fmt(cGoneR) +
+          "\n没变化 右 = " + JSON.stringify(cls(R(same.name))) + "  色 " + fmt(cSameR) +
+          "\n记号（加/缺/大/小/同）= " + JSON.stringify(marks) + " · 图标和左边一样 = " + icoOk;
+        document.title = ok ? "READY" : ("DIFF-FAIL " + JSON.stringify(
+          {颜色: [fmt(cBigL), fmt(cBigR), fmt(cSmlL), fmt(cSmlR), fmt(cNewL), fmt(cGoneR)],
+           记号: marks, 图标: icoOk, 类: [deepLeft, deepRight, goneRight, newLeft, newRight, cls(R(same.name))]}));
         return;
       }
       // ★ 「整份界面里的按钮，一个描边都不许有」（`V-92`，你的原话："所有按钮全都带一个外边框"）。
@@ -2084,6 +2367,98 @@ MOCK_JS = r"""
       // ★ 备份那一页（`V-87`）：建一次 → 列表/清单出来 → 看内容 → 再来一次（该全去重）
       //   → 删掉一次并回收。判定都落在**能看见的东西**上（DOM 里的文字/条数）。
       // ★ 版本快照边栏（`V-91`）：建两次 → 展开看文件/内容 → 删一次（去重靠"内容块"不变验证）
+      // ★ `V-236`：快照列表要能分辨"谁存的"，而且**只清 AI 的**。
+      //   判据是清单真字段 `by`（不是标题里的字）—— 所以这里故意让 AI 那条标题里
+      //   带「AI · 动手前」，人存那条**也**放个"AI"字样进去，看它会不会被骗。
+      if (h === "snap-by"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        setTab("file");
+        await sleep(500);
+        const snap = document.querySelector(".bk-snap");
+        if (!snap){ document.title = "SNAPBY-NO-PANE"; return; }
+        M.bk = [
+          {id: "me1", group: p0.id, title: "我自己存的（顺手提了句 AI）", note: "",
+           by: "", by_task: "", created: 1, created_text: "2026-10-03 20:00:00",
+           files: [{rel: "user/pkgs/md5/run.py", fp: "f1", size: 10, mtime: 1}],
+           new_objects: 1, new_bytes: 10},
+          {id: "ai1", group: p0.id, title: "AI · 动手前", note: "[AI] 工作台动手前自动存的",
+           by: "ai", by_task: "把 md5 改成支持 --upper", created: 2,
+           created_text: "2026-10-03 21:00:00",
+           files: [{rel: "user/pkgs/md5/run.py", fp: "f1", size: 10, mtime: 1}],
+           new_objects: 1, new_bytes: 10},
+        ];
+        M.rmAi = [];
+        BK.byFilter = "";
+        // 直接把两行喂给组件（真跑时是 `refresh()` 去问后端；预览里不绕那一圈）
+        BK.items = [
+          {id: "me1", group: p0.id, title: "我自己存的（顺手提了句 AI）", note: "",
+           by: "", by_task: "", created: 1, created_text: "2026-10-03 20:00:00",
+           files: 1, bytes: 10, sources: []},
+          {id: "ai1", group: p0.id, title: "AI · 动手前", note: "[AI] 工作台动手前自动存的",
+           by: "ai", by_task: "把 md5 改成支持 --upper", created: 2,
+           created_text: "2026-10-03 21:00:00",
+           files: 1, bytes: 10, sources: []},
+        ];
+        await sleep(400);
+        const bar = document.querySelector(".bk-snap .bk-bybar");
+        const chips = [].slice.call(document.querySelectorAll(".bk-snap .bk-byf")).map(e => e.textContent.trim());
+        const rowsAll = document.querySelectorAll(".bk-snap .bk-tl-item[data-bk]").length;
+        const badge = document.querySelector(".bk-snap .bk-tl-item[data-bk='ai1'] .bk-ai");
+        const badgeTip = badge ? (badge.getAttribute("title") || "") : "";
+        const noBadgeOnMine = !document.querySelector(".bk-snap .bk-tl-item[data-bk='me1'] .bk-ai");
+        const cleanBtn = document.querySelector(".bk-snap .bk-byc");
+        const cleanTxt = cleanBtn ? cleanBtn.textContent.trim() : "";
+        // 筛「我存的」：只剩 me1（哪怕它标题里也写着"AI"两个字）
+        const mineChip = [].slice.call(document.querySelectorAll(".bk-snap .bk-byf")).find(e => /我存的/.test(e.textContent));
+        mineChip && mineChip.click();
+        await sleep(300);
+        const rowsMine = [].slice.call(document.querySelectorAll(".bk-snap .bk-tl-item[data-bk]"))
+                            .map(e => e.dataset.bk);
+        // 筛「AI 存的」：只剩 ai1
+        const aiChip = [].slice.call(document.querySelectorAll(".bk-snap .bk-byf")).find(e => /AI 存的/.test(e.textContent));
+        aiChip && aiChip.click();
+        await sleep(300);
+        const rowsAi = [].slice.call(document.querySelectorAll(".bk-snap .bk-tl-item[data-bk]"))
+                          .map(e => e.dataset.bk);
+        // 点「清掉 AI 的」→ 确认 → 真调 backup_rm_ai，而且**我那条还在**
+        (document.querySelector(".bk-snap .bk-byc") || {click(){}}).click();
+        await sleep(400);
+        const asked = /AI 存的/.test((document.querySelector("#m-text") || {}).textContent || "");
+        (document.querySelector("#m-ok") || {click(){}}).click();
+        await sleep(800);
+        const called = (M.rmAi || []).length === 1;
+        const left = (M.bk || []).map(b => b.id);
+        // 回到「全部」看剩下什么
+        const allChip = [].slice.call(document.querySelectorAll(".bk-snap .bk-byf")).find(e => /全部/.test(e.textContent));
+        allChip && allChip.click();
+        await sleep(300);
+        const rowsAfter = document.querySelectorAll(".bk-snap .bk-tl-item[data-bk]").length;
+        const toastTxt = [].slice.call(document.querySelectorAll("#toasts *")).map(e => e.textContent).join(" ");
+        const noErr = !(window.__errors || []).length;
+        const ok = !!bar && rowsAll === 2 && !!badge && /md5 改成支持/.test(badgeTip) &&
+                   noBadgeOnMine && /1/.test(cleanTxt) &&
+                   rowsMine.length === 1 && rowsMine[0] === "me1" &&
+                   rowsAi.length === 1 && rowsAi[0] === "ai1" &&
+                   asked && called && left.length === 1 && left[0] === "me1" &&
+                   rowsAfter === 1 && /你存的 1 条一条没动/.test(toastTxt) && noErr;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n筛选条在 = " + !!bar + "  三个筛子 = " + JSON.stringify(chips) +
+          "\n列表条数 = " + rowsAll + "（AI 徽章 = " + !!badge + "，人存那条没徽章 = " + noBadgeOnMine + "）" +
+          "\n徽章提示里带那次的任务 = " + JSON.stringify(badgeTip.slice(0, 40)) +
+          "\n「清掉 AI 的」按钮 = " + JSON.stringify(cleanTxt) +
+          "\n筛「我存的」→ " + JSON.stringify(rowsMine) + "；筛「AI 存的」→ " + JSON.stringify(rowsAi) +
+          "\n确认框文案对不对 = " + asked + "、真调了 backup_rm_ai = " + called +
+          "\n清完剩下的 = " + JSON.stringify(left) + "（列表 " + rowsAfter + " 条）" +
+          "\n提示条 = " + toastTxt.slice(0, 60) +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+                            : ("SNAPBY-FAIL bar=" + (bar ? 1 : 0) + " badge=" + (badge ? 1 : 0) +
+                               " mine=" + rowsMine.join(",") + " ai=" + rowsAi.join(",") +
+                               " rm=" + (called ? 1 : 0) + " left=" + left.join(",") +
+                               " err=" + (window.__errors || []).length);
+      }
       if (h === "backup"){
         const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
         select(p0.id);
@@ -2597,7 +2972,10 @@ MOCK_JS = r"""
         await sleep(350);
         const idsPng = listIds();
         const imgIn = idsPng.indexOf("img") >= 0;
-        const upperOk = (window.extOf("a.PNG") === "png") && (window.extOf(".gitignore") === "");
+        // ★ 名字 → 扩展名那个助手在 `V-249` 从 `extOf` 改名成 `extFromName` 了
+        //   （`extOf` 被 `core.js` 里收对象的那个占着，同名的会被后加载的盖掉）。
+        const upperOk = (window.extFromName("a.PNG") === "png") &&
+                        (window.extFromName(".gitignore") === "");
         dragEnd();
         await sleep(200);
         // ③ 拖一个**名字里带点的文件夹**：img 收文件夹，扩展名规矩不该管到它
@@ -2830,12 +3208,15 @@ MOCK_JS = r"""
         const srcOk = /path\/ui\/index\.html$/.test(src.replace(/\\\\/g, "/").replace(/\\/g, "/"));
         const calls = (M.embedCalls || []).map(c => c.method);
         const asked = calls.indexOf("info") >= 0 && calls.indexOf("state") >= 0;
-        // ★ `V-201`：拖一个文件夹进来 —— 应该**送进内嵌那一帧**（而不是再起一个命令行进程），
-        //   页面收到 `drop` 事件后调 `add_many`。这一条把"拖放 → 内嵌界面"整条路验穿。
+        // ★ `V-201` / `V-211`：拖一个文件夹进来 —— 应该**送进内嵌那一帧**（而不是再起一个
+        //   命令行进程）；页面收到 `drop` 后先 `probe_path` 问"这是啥"，**只进草稿** ——
+        //   所以这一拖**不该**出现任何写注册表的调用（`save` / `add_many`）。
         window.__mossDrop([{path: "D:\\\\tools\\\\新拖进来的", isDir: true,
                             dir: "D:\\\\tools\\\\新拖进来的", name: "新拖进来的"}]);
         await sleep(700);
-        const dropped = (M.embedCalls || []).some(c => c.method === "add_many");
+        const dropped = (M.embedCalls || []).some(c => c.method === "probe_path");
+        const noWrite = !(M.embedCalls || []).some(c => c.method === "save" ||
+                          c.method === "add_many" || c.method === "add");
         const noErr = !(window.__errors || []).length;
         // ★ `V-204` / `V-205`：那一帧报"有人拖着东西在我头上"时，**罩子要打开**（把拖放接到
         //   我们这侧，真实路径才拿得到）、**要显示提示**、**左边列表不许跟着筛**（那一拖是给
@@ -2849,6 +3230,9 @@ MOCK_JS = r"""
           items: [{webkitGetAsEntry: () => ({isDirectory: true, name: "x"})}]};
         document.dispatchEvent(fakeDrag);
         await sleep(200);
+        // `V-227`：拖动一开始，**我们自己的投放框**是出来的（这一拖默认是"给这个包跑命令行"）
+        const dzEl = document.querySelector("#dropzone");
+        const dzOnBefore = !!dzEl && dzEl.classList.contains("on");
         window.frameDrag("path", "over");
         await sleep(200);
         const cat = document.querySelector("#dropcatcher");
@@ -2856,31 +3240,455 @@ MOCK_JS = r"""
                       getComputedStyle(cat).pointerEvents === "auto";
         // `V-206`：罩子**不画提示**（大的那个提示归那一帧自己）—— 屏幕上只能有一个"松手"
         const catBare = !!cat && !cat.querySelector(".dc-in") && cat.innerHTML.trim() === "";
+        // `V-227`：这一拖是**给那一帧的**，我们自己那颗"松手 = 运行 …"的框必须收起来 ——
+        //   它盖在 iframe 上（z-index 70），不收就是用户看到的**两个"松手"框**。
+        const dzOffOnFrame = !!dzEl && !dzEl.classList.contains("on");
         const rowsDuring = document.querySelectorAll("#list .item").length;
         const notFiltered = rowsDuring >= rowsBefore;
         const barTxt = ((document.querySelector("#dragbar") || {}).textContent || "")
                          .replace(/\s+/g, " ");
         const barFrame = /的界面上了/.test(barTxt);
+        // 离开那一帧 ⇒ 投放框该回来（别一去不回）
+        window.frameDrag("path", "out");
+        await sleep(200);
+        const dzBack = !!dzEl && dzEl.classList.contains("on");
+        const catOffEarly = !!cat && !cat.classList.contains("on");
         dragEnd();
         await sleep(200);
         const catOff = !!cat && !cat.classList.contains("on");
+        const dzOffEnd = !!dzEl && !dzEl.classList.contains("on");
         const rowsAfter = document.querySelectorAll("#list .item").length;
-        const ok = hasEmbed && tabShown && !!frame && srcOk && asked && dropped && catOn &&
-                   catBare && notFiltered && barFrame && catOff && rowsAfter === rowsBefore && noErr;
+        // ★ `V-209`（起名 / 改名）**没法在这个场景里验**：那些卡片和输入框都在**内嵌那一帧**
+        //   里面（预览里 iframe 是另一个源，父页面读不到它的 DOM）。所以那半边的证据是：
+        //   后端探针（起名/重名/洗字符/改名/列表不丢，全测过）+ 真机手点。
+        const ok = hasEmbed && tabShown && !!frame && srcOk && asked && dropped && noWrite &&
+                   catOn && catBare && notFiltered && barFrame &&
+                   dzOnBefore && dzOffOnFrame && dzBack && catOffEarly &&
+                   catOff && dzOffEnd &&
+                   rowsAfter === rowsBefore && noErr;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") +
           "\n声明了内嵌界面 = " + hasEmbed + "（" + JSON.stringify(p0.ui || null) + "）" +
           "\n「界面」选项卡出现 = " + tabShown +
           "\niframe = " + (frame ? src.slice(-40) : "（没有）") + "  地址对不对 = " + srcOk +
           "\n后端被问到 = " + JSON.stringify(calls) + "  （info+state 说明页面真的跑起来了）" +
-          "\n拖文件夹进来 → 送给内嵌界面（add_many）= " + dropped +
+          "\n拖文件夹进来 → 页面问后端 probe_path = " + dropped + "、**没写注册表** = " + noWrite +
           "\\n帧上拖动 → 罩子打开可用 = " + catOn + "、罩子本身不画提示 = " + catBare +
           "、左边**不筛** = " + notFiltered + "（" + rowsBefore + " → " + rowsDuring + " 行）" +
+          "\\n我们自己的投放框：拖起来时在 = " + dzOnBefore + "、**帧上拖动时收掉** = " + dzOffOnFrame +
+          "、离开那一帧又回来 = " + dzBack + "、拖完收掉 = " + dzOffEnd +
           "\n条上说的是「那一帧」= " + barFrame + "  |  " + barTxt.slice(0, 46) +
           "\n松手后罩子收掉 = " + catOff + "、列表复原 = " + (rowsAfter === rowsBefore) +
           "\n页内错误 = " + (window.__errors || []).length;
         if (ok) setTab("console");
         document.title = ok ? "READY" : "PATHUI-FAIL";
+      }
+      // ★ `V-216`：用户报的「提示跑完了、界面还显示在运行」——根因是**别的路径留下的进程**
+      //   （更早那次启动的孤儿）被算成"这个包在跑"，而那颗「停止」按钮以前**不去停它**、
+      //   反而又起了个内嵌后端 ⇒ 永远按不掉。这条场景钉住三件事：
+      //     ① 状态显示「停止」；② tooltip 里能看出**是谁**在跑（pid + 起始时间 + 命令行）；
+      //     ③ 点下去走的是 `pkg_stop`（真停它），**不是** `embed_start`。
+      if (h === "path-run-stop"){
+        const p0 = state.packages.find(x => x.id === "path");
+        if (!p0){ document.title = "NO-PATH-PKG"; return; }
+        M.stateOverride = {path: {running: true, pids: 1, windows: 0, visible: false,
+          titles: [], procs: [{pid: 4242, started: "10-02 14:05:30",
+            cmd: "python.exe D:\\\\...\\\\system\\\\bootstrap.py D:\\\\...\\\\system\\\\pkgs\\\\path\\\\main.py"}]}};
+        select("path");
+        await sleep(300);
+        await refreshAllStates();                    // 别等 2.5 秒那一轮
+        await sleep(200);
+        const btn = document.querySelector("#btn-run");
+        const btnTxt = (btn ? btn.textContent : "").replace(/\s+/g, "");
+        const showsStop = /停止/.test(btnTxt);
+        const tip = (btn && btn.getAttribute("title")) || "";
+        const tipKnows = /4242/.test(tip) && /10-02 14:05:30/.test(tip) && /pkgs/.test(tip);
+        const rowEl = Array.prototype.slice.call(document.querySelectorAll("#list .item"))
+                        .find(e => e.dataset.id === "path");
+        const rowIcon = rowEl ? rowEl.querySelector(".ic-run") : null;
+        const rowTip = rowIcon ? (rowIcon.getAttribute("title") || "") : "";
+        const rowKnows = /4242/.test(rowTip);
+        M.pkgStops = []; M.embedStarts = [];
+        await clickRun(p0);                           // 就是那颗按钮的处理器
+        await sleep(400);
+        const stopped = (M.pkgStops || []).length === 1 && M.pkgStops[0] === "path";
+        const notEmbedded = !(M.embedStarts || []).length;
+        const noErr = !(window.__errors || []).length;
+        const ok = showsStop && tipKnows && rowKnows && stopped && notEmbedded && noErr;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n按钮显示「停止」 = " + showsStop + "（" + btnTxt + "）" +
+          "\n顶栏 tooltip 说清是谁在跑 = " + tipKnows + "\n    " + tip.replace(/\n/g, " | ").slice(0, 140) +
+          "\n列表那颗 tooltip 也带 pid = " + rowKnows +
+          "\n点下去真的 pkg_stop 了 = " + stopped + "（" + JSON.stringify(M.pkgStops) + "）" +
+          "\n★ 没有反过来去起内嵌后端 = " + notEmbedded + "（" + JSON.stringify(M.embedStarts) + "）" +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+                            : ("RUNSTOP-FAIL 停=" + (showsStop ? 1 : 0) + " 顶栏=" + (tipKnows ? 1 : 0) +
+                               " 行=" + (rowKnows ? 1 : 0) + " stop=" + (stopped ? 1 : 0) +
+                               " 内嵌=" + (notEmbedded ? 0 : 1) + " 错=" + (window.__errors || []).length);
+      }
+      // ★ `V-222`：`exec` 也改成能内嵌了 —— 同样是"选中 → 「界面」选项卡 → 起后端 →
+      //   iframe 加载**真页面** → 垫片 postMessage → 宿主 embed_send → 后端答话"。
+      //   这条场景盯的是：① 选项卡出现、地址对；② 页面**真的问了后端 `bootstrap`**
+      //   （那一步过了，就说明 ESM 页面 + 垫片 + 宿主 + 后端这条链是通的）；
+      //   ③ 页内没报错（exec 的页面是 ESM，少一个字段就会在 mounted 里抛）。
+      if (h === "exec-ui"){
+        const p0 = state.packages.find(x => x.id === "exec");
+        if (!p0){ document.title = "NO-EXEC-PKG"; return; }
+        const hasEmbed = !!(p0.ui && p0.ui.embed);
+        select("exec");
+        await sleep(400);
+        const tabBtn = document.querySelector('.tab[data-tab="embed"]');
+        const tabShown = !!(tabBtn && !tabBtn.hidden);
+        M.embedCalls = [];
+        await embedOpen(p0);                       // = 点「运行」
+        await sleep(3000);                         // 等 iframe 加载 + ESM 起来 + 问后端
+        const frame = document.querySelector("#embed-wrap iframe[data-pid='exec']");
+        const src = frame ? (frame.getAttribute("src") || "") : "";
+        const srcOk = /exec\/ui\/index\.html$/.test(src.replace(/\\\\/g, "/").replace(/\\/g, "/"));
+        const calls = (M.embedCalls || []).map(c => c.method);
+        const booted = calls.indexOf("bootstrap") >= 0;
+        const noErr = !(window.__errors || []).length;
+        const ok = hasEmbed && tabShown && !!frame && srcOk && booted && noErr;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") +
+          "\\n声明了内嵌界面 = " + hasEmbed + "（" + JSON.stringify(p0.ui || null) + "）" +
+          "\\n「界面」选项卡出现 = " + tabShown +
+          "\\niframe = " + (frame ? src.slice(-38) : "（没有）") + "  地址对不对 = " + srcOk +
+          "\\n后端被问到 = " + JSON.stringify(calls) + "（有 bootstrap = 整条链通了）" +
+          "\\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+                            : ("EXECUI-FAIL 声明=" + (hasEmbed ? 1 : 0) + " 选项卡=" + (tabShown ? 1 : 0) +
+                               " iframe=" + (frame ? 1 : 0) + " 地址=" + (srcOk ? 1 : 0) +
+                               " bootstrap=" + (booted ? 1 : 0) + " 错=" + (window.__errors || []).length);
+      }
+      // ★ `V-224`：详情那两张卡（包详情 / 历史详情）**必须跟着窗口长大**。
+      //   以前 `.dwrap{max-width:760px;margin:20px auto}` —— 卡死在 760 居中，窗口一放大
+      //   两边全空（你的"详情页很小、没自适应"）。这条场景量**宽度关系**，不量死数字，
+      //   所以同一个场景在 1280 和 2560 两种窗口下都跑，都得过。
+      if (h === "detail-fill"){
+        async function measure(who){
+          const pane = document.querySelector("#pane-detail");
+          const card = pane && pane.querySelector(".dwrap");
+          if (!card) return null;
+          const inp = card.querySelector(".argbox");
+          return {pane: pane.clientWidth, card: card.clientWidth,
+                  args: inp ? inp.clientWidth : 0,
+                  propK: (card.querySelector(".prop-k") || {}).clientWidth || 0};
+        }
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        await sleep(500);
+        const pk = await measure("pkg");
+        if (!pk){ document.title = "FILL-FAIL NO-PKG-CARD"; return; }
+        setSide("hist");
+        await sleep(300);
+        const it = (HIST || []).find(x => x.target) || (HIST || [])[0];
+        if (!it){ document.title = "FILL-FAIL NO-HIST"; return; }
+        selectHist(it);                    // ★ 历史详情要用 `selectHist`（`select(null, it)` 会留空状态）
+        await sleep(500);
+        const hi = await measure("hist");
+        if (!hi){ document.title = "FILL-FAIL NO-HIST-CARD"; return; }
+
+        const wide = pk.pane > 1400;
+        // ① 卡要填满（只留两侧各 20px 外边距）——旧版固定 760，这条在任何窗口下都不成立
+        const fillPkg = pk.card >= pk.pane - 44;
+        const fillHist = hi.card >= hi.pane - 44;
+        // ② 在 1280 这种默认窗口下，卡就该比旧的 760 上限宽
+        const grewPkg = wide ? pk.card > 1500 : pk.card > 800;
+        // ③ 参数框：默认窗口 ≈ 老样子（620），宽窗口要跟着长（旧版恒 620）
+        const argsOk = wide ? pk.args > 900 : (pk.args > 500 && pk.args <= 640);
+        // ④ 标签列同理
+        const propOk = wide ? pk.propK > 120 : (pk.propK >= 90 && pk.propK <= 130);
+        const noErr = !(window.__errors || []).length;
+        const ok = fillPkg && fillHist && grewPkg && argsOk && propOk && noErr;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + "  窗口=" + window.innerWidth + "px  面板=" + pk.pane + "px" +
+          "\\n包详情：卡 " + pk.card + "px（面板 " + pk.pane + "，填满=" + fillPkg + "）" +
+          "  参数框 " + pk.args + "  标签列 " + pk.propK +
+          "\\n历史详情：卡 " + hi.card + "px（面板 " + hi.pane + "，填满=" + fillHist + "）" +
+          "\\n宽窗口=" + wide + "  比旧上限宽=" + grewPkg + "  参数框跟着长=" + argsOk +
+          "  标签列跟着长=" + propOk + "  页内错误=" + (window.__errors || []).length;
+        document.title = ok ? "READY"
+                            : ("FILL-FAIL 包卡=" + (fillPkg ? 1 : 0) + " 历史卡=" + (fillHist ? 1 : 0) +
+                               " 变宽=" + (grewPkg ? 1 : 0) + " 参数框=" + (argsOk ? 1 : 0) +
+                               " 标签列=" + (propOk ? 1 : 0) + " 错=" + (window.__errors || []).length);
+      }
+      // ★ `V-225`：`img` 也改成能内嵌了 —— 同一条链路：选中 → 「界面」选项卡 → 起后端 →
+      //   iframe 加载**真页面**（ESM）→ 垫片 postMessage → 宿主 embed_send → 后端答 bootstrap。
+      if (h === "img-ui"){
+        const p0 = state.packages.find(x => x.id === "img");
+        if (!p0){ document.title = "NO-IMG-PKG"; return; }
+        const hasEmbed = !!(p0.ui && p0.ui.embed);
+        select("img");
+        await sleep(400);
+        const tabBtn = document.querySelector('.tab[data-tab="embed"]');
+        const tabShown = !!(tabBtn && !tabBtn.hidden);
+        M.embedCalls = [];
+        await embedOpen(p0);
+        await sleep(3000);
+        const frame = document.querySelector("#embed-wrap iframe[data-pid='img']");
+        const src = frame ? (frame.getAttribute("src") || "") : "";
+        const srcOk = /img\/ui\/index\.html$/.test(src.replace(/\\\\/g, "/").replace(/\\/g, "/"));
+        const calls = (M.embedCalls || []).map(c => c.method);
+        const booted = calls.indexOf("bootstrap") >= 0;
+        const noErr = !(window.__errors || []).length;
+        const ok = hasEmbed && tabShown && !!frame && srcOk && booted && noErr;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") +
+          "\\n声明了内嵌界面 = " + hasEmbed + "（" + JSON.stringify(p0.ui || null) + "）" +
+          "\\n「界面」选项卡出现 = " + tabShown +
+          "\\niframe = " + (frame ? src.slice(-36) : "（没有）") + "  地址对不对 = " + srcOk +
+          "\\n后端被问到 = " + JSON.stringify(calls) + "（有 bootstrap = 整条链通了）" +
+          "\\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+                            : ("IMGUI-FAIL 声明=" + (hasEmbed ? 1 : 0) + " 选项卡=" + (tabShown ? 1 : 0) +
+                               " iframe=" + (frame ? 1 : 0) + " 地址=" + (srcOk ? 1 : 0) +
+                               " bootstrap=" + (booted ? 1 : 0) + " 错=" + (window.__errors || []).length);
+      }
+      // ★ dazi（打字练习）：和 exec / img 同一条链 —— 选中 → 「界面」选项卡 →
+      //   起后端 → iframe 加载**真的那一页** → 垫片 postMessage → 宿主 embed_send →
+      //   后端答 bootstrap。这条场景盯的就是"这一页真的转起来了"（页面自己的渲染
+      //   由 tools/包界面检查.py 管，业务由 tools/打字内嵌探针.py 管）。
+      if (h === "dazi-ui"){
+        const p0 = state.packages.find(x => x.id === "dazi");
+        if (!p0){ document.title = "NO-DAZI-PKG"; return; }
+        const hasEmbed = !!(p0.ui && p0.ui.embed);
+        select("dazi");
+        await sleep(400);
+        const tabBtn = document.querySelector('.tab[data-tab="embed"]');
+        const tabShown = !!(tabBtn && !tabBtn.hidden);
+        M.embedCalls = [];
+        await embedOpen(p0);                       // = 点「运行」
+        await sleep(3000);                         // 等 iframe 加载 + Vue 挂载 + 问后端
+        const frame = document.querySelector("#embed-wrap iframe[data-pid='dazi']");
+        const src = frame ? (frame.getAttribute("src") || "") : "";
+        const srcOk = /dazi\/ui\/index\.html$/.test(src.replace(/\\\\/g, "/").replace(/\\/g, "/"));
+        const calls = (M.embedCalls || []).map(c => c.method);
+        const booted = calls.indexOf("bootstrap") >= 0;
+        const noErr = !(window.__errors || []).length;
+        const ok = hasEmbed && tabShown && !!frame && srcOk && booted && noErr;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n声明了内嵌界面 = " + hasEmbed + "（" + JSON.stringify(p0.ui || null) + "）" +
+          "\n「界面」选项卡出现 = " + tabShown +
+          "\niframe = " + (frame ? src.slice(-38) : "（没有）") + "  地址对不对 = " + srcOk +
+          "\n后端被问到 = " + JSON.stringify(calls) + "（有 bootstrap = 整条链通了）" +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+                            : ("DAZIUI-FAIL 声明=" + (hasEmbed ? 1 : 0) + " 选项卡=" + (tabShown ? 1 : 0) +
+                               " iframe=" + (frame ? 1 : 0) + " 地址=" + (srcOk ? 1 : 0) +
+                               " bootstrap=" + (booted ? 1 : 0) + " 错=" + (window.__errors || []).length);
+      }
+      // ★ AI 工作台那一页（`V-233`）：选中一个包 → 点「AI」→ 那一页要
+      //   ① 真的有这个选项卡、② 显示模型、③ 「开始」可用、④ 交任务之后**步骤流一行行出来**、
+      //   ⑤ 跑完显示"验收通过 + 改过哪些文件 + token 合计"。
+      //   （loop 本身由 tools/ai循环探针.py 验；这条只管"这一页画不画得出来"。）
+      if (h === "ai-pane"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        await sleep(400);
+        const tabBtn = document.querySelector('.tab[data-tab="ai"]');
+        const tabShown = !!tabBtn;
+        tabBtn && tabBtn.click();
+        await sleep(600);
+        const pane = document.querySelector("#pane-ai");
+        const paneOn = !!(pane && pane.classList.contains("on"));
+        const head = ((document.querySelector("#pane-ai .ai-model") || {}).textContent || "");
+        const taskEl = document.querySelector("#pane-ai .ai-task");
+        // `V-240`：预算就一格，**单位是百万**（出厂 100 = 1 亿）—— 改一下要真存
+        //   （存的是 token：界面 100 百万 ⇒ 100000000）
+        const buds = [].slice.call(document.querySelectorAll("#pane-ai .ai-bud input"));
+        const budVals = buds.map(e => e.value);
+        const budUnit = (document.querySelector("#pane-ai .ai-bud") || {}).textContent || "";
+        M.bud = null;
+        if (buds.length === 1){
+          buds[0].value = "250";
+          buds[0].dispatchEvent(new Event("input", {bubbles: true}));
+          buds[0].dispatchEvent(new Event("change", {bubbles: true}));
+          await sleep(300);
+        }
+        const budSaved = String(M.bud);
+        const btn = document.querySelector("#pane-ai .ai-actions .btn.primary");
+        const btnOk = !!(btn && !btn.disabled);
+        // 交个任务：照着"真人怎么点"来（填字 → 点开始）
+        if (taskEl){
+          taskEl.value = "给这个包加一个 --dry-run 参数";
+          taskEl.dispatchEvent(new Event("input", {bubbles: true}));
+        }
+        await sleep(80);
+        btn && btn.click();
+        // 等结果卡出现（最多 ~8 秒）——别写死一个 sleep：轮询节奏一变就假红
+        for (let i = 0; i < 20 && !document.querySelector("#pane-ai .ai-result"); i++){
+          await sleep(400);
+        }
+        await sleep(200);
+        const started = M.aiRun || null;
+        const startArgs = started ? (started.task + "|" + started.maxSteps) : "";
+        const rows = document.querySelectorAll("#pane-ai .ai-step");
+        const tools = Array.prototype.slice.call(rows).map(r => (r.querySelector("b") || {}).textContent);
+        const stepsOk = tools.indexOf("edit_file") >= 0 && tools.indexOf("run_moss") >= 0;
+        const resEl = document.querySelector("#pane-ai .ai-result");
+        const resTxt = (resEl ? resEl.textContent : "").replace(/\s+/g, " ");
+        const resOk = !!resEl && resEl.classList.contains("ok") && /验收通过/.test(resTxt);
+        const filesOk = /md5/.test(resTxt) && /run\.py/.test(resTxt);
+        const tokOk = /合计 1290/.test(resTxt);
+        // `V-236`：结果卡上要能看到"开工前已存快照 + 回退按钮"
+        const snapEl = document.querySelector("#pane-ai .ai-rsnap");
+        const snapTxt = (snapEl ? snapEl.textContent : "").replace(/\s+/g, " ");
+        const snapOk = !!snapEl && /20261003-2130-ab12/.test(snapTxt) && /回退到开工前/.test(snapTxt);
+        const noErr = !(window.__errors || []).length;
+        const dbg = window.__AIR || {};
+        const ok = tabShown && paneOn && /deepseek-flash/.test(head) && btnOk &&
+                   budVals.length === 1 && budVals[0] === "100" && /百万/.test(budUnit) &&
+                   budSaved === "250000000" &&
+                   !!started && /dry-run/.test(startArgs) && stepsOk && resOk && filesOk && tokOk &&
+                   snapOk && noErr;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n「AI」选项卡在 = " + tabShown + "、这一页显示出来了 = " + paneOn +
+          "\n模型那行 = " + head.trim().slice(0, 40) + "、「开始」可用 = " + btnOk +
+          "\n状态：busy=" + !!dbg.busy + " running=" + !!dbg.running +
+            " info=" + JSON.stringify(dbg.info ? {ok: dbg.info.ok, model: dbg.info.model,
+                                                  key: dbg.info.has_key} : null) +
+            " err=" + (dbg.err || "") +
+          "\n交任务时传的 = " + startArgs +
+          "\n步骤流渲染出 " + rows.length + " 行：" + JSON.stringify(tools) +
+          "\n结果卡：验收通过 = " + resOk + "、列出了改过的文件 = " + filesOk + "、token 合计 = " + tokOk +
+          "\n开工前快照那条（含回退按钮）= " + snapOk + "  " + snapTxt.slice(0, 60) +
+          "\n预算那格 = " + JSON.stringify(budVals) + budUnit.replace(/[\s0-9.]/g, "") +
+          "  改完存下去（token）= " + budSaved +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+                            : ("AIPANE-FAIL 预算=" + JSON.stringify(budVals) + "→" + budSaved + " 快照=" + (snapOk ? 1 : 0) + " 页=" + (paneOn ? 1 : 0) + " 模型=" + (/deepseek/.test(head) ? 1 : 0) +
+                               " 按钮=" + (btnOk ? 1 : 0) + " 步骤=" + (stepsOk ? 1 : 0) +
+                               " 结果=" + (resOk ? 1 : 0) + " 文件=" + (filesOk ? 1 : 0) +
+                               " token=" + (tokOk ? 1 : 0) + " 错=" + (window.__errors || []).length +
+                               " busy=" + (dbg.busy ? 1 : 0) + " run=" + (dbg.running ? 1 : 0) +
+                               " key=" + (dbg.info && dbg.info.has_key ? 1 : 0) +
+                               " iok=" + (dbg.info && dbg.info.ok ? 1 : 0) +
+                               " imodel=" + ((dbg.info && dbg.info.model) || "-") +
+                               " btn=" + (btn ? btn.outerHTML.replace(/\s+/g, " ").slice(0, 90) : "没有按钮") +
+                               " warn=" + (document.querySelectorAll("#pane-ai .ai-warn").length));
+      }
+      // ★ `V-249`：AI 干完活 ⇒「文件管理」那份缓存**自动作废**（你报的"不自动刷新"）。
+      //   这条走的是**真人那条路**：选一个包 → 打开它目录里的 run.py → 切到「AI」交个任务
+      //   → 等它跑完 → 停在 AI 那一页**没被甩走**、正开着的那一页**也没被顺手关掉**，
+      //   而「文件管理」那边已经：① 重列了目录；② 把那一页重新读了一遍盘上的内容；
+      //   ③ 高亮层跟着重画（里面的字都得是新内容，不只是"有几个 span"）。
+      //   （以前三样都没有 —— 得自己按 ⟳，而按下去看到的还是旧内容。）
+      if (h === "ai-disk-refresh"){
+        const p0 = state.packages.find(x => x.id === "first") || state.packages[0];
+        select(p0.id);
+        setTab("file");
+        await sleep(700);
+        const rel = (FM.st[FM.ctx] || {}).rel;
+        if (!rel){ document.title = "AIDISK-NO-REL"; return; }
+        await fmOpenPage(rel + "/run.py");
+        await sleep(400);
+        const t0 = fmActiveTab();
+        if (!t0){ document.title = "AIDISK-NO-TAB"; return; }
+        const oldTxt = String(t0.text || "");
+        // 盘上那份"新内容"：AI 干完活之后，`fs_read` 回的就是它
+        const NEW = "import sys\n\n\ndef main():\n    print('AI 改过了')\n";
+        const origRead = pywebview.api.fs_read;
+        let reads = 0;
+        pywebview.api.fs_read = async (r) => {
+          const got = await origRead(r);
+          if (String(r) === rel + "/run.py"){ reads++; got.text = NEW; }
+          return got;
+        };
+        const ls0 = (M.ls || []).length;
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(400);
+        const taskEl = document.querySelector("#pane-ai .ai-task");
+        if (taskEl){
+          taskEl.value = "把 run.py 里那句 print 改掉";
+          taskEl.dispatchEvent(new Event("input", {bubbles: true}));
+        }
+        await sleep(80);
+        (document.querySelector("#pane-ai .ai-actions .btn.primary") || {click(){}}).click();
+        for (let i = 0; i < 20 && !document.querySelector("#pane-ai .ai-result"); i++) await sleep(400);
+        await sleep(400);
+        pywebview.api.fs_read = origRead;
+        const keptTab = (tab === "ai");          // ★ 干完活**不许**把人甩到别的页
+        const listed = (M.ls || []).slice(ls0).filter(x => String(x) === rel).length;
+        const tNow = fmActiveTab();              // ★ 也不许把正开着的那一页顺手关掉
+        const gotNew = !!tNow && String(tNow.text || "").indexOf("AI 改过了") >= 0;
+        const code = document.querySelector("#fm-body .editor pre code");
+        const spans = code ? code.querySelectorAll("span").length : -1;
+        // 高亮层里得是**新内容**（不是"有 span"就算过 —— 旧内容本来也有 span）
+        const hlNew = !!code && code.textContent.indexOf("AI 改过了") >= 0 && spans > 0;
+        // 顺手验一下假数据：这个包在 `user_data/pkgs` 里 ⇒ 那一页**不该**说"它改不了"
+        const warnTxt = ((document.querySelector("#pane-ai .ai-warn") || {}).textContent || "");
+        const noWarn = warnTxt.indexOf("改不了") < 0;
+        const ok = keptTab && listed > 0 && reads > 0 && gotNew && hlNew && noWarn &&
+                   !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n停在哪一页 = " + tab + "（要停在 ai）· 重列目录 = " + listed + " 次（要 > 0）" +
+          "\n重读文件 = " + reads + " 次（要 > 0）· 读回来的是新内容 = " + gotNew +
+          "\n高亮层 = " + spans + " 个 span、里面是新内容 = " + hlNew +
+          "\n用户层的包不说「改不了」= " + noWarn + "（" + warnTxt.replace(/\s+/g, " ").slice(0, 24) + "）" +
+          "\n旧内容 = " + JSON.stringify(oldTxt.slice(0, 24)) +
+          " · 页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+          : ("AIDISK-FAIL 页=" + tab + " 重列=" + listed + " 重读=" + reads +
+             " 新内容=" + (gotNew ? 1 : 0) + " 高亮新=" + (hlNew ? 1 : 0) + " span=" + spans +
+             " 没说改不了=" + (noWarn ? 1 : 0) + " 开着那页=" + (tNow ? 1 : 0) +
+             " 错=" + (window.__errors || []).length);
+      }
+      // ★ `V-250`：AI **开工前**存的那条快照，界面要**立刻**刷新出来（你报的
+      //   "当他备份以后 版本快照这里 没有刷新 所以我是看不到它刚刚做的快照的"）。
+      //   这条盯的是**时间顺序**：快照那一行出现的时间必须**早于**任务跑完 ——
+      //   以前只有跑完才从 result.snapshot 里知道，等于白等几十秒。
+      if (h === "ai-snap-refresh"){
+        const p0 = state.packages.find(x => x.id === "first") || state.packages[0];
+        M.bk = [];                        // 从"一条快照都没有"开始，新冒出来的那条一眼就看得见
+        M.aiSnap = null; M.aiRunN = 0;
+        select(p0.id);
+        setTab("file");
+        await sleep(800);
+        const before = M.bkCalls || 0;
+        const wasEmpty = /还没有快照/.test(((document.querySelector(".bk-snap") || {}).textContent || ""));
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(300);
+        const taskEl = document.querySelector("#pane-ai .ai-task");
+        if (taskEl){
+          taskEl.value = "把 run.py 里那句 print 改掉";
+          taskEl.dispatchEvent(new Event("input", {bubbles: true}));
+        }
+        await sleep(80);
+        (document.querySelector("#pane-ai .ai-actions .btn.primary") || {click(){}}).click();
+        // 等两件事：快照那一行出现、任务跑完（结果卡出来）
+        let tSnap = 0, tDone = 0;
+        for (let i = 0; i < 40 && !(tSnap && tDone); i++){
+          await sleep(200);
+          if (!tSnap && document.querySelector(".bk-snap .bk-ai")) tSnap = Date.now();
+          if (!tDone && document.querySelector("#pane-ai .ai-result")) tDone = Date.now();
+        }
+        await sleep(300);
+        const badge = document.querySelector(".bk-snap .bk-ai");
+        const rowTxt = (badge && badge.closest(".bk-t")) ? badge.closest(".bk-t").textContent : "";
+        const badgeTip = badge ? String(badge.getAttribute("title") || "") : "";
+        const refreshed = (M.bkCalls || 0) > before;
+        const early = !!tSnap && !!tDone && tSnap < tDone;
+        // 那一行是"AI 存的" + 标题里写着"动手前" + 悬停能看到**那次的任务原文**（`V-249`/`V-250`）
+        const titleOk = /动手前/.test(rowTxt) && /print/.test(badgeTip);
+        const ok = wasEmpty && refreshed && early && titleOk && !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n开工前是空的 = " + wasEmpty + "（该显示「还没有快照」）· 问列表次数 " + before + " → " + (M.bkCalls || 0) +
+          "\n快照那行出现 = " + (tSnap ? (tSnap - tDone) + "ms（负数=比跑完早）" : "没出现") +
+          " · 跑完 = " + (tDone ? "出现了" : "没有") +
+          "\n那一行的字 = " + JSON.stringify(rowTxt.slice(0, 40)) +
+          " · 悬停 = " + JSON.stringify(badgeTip.slice(0, 30)) +
+          " · 页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+          : ("AISNAP-FAIL 空=" + (wasEmpty ? 1 : 0) + " 刷新=" + (refreshed ? 1 : 0) +
+             " 早于跑完=" + (early ? 1 : 0) + " 标题=" + (titleOk ? 1 : 0) +
+             " tSnap=" + tSnap + " tDone=" + tDone + " 行=" + JSON.stringify(rowTxt.slice(0, 30)) +
+             " 悬停=" + JSON.stringify(badgeTip.slice(0, 24)) +
+             " 错=" + (window.__errors || []).length);
       }
       // ★ 报错这条路本身也要能自证（`V-81`）：故意造一个"计算属性里抛错"的组件（和
       //   `MossList.rows` 读 `DATA.packages` 抛的那个是同一类），看它有没有被

@@ -143,6 +143,27 @@ chk("Vue app 一律走 mountVue()（裸 createApp 只允许在 core.js）", not 
 chk("core.js 里有 mountVue + onVueError", "function mountVue(" in js_by_file.get("core.js", "")
     and "function onVueError(" in js_by_file.get("core.js", ""))
 
+# ---------------- 11. 全局不许重名（`V-249` 的血） ----------------
+# ★ 为什么值得单列：`js/*.js` 是**经典脚本**、共享同一个全局作用域，后加载的文件里
+#   一个同名 `function` 会把前面那个**整个盖掉**，而且**一句错都不报**。
+#   实测（`V-249`）：`drop.js` 里判扩展名的 `extOf(name)` 盖掉了 `core.js` 里返回
+#   `{i,c,l}` 的 `extOf(entry)` —— 于是 `String({...})` 得到 "[object Object]"，
+#   所有文件都"没有扩展名"，代码高亮永远 `plaintext`、图标配色一起丢，界面上却
+#   只是"看着不对"，控制台干干净净。所以：顶层 `function` / `const|let|var` 一律查重。
+#   ★ 认的是**行首无缩进**的声明 —— 组件方法、内部闭包里的同名不算（那些是各自作用域的）。
+_top = {}
+_dup_top = []
+for _name, _src in js_by_file.items():
+    for _m in re.finditer(r"^(?:function\s+([A-Za-z_$][\w$]*)|(?:const|let|var)\s+([A-Za-z_$][\w$]*))",
+                          _src, re.M):
+        _n = _m.group(1) or _m.group(2)
+        if _n in _top:
+            _dup_top.append("%s（%s + %s）" % (_n, _top[_n], _name))
+        else:
+            _top[_n] = _name
+chk("js/*.js 顶层名字不重名", not _dup_top,
+    ("被后加载的盖掉：%s" % _dup_top) if _dup_top else "%d 个顶层名" % len(_top))
+
 for _t in (tmp_js,):
     _t.unlink(missing_ok=True)
 

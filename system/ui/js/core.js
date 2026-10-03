@@ -212,7 +212,10 @@ function bindColResize(grip, el, sign, min, max, def){
      整张表渲染就失败（症状：文件列表空白、还什么都不报）。函数声明在这儿就万无一失。
    ★ 容器用 `Vue.reactive`：边栏那几个 computed 直接读它，值一填就自动重画。 */
 const BKD = Vue.reactive({diff: null, title: ""});
-/* 左边（文件管理那张表）该怎么上色：**左边大就左边更深**（你的原话"左侧的多 就左侧文字更深"）。 */
+/* 左边（文件管理那张表）该怎么上色：**左边大就左边更深**（你的原话"左侧的多 就左侧文字更深"）。
+   ★ `V-250` 你重定的配色：变了=琥珀（深浅分大小）、添加=蓝深、缺少=蓝浅、**不变=不动**。
+     左边这张表**不给"没变化"上灰** —— 一整屏文件绝大多数都没变，全灰就分不出重点了；
+     灰只用在右边快照边栏（`mirrorCls` 里那条 `df-same`）。 */
 function bkDiffRow(rel){
   const d = BKD.diff && BKD.diff.byRel ? BKD.diff.byRel[rel] : null;
   if (!d) return null;
@@ -220,8 +223,18 @@ function bkDiffRow(rel){
   if (d.state === "diff") return d.deep === "now" ? {"df-chg": true, "df-deep": true}
                                                   : {"df-chg": true, "df-soft": true};
   if (d.state === "empty") return {"df-empty": true};
-  if (d.state === "gone") return {"df-gone": true};
+  if (d.state === "snap-only" || d.state === "gone") return {"df-gone": true};
   return null;                                  // 一致 → 正常色，不打扰
+}
+/* `V-250`：方向记号 —— 变了看 ↑/↓（谁大谁小），增缺看 +/−（多了还是少了）。
+   左边那张表、右边快照边栏用的是**同一个**函数，所以两边的记号永远一致。 */
+function bkDiffMark(rel){
+  const d = BKD.diff && BKD.diff.byRel ? BKD.diff.byRel[rel] : null;
+  if (!d) return "";
+  if (d.state === "now-only") return "+";
+  if (d.state === "snap-only") return "−";      // 注意是减号 U+2212，不是连字符
+  if (d.state === "diff") return d.deep === "now" ? "↑" : (d.deep === "snap" ? "↓" : "≠");
+  return "";
 }
 function bkDiffWhy(rel){
   const d = BKD.diff && BKD.diff.byRel ? BKD.diff.byRel[rel] : null;

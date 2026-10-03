@@ -19,7 +19,9 @@ function setTab(name){
   if (name !== "embed") pushEmbedEvent(cur && cur.id, "visible", {visible: false});
   document.querySelectorAll(".tab").forEach(b =>
     b.classList.toggle("active", b.dataset.tab === name));
-  ["detail", "console", "file", "embed"].forEach(t =>
+  // ★ 这一串就是**选项卡的登记表** —— 加了新选项卡（比如 `V-233` 的「AI」）必须补在这儿，
+  //   否则 `setTab("ai")` 会把**四个都关掉**（名字对不上任何一个），页面看着像"点了没反应"。
+  ["detail", "console", "file", "ai", "embed"].forEach(t =>
     $("#pane-" + t).classList.toggle("on", t === name));
   hideCtx();
   // 回到详情时对一下"在不在跑 / 有没有窗口"（历史条目没有包状态，不用问）

@@ -48,6 +48,9 @@ HERE = Path(__file__).resolve().parent
 #   这一行让两种跑法都成立。
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+
+import win_geom                                                  # noqa: E402  (V-223：窗口几何)
+
 NO_WINDOW = 0x08000000          # CREATE_NO_WINDOW
 DETACHED = 0x00000008           # DETACHED_PROCESS
 DEVNULL = subprocess.DEVNULL
@@ -742,6 +745,40 @@ def _run_registered(proc):
     return rid
 
 
+def _procs_info(pids, cmdlines=None):
+    """这些 pid 的"人话身份"：pid / 起于 / 命令行（截断）—— 给界面显示用。
+
+    ★ 为什么要有它（`V-216`）：用户报「明明提示跑完了，界面上还显示在运行」。查下来是**一个
+      孤儿进程**（更早那次启动留下的 `python bootstrap.py …\\pkgs\\path\\main.py`，父进程早没了、
+      它自己在 stdin 上等着）—— `_pkg_pids` 认得出它（命令行里写着包目录），于是包**永远**是
+      "运行中"。只给一个 `pids: 1` 谁也看不出这是啥；把 pid + 起始时间 + 命令行摆出来，
+      一眼就能看出"这是昨天那个孤儿"，而不是"我刚跑的那次还没结束"。
+    """
+    out = []
+    if cmdlines is None:
+        cmdlines = _pids_by_cmdline()
+    try:
+        import psutil
+    except ImportError:
+        psutil = None
+    for pid in sorted(pids)[:6]:
+        pid = int(pid)
+        item = {"pid": pid, "started": "", "cmd": (cmdlines.get(pid) or "")[:200]}
+        if psutil is not None:
+            try:
+                pr = psutil.Process(pid)
+                item["started"] = time.strftime("%m-%d %H:%M:%S",
+                                                time.localtime(pr.create_time()))
+                # 显示用**原始大小写**（`cmdlines` 那份是小写 + 正斜杠，给人看太别扭）
+                cl = pr.cmdline() or []
+                if cl:
+                    item["cmd"] = " ".join(cl)[:200]
+            except Exception:                                        # noqa: BLE001
+                pass
+        out.append(item)
+    return out
+
+
 def _env_pkg_id(pid):
     """问一个进程：它的环境变量里 `MOSS_PKG_ID` 是什么。
 
@@ -855,6 +892,46 @@ def _pkg_run_match(cl, needle):
     return needle in head            # 可执行文件自己就在包目录里（包自带的 exe）
 
 
+def _pkg_dirs(pid):
+    """这个包对应的**真实目录**（绝对路径，可能不止一个）。
+
+    `V-220` 用：判"这个有窗口的进程是不是**包自己的程序**"（包自己的 exe 一定在它的目录里）。
+    """
+    out = []
+    for p in (DATA.get("packages") or []):
+        if str(p.get("id")) != str(pid):
+            continue
+        d = p.get("dir")
+        if d and str(d) not in out:
+            out.append(str(d))
+    return out
+
+
+def _exe_under(pid, dirs):
+    """这个进程的可执行文件是不是就在这些目录里（`V-220`）。
+
+    ★ 为什么用**可执行文件位置**当判据：`MOSS_PKG_ID` 会被包拉起的子进程继承（"往下漏"），
+      只认环境变量就会把 `explorer.exe`（被 .bat 的 `start` 拉起来的）、用户的浏览器、
+      输入法工具这些都算成调用它们的那个包在跑 —— 后果是"停止"把桌面/浏览器杀了。
+      exe 路径就写在进程自己身上（`psutil.Process(pid).exe()`），骗不了。
+    """
+    if not dirs:
+        return False
+    try:
+        import psutil
+        exe = str(psutil.Process(int(pid)).exe() or "")
+    except Exception:                                                # noqa: BLE001
+        return False
+    if not exe:
+        return False
+    exe = exe.replace("\\", "/").lower()
+    for d in dirs:
+        base = str(d).replace("\\", "/").lower().rstrip("/")
+        if base and exe.startswith(base + "/"):
+            return True
+    return False
+
+
 def _pkg_pids(pkg, parents=None, cmdlines=None, owner_pkg=None):
     """属于这个包、**还活着**的进程：
        ① 宿主记下的进程树（点过运行 / 打开界面的）
@@ -879,7 +956,18 @@ def _pkg_pids(pkg, parents=None, cmdlines=None, owner_pkg=None):
             if pid == os.getpid() or pid in owner_pkg:
                 continue
             owner_pkg[pid] = _env_pkg_id(pid)
-    pids |= {pid for pid, k in owner_pkg.items() if k == pkg}
+    # ★ `V-220`：光看"环境里写着这个包 id"会**认错人** —— `MOSS_PKG_ID` 是注入到进程环境里的，
+    #   包拉起的**任何**子进程都会继承它（`P-18` 记的就是这个"往下漏"）。实测两起真事故：
+    #     · `suoluetu`（图标缓存那个包）的 .bat 里 `start "" explorer.exe` ⇒ **explorer.exe 带着
+    #       `MOSS_PKG_ID=suoluetu`**，而它**有窗口** ⇒ 被算成"suoluetu 在跑"：
+    #       ① 重启 moss 也照样显示「停止」（那是**进程**层面的判断，重启没用）；
+    #       ② 点「停止」⇒ `pkg_stop` 把 explorer.exe 一起杀了 —— **桌面和任务栏当场没了**。
+    #     · DSH 那条线上，用户浏览器（Maxthon）、node、pwsh、输入法工具全带着 `MOSS_PKG_ID=dsh`
+    #       ⇒ `dsh` 永远"在跑"，"停止"下去就是把浏览器和 agent 全杀了。
+    #   所以这一条**加一道硬条件**：这个有窗口的进程，**可执行文件得真在包目录里** ——
+    #   那才是"包自己的界面"；explorer.exe / Maxthon.exe 在 C:\Windows 或别处，一律不算。
+    pids |= {pid for pid, k in owner_pkg.items()
+             if k == pkg and _exe_under(pid, _pkg_dirs(pkg))}
     pids.discard(os.getpid())                # 别把 moss 自己的界面窗口算进去
     return pids
 
@@ -923,6 +1011,34 @@ def _show_window(hwnd, show):
 RUNS = {}
 RUNS_LOCK = threading.Lock()
 RUNS_KEEP = 20
+
+# AI 工作台（`V-230`~`V-233`）那一次任务的状态：一个后台线程 + 一份能被轮询的状态。
+# 一次只有一个任务（同一个 tab 上并行跑两个 agent 只会互相踩文件）。
+AI = {"thread": None, "state": None, "task": "", "stop": False, "t0": 0.0}
+AI_LOCK = threading.Lock()
+
+#: AI 参数的缓存（`V-234`）：界面**没有** `MOSS_AI_*`，得回头问宿主
+#: （`moss --ai-config-reveal`）；那是起一个进程，不能每 700ms 轮询就问一次。
+_AI_CFG = {"t0": 0.0, "got": None}
+
+
+def _first_json(text):
+    """从一段可能有横幅/告警的文字里抠出**第一份** JSON 对象（`V-234`）。
+
+    为什么不用 `json.loads(整段)`：宿主会把 `[执行] / [目录]` 这类横幅和告警混在输出里
+    （`--ui-payload` 那条路踩过同样的坑，见 `_run_capture_split`）。这里从每个 `{` 开始试。
+    """
+    s = str(text or "")
+    i = s.find("{")
+    while i >= 0:
+        try:
+            obj, _end = json.JSONDecoder().raw_decode(s[i:])
+            if isinstance(obj, dict):
+                return obj
+        except ValueError:
+            pass
+        i = s.find("{", i + 1)
+    return None
 
 
 def _kill_tree(pid):
@@ -1157,6 +1273,32 @@ def _pump_output(rid):
             emit(chunk)
 
     threading.Thread(target=ticker, daemon=True).start()
+
+    def watcher():
+        """★ `V-219`：**子进程一退就算跑完了 —— 不等管道 EOF**。
+
+        为什么非要有它（用户报的"程序已经退出了，界面还亮着红色的停止按钮"）：
+        子进程的 stdout 是我们的**管道**，而它拉起的**孙进程会继承这个写端**。最典型的一例就是
+        `.bat` 里那句 `start "" explorer.exe`（`suoluetu` 那个包第 17 行就是这个）——
+        `cmd.exe` 早就退出了，可 explorer.exe 还叼着管道 ⇒ 下面那个 `os.read` **永远等不到 EOF**
+        ⇒ `r["code"]` 一直是 None ⇒ `run_poll` 永远回 `running: true` ⇒ 界面上那颗「停止」
+        一直红着；偏偏 `run_input` 问的是**进程本身**（`proc.poll()`，已经退了）⇒ 你往命令行敲回车，
+        它说"它已经跑完了" —— 同一件事两个说法，自相矛盾。现在按**进程退出**判收工，
+        再给读线程 0.35 秒把管道里剩的输出读完。
+
+        （残留一个小尾巴：那个读线程还阻塞在 `os.read` 上、跟着进程一起走（daemon），
+        每次这种运行留一个线程 + 一个管道句柄，不碍事 —— 比起"界面永远显示在跑"划算得多。）
+        """
+        try:
+            proc.wait()
+        except Exception:                                            # noqa: BLE001
+            return
+        time.sleep(0.35)                     # 让读线程把管道里剩的读完再收工
+        with RUNS_LOCK:
+            if r.get("code") is None:
+                r["code"] = proc.returncode
+
+    threading.Thread(target=watcher, daemon=True).start()
     dec = codecs.getincrementaldecoder("utf-8")("replace")
     try:
         fd = proc.stdout.fileno()
@@ -1326,12 +1468,27 @@ class Api:
         return {"ok": True}
 
     def run_poll(self, run_id):
-        """问一次状态：还在跑吗、输出到哪了、结束了的话退出码是多少。"""
+        """问一次状态：还在跑吗、输出到哪了、结束了的话退出码是多少。
+
+        ★ `V-219`：这里**以进程为准**（`proc.poll()`），不是以"管道读到 EOF"为准 ——
+          管道可能被孙进程叼着（`.bat` 里 `start ""` 那种），那样永远等不到 EOF。
+          这一问是界面每 200ms 问一次的，绝不能因为一个叼着管道的孙进程就说"还在跑"。
+        """
         with RUNS_LOCK:
             r = RUNS.get(run_id)
             if not r:
                 return {"ok": False, "msg": "没有这次运行（可能已经被清掉了）"}
-            return {"ok": True, "running": r["code"] is None, "code": r["code"],
+            code = r["code"]
+            proc = r.get("proc")
+        if code is None and proc is not None:
+            pc = proc.poll()
+            if pc is not None:                        # 兜底：watcher 那一刻可能还没轮到
+                code = pc
+                with RUNS_LOCK:
+                    if r.get("code") is None:
+                        r["code"] = pc
+        with RUNS_LOCK:
+            return {"ok": True, "running": code is None, "code": code,
                     "out": "".join(r["lines"]),
                     "ms": int((time.time() - r["t0"]) * 1000), "pid": r["pid"]}
 
@@ -1508,7 +1665,8 @@ class Api:
             vis = [w for w in ws if w["visible"]]
             out[pkg] = {"running": bool(pids), "pids": len(pids),
                         "windows": len(ws), "visible": len(vis) > 0,
-                        "titles": [w["title"] for w in ws][:5]}
+                        "titles": [w["title"] for w in ws][:5],
+                        "procs": _procs_info(pids, cmdlines)}
         return {"ok": True, "states": out}
 
     def pkg_state(self, pid):
@@ -1524,7 +1682,8 @@ class Api:
         vis = [w for w in ws if w["visible"]]
         return {"ok": True, "running": bool(pids), "pids": len(pids),
                 "windows": len(ws), "visible": len(vis) > 0,
-                "titles": [w["title"] for w in ws][:5]}
+                "titles": [w["title"] for w in ws][:5],
+                "procs": _procs_info(pids)}
 
     def pkg_stop(self, pid):
         """把这个包正在跑的进程停掉（连子孙一起）—— 不管是谁把它拉起来的。"""
@@ -1564,6 +1723,289 @@ class Api:
     def run_host(self, text):
         """跑一条宿主命令（自检用）：`--selfcheck` / `--history 20` 之类，不带包名。"""
         return _run_capture(HOST + _split(text))
+
+    # ---------------------------------------------------------------- AI 工作台（`V-230`~`V-233`）
+    # ★ 为什么在这儿而不做成一个包：这一页要**贴着当前选中的包**，还要把结果直接反映到
+    #   文件管理 / 命令行 / 运行状态上 —— 全是宿主**进程内**的状态（`V-231` 定的形态）。
+    # ★ 为什么所有 AI 模块都是**惰性 import**：它们是新代码，写坏了也**不许**把整个界面
+    #   拖下水（界面起不来 = 用户什么都干不了）。所以失败只在 AI 那一页上说清楚。
+    def _ai_mods(self):
+        ai_dir = str(HERE / "ai")
+        if ai_dir not in sys.path:
+            sys.path.insert(0, ai_dir)
+        import ai_client
+        import ai_edits
+        import ai_loop
+        return ai_client, ai_edits, ai_loop
+
+    def ai_params(self, refresh=False):
+        """拿"当前那组 AI 参数"（`V-234`）。
+
+        ★★ 为什么不能读 `MOSS_AI_*`：那几个变量是宿主发给**包**的（`core/engine.py` 在起
+           子进程时注入）。**界面进程自己没有** —— 所以第一版在工作台里显示"还没配 AI"，
+           而配置明明在（`moss --ai-test` 是通的）。真机上就是这么表现的。
+        ★ 也不许自己去读 `config.toml`：那份的**唯一读者是宿主**（格式会变，契约里写死了
+           "别在包里读它"，界面同理）。所以这里回头调宿主：
+           `moss --ai-config-reveal` 打的就是一份 JSON（含明文 key）。
+        """
+        now = time.time()
+        if not refresh and _AI_CFG["got"] and now - float(_AI_CFG["t0"]) < 15:
+            return _AI_CFG["got"]
+        out = {"ok": False, "source": "", "model": "", "base_url": "", "api_key": "",
+               "models": [], "why": ""}
+        env_base = (os.environ.get("MOSS_AI_BASE_URL") or "").strip()
+        env_model = (os.environ.get("MOSS_AI_MODEL") or "").strip()
+        if env_base and env_model:                 # 万一哪天界面进程也有了，直接用
+            out.update({"ok": True, "source": "环境变量", "base_url": env_base.rstrip("/"),
+                        "api_key": (os.environ.get("MOSS_AI_API_KEY") or "").strip(),
+                        "model": env_model,
+                        "models": [m.strip() for m in (os.environ.get("MOSS_AI_MODELS") or "").split(",")
+                                   if m.strip()] or [env_model]})
+        else:
+            r = _run_capture_split(HOST + ["--ai-config-reveal"])
+            obj = _first_json((r.get("out") or "") + (r.get("err") or ""))
+            if obj and obj.get("ok") and isinstance(obj.get("params"), dict):
+                p = obj["params"]
+                models = [str(m).strip() for m in (p.get("model") or []) if str(m).strip()]
+                out.update({"ok": bool(models and p.get("base_url")), "source": "宿主",
+                            "base_url": str(p.get("base_url") or "").rstrip("/"),
+                            "api_key": str(p.get("api_key") or ""), "model": models[0] if models else "",
+                            "models": models, "profile": obj.get("profile") or "",
+                            "why": "" if models and p.get("base_url")
+                                   else "宿主那份配置里 base_url / model 没填全"})
+            else:
+                out["why"] = ("读不到宿主的 AI 配置（`moss --ai-config-reveal` 没回 JSON）—— "
+                              "先 `moss --ai-test` 看一眼，或者去「设置 → AI」配一组。")
+        _AI_CFG.update({"t0": now, "got": out})
+        return out
+
+    def ai_budget(self, save=None):
+        """这次任务的预算（`V-239`）：**按 token 上限算**（你定的：步数不好换算成钱）。
+
+        实现搬到了 `system/ui/ai/ai_budget.py`（`core/snap.py` 那种"一份实现两处用"）——
+        这样探针不必 import 整个界面就能验它。出厂默认 **20 万 token**、到 80% 劝一次收尾。
+        """
+        try:
+            ai_dir = str(HERE / "ai")
+            if ai_dir not in sys.path:
+                sys.path.insert(0, ai_dir)
+            import ai_budget
+            if save is None:
+                cur = ai_budget.load()
+                return dict(cur, ok=True, warn=ai_budget.warn_at(cur.get("max_tokens")))
+            return ai_budget.save(save)
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "预算读不出来：%s" % e}
+
+    def ai_set_budget(self, max_tokens=200000):
+        """界面上那一格"token 上限"调的（就一个数，改完立刻生效）。"""
+        return self.ai_budget(save=max_tokens)
+
+    def ai_info(self, workdir="", refresh=False):
+        """这一页要显示的东西：模型 / 提示词（含缺失）/ 能写哪儿 / 预算 / 在不在跑。"""
+        out = {"ok": True, "running": bool(AI.get("thread") and AI["thread"].is_alive()),
+               "workdir": str(workdir or ""), "steps": 0}
+        try:
+            _c, e, _l = self._ai_mods()
+            out["home"] = str(e.HOME)
+            out["write_root"] = str(e.write_root())
+            bud = self.ai_budget()
+            out["max_tokens"] = bud.get("max_tokens")
+            out["warn_tokens"] = bud.get("warn")
+            # `V-244`：上下文窗口和两条线（DSH 的 80% / 16%）—— 那一小行提示要用
+            try:
+                import ai_budget as _b2
+                _m = str(p.get("model") or "")
+                out["context"] = _b2.context_window(_m, bud.get("context") or 0)
+                out["compact_at"] = _b2.compact_at(_m, out["context"])
+                out["retain_tokens"] = _b2.retain_tokens(_m, out["context"])
+            except Exception:                                          # noqa: BLE001
+                pass
+            p = self.ai_params(refresh=bool(refresh))
+            out["model"] = p.get("model") or ""
+            out["base_url"] = p.get("base_url") or ""
+            out["has_key"] = bool(p.get("api_key"))
+            out["key_from"] = p.get("source") or ""
+            out["why"] = p.get("why") or ""
+            used, missing = [], []
+            task = (AI.get("task") or "")
+            text, _u, miss = _l.compose_system(task or "随便")
+            out["prompts"] = [Path(u.split(" ← ")[-1]).name for u in _u]
+            out["missing_prompts"] = miss or _l.missing_prompts(list(_l.BASE_PROMPTS))
+            out["prompt_bytes"] = len(text or "")
+        except Exception as exc:                                          # noqa: BLE001
+            out["ok"] = False
+            out["msg"] = "AI 模块起不来：%s: %s" % (type(exc).__name__, exc)
+        st = AI.get("state")
+        if st:
+            out["steps"] = len(st.get("steps") or [])
+        return out
+
+    def ai_start(self, task="", workdir="", max_tokens=None):
+        """开始一次任务（后台线程跑 loop，界面靠 `ai_poll` 拿步骤流）。
+
+        `workdir`：这次在哪儿干活 —— 当前选中的包目录，或者 `user_data/pkgs`（新建包）。
+        `max_tokens`：这次任务的 token 上限（不给就读 `user_data/ai/budget.json`，默认 20 万）。
+        写权限仍然只有 `user_data/pkgs/**`（`ai_edits` 那道闸，v1 的边界）。
+        """
+        task = str(task or "").strip()
+        if not task:
+            return {"ok": False, "msg": "先写一句你要它干什么。"}
+        with AI_LOCK:
+            if AI.get("thread") and AI["thread"].is_alive():
+                return {"ok": False, "msg": "已经在跑了 —— 等它完，或者按「停止」。"}
+            try:
+                c, e, l = self._ai_mods()
+                p = self.ai_params(refresh=True)
+                if not (p.get("base_url") and p.get("model")):
+                    return {"ok": False, "msg": p.get("why") or
+                            "还没配 AI —— 去「设置 → AI」挑一家、把 key 填上。"}
+                client = c.Client(p["base_url"], p.get("api_key") or "", p["model"])
+            except Exception as exc:                                      # noqa: BLE001
+                return {"ok": False, "msg": "AI 起不来：%s" % exc}
+            wd = str(workdir or "").strip() or str(e.write_root())
+            bud = self.ai_budget()                       # 预算：界面给就听界面的，否则读存的
+            cap = int(max_tokens or bud.get("max_tokens") or 200000)
+            # ★ `V-244`：上下文压缩照 DSH 的参数 —— 触发线 = 窗口 × 0.8、逐字保留 = 窗口 × 0.16
+            import ai_budget as _bud
+            _model = str(getattr(client, "model", "") or "")
+            _ctx = _bud.context_window(_model, bud.get("context") or 0)
+            _at = _bud.compact_at(_model, _ctx)
+            _retain = _bud.retain_tokens(_model, _ctx)
+            AI.update({"task": task, "stop": False, "t0": time.time(),
+                       "max_tokens": cap, "context": _ctx,
+                       "compact_at": _at, "retain_tokens": _retain,
+                       "state": {"running": True, "steps": [], "result": None, "say": [],
+                                 "phase": "", "snapshot": None}})
+
+            def on_step(row):
+                with AI_LOCK:
+                    AI["state"]["steps"].append(row)
+
+            def say(line):
+                with AI_LOCK:
+                    AI["state"]["say"].append(str(line)[:300])
+                    if len(AI["state"]["say"]) > 400:
+                        del AI["state"]["say"][:200]
+
+            def phase(what):
+                # `V-242`：让页面分得清"模型在想"和"执行工具" —— 前者可能要等十几秒，
+            #   以前看起来就是"卡死了"（用户原话：卡很久了没动作）。
+                with AI_LOCK:
+                    AI["state"]["phase"] = str(what)
+
+            def on_snapshot(got):
+                # ★ `V-250`：开工前那条快照**存好就告诉页面** —— 「版本快照」那一列要跟着刷新。
+                #   以前只有跑完才从 `result.snapshot` 里知道，而快照是**动手之前**就存了的，
+                #   于是"存是存了，切过去看不见"（用户原话："没有刷新 所以我是看不到它刚刚做的快照"）。
+                with AI_LOCK:
+                    AI["state"]["snapshot"] = got
+
+            def work():
+                loop = l.Loop(client, workdir=wd, max_tokens=cap,
+                              compact_at=_at, retain_tokens=_retain,
+                              on_step=on_step, say=say, on_phase=phase,
+                              on_snapshot=on_snapshot,
+                              stop_check=lambda: bool(AI.get("stop")))
+                try:
+                    got = loop.run(task)
+                except Exception as exc:                                  # noqa: BLE001
+                    got = {"ok": False, "reason": "%s: %s" % (type(exc).__name__, exc),
+                           "steps": [], "usage": {}, "files": []}
+                # ★ `V-243`：跑完**落盘**（你说的"历史记录不保存是不行的"—— 原来只在内存里，
+                #   moss 一重启，任务原文/步骤流/结论/token 全没了）。存不上也不影响结果。
+                try:
+                    ai_dir = str(HERE / "ai")
+                    if ai_dir not in sys.path:
+                        sys.path.insert(0, ai_dir)
+                    import ai_runs
+                    saved = ai_runs.save({
+                        "task": task, "workdir": wd, "model": str(getattr(client, "model", "") or ""),
+                        "max_tokens": cap, "started": float(AI.get("t0") or 0),
+                        "started_text": time.strftime("%Y-%m-%d %H:%M:%S",
+                                                      time.localtime(float(AI.get("t0") or 0))),
+                        "seconds": round(time.time() - float(AI.get("t0") or time.time()), 1),
+                        "stopped": bool(AI.get("stop")),
+                        "ok": bool(got.get("ok")), "reason": got.get("reason") or "",
+                        "summary": got.get("summary") or "", "caveats": got.get("caveats") or "",
+                        "usage": got.get("usage") or {}, "files": got.get("files") or [],
+                        "snapshot": got.get("snapshot"), "steps": got.get("steps") or [],
+                        "folded": got.get("folded") or 0,
+                    })
+                    got["run_id"] = saved.get("id")
+                except Exception as exc:                                  # noqa: BLE001
+                    got["run_id"] = ""
+                    got["save_error"] = "%s: %s" % (type(exc).__name__, exc)
+                with AI_LOCK:
+                    AI["state"]["result"] = got
+                    AI["state"]["running"] = False
+
+            th = threading.Thread(target=work, daemon=True)
+            AI["thread"] = th
+            th.start()
+            # ★ 别在这儿假设 client 长什么样（`V-233` 探针用假模型时踩到）：
+            #   线程已经起来了，这里再抛异常的话，页面会看到"起不来"而其实任务已经在跑。
+            return {"ok": True, "workdir": wd, "model": str(getattr(client, "model", "") or "")}
+
+    def ai_poll(self):
+        """当前这次任务的进度（步骤流 + 结果）。界面每半秒问一次。"""
+        with AI_LOCK:
+            st = AI.get("state")
+            if not st:
+                return {"ok": True, "running": False, "idle": True, "steps": [], "say": []}
+            return {"ok": True, "running": bool(st.get("running")),
+                    "task": AI.get("task") or "", "steps": list(st.get("steps") or []),
+                    "say": list(st.get("say") or [])[-40:], "result": st.get("result"),
+                    "phase": st.get("phase") or "",
+                    # ★ `V-250`：开工前那条快照（一存好就有，不用等跑完）——
+                    #   界面拿它去刷新「版本快照」那一列。
+                    "snapshot": st.get("snapshot") or None,
+                    "max_tokens": int(AI.get("max_tokens") or 0),
+                    "context": int(AI.get("context") or 0),
+                    "compact_at": int(AI.get("compact_at") or 0),
+                    "retain_tokens": int(AI.get("retain_tokens") or 0),
+                    "prompt_tokens": int((st.get("steps") or [{}])[-1].get("ptok") or 0)
+                                      if st.get("steps") else 0,
+                    "seconds": round(time.time() - float(AI.get("t0") or time.time()), 1)}
+
+    def ai_runs(self, limit=30):
+        """跑过的那些任务（`V-243`：重启 moss 还在）。列表**不带步骤流**，那个用 `ai_run(id)`。"""
+        try:
+            ai_dir = str(HERE / "ai")
+            if ai_dir not in sys.path:
+                sys.path.insert(0, ai_dir)
+            import ai_runs
+            return {"ok": True, "runs": ai_runs.list_runs(limit=int(limit or 30))}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "runs": [], "msg": "读不到历史：%s" % e}
+
+    def ai_run(self, run_id=""):
+        """一次任务的完整记录（含步骤流）—— 界面上点「看」用。"""
+        try:
+            ai_dir = str(HERE / "ai")
+            if ai_dir not in sys.path:
+                sys.path.insert(0, ai_dir)
+            import ai_runs
+            rec = ai_runs.get(run_id)
+            return {"ok": bool(rec), "run": rec, "msg": "" if rec else "没有这条记录"}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "run": None, "msg": "读不到：%s" % e}
+
+    def ai_run_forget(self, run_id="", all_of_them=False):
+        """删一条（或全清）任务记录。记录只是回顾用的，删了不影响包。"""
+        try:
+            ai_dir = str(HERE / "ai")
+            if ai_dir not in sys.path:
+                sys.path.insert(0, ai_dir)
+            import ai_runs
+            return ai_runs.clear() if all_of_them else ai_runs.delete(run_id)
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
+    def ai_stop(self):
+        """按「停止」：**不硬杀**，只在每一轮开头告诉 loop 收工（正在发的请求让它自己结束）。"""
+        AI["stop"] = True
+        return {"ok": True, "msg": "已经让它停在下一轮（正在发出的那次请求会先回来）。"}
 
     def open_path(self, path):
         try:
@@ -1927,11 +2369,15 @@ class Api:
         except Exception as e:                                      # noqa: BLE001
             return {"ok": False, "msg": str(e)}
 
-    def backup_create(self, rels, title="", note="", group="", excludes=None):
+    def backup_create(self, rels, title="", note="", group="", excludes=None,
+                      by="", by_task=""):
         """备份一批 rel（页面给的是 `user/...` / `system/...` / `abs/...`）。
 
         落到哪个**分组**（`user_data/backups/<分组>/`）：不传就按来源猜（包 ⇒ 包 id，
         整个 user_data ⇒ `@user`，某个目录 ⇒ `@dir-<名字>`）。
+
+        `by` / `by_task`（`V-236`）：**谁存的** + **那次的任务原文**。
+        人从界面点「存快照」时是空的；AI 工作台存"动手前"那条时会给 `by="ai"`。
         """
         try:
             st = self._backup_store()
@@ -1944,7 +2390,8 @@ class Api:
             if not srcs:
                 return {"ok": False, "msg": "没有要备份的东西"}
             man = st.create(srcs, title=title, note=note, excludes=excludes,
-                            group=(str(group or "") or None))
+                            group=(str(group or "") or None),
+                            by=by, by_task=by_task)
             return {"ok": True, "id": man["id"], "group": man.get("group"),
                     "stats": man["stats"], "created_text": man["created_text"],
                     "msg": "备份好了（分组 %s）：%s 个文件、%s" % (
@@ -2244,7 +2691,13 @@ class Api:
             return {"ok": False, "msg": str(e)}
 
     def pick_dir(self, start=""):
-        """弹系统对话框让用户挑一个文件夹（导出目标用）。取消 ⇒ ok=False。"""
+        """弹系统对话框让用户挑一个文件夹（导出目标 / 插件的「选文件夹」用）。
+
+        ★ 取消 ⇒ `ok=False` **并且带 `cancelled=True`**（`V-212`）：这是给插件分辨
+          "用户自己关掉了框"和"这条路压根走不通"用的 —— 以前两者都只是"没拿到 path"，
+          插件按"问不到"处理就会**再弹一个自己那张对话框**（`path` 包真踩到：取消一次弹两次）。
+          窗口还没准备好 / 抛错**不算取消**，那时插件退回自己那条兜底是对的。
+        """
         try:
             import webview as _wv
             wins = list(getattr(_wv, "windows", None) or [])
@@ -2265,7 +2718,7 @@ class Api:
             except TypeError:
                 res = wins[0].create_file_dialog(kind, start_dir)
             if not res:
-                return {"ok": False, "msg": "没有选（取消）"}
+                return {"ok": False, "cancelled": True, "msg": "没有选（取消）"}
             p = res[0] if isinstance(res, (list, tuple)) else res
             return {"ok": True, "path": str(p)}
         except Exception as e:                                      # noqa: BLE001
@@ -2299,11 +2752,27 @@ class Api:
             except TypeError:
                 res = wins[0].create_file_dialog(kind, start_dir, types)
             if not res:
-                return {"ok": False, "msg": "没有选（取消）"}
+                return {"ok": False, "cancelled": True, "msg": "没有选（取消）"}
             p = res[0] if isinstance(res, (list, tuple)) else res
             return {"ok": True, "path": str(p)}
         except Exception as e:                                      # noqa: BLE001
             return {"ok": False, "msg": "挑文件失败：%s" % e}
+
+    def backup_rm_ai(self, group=""):
+        """**只删 AI 存的快照**（`V-236`）。
+
+        ★ 这不是"UI 帮忙过滤一下" —— 后端走的是 `BackupStore.delete_ai()`，
+          它逐条看清单里的 `by` 字段，**不是 `"ai"` 的直接跳过**。
+          所以"AI 不能删用户存的快照"是**结构性**保证，不靠提示词自觉。
+        """
+        try:
+            ai_dir = str(HERE / "ai")
+            if ai_dir not in sys.path:
+                sys.path.insert(0, ai_dir)
+            import ai_snap
+            return ai_snap.clean_ai(group=group)
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "deleted": [], "skipped": [], "msg": "清不掉：%s" % e}
 
     def backup_delete(self, bid, group=""):
         """删掉一次备份，然后**在这一组里**回收没人引用的对象。"""
@@ -3126,19 +3595,30 @@ def _wire_float(pid, win, title):
 _PAGE_URL = _page_url()          # 主窗口那一页的地址；浮动窗口用同一个，只多一个 #float=<id>
 _API = Api()                     # 两个窗口共用同一个 js_api 实例（浮动窗口里也要能用 embed_*）
 
+# ★ `V-223`：主窗口的**大小和位置**记在 `user_data/state/_ui_window.json`，下次开还在这儿。
+#   双屏的坑（坐标是虚拟屏的、副屏在主屏左边就是负数）、拔屏、换分辨率、最大化/最小化
+#   都在 `win_geom.py` 里处理，这里只负责"读回来 → 建窗 → 盯着它"。
+#   任何一步出问题都**不影响开界面**（读不出来就按默认 + 居中）。
+_WIN_GEOM_FILE = USER_DATA / "state" / win_geom.WIN_GEOM_NAME
+_WIN_GEOM = win_geom.resolve(win_geom.load(_WIN_GEOM_FILE))
+
 window = webview.create_window(
     "moss",
     _PAGE_URL,
     js_api=_API,
-    width=1280,
-    height=860,
-    min_size=(900, 600),
+    width=_WIN_GEOM["width"],
+    height=_WIN_GEOM["height"],
+    x=_WIN_GEOM["x"],                 # None = 交给 pywebview 居中（拔了屏就是这样）
+    y=_WIN_GEOM["y"],
+    min_size=win_geom.WIN_MIN_SIZE,
+    maximized=_WIN_GEOM["maximized"],  # 上次是最大化的，这次也最大化
     # ★ text_select 默认是 **False**，页面上的字**选不中**（拖不动、也没法 Ctrl+C）——
     #   pywebview 的 `create_window(..., text_select: bool = False)`。
     #   命令行窗口最要紧的就是"能选中、能复制"，所以这里必须打开它；
     #   页面里也给 `#out` 写了 user-select:text，另外配了「复制全部」按钮。
     text_select=True,
 )
+_GEOM_WATCH = win_geom.watch(window, _WIN_GEOM_FILE, note=lambda s: _note("main: " + s))
 
 # ================================================================ 拖文件进来（`V-35` / `V-38` / `V-39`）
 # 你拖着 Explorer 里的一个文件 / 文件夹丢进窗口 ⇒ 界面只列"收得下它"的包、划过谁选谁，

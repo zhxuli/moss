@@ -15,8 +15,53 @@
 
 | 调用 | 行为 |
 |---|---|
-| `moss :img`（**不带任何参数**） | 打开图形界面 |
+| `moss :img`（**不带任何参数**） | 打开图形界面（在 moss 里是**内嵌**，也能自己开一扇窗） |
 | `moss :img <参数...>` | 命令行模式 |
+
+## 界面：一份页面两种跑法（`V-48` / `V-225`）
+
+| 怎么起 | 走哪条路 | 代码在哪 |
+|---|---|---|
+| 在 moss 的「界面」选项卡里**内嵌** | 宿主给 `MOSS_UI_EMBED=1`，把它起成**后端进程**：不开窗口，在 stdin/stdout 上说 JSON 行 | `embed.py`（协议）+ `ui/moss-embed.js`（页面侧垫片） |
+| 独立窗口 | pywebview 开一扇窗 | `gui_web.py` |
+| 本机没 pywebview / WebView2 | tkinter 基础界面 | `gui_tk.py` |
+
+**★ 两条路共用同一份 `gui_web.Api`** —— 所以 `Api` 的每个方法都只收**一个 dict**
+（`params`），字段按名字取。垫片两种环境都只传一个参数（内嵌是把
+`{"id", "method", "params"}` 送进后端进程的 stdin），**别改回位置参数**，一内嵌就散架。
+页面那侧的桥只有 `ui/src/bridge.js` 一处（`ROUTES` 表把页面的位置参数翻成字段名）。
+
+**内嵌协议**（一行一个 JSON）：
+```
+宿主 → 我们： {"id": 1, "method": "scan", "params": {"dir": "D:\\pics"}}
+我们 → 宿主： {"id": 1, "ok": true, "result": {…}}
+```
+★ 规矩：**stdout 只许出 JSON 行**。日志走 `_log()`（stderr）—— 宿主对"不是 `{` 开头"的行
+会当输出收进命令行（无害），但**把一条 JSON 拆成两行就真把协议撕了**（别用多行 print）。
+`attach` / `_scan` / `_remember` / `_on_closing` / `save_config` / `set_title`
+这几个在 `Embedded.HIDDEN` 里，页面调不到（内部用 / 只在独立窗口那条路上有意义）。
+**`push_drop` 不在里面**（`V-227`）：那是页面**自己**把宿主给的真路径塞回来的那条路，
+挡掉它 = 拖进来什么都不发生（真机上就是一句"没有这个方法 push_drop"）。
+
+**内嵌时拖放改走宿主**：真路径只有宿主拿得到（Chromium 不给页面 `File.path`）。
+宿主把**真路径**作为 `drop` 事件送进页面 → 页面 `push_drop` 塞回后端 → 原来
+`take_drop()` 那条管线（`core.expand_dropped` 判文件夹/清单、按配置过滤、记历史）
+**一个字都没改**。内嵌时也不去写窗口标题（窗口是 moss 的）。
+
+★ **拖放提示的生命周期**（`V-226`，真机上踩到过"松手之后提示不消失"）：宿主铺的透明罩子
+把这一拖接过去之后，页面会收到一次**假的** `dragleave`，而且**再也收不到 `drop`** ——
+所以"松手收提示"这件事只能听宿主的：`moss.on('captured')` 之后不信 `dragleave`，
+`moss.on('dragend')` / `moss.on('drop')` 里都收掉（独立窗口那条路另挂 `window` 的
+`dragend` / `blur` 兜底）。规矩原文在 `system/spec/插件契约.md` §8 第 8 条。
+
+**怎么验**（改完先跑这三条）：
+```bash
+.\system\runtimes\python\3.12\python.exe tools\img内嵌探针.py   # 内嵌后端：协议+业务 24 条
+python tools\包界面检查.py img                                   # 这一页还画得出来吗
+python tools\界面预览.py img-ui                                  # 宿主→iframe→后端 整条链
+```
+（探针自己会去起无头 `msedge`，本机两边都用 3.12 跑过；系统 python 3.13 那份也跑通了 ——
+后端真正的运行时是 moss 自己挑的那个，跟用哪个 python 起探针无关。）
 
 ## 调用方式
 
