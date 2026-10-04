@@ -77,7 +77,9 @@ def list_runs(limit=30, with_steps=False):
         row = {k: rec.get(k) for k in ("id", "task", "workdir", "ok", "reason", "summary",
                                        "caveats", "usage", "files", "snapshot", "seconds",
                                        "started_text", "finished", "model", "max_tokens",
-                                       "stopped", "continued_from")}
+                                       # ★ `V-269`：`kind` 也要跟着回界面 —— 列表那一行靠它
+                                       #   把纯问答画成「💬 你是哪个大模型?」而不是「✅ …」
+                                       "kind", "stopped", "continued_from")}
         # ★ `V-251`：这条能不能**接着聊**（＝ 存了对话本身）。列表**不带 `messages`**
         #   （那是整条会话，几百 KB）—— 界面只拿这个布尔值，真接着聊时把 id 交回宿主。
         row["cont"] = bool(rec.get("messages"))

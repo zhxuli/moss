@@ -141,7 +141,12 @@ class Loop:
                  compact_at=102400, retain_tokens=20480, stop_check=None,
                  soft_steps=0, max_tokens=100000000, on_phase=None, on_snapshot=None):
         self.client = client
-        self.tools = T.Tools(workdir=workdir)
+        # ★ `V-269`：快照**不再开工就存**，改成"第一次真要写文件之前"存（`_before_first_write`）。
+        #   原话那次的教训：你问一句「你是哪个大模型」，它也给你存了一条备份。
+        self.snapshot = None
+        self.want_snapshot = True
+        self.task = ""
+        self.tools = T.Tools(workdir=workdir, before_write=self._before_first_write)
         #: 现在在干什么（`V-242`：界面上显示"等模型回话 12s / 执行工具"，
         #  免得"模型在想"看起来像"卡死了"）
         self.on_phase = on_phase
@@ -276,6 +281,29 @@ class Loop:
                 pass
 
     # ------------------------------------------------------------------ 主循环
+    def _before_first_write(self):
+        """第一次真要写文件之前：存"动手前"的快照（`V-269`，从开工就存改过来的）。
+
+        ★ 为什么由 `Tools` 来喊：只有它知道"这一刻要动盘了"。快照必须在**写之前**落盘
+          —— 存"已经改了一半"的样子等于没存。
+        ★ `V-250` 那条不变：**存好就立刻通知界面**（版本快照那一列要刷新出来），
+          不然你要等跑完才看得见它刚存的那条。
+        """
+        if not self.want_snapshot or self.snapshot:
+            return
+        import ai_snap as S                                              # noqa: PLC0415
+        got = S.snapshot_before(self.task, self.tools.workdir)
+        if got.get("ok"):
+            self.snapshot = {"id": got.get("id"), "group": got.get("group")}
+            self.say("动手前存了快照：%s（分组 %s）" % (got.get("id"), got.get("group")))
+            if self.on_snapshot:
+                try:
+                    self.on_snapshot(self.snapshot)
+                except Exception:                                        # noqa: BLE001
+                    pass
+        else:
+            self.say("（没存动手前的快照：%s）" % got.get("msg"))
+
     def run(self, task, extra_fragments=(), snapshot=True, history=None, from_id=""):
         """跑一次任务。
 
@@ -287,6 +315,8 @@ class Loop:
         `from_id`：这条会话是从哪条记录接过来的（写进新记录，界面上能看出链条）。
         """
         sys_text, used, missing = compose_system(task, extra_fragments)
+        self.task = str(task or "")
+        self.want_snapshot = bool(snapshot)
         old = [m for m in (history or []) if str(m.get("role")) != "system"]
         messages = [{"role": "system", "content": sys_text}] + old + \
                    [{"role": "user", "content": "%s\n\n%s" % (task, env_note(self.tools.workdir))}]
@@ -300,21 +330,12 @@ class Loop:
                                  ("；**缺**：" + "、".join(missing)) if missing else ""))
         # ★ `V-236`：**动手前先给这个包存一条快照**（`by="ai"` + 这次的任务原文）。
         #   改坏了要能一键回去；存不上也照干（只是没退路，而且会如实说）。
+        # ★ `V-269`：**什么时候存**改了 —— 原来是这一行（开工就存），现在挂到
+        #   `Tools.before_write` 上，等**第一次真的要写文件**时才存：
+        #     · 纯问答（"你是哪个大模型"）不再白写一条备份；
+        #     · 快照点也更准（贴着你真正要改的那一刻）。
+        #   参数 `snapshot=False` 照旧能整个关掉。
         self.snapshot = None
-        if snapshot:
-            import ai_snap as S                                          # noqa: PLC0415
-            got = S.snapshot_before(task, self.tools.workdir)
-            if got.get("ok"):
-                self.snapshot = {"id": got.get("id"), "group": got.get("group")}
-                self.say("开工前存了快照：%s（分组 %s）" % (got.get("id"), got.get("group")))
-                # ★ `V-250`：立刻通知界面（版本快照那一列要刷新出来）
-                if self.on_snapshot:
-                    try:
-                        self.on_snapshot(self.snapshot)
-                    except Exception:                                    # noqa: BLE001
-                        pass
-            else:
-                self.say("（没存动手前的快照：%s）" % got.get("msg"))
         nudges, result = 0, {"ok": False, "reason": "步数用完了（还没验收通过）"}
         for n in range(1, self.max_steps + 1):
             if self.stop_check and self.stop_check():
@@ -374,7 +395,9 @@ class Loop:
                                         used, missing)
                 messages.append({"role": "assistant", "content": text})
                 messages.append({"role": "user", "content":
-                                 "别只说话：要么调工具干活，要么干完了用 done(summary=…) 收工。"})
+                                 "别只说话：要么调工具干活，要么干完了用 done(summary=…) 收工；"
+                                 "**如果你只是在回答用户的问题、一个文件都不用改，就用 "
+                                 "answer(text=…) 收工**（它不要求跑命令）。"})
                 continue
             # ★ `V-247`：**按我们自己的 id 重建**这条 assistant 消息（别原样回灌）。
             #   原样回灌时，万一网关回的 tool_calls 没带 id（或 id 重复），我们这边发 tool 结果
@@ -434,6 +457,21 @@ class Loop:
                            "（硬规矩：**要么改完之后跑通一次，要么确认不用改但真跑成功过**。）")
                     # ★ `V-247`：先攒着 —— 等这一轮所有 tool 结果发完再追加（见下面 pending_notes）
                     pending_notes.append(msg)
+                elif name == "answer":
+                    # ★ `V-269`：**纯问答的合法收工**（你问「你是哪个大模型」那次，它答完了却被
+                    #   "别只说话"打回去、只好去翻目录跑命令 —— 白烧 3 万 token）。
+                    #   规矩：**一个文件都没动过**才准走这条；动过文件的必须 run_moss + done，
+                    #   否则这道口子就成了"绕开验收硬闸"的后门。
+                    if self.tools.edit_seq == 0:
+                        return self._finish(
+                            True, "问答收工（没动文件，不用跑命令）", used, missing,
+                            summary=str((call.get("args") or {}).get("text") or ""),
+                            caveats=str((call.get("args") or {}).get("caveats") or ""),
+                            kind="chat")
+                    pending_notes.append(
+                        "你这次**已经改过文件**了（第 %d 次），不能用 answer 收工 —— "
+                        "answer 只给\"一个字都没改\"的问答用。现在去 run_moss 跑通（退出码 0），"
+                        "再用 done(summary=…) 收尾。" % self.tools.edit_seq)
                 elif name == "run_moss" and str(out).startswith("退出码 0") and self.tools.verified():
                     # ★ `V-232`：真跑通了就**主动说一声**。第一次真跑时它跑通之后没来得及
                     #   再调 done（轮次用完），差的就是这一句。
@@ -460,8 +498,11 @@ class Loop:
         return self._finish(result["ok"], result["reason"], used, missing)
 
     # ------------------------------------------------------------------ 收尾
-    def _finish(self, ok, reason, used, missing, summary="", caveats=""):
+    def _finish(self, ok, reason, used, missing, summary="", caveats="", kind="work"):
         return {"ok": bool(ok), "reason": reason, "summary": summary, "caveats": caveats,
+                # ★ `V-269`：`kind="chat"` = 这次只是**回答**（没动文件、不用验收）——
+                #   界面拿它把结论卡写成「💬 回答」而不是「✅ 验收通过」。
+                "kind": str(kind or "work"),
                 "steps": self.steps, "usage": dict(self.usage),
                 "prompts": used, "missing_prompts": missing, "tools_log": self.tools.log,
                 "files": list(self.tools.changed), "folded": self.folded,
@@ -512,7 +553,8 @@ def run_cli(argv=None):
                max_tokens=max_tokens).run(task)
     print()
     print("=" * 68)
-    print("%s —— %s" % ("✅ 验收通过" if got["ok"] else "✗ 没通过", got["reason"]))
+    print("%s —— %s" % ("💬 回答" if got.get("kind") == "chat"
+                        else ("✅ 验收通过" if got["ok"] else "✗ 没通过"), got["reason"]))
     if got.get("summary"):
         print("它说改了什么：%s" % got["summary"])
     if got.get("caveats"):

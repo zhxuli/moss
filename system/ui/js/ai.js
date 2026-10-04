@@ -238,7 +238,7 @@ async function aiOpenRun(id, quiet){
     // ★ `V-253`：翻历史时，日志第一张卡还是**那次的任务原文**（照稿子的"用户指令"卡）
     AIR.sentTask = r.task || "";
     AIR.muted = 0;
-    AIR.result = {ok: !!r.ok, reason: r.reason || "", summary: r.summary || "",
+    AIR.result = {ok: !!r.ok, kind: r.kind || "work", reason: r.reason || "", summary: r.summary || "",
                   caveats: r.caveats || "", files: r.files || [], usage: r.usage || {},
                   snapshot: r.snapshot || null, run_id: r.id};
     // ★ `V-258`：翻历史 = **一轮**（前面那些轮先收起来，别和这份记录混在一起）
@@ -505,10 +505,12 @@ const MossAi = {
       return out;
     },
     /* 底部状态条左半边（照稿子：`✗ 上次未通过` + `开工快照: <tag>`）
-       ★ `V-258`：看的是"**最近一次有结果的那轮**"（`lastRes`），不是"正在跑这轮" */
+       ★ `V-258`：看的是"**最近一次有结果的那轮**"（`lastRes`），不是"正在跑这轮"
+       ★ `V-269`：纯问答那轮（`kind="chat"`）措辞跟着换 —— 它没"验收"这回事。 */
     lastText(){
       this.A.rev;
       if (!this.lastRes) return "还没跑过";
+      if (this.lastRes.kind === "chat") return this.resultOk ? "上次已回答" : "上次没通过";
       return this.resultOk ? "上次通过" : "上次未通过";
     },
     lastIcon(){
@@ -697,6 +699,19 @@ const MossAi = {
           （`window.ico` 明明是函数也白搭 —— 实测报的是 `ico is not a function`），
           所以模板里要用的东西都得是"组件自己的方法 / 计算属性"，或者挂在
           `mountVue(..., {ico: ico})` 那种 `globalProperties` 上（文件末尾那行就是）。 */
+    /* ★ `V-269`：结论卡的抬头分两种 —— 干活那次是「验收通过/没通过」，
+       纯问答那次是「回答」（没动文件、也就没有"验收"这回事）。 */
+    rhead(r){
+      if (!r) return "";
+      if (r.kind === "chat") return r.ok ? "💬 回答" : "✗ 没能回答";
+      return r.ok ? "✅ 验收通过" : "✗ 没通过";
+    },
+    /* 抬头后面那截" —— 原因"：干活那次除了"验收通过"以外都值得写；
+       问答那次只有失败才写（成功时原因就是"问答收工…"，写出来是废话）。 */
+    rshowReason(r){
+      if (!r || !r.reason || r.reason === "验收通过") return false;
+      return r.kind === "chat" ? !r.ok : true;
+    },
     stepIcon(t){
       // 稿子里那几张卡用的就是这几个名字（`list_dir` → `folder-search`、`read_file` → `file-text`、
       // 写文件 → `file-code`）—— 照它来；其余工具按同一族补。
@@ -706,7 +721,9 @@ const MossAi = {
     },
     runLine(r){
       const t = (r.started_text || "").slice(11, 19);
-      return (r.ok ? "✅ " : "✗ ") + (r.task || "").slice(0, 42) +
+      // ★ `V-269`：纯问答那次（`kind="chat"`）不是"验收通过"，图标也换成对话
+      const mark = r.kind === "chat" ? (r.ok ? "💬 " : "✗ ") : (r.ok ? "✅ " : "✗ ");
+      return mark + (r.task || "").slice(0, 42) +
              "　" + (r.steps || 0) + " 步 · " + humanTokens((r.usage || {}).total_tokens || 0) +
              (t ? " · " + t : "");
     },
@@ -977,8 +994,8 @@ const MossAi = {
             </div>
 
             <div class="ai-result" v-if="t.result" :class="{ok: !!t.result.ok, bad: !t.result.ok}">
-              <div class="ai-rhead"><span v-if="A.viewing" class="ai-old">历史记录</span>{{ t.result.ok ? "✅ 验收通过" : "✗ 没通过" }}<span
-                v-if="t.result.reason && t.result.reason !== '验收通过'"> —— {{ t.result.reason }}</span></div>
+              <div class="ai-rhead"><span v-if="A.viewing" class="ai-old">历史记录</span>{{ rhead(t.result) }}<span
+                v-if="rshowReason(t.result)"> —— {{ t.result.reason }}</span></div>
               <div class="ai-rsnap" v-if="t.result.snapshot">
                 <span>开工前已存快照 <code>{{ t.result.snapshot.id }}</code>（AI 存的，列表里带「AI」徽章）</span>
                 <button class="btn btn-outline" @click.stop="rollback(t.result.snapshot)"

@@ -367,16 +367,44 @@ def main():
     chk("H 提示词是空的 → 标题留空（存储那边会用时间兜底：\"备份 <时间>\"）",
         S.title_for("") == "" and S.title_for("   \n ") == ""
         and S.note_for("") == S.NOTE, "%r / %r" % (S.title_for(""), S.note_for("")))
-    # ★ `V-250`：快照**存好就立刻喊一声** —— 界面靠它刷新「版本快照」那一列。
-    #   你报的原话："当他备份以后 版本快照这里 没有刷新 所以我是看不到它刚刚做的快照的"。
-    #   以前只有跑完才从 `result.snapshot` 里知道，而快照是**动手之前**就存了的。
+    # ★ `V-269`：快照**不再开工就存**（你问「你是哪个大模型」也白存了一条），改成
+    #   "第一次真要写文件之前"才存。所以这里两半都要钉住：
+    #   ① **没动文件的跑 ⇒ 一条快照都不该存**；② **真动手那次 ⇒ 动手之前就存好、并立刻通知界面**。
     _snaps = []
-    _m = FakeModel([call("done", {"summary": "什么都不用改"})])
-    L.Loop(_m, workdir=fake_pkg, max_steps=3, say=lambda s: None,
-           on_snapshot=lambda g: _snaps.append(g)).run("把 zz 改成能算加法")
-    chk("H ★★ 开工前那条快照存好就**立刻通知界面**（不用等跑完）",
-        len(_snaps) == 1 and _snaps[0].get("id") and _snaps[0].get("group") == "zz",
-        "通知了 %r" % (_snaps,))
+    _m = FakeModel([call("answer", {"text": "我是 moss 的写插件助手"})])
+    _g0 = L.Loop(_m, workdir=fake_pkg, max_steps=3, say=lambda s: None,
+                 on_snapshot=lambda g: _snaps.append(g)).run("你是哪个大模型?")
+    chk("H ★★ 纯问答（一个文件都没动）⇒ **一次快照都不存**（不再白写一条备份）",
+        _snaps == [] and (_g0.get("snapshot") in (None, "")), "通知了 %r" % (_snaps,))
+    # 动手那次：hook 要在**写之前**跑 —— 所以记下 hook 那一刻文件长什么样（还是旧内容）
+    _seen_at_snap = {}
+    _m2 = FakeModel([call("edit_file", {"path": str(fake_pkg / "run.py"),
+                                        "find": "print('v2')", "replace": "print('v3')"}),
+                     call("done", {"summary": "改好了"})])
+    _g1 = L.Loop(_m2, workdir=fake_pkg, max_steps=4, say=lambda s: None,
+                 on_snapshot=lambda g: _seen_at_snap.update(
+                     g, content_at_hook=(fake_pkg / "run.py").read_text(encoding="utf-8"))
+                 ).run("把 zz 改成能算加法")
+    chk("H ★★ 真动手那次：快照存好就**立刻通知界面**（不用等跑完）",
+        len(_seen_at_snap) > 0 and _seen_at_snap.get("id")
+        and _seen_at_snap.get("group") == "zz", "通知了 %r" % (_seen_at_snap,))
+    chk("H ★★ 而且是在**写之前**存的（hook 那一刻文件还是旧的 `print('v2')`）",
+        _seen_at_snap.get("content_at_hook") == "print('v2')\n",
+        "hook 时内容=%r" % _seen_at_snap.get("content_at_hook"))
+    chk("H 改完之后文件真变了（证明上面那条不是「根本没写」）",
+        (fake_pkg / "run.py").read_text(encoding="utf-8") == "print('v3')\n",
+        (fake_pkg / "run.py").read_text(encoding="utf-8")[:40])
+    # 连改几个文件，快照也只存一条（不然"动手前"那一条会被覆盖成"动了两次之后"）
+    _snaps2 = []
+    _m3 = FakeModel([call("edit_file", {"path": str(fake_pkg / "run.py"),
+                                        "find": "print('v3')", "replace": "print('v4')"}),
+                     call("edit_file", {"path": str(fake_pkg / "run.py"),
+                                        "find": "print('v4')", "replace": "print('v5')"}),
+                     call("done", {"summary": "又改了"})])
+    L.Loop(_m3, workdir=fake_pkg, max_steps=5, say=lambda s: None,
+           on_snapshot=lambda g: _snaps2.append(g)).run("接着改")
+    chk("H ★ 连改两次也只存**一条**快照（快照点是「动手之前」那一刻）",
+        len(_snaps2) == 1, "存了 %d 条" % len(_snaps2))
 
     print()
     print("=" * 72)
@@ -826,6 +854,48 @@ def main():
 
 
 
+
+    print()
+    print("=" * 72)
+    print("Q：`V-269` 纯问答的合法收工（`answer`）—— 你问「你是哪个大模型」那次白烧 3 万 token")
+    print("=" * 72)
+    _txt, _u2, _m2x = L.compose_system("你是哪个大模型?")
+    chk("Q ★ 提示词里写明「问事就用 answer」（不靠模型自己猜）", "answer(text=…)" in _txt,
+        "")
+    chk("Q ★ 提示词里也写明「只要动了文件就不能用 answer」", "动了文件就不能用" in _txt, "")
+    # ① 一个文件都没动 + answer ⇒ 直接收工，**不用跑命令**（这正是旧版做不到的那件事）
+    q1 = L.Loop(FakeModel([call("answer", {"text": "底层是哪个模型我看不到；我是 moss 的写插件助手。"})]),
+                workdir=fake_pkg, max_steps=3, say=lambda s: None).run("你是哪个大模型?")
+    chk("Q ★★ 没动文件 + answer ⇒ 收工成功（ok=True）", q1["ok"] is True, q1["reason"][:60])
+    chk("Q ★★ 而且一次 run_moss 都没跑（省下来的就是那 7 步 / 3 万 token）",
+        all(s["tool"] != "run_moss" for s in q1["steps"]) and len(q1["steps"]) == 1,
+        "步骤：%s" % [s["tool"] for s in q1["steps"]])
+    chk("Q ★ 结果带 kind=chat（界面拿它写「💬 回答」，不写「验收通过」）",
+        q1.get("kind") == "chat", "kind=%r" % q1.get("kind"))
+    chk("Q ★ 回答正文进 summary（界面直接显示这一段）",
+        "写插件助手" in (q1.get("summary") or ""), repr((q1.get("summary") or "")[:40]))
+    chk("Q ★ 没跑过命令也过得去 ⇒ 证明它走的是**另一条出口**，不是验收闸放水",
+        q1["ok"] is True and q1["reason"] != "验收通过", q1["reason"][:60])
+    # ② 动过文件之后不许拿 answer 绕开验收硬闸
+    #    ★ `find` 取**当前真实内容**（前面几段探针也动过这个文件；写死"v5"会随段落顺序碎掉）
+    _cur = (fake_pkg / "run.py").read_text(encoding="utf-8").strip()
+    q2 = L.Loop(FakeModel([call("edit_file", {"path": str(fake_pkg / "run.py"),
+                                              "find": _cur, "replace": "print('v6')"}),
+                           call("answer", {"text": "我改完了"})]),
+                workdir=fake_pkg, max_steps=3, say=lambda s: None).run("改一下再回答")
+    chk("Q ★★ 改过文件之后用 answer ⇒ **不许收工**（否则就是个绕开验收的后门）",
+        q2["ok"] is False, q2["reason"][:70])
+    chk("Q ★ 而且当场点名告诉它为什么（不是默默失败）",
+        any("不能用 answer 收工" in str(m.get("content") or "") for m in q2["messages"]), "")
+    # ③ 只说话被打回时，提示里要**点名 answer**（模型才知道有这条出口）
+    _m5 = FakeModel([{"text": "好的，我这就开始", "tool_calls": [], "usage": {}, "native": True,
+                      "message": {"role": "assistant", "content": "好的，我这就开始"}},
+                     call("answer", {"text": "答完了"})])
+    q3 = L.Loop(_m5, workdir=fake_pkg, max_steps=3, say=lambda s: None).run("问个事")
+    chk("Q ★ 只说话被打回时，那条提示里**点名 answer**（不然它不知道该走这条）",
+        any("answer(text=…)" in str(m.get("content") or "") for m in _m5.seen[-1]), "")
+    chk("Q ★ 被打回之后它照做 ⇒ 照样能收工（kind=chat）",
+        q3.get("ok") is True and q3.get("kind") == "chat", q3["reason"][:60])
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()

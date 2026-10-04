@@ -100,6 +100,15 @@ TOOLS = [
             "id": {"type": "string", "description": "只清这一条（可选）"}},
             "required": []}}},
     {"type": "function", "function": {
+        "name": "answer",
+        "description": ("**只是回答问题**时用它收工（问你是谁、问某个包怎么用、问契约里怎么写…）："
+                        "一个文件都不用改，所以**不要求跑命令**。答案写在 text 里。"
+                        "★ 只要动了文件（哪怕一次）就不能用它，得 run_moss 跑通之后 done。"),
+        "parameters": {"type": "object", "properties": {
+            "text": {"type": "string", "description": "给用户看的回答（要能直接读，别写文件清单）"},
+            "caveats": {"type": "string", "description": "拿不准的、没查的，写在这儿（可选）"}},
+            "required": ["text"]}}},
+    {"type": "function", "function": {
         "name": "done", "description": ("收工。前提：最后一次改动之后**跑过一次且退出码 0**，"
                                         "否则会被打回来。summary 里写清改了什么、怎么验的。"),
         "parameters": {"type": "object", "properties": {
@@ -165,10 +174,17 @@ def child_env():
 
 
 class Tools:
-    """工具执行器。`workdir` 是这次任务的默认目录（通常是那个包的目录）。"""
+    """工具执行器。`workdir` 是这次任务的默认目录（通常是那个包的目录）。
 
-    def __init__(self, workdir=None):
+    `before_write`（`V-269`）：**第一次真要写文件之前**喊一声 —— 用来"动手前存快照"。
+    ★ 为什么挂在这儿而不是开工就存：你问「你是哪个大模型」那种**纯问答**也开工就存，
+      等于白写一条备份（还占列表一格）；而且快照点越贴近改动越准。
+    """
+
+    def __init__(self, workdir=None, before_write=None):
         self.workdir = Path(workdir) if workdir else E.write_root()
+        self.before_write = before_write    # `V-269`：第一次写文件之前叫一次
+        self._wrote = False                 # 只叫一次（失败重试也不重复存）
         self.edit_seq = 0          # 第几次成功改动
         self.run_seq = 0           # 第几次跑
         self.last_ok_run_seq = -1  # 最后一次"退出码 0"的跑，发生在第几回合
@@ -184,6 +200,15 @@ class Tools:
         if fn is None:
             return "[错误] 没有这个工具：%s（可用：%s）" % (
                 name, "、".join(t["function"]["name"] for t in TOOLS))
+        # ★ `V-269`：写文件之前先让 loop 存快照（`before_write` 里做的事**必须**在
+        #   `fn(...)` 之前跑完 —— 不然存下来的就是"已经改了一半"的样子）。
+        #   只认第一次：同一轮里连改三个文件也只存一条。存不上不影响改（loop 那边自己会记）。
+        if not self._wrote and name in ("edit_file", "write_file") and self.before_write:
+            self._wrote = True
+            try:
+                self.before_write()
+            except Exception as e:                                   # noqa: BLE001
+                self.log.append(("(快照)", "动手前存快照失败：%s" % e))
         try:
             out = fn(args or {})
         except Exception as e:                                       # noqa: BLE001
@@ -355,6 +380,12 @@ class Tools:
 
     def _t_done(self, args):
         return "收到。summary=%s" % str(args.get("summary") or "")[:400]
+
+    def _t_answer(self, args):
+        """纯问答收工（`V-269`）。工具本身不做判断 —— **闸在 loop 里**：
+        只有"一个文件都没动过"才准用它收工（动过文件的必须走 `done` + 跑一遍）。
+        """
+        return "收到（这次是回答，没动文件）。text=%s" % str((args or {}).get("text") or "")[:200]
 
     def _t_snap_clean(self, args):
         """清自己存的快照（`V-236`）。**只能删 `by == "ai"` 的** —— 闸在 `delete_ai()` 里。"""

@@ -93,7 +93,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "detail-fill", "ai-pane", "snap-by",
-          "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "icons"]
+          "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
 #: 是场景（或它的假数据）跟不上 —— 待办记在账本 `V-203`。
@@ -485,10 +485,30 @@ MOCK_JS = r"""
        workdir: state.home + "\\system\\pkgs\\md5",
        reason: "用户按了停止", started_text: "2026-10-03 23:40:02",
        usage: {prompt_tokens: 90000, completion_tokens: 3000, total_tokens: 93000},
-       files: [], summary: ""}]}),
+       files: [], summary: ""},
+      // ★ `V-269`：**纯问答**那一条（`kind="chat"`）—— 结论卡要写「回答」而不是「验收通过」，
+      //   而且它没动文件 ⇒ 没有"开工快照"、也不该有"验收"这套词。场景 `ai-chat` 拿它验。
+      {id: "r-chat", task: "你是哪个大模型?", steps: 1, ok: true, cont: true, msgs: 3,
+       kind: "chat", workdir: state.home + "\\user_data\\pkgs\\calc",
+       reason: "问答收工（没动文件，不用跑命令）", started_text: "2026-10-04 20:00:25",
+       usage: {prompt_tokens: 2030, completion_tokens: 92, total_tokens: 2122},
+       files: [], summary: "底层是哪个模型我自己看不到；我是 moss 的写插件助手。"}]}),
     // ★ `V-262`：**整条会话**（链头 → 这条）—— 界面进来认领/翻历史时用它，
     //   重启 moss 之后也要把前几轮摆出来（以前只 `ai_run` 最后一条 ⇒ 只看到最后一轮）
-    ai_thread: async (id) => ({
+    ai_thread: async (id) => (id === "r-chat" ? {
+      // ★ `V-269`：纯问答那一条 —— 一步 `answer`、kind=chat、没有快照
+      ok: true, tail: "r-chat", cont: true,
+      turns: [{id: "r-chat", task: "你是哪个大模型?", at: "2026-10-04 20:00:25", cont: true,
+               steps: [{n: 1, tool: "answer", brief: '{"text": "底层是哪个模型…"}',
+                        note: "收到（这次是回答，没动文件）。", ms: 2,
+                        disp: "底层是哪个模型我自己看不到；我是 moss 的写插件助手。"}],
+               result: {ok: true, kind: "chat", reason: "问答收工（没动文件，不用跑命令）",
+                        summary: "底层是哪个模型我自己看不到；我是 moss 的写插件助手。",
+                        caveats: "", files: [],
+                        usage: {prompt_tokens: 2030, completion_tokens: 92,
+                                total_tokens: 2122},
+                        snapshot: null, run_id: "r-chat",
+                        continue_note: "新会话（没带之前的对话）"}}]} : {
       // `cont` 照那条记录的真实情况给：`r-old2` 在预览里就是"更早的、没存对话"那条
       ok: true, tail: id || "r-old", cont: (id !== "r-old2"),
       turns: [{id: id || "r-old", task: "给 :calc 支持指数和开方",
@@ -3914,6 +3934,45 @@ MOCK_JS = r"""
       //   每一条我说的话，点其中某一条就快速定位到那一轮）。这条走真人那条路：
       //   进「AI」页 → 跑两轮（攒出两条"我说的话"）→ 按 Alt → 浮出那张表 →
       //   点第 1 条 → 那一轮**展开 + 闪一下**、面板收起；再按 Alt → 松开 Alt 自己收起来。
+      // ★ `V-269`：**纯问答**那一轮的结论卡措辞 —— 你问「你是哪个大模型?」那次，
+      //   它答对了，但卡片写的是「✅ 验收通过」、底下还挂一条没意义的"开工快照"。
+      //   现在：`kind="chat"` ⇒ 抬头写「💬 回答」、不显示"开工快照"、底栏写"上次已回答"。
+      if (h === "ai-chat"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        await sleep(300);
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(1200);
+        const sessSel = document.querySelector("#pane-ai .ai-sess");
+        if (sessSel){
+          sessSel.value = "r-chat";
+          sessSel.dispatchEvent(new Event("change", {bubbles: true}));
+        }
+        await sleep(600);
+        const head = ((document.querySelector("#pane-ai .ai-rhead") || {}).textContent || "").trim();
+        const card = document.querySelector("#pane-ai .ai-result");
+        const cardTxt = (card && card.textContent) || "";
+        const headOk = /回答/.test(head) && !/验收通过/.test(head) && !/没通过/.test(head);
+        const noSnap = !document.querySelector("#pane-ai .ai-rsnap");
+        const bodyOk = /写插件助手/.test(cardTxt);
+        const steps = document.querySelectorAll("#pane-ai .ai-step").length;
+        const foot = ((document.querySelector("#pane-ai .status-footer") || {}).textContent || "");
+        const footOk = /上次已回答/.test(foot) && /开工快照: —/.test(foot);
+        const ok = headOk && noSnap && bodyOk && steps === 1 && footOk &&
+                   !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n结论卡抬头 = " + JSON.stringify(head.slice(0, 20)) +
+          "（要含「回答」、不许出现「验收通过」）" +
+          "\n回答正文在卡里 = " + bodyOk + " · 步骤数 = " + steps + "（`answer` 一步就收工）" +
+          "\n没有「开工前已存快照」那一行 = " + noSnap + "（没动文件就没有快照）" +
+          "\n底栏 = " + JSON.stringify(foot.replace(/\s+/g, " ").trim().slice(0, 40)) +
+          " · 页内错误 = " + (window.__errors || []).length;
+        document.querySelector("#meta").className = "meta";
+        document.title = ok ? "READY"
+          : ("AICHAT-FAIL 抬头=" + JSON.stringify(head.slice(0, 12)) +
+             " 快照块=" + (noSnap ? 0 : 1) + " 正文=" + (bodyOk ? 1 : 0) +
+             " 步骤=" + steps + " 底栏=" + (footOk ? 1 : 0));
+      }
       if (h === "ai-alt-jump"){
         const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
         select(p0.id);

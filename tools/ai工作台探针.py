@@ -260,6 +260,19 @@ def main():
         _one.get("ok") is True and "messages" not in (_one.get("run") or {})
         and (_one.get("run") or {}).get("cont") is True,
         json.dumps(sorted((_one.get("run") or {}).keys()), ensure_ascii=False)[:120])
+    # ★ `V-269`：列表那一行靠 `kind` 决定画 ✅ 还是 💬 —— 干活那次是 work、问答那次是 chat，
+    #   两个方向都钉一下（只钉一边的话，"字段根本没存"也会绿）。
+    chk("C2 ★ 列表带 `kind`，干活那次是 work（界面据此画 ✅）",
+        _rows[0].get("kind") == "work", repr(_rows[0].get("kind")))
+    _cid = (_runs.save({"task": "你是哪个大模型?", "ok": True, "kind": "chat",
+                        "reason": "问答收工（没动文件，不用跑命令）",
+                        "summary": "我是 moss 的写插件助手", "usage": {}, "files": [],
+                        "snapshot": None, "steps": [], "messages": []}) or {}).get("id")
+    _crow = [r for r in _runs.list_runs(5) if r.get("id") == _cid]
+    chk("C2 ★★ 纯问答那次列表里 `kind=chat`（界面据此画「💬 你是哪个大模型?」）",
+        bool(_crow) and _crow[0].get("kind") == "chat",
+        json.dumps(_crow[0] if _crow else {}, ensure_ascii=False)[:130])
+    _runs.delete(_cid)                       # 清掉这条合成的，别影响后面的用例
     SCRIPT[:] = [call("run_moss", {"args": ":zz"}),                  # 跑通（验收闸要它）
                  call("done", {"summary": "接着改完了"})]
     _n_before = len(FakeClient.INSTANCES)

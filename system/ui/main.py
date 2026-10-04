@@ -1980,6 +1980,9 @@ class Api:
                         "seconds": round(time.time() - float(AI.get("t0") or time.time()), 1),
                         "stopped": bool(AI.get("stop")),
                         "ok": bool(got.get("ok")), "reason": got.get("reason") or "",
+                        # ★ `V-269`：`kind="chat"` = 只是回答问题（没动文件、没验收）——
+                        #   界面拿它把结论卡写成「💬 回答」，也不显示"开工快照"那一行。
+                        "kind": got.get("kind") or "work",
                         "summary": got.get("summary") or "", "caveats": got.get("caveats") or "",
                         "usage": got.get("usage") or {}, "files": got.get("files") or [],
                         "snapshot": got.get("snapshot"), "steps": got.get("steps") or [],
@@ -2093,6 +2096,7 @@ class Api:
                     "at": r.get("started_text") or "",
                     # 每一轮的"结论卡"就照 `ai_run` 那套字段给（页面直接画）
                     "result": {"ok": bool(r.get("ok")), "reason": r.get("reason") or "",
+                               "kind": r.get("kind") or "work",
                                "summary": r.get("summary") or "", "caveats": r.get("caveats") or "",
                                "files": r.get("files") or [], "usage": r.get("usage") or {},
                                "snapshot": r.get("snapshot"), "folded": r.get("folded") or 0,
