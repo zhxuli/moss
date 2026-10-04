@@ -471,6 +471,25 @@ MOCK_JS = r"""
        reason: "用户按了停止", started_text: "2026-10-03 23:40:02",
        usage: {prompt_tokens: 90000, completion_tokens: 3000, total_tokens: 93000},
        files: [], summary: ""}]}),
+    // ★ `V-262`：**整条会话**（链头 → 这条）—— 界面进来认领/翻历史时用它，
+    //   重启 moss 之后也要把前几轮摆出来（以前只 `ai_run` 最后一条 ⇒ 只看到最后一轮）
+    ai_thread: async (id) => ({
+      // `cont` 照那条记录的真实情况给：`r-old2` 在预览里就是"更早的、没存对话"那条
+      ok: true, tail: id || "r-old", cont: (id !== "r-old2"),
+      turns: [{id: id || "r-old", task: "给 :calc 支持指数和开方",
+               at: "2026-10-04 00:12:33", cont: true,
+               steps: [
+                 {n: 1, tool: "spec", brief: '{"section": "pkg.json"}', note: "《3. pkg.json 字段表》", ms: 3},
+                 {n: 2, tool: "read_file", brief: '{"path": "…/run.py"}', note: "共 395 行", ms: 5},
+                 {n: 3, tool: "run_moss", brief: '{"args": ":calc 2^10"}', note: "退出码 0", ms: 900},
+                 {n: 4, tool: "done", brief: '{"summary": "本来就有"}', note: "收到。", ms: 1,
+                  disp: "本来就有，写法：2^10 / sqrt(16) / 27^(1/3)"}],
+               result: {ok: true, reason: "验收通过",
+                        summary: "本来就有，写法：2^10 / sqrt(16) / 27^(1/3)", caveats: "",
+                        files: [], usage: {prompt_tokens: 30000, completion_tokens: 1400,
+                                           total_tokens: 31400},
+                        snapshot: null, run_id: id || "r-old",
+                        continue_note: "新会话（没带之前的对话）"}}]}),
     ai_run: async (id) => ({ok: true, run: {id: id, task: "给 :calc 支持指数和开方",
       ok: true, cont: true, msgs: 14, reason: "验收通过",
       summary: "本来就有，写法：2^10 / sqrt(16) / 27^(1/3)",
@@ -3896,6 +3915,12 @@ MOCK_JS = r"""
         await sleep(300);
         const dbg = window.__AIR || {};
         const turns = (dbg.turns || []).length;
+        // ★ `V-262`：**标题 = 第一句 +（N 轮）**（你报的"标题是最后一个问题"就是链头判反了）
+        const title = ((document.querySelector("#pane-ai .session-title") || {}).textContent || "")
+                        .replace(/\s+/g, " ");
+        const domTurns = document.querySelectorAll("#pane-ai .ai-turn").length;
+        const titleOk = /给 :calc 支持指数和开方/.test(title) && /（\d+ 轮）/.test(title) &&
+                        domTurns === turns;
         // ① 按住 Alt → 浮出来
         const key = (type, k) => window.dispatchEvent(
           new KeyboardEvent(type, {key: k, bubbles: true, cancelable: true}));
@@ -3920,15 +3945,18 @@ MOCK_JS = r"""
         key("keyup", "Alt");
         await sleep(200);
         const gone = !document.querySelector("#pane-ai .ai-jump");
-        const ok = turns >= 1 && listed && jumped && closed && again && gone &&
+        const ok = turns >= 1 && listed && jumped && closed && again && gone && titleOk &&
                    !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n这个会话里有 " + turns + " 条「我说过的话」（面板里列了 " + items.length + " 条）" +
+          "\n标题（要=第一句 + 几轮）= " + JSON.stringify(title.slice(0, 40)) +
+          " · 日志里画了 " + domTurns + " 轮" +
           "\n按住 Alt 浮出来 = " + listed + " · 点第 1 条：跳到 + 展开 + 闪 = " + jumped +
           "\n点完面板收起 = " + closed + " · 再按又出来 = " + again + " · 松开收起 = " + gone +
           " · 页内错误 = " + (window.__errors || []).length;
         document.title = ok ? "READY"
           : ("AIALT-FAIL 轮=" + turns + " 列=" + items.length + " 浮=" + (listed ? 1 : 0) +
+             " 标题=" + (titleOk ? 1 : 0) + "/" + JSON.stringify(title.slice(0, 24)) +
              " 跳=" + (jumped ? 1 : 0) + " 收=" + (closed ? 1 : 0) +
              " 再=" + (again ? 1 : 0) + " 松=" + (gone ? 1 : 0) +
              " 错=" + (window.__errors || []).length);

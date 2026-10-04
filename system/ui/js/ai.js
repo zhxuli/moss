@@ -133,12 +133,12 @@ async function aiSaveBudget(){
    返回 `[{head, tail, turns}]`（按链尾时间倒序）。 */
 function aiChains(runs){
   const all = runs || [];
-  const byId = {};
-  all.forEach(r => { byId[r.id] = r; });
-  const hasChild = {};
-  all.forEach(r => { if (r.continued_from) hasChild[r.continued_from] = true; });
   const out = [];
-  all.filter(r => !hasChild[r.id]).forEach(head => {
+  /* ★★ `V-262`：**链头 = 没有 `continued_from` 的那条**（没人接着它 = 它是这条会话的第一句）。
+     我上一版写的是 `!hasChild[r.id]`（"没人接在它后面"）—— 那选出来的**正好是链尾**
+     （最后一个问题）：于是下拉里的标题是最后那句、`turns` 永远从 1 开始数。你报的
+     "当前标题是最后一个问题，而不是第一个问题"就是它。 */
+  all.filter(r => !r.continued_from).forEach(head => {
     let cur = head, turns = 1, guard = 0;
     while (guard++ < 500){
       const next = all.filter(r => r.continued_from === cur.id)[0];
@@ -174,6 +174,42 @@ function aiLastRunFor(dir){
 function normDir(p){
   return String(p || "").replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
 }
+/* ★ `V-262`：**把一整条会话读回来**（链头 → 这条）—— 重启 moss 之后进这一页，
+   看到的是**整段对话**（几轮都在），而不是只有最后一轮。
+   （以前只调 `ai_run(最后那条)` ⇒ 标题变成最后那个问题、前面的轮次一个都不显示。）
+   `quiet`：开机自动认领时用，失败别弹提示。 */
+async function aiOpenThread(id, quiet){
+  try{
+    const got = await window.pywebview.api.ai_thread(id);
+    if (!got || !got.ok || !(got.turns || []).length){
+      if (!quiet) toast("读不到这条会话", true);
+      return false;
+    }
+    AIR.turns = got.turns.map((t, i) => ({
+      key: "h" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1),
+      task: t.task || "", at: (t.at || "").slice(5, 16),
+      steps: t.steps || [], result: t.result || null, folded: false,
+      note: (t.result && t.result.continue_note) || "",
+    }));
+    AIR.cur = -1;
+    AIR.muted = 0;
+    const tail = got.tail || id;
+    AIR.lastId = tail; AIR.lastAdopted = tail;
+    AIR.pickId = tail;
+    if (got.cont){ AIR.contId = tail; AIR.contTask = (AIR.turns[AIR.turns.length - 1] || {}).task || ""; }
+    else { AIR.contId = ""; AIR.contTask = ""; }
+    // 底栏那两个"最近一轮"的镜像（`A.steps` / `A.result` 还在被那几个计算属性读）
+    const last = AIR.turns[AIR.turns.length - 1] || null;
+    AIR.steps = (last && last.steps) || [];
+    AIR.result = (last && last.result) || null;
+    AIR.rev++;
+    return true;
+  }catch(e){
+    if (!quiet) toast("读不到这条会话：" + (e && e.message ? e.message : e), true);
+    return false;
+  }
+}
+
 /* 认领"上次那条"：摆出它的步骤/结论，并且**默认接着它聊**
    （跟 agent 客户端一个心思：一个包一条会话，你说下一句就是接着说；
      想重开点那一行右边的「新开一条」）。`AIR.contId` 已经有了就别抢。 */
@@ -184,7 +220,8 @@ async function aiAdoptLast(){
     AIR.contId = last.id;
     AIR.contTask = last.task || "";
     AIR.pickId = last.id;
-    await aiOpenRun(last.id, true);
+    // ★ `V-262`：认领的是**整条会话**（重启后也把前几轮摆出来），不是只有最后那一条
+    await aiOpenThread(last.id, true);
   }
 }
 
@@ -677,7 +714,7 @@ const MossAi = {
     /* ★ `V-254`（修你报的"点了点不动"）：选一条会话 = **打开看它**；能接着聊的顺手接上，
        老记录（那时候还没存对话）就明说"只能看、接不上"。
        —— 以前这里所有选项都是 `disabled`（老记录 `cont=false`），整个下拉等于死的。 */
-    pickSession(){
+    async pickSession(){
       const id = this.A.pickId || "";
       if (!id){
         AIR.viewing = ""; AIR.sentTask = ""; AIR.steps = []; AIR.result = null;
@@ -687,11 +724,16 @@ const MossAi = {
         toast("新会话：下一条不带之前的对话");
         return;
       }
-      const r = (AIR.runs || []).filter(x => x.id === id)[0];
-      if (!r) return;
-      aiOpenRun(id);
-      if (r.cont){
-        AIR.contId = id; AIR.contTask = r.task || "";
+      const c = this.sessChains.filter(x => x.head.id === id || x.tail.id === id)[0];
+      const tail = (c && c.tail.id) || id;
+      const r = (AIR.runs || []).filter(x => x.id === tail)[0] ||
+                (AIR.runs || []).filter(x => x.id === id)[0];
+      // ★ `V-262`：先**把整条会话读回来**（几轮都在），再决定"能不能接着聊" ——
+      //   顺序不能反：`aiOpenThread` 自己也会根据链尾设 `contId`，得让它先落定。
+      await aiOpenThread(tail);
+      AIR.viewing = tail;                 // 标一下"这是翻出来的历史"（结论卡上会带牌子）
+      if (r && r.cont){
+        AIR.contId = tail; AIR.contTask = r.task || "";
         toast("接着这条聊 —— 在下面写下一句，点发送");
       } else {
         AIR.contId = ""; AIR.contTask = "";

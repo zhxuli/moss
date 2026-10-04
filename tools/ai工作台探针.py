@@ -292,6 +292,20 @@ def main():
         chk("C2 新记录的 `asked_continue` 也记着（查盘就能定案）",
             str((_new or {}).get("asked_continue")) == _rid,
             "asked_continue=%r" % ((_new or {}).get("asked_continue"),))
+        # ★ `V-262`：**整条会话要能被读回来** —— 你报的"重启以后前面的会话没显示"、
+        #   "标题变成最后那个问题"都是因为界面只拿到最后一条记录。
+        _th = api.ai_thread(str((_new or {}).get("id") or ""))
+        _turns = (_th or {}).get("turns") or []
+        chk("C2 ★★ 能把**整条会话**读回来（链头 → 这条，2 轮都在）",
+            _th.get("ok") is True and len(_turns) == 2,
+            "turns=%d 尾巴=%r" % (len(_turns), (_th or {}).get("tail")))
+        chk("C2 ★ 链头在前（第一轮的指令就是**第一句**，标题该用它）",
+            bool(_turns) and "写个 zz 包" in str(_turns[0].get("task")),
+            "第一轮=%r" % ((_turns[0] if _turns else {}).get("task"),))
+        chk("C2 ★ 也不用把几百 KB 的对话塞给页面（每轮只带步骤流 + 结论）",
+            all("messages" not in t for t in _turns) and
+            bool(_turns) and bool(_turns[0].get("steps")),
+            "键=%s" % (sorted(_turns[0].keys()) if _turns else []))
         chk("C2 新记录的对话比上一轮长（老的留在里面了）",
             len((_new or {}).get("messages") or []) > (_rows[0].get("msgs") or 0),
             "%d 条" % len((_new or {}).get("messages") or []))

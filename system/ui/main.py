@@ -2060,6 +2060,52 @@ class Api:
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "run": None, "msg": "读不到：%s" % e}
 
+    def ai_thread(self, run_id=""):
+        """**这条记录所在的整条会话**（链头 → 这条）—— 给界面画整段对话。
+
+        ★ `V-262`：你原话「重启以后 之前的会话历史没有丢失 但是在页面 没有显示」。
+          根因：重启后界面只 `ai_run(最后那条)` ⇒ 只画最后一轮，前面几轮根本没进页面
+          （标题也因此变成"最后那个问题"）。
+          这里顺着 `continued_from` 一路往回走（防止环：最多 500 步），反过来输出
+          `[{id, task, at, steps, result}]`。
+        ★ 和 `ai_run` 一样：**不带 `messages`**（那是模型要的对话，几百 KB，页面用不着）。
+        """
+        try:
+            ai_dir = str(HERE / "ai")
+            if ai_dir not in sys.path:
+                sys.path.insert(0, ai_dir)
+            import ai_runs
+            rid, chain, guard = str(run_id or ""), [], 0
+            while rid and guard < 500:
+                rec = ai_runs.get(rid)
+                if not rec:
+                    break
+                chain.append(rec)
+                rid = str(rec.get("continued_from") or "")
+                guard += 1
+            chain.reverse()                                    # 链头在前（时间顺序）
+            turns = []
+            for r in chain:
+                turns.append({
+                    "id": r.get("id") or "",
+                    "task": r.get("task") or "",
+                    "at": r.get("started_text") or "",
+                    # 每一轮的"结论卡"就照 `ai_run` 那套字段给（页面直接画）
+                    "result": {"ok": bool(r.get("ok")), "reason": r.get("reason") or "",
+                               "summary": r.get("summary") or "", "caveats": r.get("caveats") or "",
+                               "files": r.get("files") or [], "usage": r.get("usage") or {},
+                               "snapshot": r.get("snapshot"), "folded": r.get("folded") or 0,
+                               "run_id": r.get("id") or "",
+                               "continue_note": r.get("continue_note") or "",
+                               "asked_continue": r.get("asked_continue") or ""},
+                    "steps": r.get("steps") or [],
+                })
+            return {"ok": True, "turns": turns,
+                    "tail": (turns[-1]["id"] if turns else ""),
+                    "cont": bool((chain[-1].get("messages") if chain else None) or [])}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "turns": [], "msg": "读不到这条会话：%s" % e}
+
     def ai_run_forget(self, run_id="", all_of_them=False):
         """删一条（或全清）任务记录。记录只是回顾用的，删了不影响包。"""
         try:
