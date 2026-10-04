@@ -1031,11 +1031,12 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
   animation:workspaceEntrance .6s cubic-bezier(.16,1,.3,1) backwards;
 }
 
-/* 顶部栏 */
+/* 顶部栏：`V-263` 起只有两个下拉 —— **会话吃剩下的宽度**（`grow`），别的自适应、不换行 */
 .aiwrap .top-toolbar{
-  display:flex;justify-content:space-between;align-items:center;
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
   padding:12px 16px;background:rgba(250,250,250,.8);backdrop-filter:blur(10px);
   border-bottom:1px solid var(--aib-border-color);flex-shrink:0;z-index:10;
+  flex-wrap:nowrap;
 }
 .aiwrap .toolbar-group{display:flex;align-items:center;gap:12px}
 
@@ -1063,6 +1064,9 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
    （弹出框的外框是浏览器画的，改不了，但里面这部分能对上。） */
 .aiwrap .custom-select select:hover{color:var(--aib-primary)}
 .aiwrap .custom-select select:disabled{color:var(--aib-text-light);cursor:default}
+/* ★ `V-263`：会话那个下拉**吃掉剩下的宽度**（别的按内容自适应、整条不许换行） */
+.aiwrap .custom-select.grow{flex:1;min-width:0}
+.aiwrap .custom-select.grow select{flex:1;min-width:0;width:100%;text-overflow:ellipsis}
 .aiwrap .custom-select option{
   background:var(--aib-bg-panel);color:var(--aib-text-main);
   font-family:inherit;font-size:13px;font-weight:500;padding:8px 10px;
@@ -1071,8 +1075,11 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
 .aiwrap .custom-select option:hover{background:var(--aib-primary-light);color:var(--aib-primary)}
 .aiwrap .custom-select option:disabled{color:var(--aib-text-light)}
 
-/* 数字输入框交互 */
-.aiwrap .token-input-group{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--aib-text-muted)}
+/* 数字输入框交互（★ `V-263`：自带 nowrap —— 以前它自己折成两行，就是你要修的那个） */
+.aiwrap .token-input-group{
+  display:flex;align-items:center;gap:6px;font-size:13px;color:var(--aib-text-muted);
+  white-space:nowrap;flex:none;
+}
 .aiwrap .token-input-group input[type="number"]{
   width:65px;padding:4px 8px;border:1px solid var(--aib-border-color);border-radius:4px;
   outline:none;font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;text-align:center;
@@ -1153,8 +1160,15 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
 .aiwrap .prompt-textarea:disabled{opacity:.6}
 .aiwrap .prompt-toolbar{
   display:flex;justify-content:space-between;align-items:center;padding:10px 16px;
-  background:#FAFAFA;border-top:1px solid var(--aib-border-color);
+  background:#FAFAFA;border-top:1px solid var(--aib-border-color);flex-wrap:nowrap;gap:8px;
 }
+/* ★ `V-263`：这一行是"token 上限（左）… 模型 / 清空 / 发送指令（右）"——
+   宽度不够时**不许换行**（换行了就变成两行按钮，很难看） */
+.aiwrap .prompt-toolbar .ai-actions{
+  display:flex;align-items:center;flex-wrap:nowrap;gap:8px;flex:none;
+}
+.aiwrap .prompt-toolbar .custom-select{padding:4px 10px;flex:none}
+.aiwrap .prompt-toolbar .btn{padding:6px 12px}
 .aiwrap .tips{font-size:12px;color:var(--aib-text-muted);display:flex;align-items:center;gap:6px}
 
 /* 交互按钮 */
@@ -1292,9 +1306,25 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
    点「用户指令」那张卡就折叠这一轮（鼠标变成手型，暗示能点）。 */
 .aiwrap .ai-turn{display:flex;flex-direction:column;gap:16px}
 .aiwrap .ai-turn + .ai-turn{margin-top:6px}
-.aiwrap .ai-th{cursor:pointer}
-.aiwrap .ai-th:hover{border-color:#CBD5E1;box-shadow:var(--aib-shadow-sm)}
-.aiwrap .ai-th .step-action b{color:var(--aib-primary)}
+/* ★ `V-263`：这一轮的抬头**做成一条细线**（原来是一张两行的卡，白占一行）：
+   `#N  用户对话  那句话……  时间/接没接上` —— 点一下折叠这一轮。 */
+.aiwrap .ai-th{
+  display:flex;align-items:baseline;gap:8px;padding:4px 2px 6px;cursor:pointer;
+  border-bottom:1px solid var(--aib-border-color);
+}
+.aiwrap .ai-th:hover{border-bottom-color:var(--aib-primary)}
+.aiwrap .ai-th-n{
+  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;
+  color:var(--aib-primary);flex:none;font-weight:600;
+}
+.aiwrap .ai-th-l{font-size:12px;color:var(--aib-text-light);flex:none}
+.aiwrap .ai-th-t{
+  flex:1;min-width:0;font-size:13px;color:var(--aib-text-main);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.aiwrap .ai-th-a{font-size:12px;color:var(--aib-text-light);flex:none;max-width:40%;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aiwrap .ai-th-a.bad{color:var(--aib-warning)}
 /* ★ `V-259`：这一轮"接着上次聊 / 按新会话跑"那行小字（宿主说的，照实显示） */
 .aiwrap .ai-turnnote{font-size:12px;color:var(--aib-success)}
 .aiwrap .ai-turnnote.bad{color:var(--aib-warning)}

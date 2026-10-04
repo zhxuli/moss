@@ -3828,7 +3828,7 @@ MOCK_JS = r"""
         for (let i = 0; i < 20 && (window.__AIR || {}).running; i++) await sleep(300);
         // ★ `V-259`：这一轮是**接着上次**的 —— 宿主那句话要写在那一轮卡上
         //   （用户原话"我每次都当新指令、在一个会话里没法一直聊"，根子是"接没接上根本看不出来"）
-        const notesCont = [].slice.call(document.querySelectorAll("#pane-ai .ai-turnnote"))
+        const notesCont = [].slice.call(document.querySelectorAll("#pane-ai .ai-th-a"))
                                 .map(e => e.textContent.trim());
         // ④ 下拉切回「＋ 新会话」→ 下一次不带老对话
         if (sessSel){
@@ -3847,7 +3847,7 @@ MOCK_JS = r"""
         for (let i = 0; i < 20 && (window.__AIR || {}).running; i++) await sleep(300);
         // ★ `V-259`：切成"新会话"之后那轮，写的是"没带之前的对话"
         //   （★ 必须在这里取：下一步"挑老记录"会把轮次整个换掉。）
-        const notesNew = [].slice.call(document.querySelectorAll("#pane-ai .ai-turnnote"))
+        const notesNew = [].slice.call(document.querySelectorAll("#pane-ai .ai-th-a"))
                                .map(e => e.textContent.trim());
         const noteOk = notesCont.some(x => /接着上次那条聊/.test(x)) &&
                        notesNew.some(x => /新会话/.test(x));
@@ -3915,11 +3915,15 @@ MOCK_JS = r"""
         await sleep(300);
         const dbg = window.__AIR || {};
         const turns = (dbg.turns || []).length;
-        // ★ `V-262`：**标题 = 第一句 +（N 轮）**（你报的"标题是最后一个问题"就是链头判反了）
-        const title = ((document.querySelector("#pane-ai .session-title") || {}).textContent || "")
-                        .replace(/\s+/g, " ");
+        // ★ `V-262`：**当前会话名在顶栏那个下拉里**（`V-263` 起日志区不再重复显示）——
+        //   要的是**第一句**，不是最后一句（你报过的那条）。
+        //   （"（N 轮）"那个尾巴要 `AIR.runs` 里真是一条链才显示；预览的假数据是两条独立
+        //     单轮记录，所以这里只钉"是第一句、不是最后那句"，链条本身由宿主探针 `ai_thread` 验。）
+        const sessHead = document.querySelector("#pane-ai .ai-sess");
+        const title = (sessHead && sessHead.options[sessHead.selectedIndex])
+                        ? sessHead.options[sessHead.selectedIndex].textContent.replace(/\s+/g, " ") : "";
         const domTurns = document.querySelectorAll("#pane-ai .ai-turn").length;
-        const titleOk = /给 :calc 支持指数和开方/.test(title) && /（\d+ 轮）/.test(title) &&
+        const titleOk = /给 :calc 支持指数和开方/.test(title) && !/加一句注释/.test(title) &&
                         domTurns === turns;
         // ① 按住 Alt → 浮出来
         const key = (type, k) => window.dispatchEvent(
@@ -4204,6 +4208,7 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
 
 
 

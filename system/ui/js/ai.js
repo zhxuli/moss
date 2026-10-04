@@ -882,47 +882,29 @@ const MossAi = {
   <div class="aiwrap">
     <div class="ai-workspace">
 
-      <!-- 顶部配置栏（照稿子：会话 / 工作区 / 上限 / 模型） -->
+      <!-- 顶部配置栏（V-263 精简）：只留**切换会话**（吃掉剩下的宽度）+ **在哪干活**。
+           上限 / 模型都挪到下面输入框那一行了 —— 上面这一条不再换行。 -->
       <header class="top-toolbar ai-bar">
-        <div class="toolbar-group">
-          <div class="custom-select" title="切换历史会话" @click="openSel($event)">
-            <span v-html='ico("history", "i")'></span>
-            <select class="ai-sess" v-model="A.pickId" :disabled="A.running" @change="pickSession()">
-              <option v-if="sessCurrent" :value="sessCurrent.tail.id"
-                      >当前: {{ (sessCurrent.head.task || "").slice(0, 30) }}{{ sessCurrent.turns > 1 ? ("（" + sessCurrent.turns + " 轮）") : "" }}</option>
-              <option v-for="c in sessOthers" :key="c.head.id" :value="c.tail.id"
-                      >历史: {{ (c.head.task || "").slice(0, 30) }}{{ c.turns > 1 ? ("（" + c.turns + " 轮）") : "" }}</option>
-              <option disabled>──────────</option>
-              <option value="">+ 新建空白会话</option>
-            </select>
-          </div>
-
-          <div class="custom-select" title="在哪干活（v1 只允许写 user_data/pkgs 下面）" @click="openSel($event)">
-            <span v-html='ico("folder-tree", "i")'></span>
-            <select v-model="A.where" :disabled="A.running" @change="refresh()">
-              <option value="pkg" :disabled="!pkg">{{ pkg ? ("当前包 :" + pkg.id) : "（左边还没选包）" }}</option>
-              <option value="new">整个项目区</option>
-            </select>
-          </div>
+        <div class="custom-select grow" title="切换历史会话（一个会话几轮问答只占一条）"
+             @click="openSel($event)">
+          <span v-html='ico("history", "i")'></span>
+          <select class="ai-sess" v-model="A.pickId" :disabled="A.running" @change="pickSession()">
+            <option v-if="sessCurrent" :value="sessCurrent.tail.id"
+                    >当前: {{ (sessCurrent.head.task || "").slice(0, 60) }}{{ sessCurrent.turns > 1 ? ("（" + sessCurrent.turns + " 轮）") : "" }}</option>
+            <option v-for="c in sessOthers" :key="c.head.id" :value="c.tail.id"
+                    >历史: {{ (c.head.task || "").slice(0, 60) }}{{ c.turns > 1 ? ("（" + c.turns + " 轮）") : "" }}</option>
+            <option disabled>──────────</option>
+            <option value="">+ 新建空白会话</option>
+          </select>
         </div>
 
-        <div class="toolbar-group">
-          <div class="token-input-group ai-bud"
-               :title="'token 上限（单位：百万）。默认 100 = 1 亿 token。烧到 ' + humanTokens(A.warnTokens) + ' 时劝它收尾，到顶就停手。'">
-            <span v-html='ico("gauge", "i")'></span> token 上限
-            <input type="number" step="10" min="0.5" max="20000" value="100" class="ai-bud-n"
-                   v-model.number="A.maxMillions" :disabled="A.running" @change="saveBudget()"> 百万
-          </div>
-
-          <div class="custom-select select-model" @click="openSel($event)"
-               :title="'这次用哪个模型。这家配了 ' + models.length + ' 个；换模型连带换上下文窗口。'">
-            <span v-html='ico("sparkles", "i")'></span>
-            <select class="ai-model" v-model="A.model" :disabled="A.running || !models.length"
-                    @change="pickModel()">
-              <option v-for="m in models" :key="m" :value="m">{{ m }}</option>
-              <option v-if="!models.length" value="">（还没配 AI）</option>
-            </select>
-          </div>
+        <div class="custom-select" title="在哪干活（v1 只允许写 user_data/pkgs 下面）"
+             @click="openSel($event)">
+          <span v-html='ico("folder-tree", "i")'></span>
+          <select v-model="A.where" :disabled="A.running" @change="refresh()">
+            <option value="pkg" :disabled="!pkg">{{ pkg ? ("当前包 :" + pkg.id) : "（左边还没选包）" }}</option>
+            <option value="new">整个项目区</option>
+          </select>
         </div>
       </header>
 
@@ -934,29 +916,19 @@ const MossAi = {
         想让 AI 真动手：把上面「在哪干活」换成整个项目区，或者选一个装在 <code>user_data/pkgs</code> 里的包。
       </p>
 
-      <!-- 中间日志流 -->
+      <!-- 中间日志流（V-263：**不再重复显示会话名** —— 顶栏那个下拉已经写着当前会话了） -->
       <main class="log-container ai-log" ref="log">
-        <div class="session-title">
-          <span v-html='ico("message-square", "i")' style="color:var(--aib-primary);display:flex"></span>
-          {{ sessionTitle }}
-        </div>
-
-        <!-- ★ V-258：日志**按轮**排 —— 一轮 = 一张「用户指令」卡 + 它的步骤卡 + 它的结论卡。
-             点「用户指令」那张卡就把**这一轮**折叠/展开（你原话："允许我折叠某个会话"）。 -->
+        <!-- ★ V-258/263：日志按轮排 —— 一轮 = 一行「#N 用户对话 + 那句话」+ 它的步骤卡 + 它的结论卡。
+             点这一行就把这一轮折叠/展开。★ 这一行**做成一行的细条**（不再占两行）。 -->
         <div class="ai-turn" v-for="(t, ti) in A.turns" :key="t.key">
-          <div class="step-card ai-step ai-th" @click="toggleTurn(ti)"
+          <div class="ai-th" @click="toggleTurn(ti)"
                :title="t.folded ? '点一下展开这一轮' : '点一下折叠这一轮'">
-            <div class="step-icon" v-html='ico("message-circle", "i")'></div>
-            <div class="step-content">
-              <div class="step-header">
-                <span class="step-action">用户指令 <b>#{{ ti + 1 }}</b></span>
-                <span class="step-meta">{{ t.folded ? "已折叠 · 点一下展开" : t.at }}</span>
-              </div>
-              <span class="code-path">{{ t.task }}</span>
-              <!-- ★ V-259：宿主说清这次是"接着上次"还是"按新会话跑"（含"接不上"的原因） -->
-              <span class="ai-turnnote" v-if="t.note"
-                    :class="{bad: /接不上|新会话/.test(t.note)}">{{ t.note }}</span>
-            </div>
+            <b class="ai-th-n">#{{ ti + 1 }}</b>
+            <span class="ai-th-l">用户对话</span>
+            <span class="ai-th-t">{{ t.task }}</span>
+            <span class="ai-th-a" :title="t.note || t.at"
+                  :class="{bad: /接不上/.test(t.note || '')}"
+                  >{{ t.folded ? "已折叠 · 点一下展开" : (t.note || t.at || "") }}</span>
           </div>
 
           <template v-if="!t.folded">
@@ -1018,11 +990,25 @@ const MossAi = {
             placeholder="在此输入指令... (按 Enter 发送，Shift+Enter 换行)"></textarea>
 
           <div class="prompt-toolbar">
-            <div class="tips">
-              <span v-html='ico("lightbulb", "i")' style="color:var(--aib-warning);display:flex"></span>
-              支持使用自然语言描述你需要的代码修改
+            <!-- ★ V-263：**token 上限靠左**（原来在顶栏）；提示语那句去掉了 -->
+            <div class="token-input-group ai-bud"
+                 :title="'token 上限（单位：百万）。默认 100 = 1 亿 token。烧到 ' + humanTokens(A.warnTokens) + ' 时劝它收尾，到顶就停手。'">
+              <span v-html='ico("gauge", "i")'></span> token 上限
+              <input type="number" step="10" min="0.5" max="20000" value="100" class="ai-bud-n"
+                     v-model.number="A.maxMillions" :disabled="A.running" @change="saveBudget()"> 百万
             </div>
-            <div style="display:flex;gap:8px" class="ai-actions">
+            <span class="sp"></span>
+            <div class="ai-actions">
+              <!-- ★ V-263：**切换模型也挪到这一行**（在清空 / 发送指令左边） -->
+              <div class="custom-select select-model" @click="openSel($event)"
+                   :title="'这次用哪个模型。这家配了 ' + models.length + ' 个；换模型连带换上下文窗口。'">
+                <span v-html='ico("sparkles", "i")'></span>
+                <select class="ai-model" v-model="A.model" :disabled="A.running || !models.length"
+                        @change="pickModel()">
+                  <option v-for="m in models" :key="m" :value="m">{{ m }}</option>
+                  <option v-if="!models.length" value="">（还没配 AI）</option>
+                </select>
+              </div>
               <button class="btn btn-outline" @click="resetLogs()"
                       v-html='ico("rotate-ccw", "i") + " 清空"'></button>
               <button class="btn btn-outline" v-if="A.running" @click="stop"
@@ -1076,5 +1062,6 @@ const MossAi = {
    `ico is not a function` —— 实测踩到，查了半天。别的页要这么干：
    `js/console.js` 也是 `mountVue(MossConsole, "#pane-console", {ico: ico})`。 */
 mountVue(MossAi, "#pane-ai", {ico: ico});
+
 
 
