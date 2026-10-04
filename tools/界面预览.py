@@ -78,7 +78,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "detail-fill", "ai-pane", "snap-by",
-          "ai-disk-refresh", "ai-snap-refresh"]
+          "ai-disk-refresh", "ai-snap-refresh", "ai-continue"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
 #: 是场景（或它的假数据）跟不上 —— 待办记在账本 `V-203`。
@@ -399,8 +399,8 @@ MOCK_JS = r"""
       if (!(maxTokens >= 5000)) return {ok: false, msg: "太小了（最小 5000）"};
       return {ok: true, max_tokens: maxTokens, warn: Math.round(maxTokens * 0.8)};
     },
-    ai_start: async (task, workdir, steps) => {
-      M.aiRun = {task: task, workdir: workdir, maxSteps: steps};
+    ai_start: async (task, workdir, steps, contId) => {
+      M.aiRun = {task: task, workdir: workdir, maxSteps: steps, cont: contId || ""};
       M.aiN = 0;
       // ★ `V-250`：真宿主**动手之前**就给这个包存一条快照（`ai_snap.snapshot_before`，
       //   `by="ai"` + `by_task`），然后**马上**通知界面刷新「版本快照」那一列。
@@ -413,9 +413,10 @@ MOCK_JS = r"""
         const id = "20261004-0312-ai" + String((M.aiRunN = (M.aiRunN || 0) + 1));
         M.bk = M.bk || [];
         M.bk.push({id: id, group: bkGroupOf([rel]),
-                   title: "AI · 动手前：" + String(task || "").slice(0, 40),
+                   // `V-251`：标题**就是那次的任务原文**（不加"AI · 动手前"那几个字）
+                   title: String(task || "").slice(0, 40),
                    note: String(task || ""), by: "ai", by_task: String(task || ""),
-                   created: Date.now() / 1000, created_text: "(预览) AI 动手前",
+                   created: Date.now() / 1000, created_text: "(预览) AI 存的",
                    sources: [rel], files: files, new_objects: files.length, new_bytes: 0});
         M.aiSnap = {id: id, group: bkGroupOf([rel])};
       }
@@ -448,17 +449,21 @@ MOCK_JS = r"""
     },
     ai_stop: async () => ({ok: true, msg: "(预览) 已经让它停在下一轮"}),
     // `V-243`：任务记录（真后端存 user_data/ai/runs/，重启还有个回顾）
+    // `V-251`：带上 `workdir` + `cont`（能不能接着聊）—— 界面进来就认领这个包上次那条
     ai_runs: async () => ({ok: true, runs: [
-      {id: "r-old", task: "给 :calc 支持指数和开方", steps: 6, ok: true,
+      {id: "r-old", task: "给 :calc 支持指数和开方", steps: 6, ok: true, cont: true, msgs: 14,
+       workdir: state.home + "\\system\\pkgs\\md5",
        reason: "验收通过", started_text: "2026-10-04 00:12:33",
        usage: {prompt_tokens: 30000, completion_tokens: 1400, total_tokens: 31400},
        files: [], summary: ""},
-      {id: "r-old2", task: "帮我补一下 agent.md", steps: 58, ok: false,
+      {id: "r-old2", task: "帮我补一下 agent.md", steps: 58, ok: false, cont: true, msgs: 44,
+       workdir: state.home + "\\system\\pkgs\\md5",
        reason: "用户按了停止", started_text: "2026-10-03 23:40:02",
        usage: {prompt_tokens: 90000, completion_tokens: 3000, total_tokens: 93000},
        files: [], summary: ""}]}),
     ai_run: async (id) => ({ok: true, run: {id: id, task: "给 :calc 支持指数和开方",
-      ok: true, reason: "验收通过", summary: "本来就有，写法：2^10 / sqrt(16) / 27^(1/3)",
+      ok: true, cont: true, msgs: 14, reason: "验收通过",
+      summary: "本来就有，写法：2^10 / sqrt(16) / 27^(1/3)",
       caveats: "", files: [], usage: {prompt_tokens: 30000, completion_tokens: 1400,
       total_tokens: 31400}, steps: [
         {n: 1, tool: "spec", brief: '{"section": "pkg.json"}', note: "《3. pkg.json 字段表》", ms: 3},
@@ -3523,6 +3528,16 @@ MOCK_JS = r"""
         for (let i = 0; i < 20 && !document.querySelector("#pane-ai .ai-result"); i++){
           await sleep(400);
         }
+        // ★ `V-251`：这一页进来会**自动认领上次那条会话**（结果卡一开始就有一个旧的），
+        //   所以不能"看到结果卡就当我这次跑完了" —— 等这次的**步骤流**里有编辑那一步、
+        //   而且**已经不在跑**了为止（两个条件都要，否则会抢在跑完之前就去断言）。
+        for (let i = 0; i < 25; i++){
+          const t = [].slice.call(document.querySelectorAll("#pane-ai .ai-step b"))
+                            .map(x => x.textContent);
+          if (!(window.__AIR || {}).running && t.indexOf("edit_file") >= 0 &&
+              document.querySelector("#pane-ai .ai-result")) break;
+          await sleep(400);
+        }
         await sleep(200);
         const started = M.aiRun || null;
         const startArgs = started ? (started.task + "|" + started.maxSteps) : "";
@@ -3673,8 +3688,9 @@ MOCK_JS = r"""
         const badgeTip = badge ? String(badge.getAttribute("title") || "") : "";
         const refreshed = (M.bkCalls || 0) > before;
         const early = !!tSnap && !!tDone && tSnap < tDone;
-        // 那一行是"AI 存的" + 标题里写着"动手前" + 悬停能看到**那次的任务原文**（`V-249`/`V-250`）
-        const titleOk = /动手前/.test(rowTxt) && /print/.test(badgeTip);
+        // 那一行是「AI 存的」+ 标题**就是那次的任务原文**（`V-251`：不要"动手前"那几个字）
+        //   + 悬停能看到全文（`V-249`）
+        const titleOk = /print/.test(rowTxt) && !/动手前/.test(rowTxt) && /print/.test(badgeTip);
         const ok = wasEmpty && refreshed && early && titleOk && !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n开工前是空的 = " + wasEmpty + "（该显示「还没有快照」）· 问列表次数 " + before + " → " + (M.bkCalls || 0) +
@@ -3688,6 +3704,79 @@ MOCK_JS = r"""
              " 早于跑完=" + (early ? 1 : 0) + " 标题=" + (titleOk ? 1 : 0) +
              " tSnap=" + tSnap + " tDone=" + tDone + " 行=" + JSON.stringify(rowTxt.slice(0, 30)) +
              " 悬停=" + JSON.stringify(badgeTip.slice(0, 24)) +
+             " 错=" + (window.__errors || []).length);
+      }
+      // ★ `V-251`：**历史会话要能找回来、能接着聊** —— 你原话「怎么还是找不到历史会话记录，
+      //   一旦重新打开 moss 只能重新再来 …… 没法继续上一次的聊天继续沟通」。
+      //   这条走真人那条路：进「AI」页（相当于重启 moss 后第一次进来）→
+      //   ① 上次那条的步骤/结论当场摆出来（不是空的）；② 默认已经是"接着它聊"；
+      //   ③ 写下一句点开始 ⇒ 传给宿主的是**那条记录的 id**；④ 点「新开一条」⇒ 不再接。
+      if (h === "ai-continue"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        await sleep(300);
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(1200);                       // 等 mounted 那一轮 aiLoadRuns + 认领
+        const dbg = window.__AIR || {};
+        const rows = document.querySelectorAll("#pane-ai .ai-step");
+        const stepsTxt = [].slice.call(rows).map(r => (r.querySelector("b") || {}).textContent).join(",");
+        const card = document.querySelector("#pane-ai .ai-result");
+        const shownOld = !!card && /本来就有/.test(card.textContent);
+        const adopted = dbg.contId === "r-old";
+        const chip = (document.querySelector("#pane-ai .ai-cont") || {}).textContent || "";
+        const chipOk = /接着聊/.test(chip) && /指数和开方/.test(chip);
+        const contRows = [].slice.call(document.querySelectorAll("#pane-ai .ai-run"))
+                                .filter(el => /接着聊/.test(el.textContent)).length;
+        // ③ 写下一句 → 点开始：宿主收到的 continue_id 必须是 r-old
+        M.aiRun = null;
+        const taskEl = document.querySelector("#pane-ai .ai-task");
+        taskEl.value = "再给 :calc 加个 --json 参数";
+        taskEl.dispatchEvent(new Event("input", {bubbles: true}));
+        await sleep(80);
+        (document.querySelector("#pane-ai .ai-actions .btn.primary") || {click(){}}).click();
+        await sleep(600);
+        const sentCont = (M.aiRun || {}).cont;
+        const sentTask = (M.aiRun || {}).task || "";
+        // 那一轮跑完（「开始」在跑的时候是灰的，不跑完点不动第二下）
+        for (let i = 0; i < 20 && (window.__AIR || {}).running; i++) await sleep(300);
+        // ④ 点「新开一条」→ 下一次不带老对话
+        (document.querySelector("#pane-ai .ai-cont .ai-eg") || {click(){}}).click();
+        await sleep(200);
+        M.aiRun = null;
+        taskEl.value = "换成新会话跑一句";
+        taskEl.dispatchEvent(new Event("input", {bubbles: true}));
+        await sleep(80);
+        (document.querySelector("#pane-ai .ai-actions .btn.primary") || {click(){}}).click();
+        await sleep(600);
+        const freshCont = (M.aiRun || {}).cont;
+        // 那一轮也跑完（跑着的时候"接着聊"那一行是藏着的 —— 那是"下一条"的设置）
+        for (let i = 0; i < 20 && (window.__AIR || {}).running; i++) await sleep(300);
+        // ⑤ 在列表里**挑一条**接着聊（不是最新那条）—— 「找不到历史会话」这条路的正解
+        const row2 = [].slice.call(document.querySelectorAll("#pane-ai .ai-run"))
+                            .filter(el => /agent\.md/.test(el.textContent))[0];
+        const pick = row2 ? row2.querySelector(".ai-eg.on") : null;
+        if (pick) pick.click();
+        await sleep(400);
+        const picked = dbg.contId;
+        const chip2 = (document.querySelector("#pane-ai .ai-cont") || {}).textContent || "";
+        const pickedOk = picked === "r-old2" && /agent\.md/.test(chip2);
+        const ok = shownOld && stepsTxt.indexOf("run_moss") >= 0 && adopted && chipOk &&
+                   contRows === 2 && sentCont === "r-old" && /--json/.test(sentTask) &&
+                   freshCont === "" && pickedOk && !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n进来就看到上次那条 = " + shownOld + "（步骤 " + JSON.stringify(stepsTxt.slice(0, 46)) + "）" +
+          "\n默认接着聊 = " + adopted + "（contId=" + JSON.stringify(dbg.contId) + "）" +
+          " · 那行字 = " + JSON.stringify(chip.replace(/\s+/g, " ").slice(0, 40)) +
+          "\n列表里能接着聊的条数 = " + contRows + "（要 2）" +
+          "\n接着聊那次发给宿主 = " + JSON.stringify([sentTask.slice(0, 20), sentCont]) +
+          "\n点「新开一条」之后 = " + JSON.stringify(freshCont) + "（要空）" +
+          "\n在列表里挑第二条接着聊 = " + JSON.stringify([picked, chip2.replace(/\s+/g, " ").slice(0, 30)]) +
+          " · 页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+          : ("AICONT-FAIL 旧=" + (shownOld ? 1 : 0) + " 默认接=" + (adopted ? 1 : 0) +
+             " 字=" + (chipOk ? 1 : 0) + " 行=" + contRows + " 传=" + JSON.stringify(sentCont) +
+             " 新=" + JSON.stringify(freshCont) + " 挑=" + JSON.stringify(picked) +
+             " steps=" + JSON.stringify(stepsTxt.slice(0, 30)) +
              " 错=" + (window.__errors || []).length);
       }
       // ★ 报错这条路本身也要能自证（`V-81`）：故意造一个"计算属性里抛错"的组件（和

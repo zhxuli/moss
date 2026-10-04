@@ -77,7 +77,11 @@ def list_runs(limit=30, with_steps=False):
         row = {k: rec.get(k) for k in ("id", "task", "workdir", "ok", "reason", "summary",
                                        "caveats", "usage", "files", "snapshot", "seconds",
                                        "started_text", "finished", "model", "max_tokens",
-                                       "stopped")}
+                                       "stopped", "continued_from")}
+        # ★ `V-251`：这条能不能**接着聊**（＝ 存了对话本身）。列表**不带 `messages`**
+        #   （那是整条会话，几百 KB）—— 界面只拿这个布尔值，真接着聊时把 id 交回宿主。
+        row["cont"] = bool(rec.get("messages"))
+        row["msgs"] = len(rec.get("messages") or [])
         row["steps"] = len(rec.get("steps") or [])
         if with_steps:
             row["steps_detail"] = rec.get("steps") or []

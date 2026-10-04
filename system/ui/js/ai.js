@@ -28,6 +28,14 @@ const AIR = Vue.reactive({
   maxMillions: 100,            // 界面上那一格是**百万为单位**（100 = 1 亿）
   diskNoted: "",               // `V-249`：已经通知过"盘上变了"的那一次（免得每轮轮询都刷一遍）
   snapNoted: "",               // `V-250`：已经通知过"快照存好了"的那一条（同上）
+  /* ★ `V-251`：**会话**那三件 —— 你原话「怎么还是找不到历史会话记录，一旦重新打开 moss
+     只能重新再来 …… 没法继续上一次的聊天继续沟通」。
+       · `contId`   正在接着哪条记录聊（空 = 新开一条；`aiStart` 把它交给宿主）
+       · `contTask` 那条记录的任务原文（界面上那一行字要显示"接着哪句"）
+       · `lastId`   这个包最近跑的那条（进来就认领，摆出它的步骤/结论）
+     为什么默认就"接着"：每个包一条会话，跟 agent 客户端一个心思 —— 想重开点「新开」。 */
+  contId: "", contTask: "", lastId: "", lastAdopted: "",
+  curWhere: "",                // `V-251`：干活的"地方"也跟着包切换 —— 换地方就换会话
 });
 
 function aiPackage(){ return cur && cur.id ? cur : null; }
@@ -80,19 +88,48 @@ async function aiSaveBudget(){
   }catch(e){ toast("存预算失败：" + (e && e.message ? e.message : e), true); }
 }
 
-/* `V-243`：把跑过的任务列出来（重启 moss 也在 —— 你说"历史记录不保存是不行的"）。 */
+/* `V-243`：把跑过的任务列出来（重启 moss 也在 —— 你说"历史记录不保存是不行的"）。
+   ★ `V-251`：顺手把**这个包上次那条会话**挂上 —— 你原话「怎么还是找不到历史会话记录，
+     一旦重新打开 moss 只能重新再来」。所以进来就：
+       ① 把上次那条的步骤流/结论摆出来（一眼看到"上次聊到哪"）；
+       ② 默认**接着它聊**（`AIR.cont`）—— 想开新的点那一行右边的「新开」。 */
 async function aiLoadRuns(){
   try{
     const got = await window.pywebview.api.ai_runs(30);
-    if (got && got.ok) AIR.runs = got.runs || [];
+    if (!got || !got.ok) return;
+    AIR.runs = got.runs || [];
+    if (!AIR.running) aiAdoptLast();
   }catch(e){ /* 读不到就空着，不吵人 */ }
 }
 
-/* 点「看」：把那条历史的步骤流/结论load进来（只看，不重跑）。 */
-async function aiOpenRun(id){
+/* 这个包（`workdir` 相同）上一次跑的那条 —— 没有就问当前的"全部文件"那个目录。 */
+function aiLastRunFor(dir){
+  const d = normDir(dir);
+  const mine = (AIR.runs || []).filter(r => normDir(r.workdir) === d);
+  return mine[0] || null;                 // 列表本来就是按时间倒序
+}
+function normDir(p){
+  return String(p || "").replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+}
+/* 认领"上次那条"：摆出它的步骤/结论，并且**默认接着它聊**
+   （跟 agent 客户端一个心思：一个包一条会话，你说下一句就是接着说；
+     想重开点那一行右边的「新开一条」）。`AIR.contId` 已经有了就别抢。 */
+async function aiAdoptLast(){
+  const last = aiLastRunFor(aiWhereDir());
+  AIR.lastId = (last && last.id) || "";
+  if (last && last.cont && !AIR.contId){
+    AIR.contId = last.id;
+    AIR.contTask = last.task || "";
+    await aiOpenRun(last.id, true);
+  }
+}
+
+/* 点「看」：把那条历史的步骤流/结论load进来（只看，不重跑）。
+   `quiet`（`V-251`）：进这一页时**自动认领**上次那条用的，别弹提示。 */
+async function aiOpenRun(id, quiet){
   try{
     const got = await window.pywebview.api.ai_run(id);
-    if (!got || !got.ok || !got.run){ toast("读不到这条记录", true); return; }
+    if (!got || !got.ok || !got.run){ if (!quiet) toast("读不到这条记录", true); return; }
     const r = got.run;
     AIR.viewing = id;
     AIR.steps = r.steps || [];
@@ -100,7 +137,7 @@ async function aiOpenRun(id){
                   caveats: r.caveats || "", files: r.files || [], usage: r.usage || {},
                   snapshot: r.snapshot || null, run_id: r.id};
     AIR.rev++;
-  }catch(e){ toast("读不到这条记录：" + (e && e.message ? e.message : e), true); }
+  }catch(e){ if (!quiet) toast("读不到这条记录：" + (e && e.message ? e.message : e), true); }
 }
 
 async function aiForgetRun(id){
@@ -147,6 +184,16 @@ async function aiPollOnce(){
         if ((res.files || []).length && typeof diskChanged === "function")
           diskChanged(res.files);
       }
+      // ★ `V-251`：跑完这一条就是"最新的那条会话" —— 下一次默认接着它聊
+      //   （`contId` 指向新记录，输入框旁边那行字跟着换）。列表也要重读一次
+      //   （新记录刚落盘）。
+      if (res.run_id && res.run_id !== AIR.lastAdopted){
+        AIR.lastAdopted = res.run_id;
+        AIR.lastId = res.run_id;
+        AIR.contId = res.run_id;
+        AIR.contTask = (AIR.task || "").trim();
+        aiLoadRuns();
+      }
     }
     AIR.rev++;
   } catch (e) { /* 轮询失败不吵人：下一轮再说 */ }
@@ -160,15 +207,18 @@ async function aiStart(){
   if (!dir) { toast("先在左边选一个包（或者选「新建包」）。", true); return; }
   AIR.busy = true;
   AIR.result = null; AIR.steps = []; AIR.say = [];
+  AIR.viewing = "";              // `V-251`：这次是新跑的，结果卡不该再挂"历史记录"那块牌子
   AIR.diskNoted = "";            // `V-249`：新任务 = 允许再通知一次"盘上变了"
   AIR.snapNoted = "";            // `V-250`：新任务 = 允许再通知一次"快照存好了"
+  const cont = AIR.contId || ""; // `V-251`：接着哪条聊（空 = 新开一条）
   try {
     // ★ `V-237` 把 14 提到 24（读一个 395 行的文件就花了 11 步）；`V-238` 再按你的定夺改成
     //   **硬顶 200 + 每 50 步提醒一次**（都在上面那两格里，随手可改）。
-    const got = await window.pywebview.api.ai_start(task, dir, AIR.maxTokens);
+    const got = await window.pywebview.api.ai_start(task, dir, AIR.maxTokens, cont);
     if (!got || !got.ok) { toast((got && got.msg) || "起不来。", true); AIR.busy = false; return; }
     AIR.running = true;
-    toast("开始干活了（模型 " + (got.model || "?") + "）—— 步骤会实时出现在下面。");
+    toast((cont ? "接着上次那条聊" : "开了一条新会话") +
+          "（模型 " + (got.model || "?") + "）—— 步骤会实时出现在下面。");
   } catch (e) {
     toast("起不来：" + (e && e.message ? e.message : e), true);
   }
@@ -278,7 +328,19 @@ const MossAi = {
     },
     openRun(id){ aiOpenRun(id); },
     forgetRun(id){ aiForgetRun(id); },
-    again(r){ AIR.task = r.task || ""; toast("需求已填回输入框 —— 改一改再点开始"); },
+    /* ★ `V-251`：接着这条聊 —— 摆出它的步骤/结论，并且把「下一句」接在它后面 */
+    contThis(r){
+      AIR.contId = r.id; AIR.contTask = r.task || "";
+      aiOpenRun(r.id);
+      toast("接着这条聊（它还记着之前 " + (r.msgs || 0) + " 条对话）—— 写下一句，点开始");
+    },
+    /* 新开一条：下一条任务不带老对话 */
+    newChat(){
+      AIR.contId = ""; AIR.contTask = "";
+      toast("下一条按**新会话**跑（老记录还在，随时能接着聊）");
+    },
+    again(r){ AIR.task = r.task || ""; AIR.contId = ""; AIR.contTask = "";
+              toast("需求已填回输入框（按新会话跑）—— 改一改再点开始"); },
     useExample(t){ AIR.task = t; },
     /* Ctrl+Enter 发送（Enter 留给换行 —— 需求常常要写好几行） */
     onKey(e){
@@ -303,7 +365,17 @@ const MossAi = {
     AIR.tick = setInterval(() => {
       const p = aiPackage();
       const id = (p && p.id) || "";
-      if (id !== AIR.curId){ AIR.curId = id; aiRefreshInfo(); }
+      const where = AIR.where;
+      /* ★ `V-251`：**换了干活的地方 = 换了一条会话** —— 会话是"一个包一条"，
+         切包时必须把接着聊那件事清掉（不然会把别的包的对话塞进这次任务），
+         然后去认领新包上次跑的那条。 */
+      if (id !== AIR.curId || where !== AIR.curWhere){
+        AIR.curId = id; AIR.curWhere = where;
+        AIR.contId = ""; AIR.contTask = ""; AIR.viewing = "";
+        AIR.steps = []; AIR.result = null; AIR.lastId = ""; AIR.lastAdopted = "";
+        aiRefreshInfo();
+        aiLoadRuns();
+      }
       if (AIR.running) aiPollOnce();
     }, 700);
   },
@@ -354,6 +426,18 @@ const MossAi = {
             :key="t" @click="useExample(t)">{{ t }}</span>
     </div>
 
+    <!-- ★ V-251：这次是**接着哪条聊** —— 一个包一条会话，进来就默认接上。
+         想重开点右边的「新开」；不带老对话跑。 -->
+    <div class="ai-cont" v-if="!A.running && A.contId">
+      <span class="ai-cont-t" :title="'这条会话是从记录 ' + A.contId + ' 接过来的'">
+        <b>接着聊</b>：{{ (A.contTask || "").slice(0, 34) || A.contId }}</span>
+      <span class="sp"></span>
+      <span class="ai-eg" @click="newChat()" title="下一条按新会话跑（不带之前那些对话）">新开一条</span>
+    </div>
+    <div class="ai-cont off" v-else-if="!A.running && A.lastId">
+      <span class="ai-cont-t">新会话（这个包上次跑过的那条还在「最近跑过」里，点它的「接着聊」就接上）</span>
+    </div>
+
     <div class="ai-actions">
       <button class="btn primary" :disabled="A.running || A.busy || !ready" @click="start">开始</button>
       <button class="btn" :disabled="!A.running" @click="stop">停止</button>
@@ -394,6 +478,8 @@ const MossAi = {
         <span class="ai-run-t" :title="r.task">{{ runLine(r) }}</span>
         <span class="sp"></span>
         <span class="ai-eg" @click="openRun(r.id)">看</span>
+        <span class="ai-eg on" v-if="r.cont" @click="contThis(r)"
+              title="接着这条聊：它还记得那条会话里的全部对话，你写下一句就行">接着聊</span>
         <span class="ai-eg" @click="again(r)">再跑</span>
         <span class="ai-eg" @click="forgetRun(r.id)" title="删掉这一条记录">删</span>
       </div>

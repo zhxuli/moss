@@ -52,11 +52,17 @@ class FakeClient:
 
     ★ 它的 `__init__` 得能接住 `Client(base_url, api_key, model)` 那种构造
       （`V-234` 之后宿主是**直接构造** Client，不再走 `from_env`）。
+    ★ `INSTANCES`（`V-251`）：宿主是在 `ai_start` 里**自己** new 一个 client 的，
+      测试拿不到那个实例 —— 所以构造时自己往表里塞一份，验"接着聊"时读它发出去的 messages。
     """
+    INSTANCES = []
 
     def __init__(self, *args, **kw):
         self.script = list(SCRIPT)
         self.seen = []
+        #: ★ `V-251`：把每次发出去的 messages 也留一份（验"接着聊"时老对话有没有真的发出去）
+        self.msgs = []
+        FakeClient.INSTANCES.append(self)
         self.model = "fake-model"
         self.base_url = args[0] if args else kw.get("base_url", "")
         self.api_key = args[1] if len(args) > 1 else kw.get("api_key", "")
@@ -68,6 +74,7 @@ class FakeClient:
     def chat(self, messages, tools=None, stop_check=None, on_wait=None):
         # `V-242`：签名跟真 client 对上（多出来的两个参数是"能不能中途停"用的）
         self.seen.append(1)
+        self.msgs.append(json.loads(json.dumps(messages, ensure_ascii=False)))
         if not self.script:
             return {"text": "（没了）", "tool_calls": [], "usage": {}, "native": True,
                     "message": {"role": "assistant", "content": "（没了）"}}
@@ -221,6 +228,65 @@ def main():
                 chk("C ★ 那条快照的清单里 `by=ai` + 任务原文都在", False, "%s: %s" % (type(exc).__name__, exc))
     chk("C 数据目录还是临时的（整轮没碰真 user_data）",
         str(ai_edits.write_root()).startswith(str(udata)), str(ai_edits.write_root()))
+
+    print()
+    print("=" * 72)
+    print("C2：`V-251` 会话 —— 宿主这一半也要真的**接着上次那条聊**")
+    print("=" * 72)
+    # 上一轮（C）跑完已经落了一条记录；现在按"重启 moss 之后接着聊"这条路走一遍：
+    # 界面把**那条记录的 id** 交回来，宿主自己去读对话、喂给 loop。
+    import ai_runs as _runs                                                # noqa: E402
+    _rows = _runs.list_runs(5)
+    _rid = (_rows[0] or {}).get("id") if _rows else ""
+    chk("C2 上一轮的任务记录落盘了（重启 moss 看得见）", bool(_rid), "%r" % (_rid,))
+    chk("C2 ★ 列表里标了「这条能接着聊」+ 对话条数（页面据此画那颗按钮）",
+        bool(_rows) and _rows[0].get("cont") is True and (_rows[0].get("msgs") or 0) >= 3,
+        json.dumps({k: _rows[0].get(k) for k in ("cont", "msgs", "task")} if _rows else {},
+                   ensure_ascii=False)[:120])
+    # 「看」那条记录时**不许**把整条对话塞给页面（几百 KB），只给个标记
+    _one = api.ai_run(_rid or "")
+    chk("C2 ★ 点「看」不带 `messages` 给页面（只带 cont/msgs）",
+        _one.get("ok") is True and "messages" not in (_one.get("run") or {})
+        and (_one.get("run") or {}).get("cont") is True,
+        json.dumps(sorted((_one.get("run") or {}).keys()), ensure_ascii=False)[:120])
+    SCRIPT[:] = [call("run_moss", {"args": ":zz"}),                  # 跑通（验收闸要它）
+                 call("done", {"summary": "接着改完了"})]
+    _n_before = len(FakeClient.INSTANCES)
+    started2 = api.ai_start("接着把 zz 的退出码也改一下", str(pkgs), 100000000, _rid)
+    chk("C2 接着聊那条起来了", started2.get("ok") is True, str(started2.get("msg") or "")[:80])
+    deadline, got2, last2 = time.time() + 40, None, None
+    while time.time() < deadline:
+        last2 = api.ai_poll()
+        if last2 and not last2.get("running") and last2.get("result"):
+            got2 = last2
+            break
+        time.sleep(0.3)
+    chk("C2 跑完了", got2 is not None, json.dumps((last2 or {}).get("result") or {}, ensure_ascii=False)[:90])
+    _inst = FakeClient.INSTANCES[-1] if len(FakeClient.INSTANCES) > _n_before else None
+    sent = json.dumps((_inst.msgs or [{}])[0] if (_inst and _inst.msgs) else [], ensure_ascii=False)
+    chk("C2 ★★ 发给模型的第一条请求里**既有上次那句、也有这次这句**（它真记得）",
+        "写个 zz 包" in sent and "接着把 zz 的退出码也改一下" in sent,
+        "发出 %d 条消息" % len((_inst.msgs or [{}])[0] if (_inst and _inst.msgs) else []))
+    if got2:
+        _new = _runs.get((got2.get("result") or {}).get("run_id") or "")
+        chk("C2 ★ 新记录里写着从哪条接过来的（界面上能看出链条）",
+            str((_new or {}).get("continued_from")) == _rid,
+            "continued_from=%r（上一轮 %r）" % ((_new or {}).get("continued_from"), _rid))
+        chk("C2 新记录的对话比上一轮长（老的留在里面了）",
+            len((_new or {}).get("messages") or []) > (_rows[0].get("msgs") or 0),
+            "%d 条" % len((_new or {}).get("messages") or []))
+    # 接不上时（记录被清了 / id 写错）：**照样干活，但要说清楚这次是新会话**
+    SCRIPT[:] = [call("done", {"summary": "新会话跑完了"})]
+    api.ai_start("这次当新会话跑", str(pkgs), 100000000, "这条记录根本不存在")
+    time.sleep(1.2)
+    _say = " ".join((api.ai_poll().get("say") or []))
+    chk("C2 ★ 接不上就说清楚（**点名没找到**，然后按新会话跑），别让人以为它还记着",
+        "没找到" in _say and "新会话" in _say, _say[-160:])
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        if not (api.ai_poll() or {}).get("running"):
+            break
+        time.sleep(0.3)
 
     print()
     print("=" * 72)

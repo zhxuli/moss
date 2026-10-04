@@ -341,11 +341,16 @@ def main():
         str(man.get("by")) == "ai", "by=%r" % man.get("by"))
     chk("H ★ 那一次的**任务原文**也写进去了（你要的\"知道是干啥之前的代码\"）",
         "能算加法" in str(man.get("by_task")), "by_task=%r" % man.get("by_task"))
-    chk("H 标题写着「AI · 动手前」（一眼认出是 AI 存的）",
-        str(man.get("title")).startswith("AI · 动手前"), "%r" % man.get("title"))
-    # ★ `V-249`：光写"动手前"认不出这是**干啥**之前的代码 —— 提示词得进标题
-    chk("H ★ 标题里带上了**那次给它的提示词**",
-        "把 zz 改成能算加法" in str(man.get("title")), "%r" % man.get("title"))
+    # ★ `V-251`：标题**就是那次的任务原文** —— 你原话「备份的时候不用写 AI 动手前，
+    #   不需要"动手前"几个字，以节省空间」。那怎么认得出是 AI 存的？列表那一行的
+    #   **「AI」徽章**（清单里的真字段 `by="ai"`），标题不背这个责任。
+    chk("H ★ 标题就是那次的任务原文（不加「AI · 动手前」那几个字，省地方）",
+        str(man.get("title")) == "把 zz 改成能算加法", "%r" % man.get("title"))
+    chk("H ★★ 标题里**不许**再出现「动手前」（那是白占地方）",
+        "动手前" not in str(man.get("title")), "%r" % man.get("title"))
+    chk("H ★ 是 AI 存的这件事靠**真字段** `by` 认（列表上那个「AI」徽章）",
+        str(man.get("by")) == "ai" and not (man.get("by_task") or "") == "",
+        "by=%r" % man.get("by"))
     chk("H ★ 备注是任务原文（全文，不截）",
         str(man.get("note")) == "把 zz 改成能算加法", "%r" % man.get("note"))
     # 提示词是用户自己敲的：可能是好几行、可能很长、也可能空着
@@ -355,12 +360,12 @@ def main():
         "%r" % S.title_for("第一行\n第二行  第三行"))
     _long = "把" * 100
     chk("H 提示词太长 → 标题截到 40 字 + 省略号",
-        len(S.title_for(_long)) <= len(S.TITLE) + 1 + S.TASK_IN_TITLE + 1
+        len(S.title_for(_long)) <= S.TASK_IN_TITLE + 1
         and S.title_for(_long).endswith("…"), "%r" % S.title_for(_long))
     chk("H 但备注里是**全文**（一个字都没截）", S.note_for(_long) == _long,
         "备注 %d 字" % len(S.note_for(_long)))
-    chk("H 提示词是空的 → 退回原来那句固定话（标题也不挂个空冒号）",
-        S.title_for("") == S.TITLE and S.title_for("   \n ") == S.TITLE
+    chk("H 提示词是空的 → 标题留空（存储那边会用时间兜底：\"备份 <时间>\"）",
+        S.title_for("") == "" and S.title_for("   \n ") == ""
         and S.note_for("") == S.NOTE, "%r / %r" % (S.title_for(""), S.note_for("")))
     # ★ `V-250`：快照**存好就立刻喊一声** —— 界面靠它刷新「版本快照」那一列。
     #   你报的原话："当他备份以后 版本快照这里 没有刷新 所以我是看不到它刚刚做的快照的"。
@@ -372,6 +377,54 @@ def main():
     chk("H ★★ 开工前那条快照存好就**立刻通知界面**（不用等跑完）",
         len(_snaps) == 1 and _snaps[0].get("id") and _snaps[0].get("group") == "zz",
         "通知了 %r" % (_snaps,))
+
+    print()
+    print("=" * 72)
+    print("P：`V-251` 会话 —— **接着上次那条聊**（你说「一旦重新打开 moss 只能重新再来」）")
+    print("=" * 72)
+    # ① 第一次跑：收尾时要把**整条对话**交出来（界面存盘，"接着聊"就靠它）
+    _m1 = FakeModel([call("done", {"summary": "第一趟干完了"})])
+    _g1 = L.Loop(_m1, workdir=fake_pkg, max_steps=3, say=lambda s: None).run("把 zz 改成能算加法")
+    _msgs = _g1.get("messages") or []
+    chk("P ★ 跑完时把**对话本身**交出来了（不是只有任务原文）",
+        len(_msgs) >= 3 and _msgs[0].get("role") == "system"
+        and "能算加法" in json.dumps(_msgs, ensure_ascii=False),
+        "%d 条：%s" % (len(_msgs), [m.get("role") for m in _msgs]))
+    chk("P 没接着谁的时候 `continued_from` 是空的", _g1.get("continued_from") == "",
+        repr(_g1.get("continued_from")))
+    # ② 存进任务记录 → 读回来 → 拿它当 history 接着跑：**老对话必须真的发出去**
+    import ai_runs as R                                                    # noqa: E402
+    _saved = R.save({"task": "把 zz 改成能算加法", "workdir": str(fake_pkg),
+                     "ok": True, "messages": _msgs, "steps": []})
+    _back = [m for m in (R.get(_saved.get("id")) or {}).get("messages") or []]
+    chk("P ★ 存盘再读回来，对话一条不少（重启 moss 也能接上）",
+        len(_back) == len(_msgs), "%d → %d" % (len(_msgs), len(_back)))
+    _m2 = FakeModel([call("done", {"summary": "第二趟接着干"})])
+    _g2 = L.Loop(_m2, workdir=fake_pkg, max_steps=3, say=lambda s: None).run(
+        "再给它加个 --json 参数", history=_back, from_id=_saved.get("id"))
+    _sent = _m2.seen[0] if _m2.seen else []
+    _sent_txt = json.dumps(_sent, ensure_ascii=False)
+    chk("P ★★ 接着聊：上次那句和这次的都发给了模型（它真记得）",
+        "把 zz 改成能算加法" in _sent_txt and "再给它加个 --json 参数" in _sent_txt,
+        "发出去 %d 条" % len(_sent))
+    chk("P 只接 system 以外的轮次：**系统提示只有一条**（用现在的提示词重拼）",
+        len([m for m in _sent if m.get("role") == "system"]) == 1
+        and _sent[0].get("role") == "system",
+        "%s" % [m.get("role") for m in _sent])
+    chk("P 老会话是接在**系统提示后面、这次那句前面**（顺序不能乱）",
+        [m.get("role") for m in _sent[:3]][0] == "system"
+        and "再给它加个 --json 参数" in json.dumps(_sent[-1], ensure_ascii=False),
+        json.dumps([m.get("role") for m in _sent], ensure_ascii=False))
+    chk("P 新记录里记着「从哪条接过来的」（界面上能看出链条）",
+        _g2.get("continued_from") == _saved.get("id"), repr(_g2.get("continued_from")))
+    chk("P 接着聊之后对话更长了（老的 + 新的都在里面）",
+        len(_g2.get("messages") or []) > len(_msgs),
+        "%d → %d" % (len(_msgs), len(_g2.get("messages") or [])))
+    chk("P 空 history = 新开一条（不多发、也不少发）",
+        len(L.Loop(FakeModel([call("done", {"summary": "新会话"})]), workdir=fake_pkg,
+                   max_steps=3, say=lambda s: None).run("开个新的", history=[]).get("messages") or []) >= 3,
+        "")
+    R.delete(_saved.get("id"))
     # 用户自己存一条（by 为空），然后试"清 AI 的" —— **它必须一条都不动我的**
     mine = S._store().create([str(fake_pkg.resolve())], title="我自己存的", note="")
     chk("H 人存的那条 by 是空的（默认就是\"人存的\"）", not (mine.get("by") or ""), "by=%r" % mine.get("by"))

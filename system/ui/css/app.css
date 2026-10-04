@@ -1010,6 +1010,14 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
    别在这儿自己给 `.primary` 加 padding/描边：那样会多出一个"浏览器默认按钮"的灰框
    （`tools/界面预览.py flat-buttons` 那条场景就是抓这个的，`V-233` 当场踩到）。 */
 .ai-actions .btn{flex:none}
+/* ★ `V-251`：这次是"接着哪条聊"那一行 —— 一个包一条会话，进来就默认接上；
+   想重开点右边。它是**状态提示**不是按钮，所以底色淡、字小。 */
+.ai-cont{display:flex;align-items:center;gap:8px;padding:5px 9px;border-radius:8px;
+  background:var(--fill);font-size:12px;color:var(--fg2)}
+.ai-cont.off{background:transparent;color:var(--dim)}
+.ai-cont .ai-cont-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai-cont b{color:var(--accent);font-weight:600}
+.ai-cont .ai-eg{flex:none}
 .ai-steps{border:1px solid var(--line2);border-radius:10px;background:var(--panel);
   overflow:auto;max-height:44vh}
 .ai-step{display:flex;gap:8px;align-items:baseline;padding:4px 10px;font-family:var(--mono);
@@ -1089,6 +1097,8 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
   overflow:hidden;text-overflow:ellipsis;flex:1}
 .ai-old{font-size:10.5px;background:var(--tag);color:var(--fg2);border-radius:4px;
   padding:1px 6px;margin-right:6px}
+/* 「接着聊」比隔壁那三个"看/再跑/删"重要一档 —— 给它点颜色，别混在一起 */
+.ai-run .ai-eg.on{color:var(--accent);background:var(--sel)}
 
 /* `V-244`：上下文用量（对着"到 80% 才折"那条线看） */
 .ai-ctx{color:var(--dim2)}

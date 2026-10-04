@@ -1841,11 +1841,16 @@ class Api:
             out["steps"] = len(st.get("steps") or [])
         return out
 
-    def ai_start(self, task="", workdir="", max_tokens=None):
+    def ai_start(self, task="", workdir="", max_tokens=None, continue_id=""):
         """开始一次任务（后台线程跑 loop，界面靠 `ai_poll` 拿步骤流）。
 
         `workdir`：这次在哪儿干活 —— 当前选中的包目录，或者 `user_data/pkgs`（新建包）。
         `max_tokens`：这次任务的 token 上限（不给就读 `user_data/ai/budget.json`，默认 20 万）。
+        `continue_id`（`V-251`）：**接着哪条记录聊** —— 把那条记录里的对话（`messages`）
+            接上去，然后这次的任务作为新的一句追加在后面。空 = 新开一条。
+        ★ 为什么必须有：你原话「怎么还是找不到历史会话记录，一旦重新打开 moss 只能重新再来
+          —— 你见哪个 AI 助手连历史记录都没有的？」。以前存了"任务 + 步骤流"，但**对话本身
+          没存**，所以只能"看"，不能"接着说"。
         写权限仍然只有 `user_data/pkgs/**`（`ai_edits` 那道闸，v1 的边界）。
         """
         task = str(task or "").strip()
@@ -1864,6 +1869,23 @@ class Api:
             except Exception as exc:                                      # noqa: BLE001
                 return {"ok": False, "msg": "AI 起不来：%s" % exc}
             wd = str(workdir or "").strip() or str(e.write_root())
+            # ★ `V-251`：要接着哪条聊 —— 把那条记录里的对话取出来（取不到就当新开一条，
+            #   但要**如实说一声**，别让用户以为"它还记着"）。
+            hist, cont_from, cont_note = [], "", ""
+            cid = str(continue_id or "").strip()
+            if cid:
+                try:
+                    import ai_runs as _runs                                # noqa: PLC0415
+                    rec = _runs.get(cid) or {}
+                    hist = [m for m in (rec.get("messages") or [])
+                            if isinstance(m, dict) and m.get("role")]
+                    if hist:
+                        cont_from = cid
+                        cont_note = "接着 %s 那条聊（它还记着之前 %d 条对话）" % (cid, len(hist))
+                    else:
+                        cont_note = "没找到 %s 那条对话（可能被清了）—— 这次按新会话跑" % cid
+                except Exception as exc:                                  # noqa: BLE001
+                    cont_note = "接不上 %s（%s）—— 这次按新会话跑" % (cid, exc)
             bud = self.ai_budget()                       # 预算：界面给就听界面的，否则读存的
             cap = int(max_tokens or bud.get("max_tokens") or 200000)
             # ★ `V-244`：上下文压缩照 DSH 的参数 —— 触发线 = 窗口 × 0.8、逐字保留 = 窗口 × 0.16
@@ -1908,7 +1930,9 @@ class Api:
                               on_snapshot=on_snapshot,
                               stop_check=lambda: bool(AI.get("stop")))
                 try:
-                    got = loop.run(task)
+                    if cont_note:
+                        say(cont_note)
+                    got = loop.run(task, history=hist, from_id=cont_from)
                 except Exception as exc:                                  # noqa: BLE001
                     got = {"ok": False, "reason": "%s: %s" % (type(exc).__name__, exc),
                            "steps": [], "usage": {}, "files": []}
@@ -1931,6 +1955,10 @@ class Api:
                         "usage": got.get("usage") or {}, "files": got.get("files") or [],
                         "snapshot": got.get("snapshot"), "steps": got.get("steps") or [],
                         "folded": got.get("folded") or 0,
+                        # ★ `V-251`：这条会话的对话本身 + 从哪条接过来的 ——
+                        #   「接着聊」靠它，重启 moss 也不会"只能重新再来"。
+                        "messages": got.get("messages") or [],
+                        "continued_from": got.get("continued_from") or "",
                     })
                     got["run_id"] = saved.get("id")
                 except Exception as exc:                                  # noqa: BLE001
@@ -1980,13 +2008,22 @@ class Api:
             return {"ok": False, "runs": [], "msg": "读不到历史：%s" % e}
 
     def ai_run(self, run_id=""):
-        """一次任务的完整记录（含步骤流）—— 界面上点「看」用。"""
+        """一次任务的完整记录（含步骤流）—— 界面上点「看」用。
+
+        ★ `V-251`：**不把 `messages` 发给页面**（那是整条会话，几百 KB）—— 页面只需要
+          知道"这条能不能接着聊"（`cont`），真要接着聊时把 **id** 交回来，宿主自己去读。
+        """
         try:
             ai_dir = str(HERE / "ai")
             if ai_dir not in sys.path:
                 sys.path.insert(0, ai_dir)
             import ai_runs
             rec = ai_runs.get(run_id)
+            if rec:
+                rec = dict(rec)
+                msgs = rec.pop("messages", None) or []
+                rec["cont"] = bool(msgs)
+                rec["msgs"] = len(msgs)
             return {"ok": bool(rec), "run": rec, "msg": "" if rec else "没有这条记录"}
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "run": None, "msg": "读不到：%s" % e}

@@ -33,8 +33,14 @@
   `by="ai"` + `by_task`（那次的任务原文）。**AI 只能清自己存的** —— 清快照只走
   `BackupStore.delete_ai()`（逐条看 `by`，不是 `ai` 就跳过），`run_moss` 里的
   `--snap rm/…` 一律被拒。界面上快照列表带「AI」徽章 + 筛选 + 「清掉 AI 的（N）」。
-  标题/备注是**给人看的**（`title_for()`：`AI · 动手前：<提示词前 40 字>`，备注放全文）——
-  判据永远是 `by`，别拿标题认。
+  标题那一栏**就是那次的任务原文**（`title_for()`：压一行、超 40 字带 `…`；空着留空，
+  存储用时间兜底）—— 判据永远是 `by`（列表上的「AI」徽章），别把标识写进标题占地方。
+* **会话（`V-251`，接着聊）**：`ai_loop` 收尾时交出**整条对话**（`result["messages"]`）→
+  宿主写进 `user_data/ai/runs/<id>.json` → 下次 `ai_start(..., continue_id=<那条的 id>)`
+  把对话读出来，`loop.run(..., history=…)` 接上去（只接 `system` 以外的轮次；系统提示每次
+  用现在的契约重拼）。界面**按"干活的地方"分会话**：进来就认领这个包上次那条并**默认接着聊**，
+  想重开点「新开一条」。★ 别把 `messages` 塞进 `ai_poll`/`ai_run` 的返回值（几百 KB）——
+  只给 `cont`/`msgs`，真正接着聊时把 **id** 交回宿主。
 * **它动完盘 ⇒ 必须通知界面**（`V-249`）：`ai_poll()` 里看到「跑完 + 有 `files`」就调
   `files.js` 的 `diskChanged(rels)`（作废文件管理缓存 / 重问包表 / 重读开着的那几页 /
   重列目录），**按 run 只通知一次**。★ 静默刷新一律走 `fmRefresh(true)`：它**不许抢顶层
@@ -52,8 +58,9 @@
   断言在 `backup-diff` 场景里是**数字**（把 `getComputedStyle().color` 转成 hsl 比 hue / 明度），别靠看截图。
 * 改动它之后跑这两个：`python tools\ai循环探针.py`（loop，假模型）、
   `.\system\runtimes\python\3.12\python.exe tools\ai工作台探针.py`（宿主那半，假模型+假宿主），
-  再加 `python tools\界面预览.py ai-pane ai-disk-refresh ai-snap-refresh`（这一页画不画得出来 /
-  干完活文件管理刷不刷新 / 开工前那条快照刷不刷出来）。**都不烧 token。**
+  再加 `python tools\界面预览.py ai-pane ai-disk-refresh ai-snap-refresh ai-continue`
+  （这一页画不画得出来 / 干完活文件管理刷不刷新 / 开工前那条快照刷不刷出来 /
+  重启后能不能接着上次那条聊）。**都不烧 token。**
 
 ## 要写包 / 改包
 

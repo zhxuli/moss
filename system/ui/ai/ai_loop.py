@@ -147,6 +147,9 @@ class Loop:
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.steps = []
         self.folded = 0
+        #: ★ `V-251`：这条会话的消息表（收尾时交给界面存盘 —— "接着聊"靠它）
+        self.messages = []
+        self.continued_from = ""
 
     def _compact(self, messages):
         """上下文压缩：**照 DSH 那套策略，但只做"本地修剪"这一级**。
@@ -242,10 +245,26 @@ class Loop:
                 pass
 
     # ------------------------------------------------------------------ 主循环
-    def run(self, task, extra_fragments=(), snapshot=True):
+    def run(self, task, extra_fragments=(), snapshot=True, history=None, from_id=""):
+        """跑一次任务。
+
+        `history`（`V-251`）：**接着上次那条会话聊** —— 上一次跑完时留下的对话
+        （`ai_runs` 里存着）。给了它就把那些轮次接在系统提示后面，这次的任务作为
+        **新的一句**追加在后面。★ 只接 `system` 以外的轮次：系统提示每次都用**现在的**
+        契约/提示词重拼（不然改完提示词、老会话还带着老规矩）。
+        ★ 空会话（`[]`）和没给一样 —— 别把"新开一条"变成"少发一条用户消息"。
+        `from_id`：这条会话是从哪条记录接过来的（写进新记录，界面上能看出链条）。
+        """
         sys_text, used, missing = compose_system(task, extra_fragments)
-        messages = [{"role": "system", "content": sys_text},
-                    {"role": "user", "content": "%s\n\n%s" % (task, env_note(self.tools.workdir))}]
+        old = [m for m in (history or []) if str(m.get("role")) != "system"]
+        messages = [{"role": "system", "content": sys_text}] + old + \
+                   [{"role": "user", "content": "%s\n\n%s" % (task, env_note(self.tools.workdir))}]
+        # ★ `V-251`：这个列表就是"这条会话" —— 全程只 append/就地改（底下没有重新赋值），
+        #   所以收尾时（`_finish`）把它原样交出去，界面存盘、下次接着聊。
+        self.messages = messages
+        self.continued_from = str(from_id or "")
+        if old:
+            self.say("接着上次那条聊：它还记得之前 %d 条对话" % len(old))
         self.say("提示词：%s%s" % ("；".join(used),
                                  ("；**缺**：" + "、".join(missing)) if missing else ""))
         # ★ `V-236`：**动手前先给这个包存一条快照**（`by="ai"` + 这次的任务原文）。
@@ -410,7 +429,12 @@ class Loop:
                 "steps": self.steps, "usage": dict(self.usage),
                 "prompts": used, "missing_prompts": missing, "tools_log": self.tools.log,
                 "files": list(self.tools.changed), "folded": self.folded,
-                "snapshot": getattr(self, "snapshot", None)}
+                "snapshot": getattr(self, "snapshot", None),
+                # ★ `V-251`：**把这一整条对话留下来** —— 界面存进任务记录，
+                #   下次点「接着聊」就把它接上去（不然重启 moss 只能从头再来）。
+                #   存的是**收尾时**的消息表（`_compact` 已经折过的那些，所以不算大）。
+                "messages": self.messages,
+                "continued_from": getattr(self, "continued_from", "")}
 
 
 # ---------------------------------------------------------------------- 命令行
