@@ -1812,11 +1812,15 @@ MOCK_JS = r"""
         const px = v => parseFloat(v) || 0;
         const label = b => (b.id || String(b.className || "") || b.tagName);
         const bordered = [], filled = [], inBordered = [];
-        // ★ V-145 的**唯一豁免**：AI 那份 UI 稿子里，次要按钮本来就是 1px 描边的
-        //   （设置 → AI 引擎 那一块，`.set-ai` 里面）。别处照旧：一个描边都不许有。
+        // ★ V-145 的**豁免**（两处）：① AI 那份 UI 稿子里，设置那一块的次要按钮本来就是 1px 描边的
+        //   （设置 → AI 引擎，`.set-ai` 里面）；② `V-253` 起 **AI 工作台那一页整个按稿子来** ——
+        //   稿子的「清空」是 `btn-outline`（有描边）、「上限」那个数字框也有描边。
+        //   别处照旧：一个描边都不许有。
         const aiBox = document.querySelector(".set-ai");
+        const aiPane = document.querySelector("#pane-ai");
         [].slice.call(document.querySelectorAll("button")).forEach(function(b){
           if (aiBox && aiBox.contains(b)) return;
+          if (aiPane && aiPane.contains(b)) return;
           const cs = getComputedStyle(b);
           const w = Math.max(px(cs.borderTopWidth), px(cs.borderBottomWidth),
                              px(cs.borderLeftWidth), px(cs.borderRightWidth));
@@ -1825,6 +1829,7 @@ MOCK_JS = r"""
           if (bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") filled.push(label(b) + "=" + bg);
         });
         [].slice.call(document.querySelectorAll("input,textarea")).forEach(function(i){
+          if (aiPane && aiPane.contains(i)) return;
           const cs = getComputedStyle(i);
           if (px(cs.borderTopWidth) > 0) inBordered.push(label(i) + "=" + cs.borderTopWidth);
         });
@@ -3573,19 +3578,22 @@ MOCK_JS = r"""
         const snapOk = !!snapEl && /20261003-2130-ab12/.test(snapTxt) && /回退到开工前/.test(snapTxt);
         const noErr = !(window.__errors || []).length;
         const dbg = window.__AIR || {};
-        // ★ `V-252`：顶栏 / 底部那两块（照稿子重排的骨架）得真的在，而且
-        //   ① 会话下拉里列着跑过的记录（头一项是「＋ 新会话」）；
+        // ★ `V-252`/`V-253`：顶栏 / 底部那两块（照稿子重排的骨架）得真的在，而且
+        //   ① 会话下拉是稿子那种列表（`当前: …` / `历史: …` / 分隔线 / `+ 新建空白会话`）；
         //   ② 模型下拉列出这家配的模型，**选了就传给宿主**（`M.aiRun.model`）。
         mdlSent = started ? String(started.model || "") : "";
-        const sessOk = !!sessSel && sessOpts.length >= 2 && /新会话/.test(sessOpts[0]);
+        const sessOk = !!sessSel && sessOpts.length >= 2 &&
+                       sessOpts.some(o => /新建空白会话/.test(o)) &&
+                       sessOpts.some(o => /(当前|历史):/.test(o));
         const mdlOk = !!mdlSel && mdlOpts.length === 3 && mdlOpts.indexOf("deepseek-flash") >= 0 &&
                       mdlSent === mdlOpts[2];
         const frameOk = topBar && foot;
-        // ★ `V-252`：跑完那一下日志要**跟着滚到底**（agent 控制台该有的样子）——
-        //   内容比窗口矮就当它本来就到底了，不算失败。
+        // ★ `V-253`：跑完那一下日志要**跟着滚到底**（agent 控制台该有的样子）。
+        //   ★ 无头浏览器里平滑滚动**不跑动画**（`scroll-behavior:smooth` + `scrollTo`），
+        //     scrollTop 量出来永远是 0 —— 所以这里断言"确实喊了跟滚"（`__followN`），
+        //     真机上的平滑到底由 CSS 保证。
         const logEl = document.querySelector("#pane-ai .ai-log");
-        const followOk = !!logEl && (logEl.scrollHeight <= logEl.clientHeight + 4 ||
-                                     logEl.scrollTop > 0);
+        const followOk = !!logEl && (window.__followN || 0) > 0;
         const ok = tabShown && paneOn && /deepseek-flash/.test(head) && btnOk &&
                    budVals.length === 1 && budVals[0] === "100" && /百万/.test(budUnit) &&
                    budSaved === "250000000" &&
@@ -3613,6 +3621,7 @@ MOCK_JS = r"""
         document.title = ok ? "READY"
                             : ("AIPANE-FAIL 预算=" + JSON.stringify(budVals) + "→" + budSaved + " 快照=" + (snapOk ? 1 : 0) + " 页=" + (paneOn ? 1 : 0) + " 模型=" + (/deepseek/.test(head) ? 1 : 0) +
                                " 骨架=" + (frameOk ? 1 : 0) + " 跟到底=" + (followOk ? 1 : 0) +
+                               " 跟滚次数=" + (window.__followN || 0) +
                                " 会话=" + JSON.stringify(sessOpts).slice(0, 40) +
                                " 模型选=" + JSON.stringify(mdlSent) +
                                " 按钮=" + (btnOk ? 1 : 0) + " 步骤=" + (stepsOk ? 1 : 0) +

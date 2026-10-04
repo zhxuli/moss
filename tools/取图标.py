@@ -132,7 +132,11 @@ def main():
         print("没有要补的，文件没动。")
         return 0
 
-    body = HEAD + "".join('"%s": "%s",\n' % (n, b) for n, b in have.items()) + TAIL
+    body = splice(text, have, added)
+    if body is None:
+        print("[错误] 找不到 `const LUCIDE = {` 那张表 —— **什么都没写**"
+              "（以前这里是无条件整份重拼，会把表外面那些自绘图标和实心分支一起抹掉）。")
+        return 1
     tmp = TARGET.with_suffix(".js.tmp")
     tmp.write_text(body, encoding="utf-8", newline="")
     _replace(tmp, TARGET)
@@ -140,6 +144,30 @@ def main():
           % (TARGET, len(added), " ".join(added), len(have)))
     print("★ 别忘了把 vendor/README.md 里的图标个数一起改掉。")
     return 0
+
+
+#: `const LUCIDE = {` 那张表（**这一张是"扁平表"**）；表**外面**还有自绘图标（`SOLID`
+#: 表 + `BODY_*`）和 `ico()` 的实心分支 —— 那些**一个字都不能动**。
+TABLE = re.compile(r"(const LUCIDE = \{\n)(.*?)(\n\};)", re.S)
+
+
+def splice(text, have, added):
+    """只把新条目插进 LUCIDE 表末尾；表外面原样保留。
+
+    ★ `V-253` 的教训：这个脚本原来是 `HEAD + 所有条目 + TAIL` **整份重拼**，而
+      `HEAD`/`TAIL` 是"只有扁平表"那个年代的常量 —— 于是每补一个图标，就把后来加的
+      `SOLID` 表（`moss-history` / `moss-camera` / `moss-folder-out`）和 `ico()` 的
+      实心分支**静默删掉**（`界面检查.py` 的"图标名都存在"那条当场报红，
+      可那已经是写完文件之后了）。现在改成"往表里插一行"，表外面碰都不碰。
+    """
+    m = TABLE.search(text)
+    if not m:
+        return None
+    rows = "".join('"%s": "%s",\n' % (n, have[n]) for n in added)
+    head, mid, tail = m.group(1), m.group(2), m.group(3)
+    if not mid.endswith("\n"):
+        mid += "\n"
+    return text[:m.start()] + head + mid + rows.rstrip("\n") + tail + text[m.end():]
 
 
 def _replace(tmp, dest):

@@ -62,10 +62,15 @@
   模板里照样报 `ico is not a function`。要就两条路：包一层方法（`stepIcon(){ return ico(...) }`），
   或者 `mountVue(MossAi, "#pane-ai", {ico: ico})`（`js/console.js` 一直这么写）。**加完模板记得跑一遍
   `ai-pane` 之外的场景** —— 这个错误会污染所有页（`PAGE-ERR`）。
-* **AI 那一页的骨架**（`V-252`，照你给的稿子）：`.ai-bar` 顶栏（会话 / 干活的地方 / 上限 / **模型** / 刷新）
-  → `.ai-log` 唯一滚动区（会话标题 + 一步一步的卡 + 结论卡 + 会话记录）
-  → `.ai-foot` 固定在底部（输入框 + 按钮 + 状态条）。**设置别再往中间的流里塞**。
-  模型是 `ai_info.models` + `ai_start(..., model=…)`（换模型连带换上下文窗口）；日志会跟着滚。
+* **AI 那一页的骨架**（`V-253`，**按你给的 UI 稿子逐条抄的**，别再自己发挥）：灰底上居中一张
+  `.ai-workspace` 卡片 → `.top-toolbar`（会话 / 工作区 / 上限 / 模型，全是 `.custom-select`）
+  → `.log-container`（唯一滚动区：`.session-title` + 一张张 `.step-card` + `.thinking-indicator` 永远在最后）
+  → `.bottom-area`（`.prompt-box` 输入 + `清空`/`发送指令` + `.status-footer`）。
+  样式在 `app.css` 里**加了 `.aiwrap` 前缀**（稿子用的是 `.btn` / `::-webkit-scrollbar` 这种全局名，
+  不圈起来会把整个界面带歪）。模型是 `ai_info.models` + `ai_start(..., model=…)`。
+  ★ `#pane-ai` 里的按钮/输入框**按稿子豁免** `flat-buttons` 那条闸（稿子的「清空」是描边的）。
+  ★ 补图标用 `tools\取图标.py`（**只增不改**；它以前会整份重拼、把 `SOLID` 自绘图标和
+    `ico()` 的实心分支删掉 —— `V-253` 修好了，改之前先看一眼 `splice()` 那段注释）。
 * 改动它之后跑这两个：`python tools\ai循环探针.py`（loop，假模型）、
   `.\system\runtimes\python\3.12\python.exe tools\ai工作台探针.py`（宿主那半，假模型+假宿主），
   再加 `python tools\界面预览.py ai-pane ai-disk-refresh ai-snap-refresh ai-continue`
