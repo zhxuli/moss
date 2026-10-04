@@ -611,10 +611,34 @@ const MossAi = {
       if (e.key !== "Alt") return;
       if (typeof tab !== "undefined" && tab !== "ai") return;   // 不在 AI 这一页就别管
       if (!(this.A.turns || []).length) return;
+      /* ★★ V-266 修你报的"按两下才显示"：**Alt 的默认动作必须拦掉**。
+         在 WebView2/Chromium 里，单独按 Alt 会去激活**窗口菜单栏** ——
+         那一下就"喂给菜单了"，页面要等第二下才收到 ⇒ 现象正好是"按两下才出来、
+         再按两下才隐藏"。`preventDefault()` 之后第一下就归页面。
+         ★ 再加一道"同一按只算一次"的防抖：万一某些环境 keydown 来两发，
+           也不会自己抵消成"按了没反应"。 */
+      try{ e.preventDefault(); }catch(e2){}
+      this._altDownSeen = true;        // `altUp` 靠它判断"这一按的 keydown 收到没有"
       if (e.repeat) return;
-      AIR.altOn = !AIR.altOn;          // 再按一下 = 收起
+      const now = Date.now();
+      if (now - (this._altAt || 0) < 120) return;
+      this._altAt = now;
+      AIR.altOn = !AIR.altOn;          // 再按一下 = 收起（开关）
     },
-    altUp(){ /* 松手**不收** —— 收了就变成"得一直按住"（V-265） */ },
+    /* ★ V-266 的兜底：万一 `keydown` 还是被窗口菜单吃掉，就用**同一次按键的 `keyup`** 顶上
+       （两发都收到也只算一次：`_altDownSeen` 为真就跳过）。松手本身**不收起** ✓ */
+    altUp(e){
+      if (e.key !== "Alt") return;
+      const seen = this._altDownSeen;
+      this._altDownSeen = false;
+      if (seen) return;                                  // 这一按已经处理过了
+      if (typeof tab !== "undefined" && tab !== "ai") return;
+      if (!(this.A.turns || []).length) return;
+      const now = Date.now();
+      if (now - (this._altAt || 0) < 120) return;
+      this._altAt = now;
+      AIR.altOn = !AIR.altOn;
+    },
     jumpTurn(ti){
       const t = (AIR.turns || [])[ti];
       if (!t) return;
