@@ -3942,27 +3942,47 @@ MOCK_JS = r"""
         const jumped = !!first && first.classList.contains("ai-flash") &&
                        !!(dbg.turns && dbg.turns[0] && dbg.turns[0].folded === false);
         const closed = !dbg.altOn && !document.querySelector("#pane-ai .ai-jump");
-        // ③ 再按 Alt 浮出来 → 松开 Alt 自己收起
+        // ③ `V-265`：**松手不收起**（你报的"得按两下"就是松手收起来了）；
+        //    再按一下 Alt（开关）/ Esc / 点别处才收
         key("keydown", "Alt");
         await sleep(200);
         const again = !!document.querySelector("#pane-ai .ai-jump");
         key("keyup", "Alt");
+        await sleep(220);
+        const keepAfterKeyup = !!document.querySelector("#pane-ai .ai-jump");
+        key("keydown", "Alt");                       // 再按一下 = 收起（开关）
         await sleep(200);
-        const gone = !document.querySelector("#pane-ai .ai-jump");
-        const ok = turns >= 1 && listed && jumped && closed && again && gone && titleOk &&
-                   !(window.__errors || []).length;
+        const toggleOff = !document.querySelector("#pane-ai .ai-jump");
+        key("keydown", "Alt");                       // 再浮出来 → Esc 收
+        await sleep(200);
+        key("keydown", "Escape");
+        await sleep(200);
+        const escOff = !document.querySelector("#pane-ai .ai-jump");
+        key("keydown", "Alt");                       // 再浮出来 → 点别处收
+        await sleep(200);
+        document.querySelector("#pane-ai .ai-task")
+          .dispatchEvent(new MouseEvent("mousedown", {bubbles: true}));
+        await sleep(200);
+        const clickOff = !document.querySelector("#pane-ai .ai-jump");
+        const gone = toggleOff && escOff && clickOff;
+        const ok = turns >= 1 && listed && jumped && closed && again && keepAfterKeyup &&
+                   gone && titleOk && !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n这个会话里有 " + turns + " 条「我说过的话」（面板里列了 " + items.length + " 条）" +
           "\n标题（要=第一句 + 几轮）= " + JSON.stringify(title.slice(0, 40)) +
           " · 日志里画了 " + domTurns + " 轮" +
           "\n按住 Alt 浮出来 = " + listed + " · 点第 1 条：跳到 + 展开 + 闪 = " + jumped +
-          "\n点完面板收起 = " + closed + " · 再按又出来 = " + again + " · 松开收起 = " + gone +
+          "\n点完面板收起 = " + closed + " · 再按又出来 = " + again +
+          " · ★ 松手**还留着** = " + keepAfterKeyup +
+          "\n再按一下收 = " + toggleOff + " · Esc 收 = " + escOff + " · 点别处收 = " + clickOff +
           " · 页内错误 = " + (window.__errors || []).length;
         document.title = ok ? "READY"
           : ("AIALT-FAIL 轮=" + turns + " 列=" + items.length + " 浮=" + (listed ? 1 : 0) +
-             " 标题=" + (titleOk ? 1 : 0) + "/" + JSON.stringify(title.slice(0, 24)) +
              " 跳=" + (jumped ? 1 : 0) + " 收=" + (closed ? 1 : 0) +
-             " 再=" + (again ? 1 : 0) + " 松=" + (gone ? 1 : 0) +
+             " 再=" + (again ? 1 : 0) + " 松手留=" + (keepAfterKeyup ? 1 : 0) +
+             " 开关=" + (toggleOff ? 1 : 0) + " esc=" + (escOff ? 1 : 0) +
+             " 点别处=" + (clickOff ? 1 : 0) +
+             " 标题=" + (titleOk ? 1 : 0) + "/" + JSON.stringify(title.slice(0, 24)) +
              " 错=" + (window.__errors || []).length);
       }
       //   `MossList.rows` 读 `DATA.packages` 抛的那个是同一类），看它有没有被

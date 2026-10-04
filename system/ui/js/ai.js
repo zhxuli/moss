@@ -601,21 +601,20 @@ const MossAi = {
       AIR.rev++;
       this.$nextTick(() => this.autoGrow());
     },
-    /* ★ `V-261`：**Alt 键当"我说过的话"导航用**。
+    /* ★ V-261：**Alt 键当"我说过的话"导航用**。
        按住 Alt → 浮出一张表（这一串会话里我说过的每一句）→ 点哪条就滚到哪一轮。
-       为什么用 Alt：不占界面（这一页已经排满了），也是"看一眼 / 跳一下"这种临时动作的惯例键。
-       ★ 松手才收起来 —— 不然"按住 Alt 再去点"这个动作做不完；
-         鼠标停在面板上时也不收（慢慢点也行）。 */
+       ★★ V-265 修你报的"得按两下才出来"：**松手不再收起**（原来 keydown 浮出、keyup 立刻收起，
+          一次正常的"按一下"就变成闪一下 ⇒ 你只能按住不放，或者按第二次才看见）。
+          现在是个**开关**：按一下浮出并**留着**，再按一下 / 点某一条 / Esc / 点别处才收。 */
     altDown(e){
+      if (e.key === "Escape"){ AIR.altOn = false; return; }
       if (e.key !== "Alt") return;
       if (typeof tab !== "undefined" && tab !== "ai") return;   // 不在 AI 这一页就别管
       if (!(this.A.turns || []).length) return;
-      if (!e.repeat) AIR.altOn = true;
+      if (e.repeat) return;
+      AIR.altOn = !AIR.altOn;          // 再按一下 = 收起
     },
-    altUp(e){
-      if (e.key !== "Alt") return;
-      if (!this._overJump) AIR.altOn = false;
-    },
+    altUp(){ /* 松手**不收** —— 收了就变成"得一直按住"（V-265） */ },
     jumpTurn(ti){
       const t = (AIR.turns || [])[ti];
       if (!t) return;
@@ -873,10 +872,19 @@ const MossAi = {
     this._ku = e => this.altUp(e);
     window.addEventListener("keydown", this._kd, true);
     window.addEventListener("keyup", this._ku, true);
+    /* ★ V-265：面板开着的时候，**点别处**也收起来（不然它一直挡着日志）*/
+    this._md = e => {
+      if (!AIR.altOn) return;
+      const t = e.target;
+      if (t && t.closest && t.closest(".ai-jump")) return;
+      AIR.altOn = false;
+    };
+    document.addEventListener("mousedown", this._md, true);
   },
   beforeUnmount(){
     window.removeEventListener("keydown", this._kd, true);
     window.removeEventListener("keyup", this._ku, true);
+    document.removeEventListener("mousedown", this._md, true);
   },
   template: `
   <div class="aiwrap">
