@@ -104,8 +104,10 @@ async function init(){
 function paintStaticIcons(){
   // 注意：这里**没有"退出"按钮** —— 标题栏本来就有 ×，重复一个是多余的
   // 顶层三个选项卡也带图标（原来只有文字，和别处不统一）
+  // ★ `V-257`：「AI」那一格也要图标 —— 用的就是**设置面板里 AI 那一组那个标记**
+  //   （`moss-openai`，见 vendor/lucide.js 里那条手写的；只有一份，两处都用它）。
   const tabs = {"detail": ["info", "详情"], "console": ["terminal", "命令行"],
-                "file": ["folder-tree", "文件管理"]};
+                "file": ["folder-tree", "文件管理"], "ai": ["moss-openai", "AI"]};
   Object.keys(tabs).forEach(k => {
     const b = document.querySelector('.tab[data-tab="' + k + '"]');
     if (b) b.innerHTML = ico(tabs[k][0], "i") + '<span>' + tabs[k][1] + '</span>';

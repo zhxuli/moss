@@ -102,6 +102,10 @@ def main():
     if verify:
         bad, ok = [], 0
         for name, body in have.items():
+            # ★ `V-257`：`moss-` 开头的是**手工加的**（不在 lucide-static 里，比如
+            #   `moss-openai` 是 Tabler 的标记）—— 别拿线上去核对它，白报"取不到"。
+            if name.startswith("moss-"):
+                continue
             try:
                 if fetch(name) == body:
                     ok += 1

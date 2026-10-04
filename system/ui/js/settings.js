@@ -459,22 +459,16 @@ const MossSettings = {
       const r = await pywebview.api.ai_presets();
       this.ai.presets = (r && r.presets) || [];
     },
-    // 稿子里的三个内联图标（人物 / 加号 / 左箭头）—— 我们的图标库里没有，直接照抄它的 path
+    // 稿子里的几个内联图标（人物 / 加号 / 左箭头）—— 我们的图标库里没有，直接照抄它的 path
+    // ★ `V-257`：`openai` 那条**搬进 vendor/lucide.js 了**（`moss-openai`）——
+    //   顶层「AI」选项卡也要用同一个标记，两处各抄一段 path 迟早漂移。
     aiSvg(name){
+      if (name === "openai") return ico("moss-openai", "i");
       const P = {
         user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>' +
               '<circle cx="12" cy="7" r="4"></circle>',
         plus: '<path d="M12 5v14M5 12h14"></path>',
         back: '<path d="M19 12H5M12 19l-7-7 7-7"></path>',
-        // OpenAI 的那个标记（Tabler Icons 的 brand-openai，MIT；用来表示"咱走的是 OpenAI 兼容格式"）
-        openai: '<path d="M11.217 19.384a3.501 3.501 0 0 0 6.783 -1.217v-5.167l-6 -3.35"></path>' +
-                '<path d="M5.214 15.014a3.501 3.501 0 0 0 4.446 5.266l4.34 -2.534v-6.946"></path>' +
-                '<path d="M6 7.63c-1.391 -.236 -2.787 .395 -3.534 1.689a3.474 3.474 0 0 0 1.271 4.745' +
-                'l4.263 2.514l6 -3.348"></path>' +
-                '<path d="M12.783 4.616a3.501 3.501 0 0 0 -6.783 1.217v5.067l6 3.45"></path>' +
-                '<path d="M18.786 8.986a3.501 3.501 0 0 0 -4.446 -5.266l-4.34 2.534v6.946"></path>' +
-                '<path d="M18 16.302c1.391 .236 2.787 -.395 3.534 -1.689a3.474 3.474 0 0 0 -1.271 -4.745' +
-                'l-4.308 -2.514l-5.955 3.42"></path>',
       }[name] || '';
       // ★ 跟 `icon()` 出来的一模一样：带 `class="i"`（那条样式管着宽高 + `display:block`）
       //   —— 少了它，svg 是行内元素、按基线摆，跟旁边文字对不齐（V-161 踩过）。

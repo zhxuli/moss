@@ -1058,6 +1058,18 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
 .aiwrap .select-model{background:var(--aib-primary-light);border-color:#BFDBFE;color:var(--aib-primary)}
 .aiwrap .select-model:hover{background:#DBEAFE}
 .aiwrap .custom-select svg{flex:none}
+/* ★ `V-257`：**下拉列表本身**也得是这个风格 —— 原生 `<select>` 的弹出层在 Chromium 上
+   认 `option` 的底色/字色/字号，所以照 `.custom-select` 那套给一遍；再补 hover / 选中态。
+   （弹出框的外框是浏览器画的，改不了，但里面这部分能对上。） */
+.aiwrap .custom-select select:hover{color:var(--aib-primary)}
+.aiwrap .custom-select select:disabled{color:var(--aib-text-light);cursor:default}
+.aiwrap .custom-select option{
+  background:var(--aib-bg-panel);color:var(--aib-text-main);
+  font-family:inherit;font-size:13px;font-weight:500;padding:8px 10px;
+}
+.aiwrap .custom-select option:checked,
+.aiwrap .custom-select option:hover{background:var(--aib-primary-light);color:var(--aib-primary)}
+.aiwrap .custom-select option:disabled{color:var(--aib-text-light)}
 
 /* 数字输入框交互 */
 .aiwrap .token-input-group{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--aib-text-muted)}

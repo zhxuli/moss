@@ -55,6 +55,20 @@ function humanTokens(n){
   return String(v);
 }
 
+/* ★ `V-257`：**中文单位**的 token 数（你原话："当数值比较大的时候应该变更单位为万 百万 亿这样"）——
+   底栏那三个数用它；小数字照原样给。`title` 里另给精确值。 */
+function cntok(n){
+  const v = Math.round(Number(n) || 0);
+  const neg = v < 0 ? "-" : "", a = Math.abs(v);
+  const cut = (x, d) => {
+    const s = (x).toFixed(d);
+    return s.replace(/\.?0+$/, "");
+  };
+  if (a >= 100000000) return neg + cut(a / 100000000, 2) + "亿";
+  if (a >= 10000) return neg + cut(a / 10000, 1) + "万";
+  return neg + String(a);
+}
+
 /* 给探针/预览工具看的把手（`V-233`）：这一页的状态全在 `AIR` 里，
    外面想断言"到底 ready 没有 / 是不是还 busy"就靠它 —— 不用去猜 DOM。 */
 window.__AIR = AIR;
@@ -379,12 +393,21 @@ const MossAi = {
       const s = this.A.result && this.A.result.snapshot;
       return (s && s.id) || "";
     },
-    /* 底部状态条右半边：`Token 消耗: 输入 / 输出 / 合计`（照稿子那三个数） */
+    /* 底部状态条右半边：`Token 消耗: 输入 / 输出 / 合计`（照稿子那三个数）
+       ★ `V-257`：数字大了换中文单位（万/亿），精确值放 `title`。 */
     tokLine(){
       this.A.rev;
       const u = this.usage;
       if (!u) return "— / — / —";
-      return (u.prompt_tokens || 0) + " / " + (u.completion_tokens || 0) + " / " + (u.total_tokens || 0);
+      return cntok(u.prompt_tokens) + " / " + cntok(u.completion_tokens) + " / " +
+             cntok(u.total_tokens);
+    },
+    tokTip(){
+      this.A.rev;
+      const u = this.usage;
+      if (!u) return "";
+      return "输入 " + (u.prompt_tokens || 0) + " · 输出 " + (u.completion_tokens || 0) +
+             " · 合计 " + (u.total_tokens || 0) + " token";
     },
   },
   watch: {
@@ -402,10 +425,13 @@ const MossAi = {
     refresh(){ aiRefreshInfo(true); },          // 那颗「刷新」= 重新问一次宿主（不吃缓存）
     /* 回退到"开工前"那条快照（`V-236`）。默认 `only="all"`：缺的补上、变了的回退，       多出来的**不动**（和「文件管理 → 快照」里那个「只写回」一个语义）。 */
     rollback(){
-      const snap = A.result && A.result.snapshot;
+      // ★ `V-257`：这里原来写的是裸 `A` / `target` / `shortPath` —— 那是**模块级/计算属性**
+      //   的东西，在方法作用域里一个都不存在 ⇒ 点底栏那个"开工快照"标签直接报
+      //   `A is not defined`（你报的那个错）。方法里一律走 `this.`。
+      const A = this.A, target = this.target, snap = A.result && A.result.snapshot;
       if (!snap){ toast("这次没存快照，没得退。", true); return; }
       askConfirm("回退到开工前？",
-        "把 <code>" + esc(shortPath(target)) + "</code> 回到快照 <code>" + esc(snap.id) +
+        "把 <code>" + esc(this.shortPath(target)) + "</code> 回到快照 <code>" + esc(snap.id) +
         "</code> 那一刻（AI 动手之前）。<br>只写回：缺的补上、改过的退回去，<b>多出来的不动</b>；" +
         "覆盖前会留 <code>.bak</code>。",
         async () => {
@@ -528,11 +554,21 @@ const MossAi = {
     pickModel(){
       toast("这次用 " + (AIR.model || "?") + " 跑（换模型连带换上下文窗口）");
     },
-    /* 会话记录里那一行：✅/✗ + 任务 + 时间 */
-    sessLabel(r){
-      const t = (r.started_text || "").slice(5, 16);
-      return (r.ok ? "✅ " : "✗ ") + (r.task || "").slice(0, 30) + (t ? ("　" + t) : "");
+    /* ★ `V-257`：下拉点不开是**点在了外框上**（`.custom-select` 有 6×12 内边距、还有一个图标，
+       真正能弹出列表的只有里面那个 `<select>` 的文字那一小块）。补一个：点框子的任何地方
+       都替你把下拉打开（Chromium 的 `showPicker()`；不支持就退化成 focus）。 */
+    openSel(ev){
+      const box = ev && ev.currentTarget;
+      const sel = box && box.querySelector && box.querySelector("select");
+      if (!sel || sel.disabled) return;
+      if (ev && ev.target === sel) return;          // 点在 select 自己身上，浏览器已经弹了
+      try{
+        if (sel.showPicker) sel.showPicker();
+        else sel.focus();
+      }catch(e){ try{ sel.focus(); }catch(e2){} }
     },
+    /* ★ `V-257`：token 数大了就换中文单位（万 / 亿）—— 底栏那三个数用 */
+    cntok(n){ return cntok(n); },
     /* ★ `V-253`（照稿子）：步骤卡那三样 —— 人话动作 / 右边那格 meta / 里面那行等宽路径。
        工具名由模板里那个 `b` 显示，别在这儿再拼一遍（不然是"改文件 edit_file edit_file"）。 */
     stepTitle(s){
@@ -638,7 +674,7 @@ const MossAi = {
       <!-- 顶部配置栏（照稿子：会话 / 工作区 / 上限 / 模型） -->
       <header class="top-toolbar ai-bar">
         <div class="toolbar-group">
-          <div class="custom-select" title="切换历史会话">
+          <div class="custom-select" title="切换历史会话" @click="openSel($event)">
             <span v-html='ico("history", "i")'></span>
             <select class="ai-sess" v-model="A.pickId" :disabled="A.running" @change="pickSession()">
               <option v-if="sessCurrent" :value="sessCurrent.id"
@@ -650,7 +686,7 @@ const MossAi = {
             </select>
           </div>
 
-          <div class="custom-select" title="在哪干活（v1 只允许写 user_data/pkgs 下面）">
+          <div class="custom-select" title="在哪干活（v1 只允许写 user_data/pkgs 下面）" @click="openSel($event)">
             <span v-html='ico("folder-tree", "i")'></span>
             <select v-model="A.where" :disabled="A.running" @change="refresh()">
               <option value="pkg" :disabled="!pkg">{{ pkg ? ("当前包 :" + pkg.id) : "（左边还没选包）" }}</option>
@@ -661,13 +697,13 @@ const MossAi = {
 
         <div class="toolbar-group">
           <div class="token-input-group ai-bud"
-               :title="'token 上限（百万）：默认 100 = 1 亿。烧到 ' + humanTokens(A.warnTokens) + ' 时劝它收尾，到顶就停手。'">
-            <span v-html='ico("gauge", "i")'></span> 上限
+               :title="'token 上限（单位：百万）。默认 100 = 1 亿 token。烧到 ' + humanTokens(A.warnTokens) + ' 时劝它收尾，到顶就停手。'">
+            <span v-html='ico("gauge", "i")'></span> token 上限
             <input type="number" step="10" min="0.5" max="20000" value="100" class="ai-bud-n"
                    v-model.number="A.maxMillions" :disabled="A.running" @change="saveBudget()"> 百万
           </div>
 
-          <div class="custom-select select-model"
+          <div class="custom-select select-model" @click="openSel($event)"
                :title="'这次用哪个模型。这家配了 ' + models.length + ' 个；换模型连带换上下文窗口。'">
             <span v-html='ico("sparkles", "i")'></span>
             <select class="ai-model" v-model="A.model" :disabled="A.running || !models.length"
@@ -778,7 +814,7 @@ const MossAi = {
               <span class="snapshot-tag" title="点击回滚到此快照" @click="rollback()">{{ snapId }}</span></span>
             <span v-else>开工快照: —</span>
           </div>
-          <div>
+          <div :title="tokTip">
             Token 消耗: <span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace">{{ tokLine }}</span>
           </div>
         </div>
