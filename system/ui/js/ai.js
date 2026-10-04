@@ -921,10 +921,10 @@ const MossAi = {
         <!-- ★ V-258/263：日志按轮排 —— 一轮 = 一行「#N 用户对话 + 那句话」+ 它的步骤卡 + 它的结论卡。
              点这一行就把这一轮折叠/展开。★ 这一行**做成一行的细条**（不再占两行）。 -->
         <div class="ai-turn" v-for="(t, ti) in A.turns" :key="t.key">
+          <!-- V-264：这一行不写「用户对话」（白占宽度）——靠底色说明这是用户说的 -->
           <div class="ai-th" @click="toggleTurn(ti)"
                :title="t.folded ? '点一下展开这一轮' : '点一下折叠这一轮'">
             <b class="ai-th-n">#{{ ti + 1 }}</b>
-            <span class="ai-th-l">用户对话</span>
             <span class="ai-th-t">{{ t.task }}</span>
             <span class="ai-th-a" :title="t.note || t.at"
                   :class="{bad: /接不上/.test(t.note || '')}"
@@ -1062,6 +1062,7 @@ const MossAi = {
    `ico is not a function` —— 实测踩到，查了半天。别的页要这么干：
    `js/console.js` 也是 `mountVue(MossConsole, "#pane-console", {ico: ico})`。 */
 mountVue(MossAi, "#pane-ai", {ico: ico});
+
 
 
 

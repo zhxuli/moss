@@ -1306,18 +1306,20 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
    点「用户指令」那张卡就折叠这一轮（鼠标变成手型，暗示能点）。 */
 .aiwrap .ai-turn{display:flex;flex-direction:column;gap:16px}
 .aiwrap .ai-turn + .ai-turn{margin-top:6px}
-/* ★ `V-263`：这一轮的抬头**做成一条细线**（原来是一张两行的卡，白占一行）：
-   `#N  用户对话  那句话……  时间/接没接上` —— 点一下折叠这一轮。 */
+/* ★ `V-263`/`V-264`：这一轮的抬头**做成一条细线**（原来是一张两行的卡，白占一行）：
+   `#N  那句话……  时间/接没接上` —— 点一下折叠这一轮。
+   ★ `V-264`：**不再写「用户对话」四个字**（白占宽度），改用**底色**说明"这是用户说的"：
+     浅蓝底（和 `.select-model` 同一个 `--aib-primary-light`），hover 再深一档。 */
 .aiwrap .ai-th{
-  display:flex;align-items:baseline;gap:8px;padding:4px 2px 6px;cursor:pointer;
-  border-bottom:1px solid var(--aib-border-color);
+  display:flex;align-items:baseline;gap:8px;padding:6px 10px;cursor:pointer;
+  background:var(--aib-primary-light);border-radius:6px;
+  transition:var(--aib-transition-smooth);
 }
-.aiwrap .ai-th:hover{border-bottom-color:var(--aib-primary)}
+.aiwrap .ai-th:hover{background:#DBEAFE}
 .aiwrap .ai-th-n{
   font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;
   color:var(--aib-primary);flex:none;font-weight:600;
 }
-.aiwrap .ai-th-l{font-size:12px;color:var(--aib-text-light);flex:none}
 .aiwrap .ai-th-t{
   flex:1;min-width:0;font-size:13px;color:var(--aib-text-main);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
