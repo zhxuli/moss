@@ -30,11 +30,28 @@ if str(HERE) not in sys.path:
 
 
 class AiError(Exception):
-    """连不上 / 回的不是 JSON / 模型没按约定说话 —— 都归这里，消息要能给人看。"""
+    """连不上 / 回的不是 JSON / 模型没按约定说话 —— 都归这里，消息要能给人看。
+
+    `retryable`（`V-270`）：**这一条是"网络抖了一下"，值得原样重发**（DNS 解析失败、
+    连接被拒/被重置、TLS 握手失败…）。真机那次（2026-10-04 21:14~21:18）这台机器的
+    DNS 抖了 4 分钟，连着 4 条任务全报 `[Errno 11001] getaddrinfo failed` —— 一句话都没发出去，
+    却每条都当"跑失败了"。现在这种错**自己重试两回**，抖一下不至于把你这句任务作废。
+    ★ 只有"请求根本没到对面"那类才算 retryable；HTTP 400/401、模型回的不是 JSON、
+      超时（对面可能在算）这些都**不重试** —— 重试它们只会重复烧 token。
+    """
+
+    def __init__(self, msg, retryable=False):
+        super().__init__(msg)
+        self.retryable = bool(retryable)
 
 
 class Stopped(AiError):
     """用户按了停止（`V-242`：请求**中途**就能停，不用等它说完）。"""
+
+
+#: `V-270`：连接层抖动的重试次数 / 每次等多久（首发之外再试 2 回）
+RETRY_TIMES = 2
+RETRY_WAITS = (1.5, 4.0)
 
 
 def from_env(need=True):
@@ -65,7 +82,8 @@ class Client:
         return cls(cfg["base_url"], cfg["api_key"], model or cfg["model"], timeout=timeout)
 
     # ---------------------------------------------------------------- 发一次请求
-    def chat(self, messages, tools=None, temperature=None, stop_check=None, on_wait=None):
+    def chat(self, messages, tools=None, temperature=None, stop_check=None, on_wait=None,
+             on_retry=None):
         """发一次请求，回统一形状。
 
         ★★ `V-242` 真机踩到的：**按了停止停不下来**。原因就是这一句 `urlopen(...).read()`
@@ -74,6 +92,9 @@ class Client:
         ★ 改法：不用 `urllib` 一把梭，改用 `http.client` **一小块一小块读**
           （socket 每 2 秒没数据就先醒一下），每块之间问一次"要不要停"。
           要停就**关掉连接**、抛 `Stopped` —— 停在 1~2 秒内，不再等满 180 秒。
+        ★ `V-270`：**连接层的抖动自己重试**（DNS 解析失败/连接被重置…见 `AiError.retryable`）。
+          重试之前先问一次"要不要停"；等待也是**一小段一小段睡**，按了停止立刻走。
+          `on_retry(第几次, 还有几次, 原错误)` 给上层一个说话的机会（界面上会打一行"重试"）。
         """
         body = {"model": self.model, "messages": messages}
         if tools:
@@ -83,7 +104,36 @@ class Client:
         if temperature is not None:
             body["temperature"] = temperature
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        raw = self._post_watched(data, stop_check=stop_check, on_wait=on_wait)
+        raw = ""
+        for attempt in range(1, RETRY_TIMES + 2):                 # 首发 + 重试
+            try:
+                raw = self._post_watched(data, stop_check=stop_check, on_wait=on_wait)
+                break
+            except Stopped:
+                raise
+            except AiError as e:
+                last = attempt > RETRY_TIMES
+                if not getattr(e, "retryable", False) or last:
+                    # 最后一次还不行：把"这是网络的事、你的任务没发出去"写清楚
+                    if getattr(e, "retryable", False):
+                        raise AiError("%s（连着 %d 次都没连上 —— 网络/代理是不是断了？"
+                                      "这次任务**一个字都没发出去**，网络好了点「重新跑」就行）"
+                                      % (e, RETRY_TIMES + 1), retryable=True)
+                    raise
+                if stop_check and stop_check():
+                    raise Stopped("用户按了停止")
+                wait = RETRY_WAITS[min(attempt - 1, len(RETRY_WAITS) - 1)]
+                if on_retry:
+                    try:
+                        on_retry(attempt, RETRY_TIMES, e)
+                    except Exception:                                 # noqa: BLE001
+                        pass
+                slept = 0.0
+                while slept < wait:                                   # 分段睡，能立刻停
+                    if stop_check and stop_check():
+                        raise Stopped("用户按了停止")
+                    time.sleep(0.2)
+                    slept += 0.2
         try:
             obj = json.loads(raw)
         except ValueError:
@@ -216,7 +266,9 @@ class Client:
             # ★ 连接被"盯停止"的线程掐掉时，这里抛的就是 OSError —— 认出它，报"用户按了停止"
             if stop_now["v"] or (stop_check and stop_check()):
                 raise Stopped("用户按了停止")
-            raise AiError("没连上 / 断了：%s" % e)
+            # ★ `V-270`：走到这儿说明**请求根本没到对面**（DNS 解析失败 / 连接被拒 / 被重置 /
+            #   TLS 握手失败…）—— 这类是"网络抖了一下"，值得原样重发（`chat()` 会重试两回）。
+            raise AiError("没连上 / 断了：%s" % e, retryable=True)
         finally:
             stop_now["v"] = True                     # 叫停 watcher
             try:

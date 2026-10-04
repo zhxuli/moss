@@ -507,7 +507,8 @@ MOCK_JS = r"""
                  // ★ 纯问答那轮**两张卡都不画**：`answer` 的正文就和下面「回答」卡一模一样
                  //   （你原话："如果后面回答要显示的话，那么中间这个其它 answer 就不需要显示才对"）。
                  {n: 1, tool: "answer", brief: '{"text": "底层是哪个模型…"}',
-                  note: "收到（这次是回答，没动文件）。", ms: 2, mute: true, disp: ""}],
+                  note: "收到（这次是回答，没动文件）。", ms: 2, mute: true,
+                  disp: "", nodisp: true}],
                result: {ok: true, kind: "chat", reason: "问答收工（没动文件，不用跑命令）",
                         summary: "底层是哪个模型我自己看不到；我是 moss 的写插件助手。",
                         caveats: "", files: [],
@@ -520,11 +521,15 @@ MOCK_JS = r"""
       turns: [{id: id || "r-old", task: "给 :calc 支持指数和开方",
                at: "2026-10-04 00:12:33", cont: true,
                steps: [
+                 // ★ `V-269` 补：`(说话)` 这类步骤**没有 `disp`**，正文是从 `brief` 反解出来的
+                 //   —— 场景要钉住"它照旧显示"（别为了收拾 `done` 的重复，把这种卡一起弄哑）
+                 {n: 1, tool: "(说话)", brief: "我先看一眼这个包的实现", note: "没调工具", ms: 1,
+                  disp: ""},
                  {n: 1, tool: "spec", brief: '{"section": "pkg.json"}', note: "《3. pkg.json 字段表》", ms: 3},
                  {n: 2, tool: "read_file", brief: '{"path": "…/run.py"}', note: "共 395 行", ms: 5},
                  {n: 3, tool: "run_moss", brief: '{"args": ":calc 2^10"}', note: "退出码 0", ms: 900},
                  {n: 4, tool: "done", brief: '{"summary": "本来就有"}', note: "收到。", ms: 1,
-                  disp: ""}],
+                  disp: "", nodisp: true}],
                result: {ok: true, reason: "验收通过",
                         summary: "本来就有，写法：2^10 / sqrt(16) / 27^(1/3)", caveats: "",
                         files: [], usage: {prompt_tokens: 30000, completion_tokens: 1400,
@@ -3985,8 +3990,21 @@ MOCK_JS = r"""
         const runCard = cards2.filter(el => (el.getAttribute("data-tool") || "") === "run_moss")[0];
         const doneNoBody = !!doneCard && bodyOf(doneCard) === "";
         const runHasBody = !!runCard && /moss :calc/.test(bodyOf(runCard));
+        // ★ `(说话)` 那种"正文从 brief 反解"的卡**不许**被一起弄哑（`nodisp` 只管 done/answer）
+        const talkCard = cards2.filter(el => (el.getAttribute("data-tool") || "") === "(说话)")[0];
+        const talkHasBody = !!talkCard && /我先看一眼/.test(bodyOf(talkCard));
+        // ③ `V-270`：「重新跑」那颗按钮 —— 网络断了/跑挂了之后，上一句原话一键填回输入框
+        //    （这条任务挂过一次，你原来的痛点是"输入框已经清空了，还得重打一遍"）
+        const taskEl = document.querySelector("#pane-ai .ai-task");
+        const rerunBtn = [].slice.call(document.querySelectorAll("#pane-ai .ai-actions .btn"))
+                            .filter(b => /重新跑/.test(b.textContent))[0];
+        if (taskEl) taskEl.value = "";
+        if (rerunBtn) rerunBtn.click();
+        await sleep(250);
+        const refilled = !!taskEl && taskEl.value.trim();
+        const rerunOk = !!rerunBtn && !!refilled && !(window.__AIR || {}).running;
         const ok = headOk && noSnap && bodyOk && noStep && footOk && doneNoBody && runHasBody &&
-                   !(window.__errors || []).length;
+                   talkHasBody && rerunOk && !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n结论卡抬头 = " + JSON.stringify(head.slice(0, 20)) +
           "（要含「回答」、不许出现「验收通过」）" +
@@ -3995,6 +4013,9 @@ MOCK_JS = r"""
           "\n没有「开工前已存快照」那一行 = " + noSnap + "（没动文件就没有快照）" +
           "\n干活那条：`done` 卡不摆正文 = " + doneNoBody +
           " · `run_moss` 卡照旧摆命令 = " + runHasBody +
+          " · `(说话)` 卡正文照旧显示 = " + talkHasBody +
+          "\n「重新跑」按钮在 = " + !!rerunBtn + " · 点了把原话填回输入框 = " + rerunOk +
+          "（填回来的是：" + JSON.stringify((taskEl.value || "").slice(0, 20)) + "）" +
           "\n底栏 = " + JSON.stringify(foot.replace(/\s+/g, " ").trim().slice(0, 40)) +
           " · 页内错误 = " + (window.__errors || []).length;
         document.querySelector("#meta").className = "meta";
@@ -4002,7 +4023,8 @@ MOCK_JS = r"""
           : ("AICHAT-FAIL 抬头=" + JSON.stringify(head.slice(0, 12)) +
              " 快照块=" + (noSnap ? 0 : 1) + " 正文=" + (bodyOk ? 1 : 0) +
              " 步骤=" + steps + " 底栏=" + (footOk ? 1 : 0) +
-             " done空=" + (doneNoBody ? 1 : 0) + " run有=" + (runHasBody ? 1 : 0));
+             " done空=" + (doneNoBody ? 1 : 0) + " run有=" + (runHasBody ? 1 : 0) +
+             " 说话卡=" + (talkHasBody ? 1 : 0) + " 重跑=" + (rerunOk ? 1 : 0));
       }
       if (h === "ai-alt-jump"){
         const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];

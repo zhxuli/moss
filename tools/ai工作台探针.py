@@ -73,7 +73,7 @@ class FakeClient:
     def from_env(cls, **kw):
         return cls()
 
-    def chat(self, messages, tools=None, stop_check=None, on_wait=None):
+    def chat(self, messages, tools=None, stop_check=None, on_wait=None, on_retry=None):
         # `V-242`：签名跟真 client 对上（多出来的两个参数是"能不能中途停"用的）
         self.seen.append(1)
         self.msgs.append(json.loads(json.dumps(messages, ensure_ascii=False)))
@@ -363,7 +363,7 @@ def main():
     release = threading.Event()
 
     class SlowClient(FakeClient):
-        def chat(self, messages, tools=None, stop_check=None, on_wait=None):
+        def chat(self, messages, tools=None, stop_check=None, on_wait=None, on_retry=None):
             release.wait(timeout=30)                     # 一直等，直到测试放行
             return call("list_dir", {"path": str(pkgs)})
 

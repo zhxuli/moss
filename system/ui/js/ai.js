@@ -830,11 +830,13 @@ const MossAi = {
          一个字不截）—— 原来直接拆 `brief`，而 `brief` 是 `brief[:70]` 截过的 JSON，
          `JSON.parse` 必然失败，于是屏幕上就是 `{"summary": "……` 这种原始串（你报的那条）。
        下面的 JSON 拆法留着当兜底（老记录 / 没有 `disp` 时）。
-       ★ `V-269` 补：宿主**明确给了空串**（`disp === ""`）就是"这一步没有正文可摆"
-         （`done` / `answer` 的正文归下面那张结论卡）—— 这时**不许再拿 `brief` 去反解**，
-         否则同一段话又会被捞出来贴一遍（你截图里那张 `answer` 卡就是这样）。 */
+       ★ `V-269` 补：宿主给 `nodisp` 的步骤（`done` / `answer`）**没有正文可摆** ——
+         它们的正文归下面那张结论卡，这里别再拿 `brief` 去反解（那正是"同一段话又贴一遍"）。
+         ★ 为什么不用"`disp` 是空串"当信号：`(说话)` / `(打回)` / `(重试)` 这几张**本来就
+           没有 `disp`、正文是从 `brief` 反解出来的**（老记录也这样）—— 拿空串当信号会把它们的
+           正文一起弄没。所以另给一个明确的键。 */
     stepPath(s){
-      if (s && s.disp === "") return "";
+      if (s && s.nodisp) return "";
       if (s && s.disp) return String(s.disp);
       const b = String((s && s.brief) || "");
       try{
@@ -1066,6 +1068,11 @@ const MossAi = {
                   <option v-if="!models.length" value="">（还没配 AI）</option>
                 </select>
               </div>
+              <!-- ★ V-270：**重新跑** —— 网络断了 / 跑挂了之后，一句原话不用重打。
+                   只在"这个包有跑过的记录"时出现（lastRun 就是干这个用的）。 -->
+              <button class="btn btn-outline" v-if="lastRun && !A.running" @click="again(lastRun)"
+                      :title="'把这句原话填回输入框（' + ((lastRun.task || '').slice(0, 24)) + '…）'"
+                      v-html='ico("refresh-cw", "i") + " 重新跑"'></button>
               <button class="btn btn-outline" @click="resetLogs()"
                       v-html='ico("rotate-ccw", "i") + " 清空"'></button>
               <button class="btn btn-outline" v-if="A.running" @click="stop"

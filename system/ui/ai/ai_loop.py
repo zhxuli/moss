@@ -158,6 +158,8 @@ class Loop:
         #   以前只有跑完才从 `result.snapshot` 里看得到，而快照其实是**第一步之前**就存了的。
         self.on_snapshot = on_snapshot
         self.wait_note = 0.0
+        #: `V-270`：现在这一轮的序号（重试那行要用它）—— `_on_retry` 里读
+        self.cur_n = 0
         # ★ `V-239`（你定的）：预算**按 token 算**，不再让你算步数。
         #   步数那两样（`soft_steps` 软提醒 / `max_steps` 硬顶）**退居幕后当兜底** ——
         #   防的是"一直调工具但几乎不烧 token"那种死循环，不是你要调的旋钮。
@@ -268,10 +270,29 @@ class Loop:
         if self.on_phase:
             self.on_phase("waiting")
 
-    def _step(self, n, tool, brief, note="", ms=0, disp=""):
+    def _on_retry(self, attempt, times, err):
+        """`V-270`：网络抖了一下、这条请求**根本没发出去**，正在重发 —— 说出来。
+
+        ★ 为什么要占一行步骤：真机那次 DNS 抖了 4 分钟，连着 4 条任务全报
+          `[Errno 11001] getaddrinfo failed`，界面上只有一句"模型那边出错"，看不出是网络
+          还是我们坏了。现在它会自己重试两回，重试这件事也让你看得见。
+        """
+        self._step(self.cur_n or 1, "(重试)",
+                   "没连上：%s" % str(err)[:70],
+                   "%s后重发（第 %d 次，共 %d 次）"
+                   % (("%.1f 秒" % C.RETRY_WAITS[min(attempt - 1, len(C.RETRY_WAITS) - 1)]),
+                      attempt, times))
+        self.say("  网络抖了一下（%s）—— 正在重发（第 %d/%d 次）" % (err, attempt, times))
+
+    def _step(self, n, tool, brief, note="", ms=0, disp="", nodisp=False):
         row = {"n": n, "tool": tool, "brief": brief, "note": note, "ms": int(ms or 0),
                # ★ `V-260`：给人看的那一份（完整的路径 / 完整的 summary）—— 界面优先用它
                "disp": disp,
+               # ★ `V-269` 补：`nodisp=True` = **这一步没有正文可摆**（`done` / `answer` 的正文
+               #   归下面的结论卡）。为什么单独一个键、不拿"disp 是空串"当信号：
+               #   `(说话)` / `(打回)` / `(重试)` 这几张本来就没有 `disp`、正文是从 `brief`
+               #   反解出来的（老记录也这样）—— 混用会把它们的正文一起弄没。
+               "nodisp": bool(nodisp),
                "tokens": self.usage["total_tokens"], "folded": self.folded,
                # `V-244`：这一轮真实发出去的输入 token（= 现在上下文多长）—— 界面据此显示
                "ptok": int(self.usage.get("last_prompt") or 0)}
@@ -378,8 +399,9 @@ class Loop:
             try:
                 if self.on_phase:
                     self.on_phase("thinking")
+                self.cur_n = n
                 resp = self.client.chat(messages, T.TOOLS, stop_check=self.stop_check,
-                                        on_wait=self._on_wait)
+                                        on_wait=self._on_wait, on_retry=self._on_retry)
             except C.Stopped:
                 # ★ `V-242`：请求**发到一半**按的停止 —— 立刻收工，不再等它把话说完。
                 return self._finish(False, "用户按了停止", used, missing)
@@ -439,7 +461,9 @@ class Loop:
                 #   （你报的"像是一个字典，而不是显示里面的文本"，还有"回复长了看不全"）。
                 #   这里另给一份 `disp`：**给人看的、完整的**（`done` 的 summary 一个字不截）。
                 self._step(n, name, brief[:70], note, ms=_ms,
-                           disp=_step_disp(name, call.get("args") or {}))
+                           disp=_step_disp(name, call.get("args") or {}),
+                           # `V-269` 补：这两个工具的正文归下面的结论卡，步骤卡不重复贴
+                           nodisp=name in ("done", "answer"))
                 if native:
                     messages.append({"role": "tool", "tool_call_id": call.get("id") or name,
                                      "content": str(out)})

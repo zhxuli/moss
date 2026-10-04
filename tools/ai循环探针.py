@@ -58,7 +58,7 @@ class FakeModel:
         self.script = list(script)
         self.seen = []                    # 每次收到的 messages（断言用）
 
-    def chat(self, messages, tools=None, stop_check=None, on_wait=None):
+    def chat(self, messages, tools=None, stop_check=None, on_wait=None, on_retry=None):
         # `V-242`：真 client 收这两个参数；假模型签名跟着对上（不然 loop 一调就 TypeError）
         if stop_check and stop_check():
             import ai_client as _c
@@ -734,7 +734,7 @@ def main():
     class _StopClient:
         model = "fake"
 
-        def chat(self, messages, tools=None, stop_check=None, on_wait=None):
+        def chat(self, messages, tools=None, stop_check=None, on_wait=None, on_retry=None):
             raise _C.Stopped("用户按了停止")
 
     gotS = L.Loop(_StopClient(), workdir=pkgs, say=lambda s: None).run("随便干点啥")
@@ -918,6 +918,16 @@ def main():
         and L._step_disp("answer", {"text": "回答正文"}) == "",
         "done=%r answer=%r" % (L._step_disp("done", {"summary": "改好了"}),
                                L._step_disp("answer", {"text": "回答正文"})))
+    # 界面的判据是**步骤上的 `nodisp`**，不是"disp 是空串" —— 拿空串当信号会把
+    # `(说话)` 那类"正文从 brief 反解"的卡一起弄哑（老记录里它们也没有 disp）。
+    _nod = [s for s in q1["steps"] if s.get("tool") == "answer"]
+    chk("Q ★ `answer` 那步带 `nodisp=True`（界面据此不摆正文）",
+        bool(_nod) and all(s.get("nodisp") for s in _nod),
+        "%r" % [(s.get("tool"), s.get("nodisp")) for s in q1["steps"]])
+    _talk = [s for s in q3["steps"] if s.get("tool") == "(说话)"]
+    chk("Q ★ 而 `(说话)` 那步**不带** `nodisp`（它的正文照旧要从 brief 反解出来显示）",
+        bool(_talk) and not any(s.get("nodisp") for s in _talk),
+        "%r" % [(s.get("tool"), s.get("nodisp")) for s in q3["steps"]])
     chk("Q ★ 别的步骤照旧给人看（路径 / 命令这些不能一起砍掉）",
         L._step_disp("read_file", {"path": "C:\\x\\run.py"}) == "C:\\x\\run.py"
         and L._step_disp("run_moss", {"args": ":calc top=5"}) == "moss :calc top=5",
@@ -949,6 +959,106 @@ def main():
     chk("Q ★ 干活轮次的步骤卡一张都不许 mute（别把干活那几轮也弄哑了）",
         bool(_work["steps"]) and not any(s.get("mute") for s in _work["steps"]),
         "步骤：%s" % [(s.get("tool"), bool(s.get("mute"))) for s in _work["steps"]])
+
+    print()
+    print("=" * 72)
+    print("R：`V-270` 网络抖了一下 —— 连接层自己重试（DNS / 连接被重置那一类）")
+    print("=" * 72)
+    # 真机那次（2026-10-04 21:14~21:18）：这台机器的 DNS 抖了 4 分钟，连着 4 条任务全报
+    # `[Errno 11001] getaddrinfo failed` —— 一个字都没发出去，却每条都当"跑失败了"。
+    # 现在这种错自己重试两回；这一节把"重试 / 不重试 / 通知"三件事都钉住。
+    _old_waits = C.RETRY_WAITS
+    C.RETRY_WAITS = (0.01, 0.01)                              # 探针里别真等那 5.5 秒
+    try:
+        _calls = {"n": 0}
+
+        def _flaky(data, stop_check=None, on_wait=None):
+            _calls["n"] += 1
+            if _calls["n"] <= 2:
+                raise C.AiError("没连上 / 断了：[Errno 11001] getaddrinfo failed",
+                                retryable=True)
+            return json.dumps({"choices": [{"message": {"content": "在的"}}],
+                               "usage": {"total_tokens": 3}}, ensure_ascii=False)
+
+        _cli = C.Client("https://api.example.invalid/v1", "k", "m")
+        _cli._post_watched = lambda data, stop_check=None, on_wait=None: _flaky(data)
+        _seen = []
+        _got = _cli.chat([{"role": "user", "content": "hi"}],
+                         on_retry=lambda a, t, e: _seen.append((a, t, str(e)[:24])))
+        chk("R ★★ 头两次 DNS 失败 ⇒ 第三次成功（不用你把任务重发一遍）",
+            (_got.get("text") or "") == "在的" and _calls["n"] == 3,
+            "一共发了 %d 次 · text=%r" % (_calls["n"], _got.get("text")))
+        chk("R ★ 每次重试都通知上层（界面据此打一行「重试」）",
+            [x[0] for x in _seen] == [1, 2], "%r" % (_seen,))
+        # 一直连不上 ⇒ 止于 3 次，而且要说清"这是网络的事、任务一个字都没发出去"
+        _deadn = {"n": 0}
+
+        def _dead(data, stop_check=None, on_wait=None):
+            _deadn["n"] += 1
+            raise C.AiError("没连上 / 断了：[Errno 11001] getaddrinfo failed", retryable=True)
+
+        _cli2 = C.Client("https://api.example.invalid/v1", "k", "m")
+        _cli2._post_watched = lambda data, stop_check=None, on_wait=None: _dead(data)
+        _msg = ""
+        try:
+            _cli2.chat([{"role": "user", "content": "hi"}])
+        except C.AiError as _e:
+            _msg = str(_e)
+        chk("R ★ 一直连不上 ⇒ 止于 3 次（不会无限重试烧时间）", _deadn["n"] == 3,
+            "发了 %d 次" % _deadn["n"])
+        chk("R ★ 而且说清这是网络的事 + 任务是「一个字都没发出去」",
+            "都没连上" in _msg and "一个字都没发出去" in _msg, _msg[:100])
+        # 非网络错（HTTP 400 / 401 那类）⇒ **一次都不许重试**（重试只会重复烧 token）
+        _badn = {"n": 0}
+
+        def _bad(data, stop_check=None, on_wait=None):
+            _badn["n"] += 1
+            raise C.AiError("400：insufficient tool messages following tool_calls message")
+
+        _cli3 = C.Client("https://api.example.invalid/v1", "k", "m")
+        _cli3._post_watched = lambda data, stop_check=None, on_wait=None: _bad(data)
+        try:
+            _cli3.chat([{"role": "user", "content": "hi"}])
+        except C.AiError:
+            pass
+        chk("R ★ 非网络错（400 那类）**一次都不重试**", _badn["n"] == 1,
+            "发了 %d 次" % _badn["n"])
+        # loop 那一层：重试要在步骤流里留一行（不然你只看到它卡着）
+        _fl2 = {"n": 0}
+
+        def _flaky2(data, stop_check=None, on_wait=None):
+            _fl2["n"] += 1
+            if _fl2["n"] == 1:
+                raise C.AiError("没连上 / 断了：[Errno 11001] getaddrinfo failed", retryable=True)
+            return json.dumps({"choices": [{"message": {
+                "content": "",
+                "tool_calls": [{"id": "c1", "type": "function",
+                                "function": {"name": "answer",
+                                             "arguments": json.dumps({"text": "在的"},
+                                                                     ensure_ascii=False)}}]}}],
+                "usage": {"total_tokens": 3}}, ensure_ascii=False)
+
+        _cli4 = C.Client("https://api.example.invalid/v1", "k", "m")
+        _cli4._post_watched = lambda data, stop_check=None, on_wait=None: _flaky2(data)
+        _r4 = L.Loop(_cli4, workdir=fake_pkg, max_steps=3, say=lambda s: None).run("你是谁")
+        chk("R ★ loop 里重试会在步骤流里留一行 `(重试)`（界面上看得见「网络抖了一下」）",
+            any(s.get("tool") == "(重试)" for s in _r4["steps"])
+            and _r4.get("ok") is True and _r4.get("kind") == "chat",
+            "步骤：%s" % [s.get("tool") for s in _r4["steps"]])
+        # 上面几条用的都是我手搓的 `retryable=True`；这里真去连一个**不存在的域名**，
+        # 钉住"`_post` 那条路确实把它标成 retryable"—— 不然上面全是自说自话。
+        _real = C.Client("https://no-such-host-moss-probe.invalid/v1", "k", "m", timeout=5)
+        _rr, _rtxt = False, ""
+        try:
+            _real._post(json.dumps({"model": "m", "messages": []}).encode("utf-8"))
+        except C.AiError as _e:                                      # noqa: PERF203
+            _rr, _rtxt = bool(getattr(_e, "retryable", False)), str(_e)[:60]
+        except Exception as _e:                                      # noqa: BLE001
+            _rtxt = "%s: %s" % (type(_e).__name__, _e)
+        chk("R ★★ 真连一个不存在的域名 ⇒ 抛出的错**标了 retryable**（否则等于没重试）",
+            _rr, _rtxt)
+    finally:
+        C.RETRY_WAITS = _old_waits
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()
