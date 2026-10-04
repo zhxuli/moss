@@ -392,6 +392,20 @@ def main():
         "%d 条：%s" % (len(_msgs), [m.get("role") for m in _msgs]))
     chk("P 没接着谁的时候 `continued_from` 是空的", _g1.get("continued_from") == "",
         repr(_g1.get("continued_from")))
+    # ★ `V-260`：步骤行要另给一份**给人看的** `disp` —— 你报的"显示的是一个字典"就是
+    #   因为界面只拿到 `brief[:70]`（截断的 JSON），`JSON.parse` 必然失败。
+    _done = [s for s in (_g1.get("steps") or []) if s.get("tool") == "done"]
+    chk("P ★ 步骤行给了「给人看」的那一份（`disp` = 完整 summary，不是截断的 JSON）",
+        bool(_done) and _done[-1].get("disp") == "第一趟干完了"
+        and str(_done[-1].get("brief") or "").startswith("{"),
+        "disp=%r brief=%r" % ((_done[-1] or {}).get("disp"), (_done[-1] or {}).get("brief")))
+    _long_sum = "回答" * 120                       # 240 字，超过 `brief[:70]`
+    _g1b = L.Loop(FakeModel([call("done", {"summary": _long_sum})]), workdir=fake_pkg,
+                  max_steps=3, say=lambda s: None).run("长长地回答我")
+    _d2 = [s for s in (_g1b.get("steps") or []) if s.get("tool") == "done"]
+    chk("P ★★ 长回答**一个字都不截**（`disp` 给全文）",
+        bool(_d2) and _d2[-1].get("disp") == _long_sum,
+        "disp %d 字（原文 %d 字）" % (len((_d2[-1] or {}).get("disp") or ""), len(_long_sum)))
     # ② 存进任务记录 → 读回来 → 拿它当 history 接着跑：**老对话必须真的发出去**
     import ai_runs as R                                                    # noqa: E402
     _saved = R.save({"task": "把 zz 改成能算加法", "workdir": str(fake_pkg),

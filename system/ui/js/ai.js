@@ -122,6 +122,32 @@ async function aiSaveBudget(){
   }catch(e){ toast("存预算失败：" + (e && e.message ? e.message : e), true); }
 }
 
+/* ★ `V-260`：**把记录按"链"归并**。
+   一次会话 = 一条链（第一条是链头，后面每一轮都 `continued_from` 指着上一条）。
+   你原话："一个会话 3 个问题，它直接这个列表里面都有他们 —— 按说实际上就显示第一个，
+   因为其他的两个不是独立会话，不应该显示才对"。
+   所以：列表**只留链头**，但选项的**值取链尾**（最新那条）—— 这样"接着聊"带的是整条会话。
+   返回 `[{head, tail, turns}]`（按链尾时间倒序）。 */
+function aiChains(runs){
+  const all = runs || [];
+  const byId = {};
+  all.forEach(r => { byId[r.id] = r; });
+  const hasChild = {};
+  all.forEach(r => { if (r.continued_from) hasChild[r.continued_from] = true; });
+  const out = [];
+  all.filter(r => !hasChild[r.id]).forEach(head => {
+    let cur = head, turns = 1, guard = 0;
+    while (guard++ < 500){
+      const next = all.filter(r => r.continued_from === cur.id)[0];
+      if (!next) break;
+      cur = next; turns++;
+    }
+    out.push({head: head, tail: cur, turns: turns});
+  });
+  // 列表按"最新那条"倒序（链头顺序不一定等于链尾顺序）
+  return out.sort((a, b) => String(b.tail.id).localeCompare(String(a.tail.id)));
+}
+
 /* `V-243`：把跑过的任务列出来（重启 moss 也在 —— 你说"历史记录不保存是不行的"）。
    ★ `V-251`：顺手把**这个包上次那条会话**挂上 —— 你原话「怎么还是找不到历史会话记录，
      一旦重新打开 moss 只能重新再来」。所以进来就：
@@ -403,17 +429,23 @@ const MossAi = {
     /* ★ `V-253`（照稿子那个 `切换历史会话` 下拉）：
        选中那条显示成 `当前: <任务>`，别的都是 `历史: <任务>`，最后一项是 `+ 新建空白会话`。
        ★ `V-254`：**一个都不 disable** —— 老记录（没存对话）也能点开看，
-         点了会自动退回"能看不能接"（见 `pickSession`）。 */
+         点了会自动退回"能看不能接"（见 `pickSession`）。
+       ★ `V-260`：**按"链"归并** —— 一个会话（几轮问答）在下拉里只占一条，
+         值取链尾（最新那条）⇒ 接着聊带的是整条会话；多轮的标出「N 轮」。 */
+    sessChains(){
+      this.A.rev;
+      return aiChains(this.A.runs);
+    },
     sessCurrent(){
       this.A.rev;
       const id = this.A.pickId || "";
       if (!id) return null;
-      return (this.A.runs || []).filter(r => r.id === id)[0] || null;
+      return this.sessChains.filter(c => c.head.id === id || c.tail.id === id)[0] || null;
     },
     sessOthers(){
       this.A.rev;
       const id = this.A.pickId || "";
-      return (this.A.runs || []).filter(r => r.id !== id);
+      return this.sessChains.filter(c => c.head.id !== id && c.tail.id !== id);
     },
     /* ★ `V-253`/`V-258`：日志现在是**按轮**渲染的（见模板里的 `A.turns` 那一段），
        这个 `logCards` 留着只为兼容老场景 —— 它把**最后一轮**拍平。 */
@@ -674,8 +706,13 @@ const MossAi = {
       if (k === "run") return "var(--aib-warning)";
       return "var(--aib-primary)";
     },
-    /* 步骤卡第二行：把 brief 里那个 JSON 拆成人看的**路径**（`{"path": "…\\run.py"}` → `…\run.py`） */
+    /* 步骤卡第二行：**给人看的那一行**。
+       ★ `V-260`：优先用宿主给的 `disp`（完整的路径 / 完整的 summary，`done` 那种一整段回答
+         一个字不截）—— 原来直接拆 `brief`，而 `brief` 是 `brief[:70]` 截过的 JSON，
+         `JSON.parse` 必然失败，于是屏幕上就是 `{"summary": "……` 这种原始串（你报的那条）。
+       下面的 JSON 拆法留着当兜底（老记录 / 没有 `disp` 时）。 */
     stepPath(s){
+      if (s && s.disp) return String(s.disp);
       const b = String((s && s.brief) || "");
       try{
         const j = JSON.parse(b);
@@ -686,10 +723,17 @@ const MossAi = {
           if (j.args) bits.push("moss " + String(j.args));
           if (j.section) bits.push("契约：" + String(j.section));
           if (j.id) bits.push(String(j.id));
-          if (j.summary) bits.push(String(j.summary).slice(0, 80));
+          if (j.summary) bits.push(String(j.summary));
           if (bits.length) return bits.join("　");
         }
-      }catch(e){ /* 不是 JSON 就原样显示 */ }
+      }catch(e){ /* 不是 JSON（多半是被截断的老记录）—— 下面那句把它救回来 */ }
+      // 截断的 JSON 也尽量把 summary / content 捞出来，别原样摆 JSON 给人看
+      const m = b.match(/"(?:summary|content|text)"\s*:\s*"((?:[^"\\]|\\.)*)/);
+      if (m){
+        let t = m[1];
+        try{ t = JSON.parse('"' + t + '"'); }catch(e){}
+        return t;
+      }
       return b;
     },
     /* ★ `V-251`：接着这条聊 —— 摆出它的步骤/结论，并且把「下一句」接在它后面 */
@@ -760,10 +804,10 @@ const MossAi = {
           <div class="custom-select" title="切换历史会话" @click="openSel($event)">
             <span v-html='ico("history", "i")'></span>
             <select class="ai-sess" v-model="A.pickId" :disabled="A.running" @change="pickSession()">
-              <option v-if="sessCurrent" :value="sessCurrent.id"
-                      >当前: {{ (sessCurrent.task || "").slice(0, 30) }}</option>
-              <option v-for="r in sessOthers" :key="r.id" :value="r.id"
-                      >历史: {{ (r.task || "").slice(0, 30) }}</option>
+              <option v-if="sessCurrent" :value="sessCurrent.tail.id"
+                      >当前: {{ (sessCurrent.head.task || "").slice(0, 30) }}{{ sessCurrent.turns > 1 ? ("（" + sessCurrent.turns + " 轮）") : "" }}</option>
+              <option v-for="c in sessOthers" :key="c.head.id" :value="c.tail.id"
+                      >历史: {{ (c.head.task || "").slice(0, 30) }}{{ c.turns > 1 ? ("（" + c.turns + " 轮）") : "" }}</option>
               <option disabled>──────────</option>
               <option value="">+ 新建空白会话</option>
             </select>

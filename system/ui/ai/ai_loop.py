@@ -65,6 +65,35 @@ def missing_prompts(names):
     return [n for n in names if not find_prompt(n)[1]]
 
 
+#: `V-260`：`disp` 最长给多少（`done` 的 summary 可能是一整段回答，别无限大）
+DISP_MAX = 4000
+
+
+def _step_disp(name, args):
+    """这一步**给人看**的内容（完整、不截 JSON）。
+
+    ★ 为什么要在宿主这边拼：界面只拿到 `brief[:70]`（那是**给一行摘要**用的），
+      JSON 被截断 ⇒ `JSON.parse` 失败 ⇒ 只能把 `{"summary": "……` 这种原始串摆给用户
+      （`V-260` 用户原话："像是一个字典，而不是显示里面的文本"、"回复长了看不全"）。
+      宿主手里有**完整参数**，就在这儿拼好，界面直接显示。
+    """
+    a = args or {}
+    if name == "done":
+        return str(a.get("summary") or "")[:DISP_MAX]
+    if a.get("path"):
+        return str(a["path"])
+    if a.get("args"):
+        return "moss " + str(a["args"])
+    if a.get("section"):
+        return "契约：" + str(a["section"])
+    if a.get("id"):
+        return str(a["id"])
+    try:
+        return json.dumps(a, ensure_ascii=False)[:DISP_MAX]
+    except (TypeError, ValueError):
+        return str(a)[:DISP_MAX]
+
+
 def pick_fragments(task):
     """按任务关键词挑要注入的片段（粗糙但够用；片段内容一律指向契约，不抄正文）。"""
     low = str(task or "").lower()
@@ -231,8 +260,10 @@ class Loop:
         if self.on_phase:
             self.on_phase("waiting")
 
-    def _step(self, n, tool, brief, note="", ms=0):
+    def _step(self, n, tool, brief, note="", ms=0, disp=""):
         row = {"n": n, "tool": tool, "brief": brief, "note": note, "ms": int(ms or 0),
+               # ★ `V-260`：给人看的那一份（完整的路径 / 完整的 summary）—— 界面优先用它
+               "disp": disp,
                "tokens": self.usage["total_tokens"], "folded": self.folded,
                # `V-244`：这一轮真实发出去的输入 token（= 现在上下文多长）—— 界面据此显示
                "ptok": int(self.usage.get("last_prompt") or 0)}
@@ -377,7 +408,12 @@ class Loop:
                 out = self.tools.call(name, call.get("args") or {})
                 _ms = int((time.time() - _t0) * 1000)
                 note = str(out).splitlines()[0][:70] if out else ""
-                self._step(n, name, brief[:70], note, ms=_ms)
+                # ★ `V-260`：`brief[:70]` 是**给一行摘要**用的，可它把 JSON 截断了 ⇒
+                #   界面 `JSON.parse` 失败、只能把 `{"summary": "……` 这种原始串摆给你看
+                #   （你报的"像是一个字典，而不是显示里面的文本"，还有"回复长了看不全"）。
+                #   这里另给一份 `disp`：**给人看的、完整的**（`done` 的 summary 一个字不截）。
+                self._step(n, name, brief[:70], note, ms=_ms,
+                           disp=_step_disp(name, call.get("args") or {}))
                 if native:
                     messages.append({"role": "tool", "tool_call_id": call.get("id") or name,
                                      "content": str(out)})

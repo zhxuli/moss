@@ -1111,6 +1111,8 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
   font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;
   color:var(--aib-text-muted);word-break:break-all;background:#E2E8F0;
   padding:2px 6px;border-radius:4px;display:inline-block;width:fit-content;
+  /* ★ `V-260`：回答可以是好几段（`done` 的 summary）—— 换行照原样、不截断 */
+  white-space:pre-wrap;max-width:100%;
 }
 
 /* 思考中指示器（AI Thinking） */
