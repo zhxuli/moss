@@ -1286,3 +1286,10 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
 .aiwrap .ai-run .ai-eg.on{color:var(--aib-primary);background:var(--aib-primary-light);font-weight:500}
 .aiwrap .ai-n,.aiwrap .ai-ms{color:var(--aib-text-light);font-size:12px}
 .aiwrap .ai-log .sp{flex:1}
+/* ★ `V-258`：一轮 = 一小段（用户指令卡 + 步骤卡 + 结论卡），轮与轮之间留口气；
+   点「用户指令」那张卡就折叠这一轮（鼠标变成手型，暗示能点）。 */
+.aiwrap .ai-turn{display:flex;flex-direction:column;gap:16px}
+.aiwrap .ai-turn + .ai-turn{margin-top:6px}
+.aiwrap .ai-th{cursor:pointer}
+.aiwrap .ai-th:hover{border-color:#CBD5E1;box-shadow:var(--aib-shadow-sm)}
+.aiwrap .ai-th .step-action b{color:var(--aib-primary)}

@@ -3567,13 +3567,14 @@ MOCK_JS = r"""
         const rows = document.querySelectorAll("#pane-ai .ai-step");
         const tools = Array.prototype.slice.call(rows).map(r => (r.querySelector("b") || {}).textContent);
         const stepsOk = tools.indexOf("edit_file") >= 0 && tools.indexOf("run_moss") >= 0;
-        const resEl = document.querySelector("#pane-ai .ai-result");
+        const resEl = [].slice.call(document.querySelectorAll("#pane-ai .ai-result")).pop();
         const resTxt = (resEl ? resEl.textContent : "").replace(/\s+/g, " ");
         const resOk = !!resEl && resEl.classList.contains("ok") && /验收通过/.test(resTxt);
         const filesOk = /md5/.test(resTxt) && /run\.py/.test(resTxt);
         const tokOk = /合计 1290/.test(resTxt);
         // `V-236`：结果卡上要能看到"开工前已存快照 + 回退按钮"
-        const snapEl = document.querySelector("#pane-ai .ai-rsnap");
+        // ★ `V-258`：日志按轮攒，结论卡**每轮一张** —— 断言看最后一张（刚跑完那轮）
+        const snapEl = [].slice.call(document.querySelectorAll("#pane-ai .ai-rsnap")).pop();
         const snapTxt = (snapEl ? snapEl.textContent : "").replace(/\s+/g, " ");
         const snapOk = !!snapEl && /20261003-2130-ab12/.test(snapTxt) && /回退到开工前/.test(snapTxt);
         const noErr = !(window.__errors || []).length;

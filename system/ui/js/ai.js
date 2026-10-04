@@ -43,6 +43,14 @@ const AIR = Vue.reactive({
        它和 `contId`（下一次跑要不要接着哪条）**分开** —— 老记录没有对话，能看不能接，
        以前把两个合成一个、又给选项加了 `disabled`，结果那个下拉**整个点不动**（你报的 bug）。 */
   sentTask: "", muted: 0, pickId: "",
+  /* ★ `V-258`：**一轮一轮攒着的会话**（你原话："继续对话的时候只显示最后一次，前面的会清空，
+     我需要能一直看到，并且允许我折叠某个会话"）。
+     一轮 = `{key, task, at, steps: [], result: null, folded: false}`
+       · `steps` 是这一轮的步骤卡（**各轮各存一份**，新一轮不会把上一轮冲掉）
+       · `result` 是这一轮的结论卡（没跑完就是 null）
+       · `folded` 是"这一轮折叠了"（点那一轮的「用户指令」卡切换）
+     `cur` = 正在跑的那一轮的下标（`-1` = 没在跑）。 */
+  turns: [], cur: -1, turnSeq: 0,
 });
 
 function aiPackage(){ return cur && cur.id ? cur : null; }
@@ -167,6 +175,11 @@ async function aiOpenRun(id, quiet){
     AIR.result = {ok: !!r.ok, reason: r.reason || "", summary: r.summary || "",
                   caveats: r.caveats || "", files: r.files || [], usage: r.usage || {},
                   snapshot: r.snapshot || null, run_id: r.id};
+    // ★ `V-258`：翻历史 = **一轮**（前面那些轮先收起来，别和这份记录混在一起）
+    AIR.turns = [{key: "v" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1), task: r.task || "",
+                  at: (r.started_text || "").slice(5, 16) || "历史记录",
+                  steps: AIR.steps, result: AIR.result, folded: false}];
+    AIR.cur = 0;
     AIR.rev++;
   }catch(e){ if (!quiet) toast("读不到这条记录：" + (e && e.message ? e.message : e), true); }
 }
@@ -195,6 +208,13 @@ async function aiPollOnce(){
     if (got.context) AIR.context = got.context;
     AIR.promptTokens = got.prompt_tokens || 0;
     if (!got.idle) AIR.result = got.result || null;
+    // ★ `V-258`：这一轮的步骤/结论**落在它自己身上**（`AIR.steps` 还是"现在这轮"的镜像，
+    //   底下那几个计算属性照旧读它）—— 关键：**前几轮的 steps 数组不被碰**。
+    const cur = (AIR.turns || [])[AIR.cur];
+    if (cur){
+      cur.steps = AIR.steps;
+      if (got.result) cur.result = got.result;
+    }
     // ★ `V-249`：它干完活了、而且盘上真有文件变了 ⇒ 让「文件管理」那份缓存作废
     //   （你报的"AI 改完文件后「文件管理」页不自动刷新"，就是缺这一下）。
     //   只通知一次：结果会一直摆在 `ai_poll` 里（轮询每 700ms 一次），不认个号就会
@@ -244,6 +264,14 @@ async function aiStart(){
   //   而且"清空"过的那一段不再显示。
   AIR.sentTask = task;
   AIR.muted = 0;
+  // ★ `V-258`：**新起一轮** —— 前面几轮原样留着（这样接着聊时还看得到上文）；
+  //   输入框发出去就清空（照稿子的 `handleInput.value = ""`）。
+  AIR.turns.push({key: "t" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1), task: task,
+                  at: (AIR.contId ? "接着聊" : "新会话") + " · " +
+                      new Date().toTimeString().slice(0, 8),
+                  steps: [], result: null, folded: false});
+  AIR.cur = AIR.turns.length - 1;
+  AIR.task = "";
   AIR.diskNoted = "";            // `V-249`：新任务 = 允许再通知一次"盘上变了"
   AIR.snapNoted = "";            // `V-250`：新任务 = 允许再通知一次"快照存好了"
   const cont = AIR.contId || ""; // `V-251`：接着哪条聊（空 = 新开一条）
@@ -290,7 +318,15 @@ const MossAi = {
       return norm(t) === norm(root) || norm(t).indexOf(norm(root) + "\\") === 0 ||
              norm(t).indexOf(norm(root) + "/") === 0;
     },
-    usage(){ this.A.rev; return (this.A.result && this.A.result.usage) || null; },
+    /* ★ `V-258`：**最后一轮的结论** —— 底栏（上一次 ✅/✗、快照号、token 统计）用的就是它。
+       `A.result` 只表示"现在这轮跑出结果没有"，所以另起一个"最近一次有结果的那轮"。 */
+    lastRes(){
+      this.A.rev;
+      const ts = this.A.turns || [];
+      for (let i = ts.length - 1; i >= 0; i--) if (ts[i] && ts[i].result) return ts[i].result;
+      return null;
+    },
+    usage(){ this.A.rev; return (this.lastRes && this.lastRes.usage) || null; },
     /* `V-237`：把"用了几步"显示出来 —— 上次"步数用完了"你根本不知道它第几步停的。
        （`V-239` 起主闸是 token，这行只当参考。） */
     curStep(){ this.A.rev; return (this.A.steps || []).reduce((m, s) => Math.max(m, s.n || 0), 0); },
@@ -313,8 +349,8 @@ const MossAi = {
       const ss = this.A.steps || [];
       return ss.length ? (ss[ss.length - 1].folded || 0) : 0;
     },
-    files(){ this.A.rev; return (this.A.result && this.A.result.files) || []; },
-    resultOk(){ this.A.rev; return !!(this.A.result && this.A.result.ok); },
+    files(){ this.A.rev; return (this.lastRes && this.lastRes.files) || []; },
+    resultOk(){ this.A.rev; return !!(this.lastRes && this.lastRes.ok); },
     /* ★ `V-252`（照你给的稿子重做这一页）：顶上那两个下拉要的东西 ——
        ① 这一家配了哪些模型（`ai_info.models`；只有一条就只显示那一条）；
        ② 这个包上次那条（「重新跑」按钮填回它的任务原文）。 */
@@ -328,15 +364,20 @@ const MossAi = {
       this.A.rev;
       return aiLastRunFor(aiWhereDir());
     },
-    /* 会话那一栏现在长什么样（标题那一行 + 底部状态条都要） */
+    /* 会话那一栏现在长什么样（标题那一行 + 底部状态条都要）
+       ★ `V-258`：看的是**这一串对话的第一句**（第一轮的指令），翻历史时是那条记录的原文。 */
     sessionTitle(){
       this.A.rev;
       if (this.A.viewing){
         const r = (this.A.runs || []).filter(x => x.id === this.A.viewing)[0];
         return (r && r.task) || this.A.contTask || "历史会话";
       }
-      return (this.A.sentTask || "").trim() || (this.A.task || "").trim() ||
-             "新会话 —— 在下面写你要它干什么";
+      const ts = this.A.turns || [];
+      if (ts.length){
+        const head = (ts[0].task || "").trim();
+        return ts.length > 1 ? (head + "（" + ts.length + " 轮）") : head;
+      }
+      return (this.A.task || "").trim() || "新会话 —— 在下面写你要它干什么";
     },
     /* ★ `V-253`（照稿子那个 `切换历史会话` 下拉）：
        选中那条显示成 `当前: <任务>`，别的都是 `历史: <任务>`，最后一项是 `+ 新建空白会话`。
@@ -353,44 +394,43 @@ const MossAi = {
       const id = this.A.pickId || "";
       return (this.A.runs || []).filter(r => r.id !== id);
     },
-    /* ★ `V-253`：日志流里的卡片（照稿子：每一步一张卡 + 第一张是"用户指令"）。
-       `muted` 之前的不再显示（"清空"按下去就是这个效果）。 */
+    /* ★ `V-253`/`V-258`：日志现在是**按轮**渲染的（见模板里的 `A.turns` 那一段），
+       这个 `logCards` 留着只为兼容老场景 —— 它把**最后一轮**拍平。 */
     logCards(){
       this.A.rev;
       const out = [];
-      const task = (this.A.sentTask || "").trim();
-      if (task){
-        out.push({key: "user", kind: "user", icon: "message-circle",
-                  color: "var(--aib-primary)", action: "用户指令", tool: "",
-                  meta: this.A.running ? "刚刚" : "这次会话", path: task});
-      }
-      const steps = (this.A.steps || []).slice(this.A.muted || 0);
-      steps.forEach((s, i) => {
+      const t = (this.A.turns || [])[this.A.turns.length - 1];
+      if (!t) return out;
+      out.push({key: "user", kind: "user", icon: "message-circle",
+                color: "var(--aib-primary)", action: "用户指令", tool: "",
+                meta: t.at || "", path: t.task || ""});
+      (t.steps || []).forEach((s, i) => {
         out.push({key: "s" + (s.n || i), kind: "step", icon: this.stepIcon(s.tool),
                   color: this.kindColor(s.tool), action: this.stepTitle(s), tool: s.tool,
                   meta: this.stepMeta(s), path: this.stepPath(s)});
       });
       return out;
     },
-    /* 底部状态条左半边（照稿子：`✗ 上次未通过` + `开工快照: <tag>`） */
+    /* 底部状态条左半边（照稿子：`✗ 上次未通过` + `开工快照: <tag>`）
+       ★ `V-258`：看的是"**最近一次有结果的那轮**"（`lastRes`），不是"正在跑这轮" */
     lastText(){
       this.A.rev;
-      if (!this.A.result) return "还没跑过";
+      if (!this.lastRes) return "还没跑过";
       return this.resultOk ? "上次通过" : "上次未通过";
     },
     lastIcon(){
       this.A.rev;
-      if (!this.A.result) return "circle-slash";
+      if (!this.lastRes) return "circle-slash";
       return this.resultOk ? "check" : "x-circle";
     },
     lastColor(){
       this.A.rev;
-      if (!this.A.result) return "var(--aib-text-light)";
+      if (!this.lastRes) return "var(--aib-text-light)";
       return this.resultOk ? "var(--aib-success)" : "var(--aib-danger)";
     },
     snapId(){
       this.A.rev;
-      const s = this.A.result && this.A.result.snapshot;
+      const s = this.lastRes && this.lastRes.snapshot;
       return (s && s.id) || "";
     },
     /* 底部状态条右半边：`Token 消耗: 输入 / 输出 / 合计`（照稿子那三个数）
@@ -416,6 +456,8 @@ const MossAi = {
        （照稿子里那个"占位符，模拟滚动到底部"的意思做的。） */
     "A.steps"(){ this.followLog(); },
     "A.result"(){ this.followLog(); },
+    /* ★ `V-258`：新起一轮、翻历史、清空 —— 日志内容变了就跟着滚到底 */
+    "A.turns"(){ this.followLog(); },
     /* ★ `V-253`：需求被别处改过（「重跑」填回输入框 / 「清空」清掉）⇒ 文本域重新量一次高度 */
     "A.task"(){ this.$nextTick(() => this.autoGrow()); },
   },
@@ -424,11 +466,13 @@ const MossAi = {
     saveBudget: aiSaveBudget,
     refresh(){ aiRefreshInfo(true); },          // 那颗「刷新」= 重新问一次宿主（不吃缓存）
     /* 回退到"开工前"那条快照（`V-236`）。默认 `only="all"`：缺的补上、变了的回退，       多出来的**不动**（和「文件管理 → 快照」里那个「只写回」一个语义）。 */
-    rollback(){
+    rollback(snapIn){
       // ★ `V-257`：这里原来写的是裸 `A` / `target` / `shortPath` —— 那是**模块级/计算属性**
       //   的东西，在方法作用域里一个都不存在 ⇒ 点底栏那个"开工快照"标签直接报
       //   `A is not defined`（你报的那个错）。方法里一律走 `this.`。
-      const A = this.A, target = this.target, snap = A.result && A.result.snapshot;
+      // ★ `V-258`：参数是**哪一轮**的快照（每轮结论卡上都有自己的那颗回退按钮）。
+      const A = this.A, target = this.target;
+      const snap = snapIn || (this.lastRes && this.lastRes.snapshot);
       if (!snap){ toast("这次没存快照，没得退。", true); return; }
       askConfirm("回退到开工前？",
         "把 <code>" + esc(this.shortPath(target)) + "</code> 回到快照 <code>" + esc(snap.id) +
@@ -456,11 +500,27 @@ const MossAi = {
       ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
     },
     resetLogs(){
-      AIR.muted = (AIR.steps || []).length;
-      AIR.result = null; AIR.sentTask = ""; AIR.viewing = "";
+      // ★ `V-258`：清空 = 把**所有轮**清掉（原来只是"从这一轮之后不再显示"，看不到效果）
+      AIR.turns = []; AIR.cur = -1;
+      AIR.muted = 0;
+      AIR.result = null; AIR.steps = []; AIR.sentTask = ""; AIR.viewing = ""; AIR.pickId = "";
       AIR.task = "";
       AIR.rev++;
       this.$nextTick(() => this.autoGrow());
+    },
+    /* ★ `V-258`：折叠 / 展开**某一轮**（点那一轮的「用户指令」卡，或卡右边那行字） */
+    toggleTurn(ti){
+      const t = (AIR.turns || [])[ti];
+      if (!t) return;
+      t.folded = !t.folded;
+      AIR.rev++;
+    },
+    /* ★ `V-258`：某一轮的步骤卡（`t.steps` 是那一轮自己的，不会互相冲掉） */
+    turnCards(t){
+      return (t.steps || []).map((s, i) => ({
+        key: "s" + (s.n || i), icon: this.stepIcon(s.tool), color: this.kindColor(s.tool),
+        action: this.stepTitle(s), tool: s.tool, meta: this.stepMeta(s), path: this.stepPath(s),
+      }));
     },
     doShake(){
       this.shake = false;
@@ -535,6 +595,7 @@ const MossAi = {
       const id = this.A.pickId || "";
       if (!id){
         AIR.viewing = ""; AIR.sentTask = ""; AIR.steps = []; AIR.result = null;
+        AIR.turns = []; AIR.cur = -1;                    // `V-258`：换会话 = 清空日志
         AIR.contId = ""; AIR.contTask = ""; AIR.lastId = ""; AIR.muted = 0;
         AIR.rev++;
         toast("新会话：下一条不带之前的对话");
@@ -659,6 +720,7 @@ const MossAi = {
         AIR.contId = ""; AIR.contTask = ""; AIR.viewing = "";
         AIR.steps = []; AIR.result = null; AIR.lastId = ""; AIR.lastAdopted = "";
         AIR.sentTask = ""; AIR.muted = 0; AIR.pickId = "";
+        AIR.turns = []; AIR.cur = -1;                 // `V-258`：换了包 = 换一条会话，日志清空
         aiRefreshInfo();
         aiLoadRuns();
       }
@@ -730,40 +792,56 @@ const MossAi = {
           {{ sessionTitle }}
         </div>
 
-        <div class="step-card ai-step" v-for="(c, i) in logCards" :key="c.key"
-             :class="c.kind === 'user' ? '' : ('k-' + toolKind(c.tool))"
-             :data-tool="c.tool || ''">
-          <div class="step-icon" v-html='ico(c.icon, "i")'></div>
-          <div class="step-content">
-            <div class="step-header">
-              <span class="step-action" :style="{color: c.color}">{{ c.action }} <b>{{ c.tool }}</b></span>
-              <span class="step-meta">{{ c.meta }}</span>
+        <!-- ★ V-258：日志**按轮**排 —— 一轮 = 一张「用户指令」卡 + 它的步骤卡 + 它的结论卡。
+             点「用户指令」那张卡就把**这一轮**折叠/展开（你原话："允许我折叠某个会话"）。 -->
+        <div class="ai-turn" v-for="(t, ti) in A.turns" :key="t.key">
+          <div class="step-card ai-step ai-th" @click="toggleTurn(ti)"
+               :title="t.folded ? '点一下展开这一轮' : '点一下折叠这一轮'">
+            <div class="step-icon" v-html='ico("message-circle", "i")'></div>
+            <div class="step-content">
+              <div class="step-header">
+                <span class="step-action">用户指令 <b>#{{ ti + 1 }}</b></span>
+                <span class="step-meta">{{ t.folded ? "已折叠 · 点一下展开" : t.at }}</span>
+              </div>
+              <span class="code-path">{{ t.task }}</span>
             </div>
-            <span class="code-path">{{ c.path }}</span>
-            <span class="step-meta" v-if="c.note">{{ c.note }}</span>
           </div>
+
+          <template v-if="!t.folded">
+            <div class="step-card ai-step" v-for="c in turnCards(t)" :key="c.key"
+                 :class="'k-' + toolKind(c.tool)" :data-tool="c.tool || ''">
+              <div class="step-icon" v-html='ico(c.icon, "i")'></div>
+              <div class="step-content">
+                <div class="step-header">
+                  <span class="step-action" :style="{color: c.color}">{{ c.action }} <b>{{ c.tool }}</b></span>
+                  <span class="step-meta">{{ c.meta }}</span>
+                </div>
+                <span class="code-path">{{ c.path }}</span>
+              </div>
+            </div>
+
+            <div class="ai-result" v-if="t.result" :class="{ok: !!t.result.ok, bad: !t.result.ok}">
+              <div class="ai-rhead"><span v-if="A.viewing" class="ai-old">历史记录</span>{{ t.result.ok ? "✅ 验收通过" : "✗ 没通过" }}<span
+                v-if="t.result.reason && t.result.reason !== '验收通过'"> —— {{ t.result.reason }}</span></div>
+              <div class="ai-rsnap" v-if="t.result.snapshot">
+                <span>开工前已存快照 <code>{{ t.result.snapshot.id }}</code>（AI 存的，列表里带「AI」徽章）</span>
+                <button class="btn btn-outline" @click.stop="rollback(t.result.snapshot)"
+                        title="回到这次动手之前（只写回：缺的补上、变了的回退）">回退到开工前</button>
+              </div>
+              <p v-if="t.result.summary" class="ai-rsum">{{ t.result.summary }}</p>
+              <p v-if="t.result.caveats" class="ai-rcav">它自己标的不确定：{{ t.result.caveats }}</p>
+              <div v-if="(t.result.files || []).length" class="ai-rfiles">动过的文件：<span
+                v-for="f in t.result.files" :key="f">{{ shortPath(f) }}　</span></div>
+              <div class="ai-rtok" v-if="t.result.usage">
+                token：输入 {{ t.result.usage.prompt_tokens }} / 输出 {{ t.result.usage.completion_tokens }} / 合计 {{ t.result.usage.total_tokens }}
+                （上限 {{ humanTokens(A.maxTokens) }}）
+                <span v-if="t.result.folded">· 折叠了 {{ t.result.folded }} 条旧结果</span>
+              </div>
+            </div>
+          </template>
         </div>
 
-        <!-- 结论卡（稿子里没有；这一页必须有：验收过没过 + 改了什么 + 能不能退回去） -->
-        <div class="ai-result" v-if="A.result" :class="{ok: resultOk, bad: !resultOk}">
-          <div class="ai-rhead"><span v-if="A.viewing" class="ai-old">历史记录</span>{{ resultOk ? "✅ 验收通过" : "✗ 没通过" }}<span
-            v-if="A.result.reason && A.result.reason !== '验收通过'"> —— {{ A.result.reason }}</span></div>
-          <div class="ai-rsnap" v-if="A.result.snapshot">
-            <span>开工前已存快照 <code>{{ A.result.snapshot.id }}</code>（AI 存的，列表里带「AI」徽章）</span>
-            <button class="btn btn-outline" @click="rollback()"
-                    title="回到这次动手之前（只写回：缺的补上、变了的回退）">回退到开工前</button>
-          </div>
-          <p v-if="A.result.summary" class="ai-rsum">{{ A.result.summary }}</p>
-          <p v-if="A.result.caveats" class="ai-rcav">它自己标的不确定：{{ A.result.caveats }}</p>
-          <div v-if="files.length" class="ai-rfiles">动过的文件：<span v-for="f in files" :key="f">{{ shortPath(f) }}　</span></div>
-          <div class="ai-rtok" v-if="usage">
-            token：输入 {{ usage.prompt_tokens }} / 输出 {{ usage.completion_tokens }} / 合计 {{ usage.total_tokens }}
-            （上限 {{ humanTokens(A.maxTokens) }}）
-            <span v-if="A.result.folded">· 折叠了 {{ A.result.folded }} 条旧结果</span>
-          </div>
-        </div>
-
-        <p class="ai-empty" v-if="!logCards.length && !A.result">
+        <p class="ai-empty" v-if="!A.turns.length">
           还没有跑过。它会：读契约 → 改文件 → 跑一次证明能跑 → 收工。
         </p>
 
