@@ -896,6 +896,18 @@ def main():
         any("answer(text=…)" in str(m.get("content") or "") for m in _m5.seen[-1]), "")
     chk("Q ★ 被打回之后它照做 ⇒ 照样能收工（kind=chat）",
         q3.get("ok") is True and q3.get("kind") == "chat", q3["reason"][:60])
+    # ④ 真机截图复验抓到的两处显示问题（`V-269` 补）
+    #    ① 步骤卡上摆的是 `{"text": "…"}` 原始 JSON（`V-260` 修过的毛病，新工具漏了）
+    _d = L._step_disp("answer", {"text": "底层是哪个模型我自己看不到"})
+    chk("Q ★ `answer` 那一步给人看的是**回答正文**，不是原始 JSON",
+        _d == "底层是哪个模型我自己看不到", repr(_d))
+    chk("Q ★ `done` 那条没被带坏（还是 summary）",
+        L._step_disp("done", {"summary": "改好了"}) == "改好了",
+        repr(L._step_disp("done", {"summary": "改好了"})))
+    #    ② 工具回话别把整段回答回显进来 —— 否则同一段话在那一行右边又抄一遍、还把行撑满
+    _ack = T.Tools(workdir=fake_pkg).call("answer", {"text": "很长的一段回答" * 5})
+    chk("Q ★ `answer` 的回话**不回显**正文（回显了的话步骤行会重复一遍、还撑满）",
+        "很长的一段回答" not in _ack, repr(_ack))
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()

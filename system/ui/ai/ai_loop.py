@@ -78,8 +78,11 @@ def _step_disp(name, args):
       宿主手里有**完整参数**，就在这儿拼好，界面直接显示。
     """
     a = args or {}
-    if name == "done":
-        return str(a.get("summary") or "")[:DISP_MAX]
+    # ★ `V-269` 补：`answer` 跟 `done` 一样 —— **给人看的是那段回答本身**，
+    #   不是 `{"text": "…"}` 这坨 JSON（真机截图里就是这么显示的：卡片上摆了一整行原始 JSON，
+    #   正是 `V-260` 修过的那个毛病，我新加的工具漏了这一步）。
+    if name in ("done", "answer"):
+        return str(a.get("summary") or a.get("text") or "")[:DISP_MAX]
     if a.get("path"):
         return str(a["path"])
     if a.get("args"):
@@ -396,8 +399,8 @@ class Loop:
                 messages.append({"role": "assistant", "content": text})
                 messages.append({"role": "user", "content":
                                  "别只说话：要么调工具干活，要么干完了用 done(summary=…) 收工；"
-                                 "**如果你只是在回答用户的问题、一个文件都不用改，就用 "
-                                 "answer(text=…) 收工**（它不要求跑命令）。"})
+                                 "**如果你只是在回答用户的问题、一个文件都不用改，就把你上面那段话"
+                                 "原样写进 answer(text=…) 收工**（它不要求跑命令，别再重写一遍）。"})
                 continue
             # ★ `V-247`：**按我们自己的 id 重建**这条 assistant 消息（别原样回灌）。
             #   原样回灌时，万一网关回的 tool_calls 没带 id（或 id 重复），我们这边发 tool 结果
