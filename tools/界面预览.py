@@ -60,6 +60,21 @@ SRC = ROOT / "system" / "ui"
 PRE = Path(__import__("tempfile").gettempdir()) / "moss_ui_preview"
 SHOTS = Path(__import__("tempfile").gettempdir()) / "moss_ui_shots"
 
+
+def icons_script():
+    """图标表（`V-267`）：跟宿主走**同一份实现**（`system/ui/icons.py` 读 `system/icon/svg/`）。
+
+    ★ 别在这儿另抄一份图标数据 —— 那就是"两处维护、必然漂移"。
+    ★ 预览是 `file://` 打开的，`<script src>` 能加载（`ico()` 本身来自 `vendor/lucide.js`），
+      但 `window.__MOSS_ICONS` **没有任何文件提供** ⇒ 不插这一段，预览里所有图标都是空白，
+      而截图看着"只是有点空"，很容易当成没事（这个坑正是靠它才发现的）。
+    """
+    import importlib.util                                        # noqa: PLC0415
+    spec = importlib.util.spec_from_file_location("moss_ui_icons", SRC / "icons.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.script_tag()
+
 BROWSERS = [
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
     r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
@@ -78,7 +93,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "detail-fill", "ai-pane", "snap-by",
-          "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump"]
+          "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "icons"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
 #: 是场景（或它的假数据）跟不上 —— 待办记在账本 `V-203`。
@@ -3985,6 +4000,45 @@ MOCK_JS = r"""
              " 标题=" + (titleOk ? 1 : 0) + "/" + JSON.stringify(title.slice(0, 24)) +
              " 错=" + (window.__errors || []).length);
       }
+      // ★ `V-267`：图标数据从 `lucide.js` 搬进 `system/icon/svg/*.svg`（宿主读出来注入成
+      //   `window.__MOSS_ICONS`）。这条场景是那次搬迁的护栏，而且**只认数字**：
+      //   ① 表在不在、有多少个名字；② 页面上 `<svg class="i">` 里真画出了多少条路径；
+      //   ③ **一个空壳图标都不许有** —— 表没注入时 `ico()` 会回退成"空 svg"（元素还在、
+      //      里面 0 条路径），所以"`svg` 元素存在吗"这种断言是**假绿**（`V-199` 那条就是），
+      //      必须数路径。截图看着"就是有点空"，人眼极容易放过。
+      if (h === "icons"){
+        await sleep(700);
+        const T = window.__MOSS_ICONS || {};
+        const nTab = Object.keys(T).length;
+        const SHAPE = "path,circle,rect,line,polyline,polygon,ellipse";
+        const svgs = Array.from(document.querySelectorAll("svg.i"));
+        const drawn = svgs.filter(s => s.querySelector(SHAPE)).length;
+        const tabAi = document.querySelector('.tab[data-tab="ai"] svg');
+        const tabDetail = document.querySelector('.tab[data-tab="detail"] svg');
+        const selfchk = document.querySelector("#btn-selfcheck svg");
+        const at = e => !!(e && e.querySelector(SHAPE));
+        const sample = ["play", "file", "folder", "history", "moss-openai",
+                        "moss-user", "moss-plus", "moss-back", "moss-camera",
+                        "moss-folder-out", "moss-history", "terminal"];
+        const missing = sample.filter(n => !(T[n] && /<(path|circle|rect|line|polyline|polygon|ellipse)/.test(T[n].body)));
+        const ok = nTab >= 90 && svgs.length >= 10 && drawn === svgs.length &&
+                   at(tabAi) && at(tabDetail) && at(selfchk) && !missing.length &&
+                   !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n图标表里 " + nTab + " 个名字（应为 ≥90）" +
+          "\n页面上 <svg class=i> 有 " + svgs.length + " 个，其中画了东西的 " + drawn +
+          " 个（要**相等** —— 空壳 = 图标没注入）" +
+          "\n抽查这几颗表里有没有：缺 " + JSON.stringify(missing) +
+          "\n顶栏「详情」选项卡有图 = " + at(tabDetail) +
+          " ·「AI」选项卡有图 = " + at(tabAi) +
+          " · 自检按钮有图 = " + at(selfchk) +
+          " · 页内错误 = " + (window.__errors || []).length;
+        document.querySelector("#meta").className = "meta";
+        document.title = ok ? "READY"
+          : ("ICON-FAIL 表=" + nTab + " svg=" + svgs.length + " 画了=" + drawn +
+             " 缺=" + missing.length + " 详情=" + (at(tabDetail) ? 1 : 0) +
+             " AI=" + (at(tabAi) ? 1 : 0) + " 自检=" + (at(selfchk) ? 1 : 0));
+      }
       //   `MossList.rows` 读 `DATA.packages` 抛的那个是同一类），看它有没有被
       //   `Vue.config.errorHandler` 收进 `window.__errors`。
       //   为什么要这条：那道"有错就判 PAGE-ERR"的闸要是本身收不到错，坏代码照样过 ——
@@ -4156,6 +4210,18 @@ def main():
         return 1
     (PRE / "index.html").write_text(page.replace(anchor, inject + anchor),
                                     encoding="utf-8", newline="")
+    # 图标表（`V-267`）：宿主是在组装自包含页面时插的（`system/ui/main.py`），
+    # 预览这边走 `file://`、没人插 ⇒ 这里补上，插在 `<body>` 后面（脚本之前）。
+    # ★ 以前这里写成"页面里没有 `__MOSS_ICONS` 才插"，结果**假绿**：新加的 `icons` 场景里
+    #   正好有 `window.__MOSS_ICONS` 这串字，守卫一看"有了"就跳过 ⇒ 表根本没注入，
+    #   而所有"svg 元素在不在"的断言照样绿（实测：表=0、106 个空壳 svg）。
+    #   现在不猜：临时副本每次重建，直接插，插不进去（命中数 ≠ 1）就报错退出。
+    page2, n = re.subn(r"(<body[^>]*>)", lambda m: m.group(1) + "\n" + icons_script(),
+                       (PRE / "index.html").read_text(encoding="utf-8"), count=1, flags=re.I)
+    if n != 1:
+        print("[错误] index.html 里找不到 `<body>`，图标表插不进去（界面结构改过了？）")
+        return 1
+    (PRE / "index.html").write_text(page2, encoding="utf-8", newline="")
 
     SHOTS.mkdir(parents=True, exist_ok=True)
     url = (PRE / "index.html").as_uri()

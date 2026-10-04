@@ -50,6 +50,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import win_geom                                                  # noqa: E402  (V-223：窗口几何)
+import icons                                                     # noqa: E402  (V-267：图标表)
 
 NO_WINDOW = 0x08000000          # CREATE_NO_WINDOW
 DETACHED = 0x00000008           # DETACHED_PROCESS
@@ -3379,6 +3380,11 @@ def _inline_page():
 
         html = re.sub(r'<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>', css_repl, html)
         html = re.sub(r'<script[^>]*src="([^"]+)"[^>]*></script>', js_repl, html)
+        # 图标表（`V-267`）：`system/icon/svg/*.svg` 读出来插在 `<body>` 后面。
+        # ★ 必须插在**所有脚本之前**：`vendor/lucide.js` 的 `ico()` 在**定义时**不看表，
+        #   但页面里 `paintStaticIcons()` 之类是加载期就调 `ico()` 的 —— 表得先在那儿。
+        html = re.sub(r"(<body[^>]*>)", lambda m: m.group(1) + "\n" + icons.script_tag(), html,
+                      count=1, flags=re.I)
         out = USER_DATA / "state" / "_ui_inline.html"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(html, encoding="utf-8", newline="")

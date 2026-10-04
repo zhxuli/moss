@@ -81,14 +81,25 @@ js_ids |= set(re.findall(r'\.id\s*=\s*["\']([A-Za-z0-9_\-]+)["\']', js))
 missing = sorted(used - set(ids) - js_ids)
 chk('$("#id") 都能找到', not missing, ("找不到：%s" % missing) if missing else "%d 个引用" % len(used))
 
-# ---------------- 4. 图标名都在 lucide 表里 ----------------
-lucide = (UI / "vendor" / "lucide.js").read_text(encoding="utf-8")
-have = set(re.findall(r'^"([a-z0-9\-]+)":\s*"', lucide, re.M))
-have |= set(re.findall(r'^"([a-z0-9\-]+)":\s*\{', lucide, re.M))   # 实心那族（`V-96`）
+# ---------------- 4. 图标名都在 system/icon/svg/*.svg 里（`V-267`） ----------------
+# ★ 以前是去 `vendor/lucide.js` 里数那两张 JS 表（`V-96` 的实心族是第二张）。
+#   `V-267` 把 260 条 path 数据搬进了 `system/icon/svg/<名字>.svg`、`lucide.js` 只剩
+#   二十行 `ico()` ⇒ **那个文件里再没有名字可数**，检查必须跟着改（不改就是空集、
+#   永远绿 —— 假绿比失败更坏）。
+svg_dir = ROOT / "system" / "icon" / "svg"
+have = set(p.stem for p in svg_dir.glob("*.svg"))
 want = set(re.findall(r'\bico\(\s*"([a-z0-9\-]+)"', js))
 bad = sorted(want - have)
-chk("ico() 的图标名都存在", not bad,
-    ("缺：%s" % bad) if bad else "%d 个名 / 表里 %d 个" % (len(want), len(have)))
+chk("ico() 的图标名都有对应 .svg", not bad,
+    ("缺：%s" % bad) if bad else "%d 个名 / 文件里 %d 个" % (len(want), len(have)))
+# ★ 反向也要查一遍：`window.__MOSS_ICONS` 是**宿主注入**的，没人用到的图标留着不碍事，
+#   但**表整体空掉**（路径写错、根算错）会让整个界面变成一片空白图 —— 而上面那条
+#   "名字都有"照样绿。所以这里硬性要求表非空、且能读出 `<g>`/`<path>` 内容。
+_empty_svg = sorted(p.name for p in svg_dir.glob("*.svg")
+                    if "<svg" not in p.read_text(encoding="utf-8", errors="replace"))
+chk("图标文件都读得出内容", have and not _empty_svg,
+    ("空/坏的：%s" % _empty_svg) if _empty_svg
+    else ("目录都不见了：%s" % svg_dir) if not have else "%d 个 .svg" % len(have))
 
 # ---------------- 5. 界面调的 api 方法，main.py 里都有 ----------------
 api_calls = set(re.findall(r'pywebview\.api\.([A-Za-z0-9_]+)\(', js))

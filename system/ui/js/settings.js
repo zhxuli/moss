@@ -459,23 +459,14 @@ const MossSettings = {
       const r = await pywebview.api.ai_presets();
       this.ai.presets = (r && r.presets) || [];
     },
-    // 稿子里的几个内联图标（人物 / 加号 / 左箭头）—— 我们的图标库里没有，直接照抄它的 path
-    // ★ `V-257`：`openai` 那条**搬进 vendor/lucide.js 了**（`moss-openai`）——
+    // 稿子里的几个内联图标（人物 / 加号 / 左箭头）—— 我们的图标库（lucide）里没有一样的，
+    // 所以照抄它的 path 存成图标文件（`system/icon/svg/moss-*.svg`）。
+    // ★ `V-257`：`openai` 那条**搬进 `system/icon/svg/moss-openai.svg` 了** ——
     //   顶层「AI」选项卡也要用同一个标记，两处各抄一段 path 迟早漂移。
+    // ★ `V-267`：那三条 path 也搬进文件了（`moss-user` / `moss-plus` / `moss-back`）——
+    //   这一处代码从 15 行缩成 1 行，画笔（1.5 描边那套）跟别的图标一样写在文件里。
     aiSvg(name){
-      if (name === "openai") return ico("moss-openai", "i");
-      const P = {
-        user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>' +
-              '<circle cx="12" cy="7" r="4"></circle>',
-        plus: '<path d="M12 5v14M5 12h14"></path>',
-        back: '<path d="M19 12H5M12 19l-7-7 7-7"></path>',
-      }[name] || '';
-      // ★ 跟 `icon()` 出来的一模一样：带 `class="i"`（那条样式管着宽高 + `display:block`）
-      //   —— 少了它，svg 是行内元素、按基线摆，跟旁边文字对不齐（V-161 踩过）。
-      //   描边也用 1.5，跟 lucide 那一族一个粗细（Tabler 原图是 2，放进导航里会显得重）。
-      return '<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-             'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" ' +
-             'aria-hidden="true">' + P + '</svg>';
+      return ico(name === "openai" ? "moss-openai" : "moss-" + name, "i");
     },
     // 点路径里的任意一段（`V-198`）：用系统默认方式打开"到这一段为止"的那个路径
     async openSeg(s){ if (s && s.path) await pywebview.api.open_path(s.path); },
