@@ -1298,3 +1298,38 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
 /* ★ `V-259`：这一轮"接着上次聊 / 按新会话跑"那行小字（宿主说的，照实显示） */
 .aiwrap .ai-turnnote{font-size:12px;color:var(--aib-success)}
 .aiwrap .ai-turnnote.bad{color:var(--aib-warning)}
+/* ★ `V-261`：按住 Alt 浮出来的"我说过的话"那张表（右上角，样式跟这套 UI 一路） */
+.aiwrap{position:relative}
+.aiwrap .ai-jump{
+  position:absolute;right:16px;top:58px;z-index:20;width:380px;max-width:70%;
+  max-height:60%;display:flex;flex-direction:column;overflow:hidden;
+  background:var(--aib-bg-panel);border:1px solid var(--aib-border-color);
+  border-radius:var(--aib-radius-lg);box-shadow:var(--aib-shadow-float);
+}
+.aiwrap .ai-jump-h{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:10px 12px;font-size:12px;font-weight:600;color:var(--aib-text-main);
+  border-bottom:1px solid var(--aib-border-color);background:rgba(250,250,250,.8);
+}
+.aiwrap .ai-jump-h span{font-weight:400;color:var(--aib-text-light)}
+.aiwrap .ai-jump-list{overflow:auto}
+.aiwrap .ai-jump-i{
+  display:flex;align-items:baseline;gap:8px;padding:8px 12px;cursor:pointer;
+  border-bottom:1px solid var(--aib-border-color);font-size:13px;
+}
+.aiwrap .ai-jump-i:last-child{border-bottom:none}
+.aiwrap .ai-jump-i:hover{background:var(--aib-primary-light)}
+.aiwrap .ai-jump-i b{
+  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;
+  color:var(--aib-primary);flex:none;
+}
+.aiwrap .ai-jump-t{
+  flex:1;min-width:0;color:var(--aib-text-main);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.aiwrap .ai-jump-a{font-size:12px;color:var(--aib-text-light);flex:none}
+/* 跳过去那一下闪一下，让你知道落在哪儿了 */
+.aiwrap .ai-turn.ai-flash .ai-th{
+  border-color:var(--aib-primary);box-shadow:0 0 0 3px var(--aib-shadow-focus);
+  animation:fadeIn .2s;
+}

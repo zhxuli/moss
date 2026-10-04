@@ -78,7 +78,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "detail-fill", "ai-pane", "snap-by",
-          "ai-disk-refresh", "ai-snap-refresh", "ai-continue"]
+          "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
 #: 是场景（或它的假数据）跟不上 —— 待办记在账本 `V-203`。
@@ -3876,7 +3876,63 @@ MOCK_JS = r"""
              " 错=" + (window.__errors || []).length +
              " E=" + JSON.stringify((window.__errors || []).slice(0, 1)).slice(0, 120));
       }
-      // ★ 报错这条路本身也要能自证（`V-81`）：故意造一个"计算属性里抛错"的组件（和
+      // ★ `V-261`：**按住 Alt = 「我说过的话」导航**（你原话：按 alt 显示这个会话历史里
+      //   每一条我说的话，点其中某一条就快速定位到那一轮）。这条走真人那条路：
+      //   进「AI」页 → 跑两轮（攒出两条"我说的话"）→ 按 Alt → 浮出那张表 →
+      //   点第 1 条 → 那一轮**展开 + 闪一下**、面板收起；再按 Alt → 松开 Alt 自己收起来。
+      if (h === "ai-alt-jump"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        await sleep(300);
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(1000);
+        const taskEl = document.querySelector("#pane-ai .ai-task");
+        M.aiRun = null;
+        taskEl.value = "给这个包加一句注释";
+        taskEl.dispatchEvent(new Event("input", {bubbles: true}));
+        await sleep(80);
+        (document.querySelector("#pane-ai .ai-actions .btn.primary") || {click(){}}).click();
+        for (let i = 0; i < 25 && (window.__AIR || {}).running; i++) await sleep(300);
+        await sleep(300);
+        const dbg = window.__AIR || {};
+        const turns = (dbg.turns || []).length;
+        // ① 按住 Alt → 浮出来
+        const key = (type, k) => window.dispatchEvent(
+          new KeyboardEvent(type, {key: k, bubbles: true, cancelable: true}));
+        key("keydown", "Alt");
+        await sleep(250);
+        const panel = document.querySelector("#pane-ai .ai-jump");
+        const items = document.querySelectorAll("#pane-ai .ai-jump-i");
+        const listed = !!(panel && items.length === turns && turns >= 1);
+        // ② 点第 1 条 → 跳到那一轮（展开 + 闪一下 + 面板收起）
+        if (dbg.turns && dbg.turns[0]) dbg.turns[0].folded = true;   // 先折上，看它会不会展开
+        await sleep(120);
+        if (items[0]) items[0].click();
+        await sleep(400);
+        const first = document.querySelectorAll("#pane-ai .ai-turn")[0];
+        const jumped = !!first && first.classList.contains("ai-flash") &&
+                       !!(dbg.turns && dbg.turns[0] && dbg.turns[0].folded === false);
+        const closed = !dbg.altOn && !document.querySelector("#pane-ai .ai-jump");
+        // ③ 再按 Alt 浮出来 → 松开 Alt 自己收起
+        key("keydown", "Alt");
+        await sleep(200);
+        const again = !!document.querySelector("#pane-ai .ai-jump");
+        key("keyup", "Alt");
+        await sleep(200);
+        const gone = !document.querySelector("#pane-ai .ai-jump");
+        const ok = turns >= 1 && listed && jumped && closed && again && gone &&
+                   !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n这个会话里有 " + turns + " 条「我说过的话」（面板里列了 " + items.length + " 条）" +
+          "\n按住 Alt 浮出来 = " + listed + " · 点第 1 条：跳到 + 展开 + 闪 = " + jumped +
+          "\n点完面板收起 = " + closed + " · 再按又出来 = " + again + " · 松开收起 = " + gone +
+          " · 页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+          : ("AIALT-FAIL 轮=" + turns + " 列=" + items.length + " 浮=" + (listed ? 1 : 0) +
+             " 跳=" + (jumped ? 1 : 0) + " 收=" + (closed ? 1 : 0) +
+             " 再=" + (again ? 1 : 0) + " 松=" + (gone ? 1 : 0) +
+             " 错=" + (window.__errors || []).length);
+      }
       //   `MossList.rows` 读 `DATA.packages` 抛的那个是同一类），看它有没有被
       //   `Vue.config.errorHandler` 收进 `window.__errors`。
       //   为什么要这条：那道"有错就判 PAGE-ERR"的闸要是本身收不到错，坏代码照样过 ——
@@ -4120,6 +4176,7 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
 
 
 

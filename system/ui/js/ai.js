@@ -51,6 +51,9 @@ const AIR = Vue.reactive({
        · `folded` 是"这一轮折叠了"（点那一轮的「用户指令」卡切换）
      `cur` = 正在跑的那一轮的下标（`-1` = 没在跑）。 */
   turns: [], cur: -1, turnSeq: 0,
+  /* ★ `V-261`：按住 **Alt** 时浮出来的"我说过的话"导航（你原话：按 alt 显示这个会话历史里
+     每一条我说的话，点其中某一条就快速定位到那一轮）。 */
+  altOn: false,
 });
 
 function aiPackage(){ return cur && cur.id ? cur : null; }
@@ -561,6 +564,36 @@ const MossAi = {
       AIR.rev++;
       this.$nextTick(() => this.autoGrow());
     },
+    /* ★ `V-261`：**Alt 键当"我说过的话"导航用**。
+       按住 Alt → 浮出一张表（这一串会话里我说过的每一句）→ 点哪条就滚到哪一轮。
+       为什么用 Alt：不占界面（这一页已经排满了），也是"看一眼 / 跳一下"这种临时动作的惯例键。
+       ★ 松手才收起来 —— 不然"按住 Alt 再去点"这个动作做不完；
+         鼠标停在面板上时也不收（慢慢点也行）。 */
+    altDown(e){
+      if (e.key !== "Alt") return;
+      if (typeof tab !== "undefined" && tab !== "ai") return;   // 不在 AI 这一页就别管
+      if (!(this.A.turns || []).length) return;
+      if (!e.repeat) AIR.altOn = true;
+    },
+    altUp(e){
+      if (e.key !== "Alt") return;
+      if (!this._overJump) AIR.altOn = false;
+    },
+    jumpTurn(ti){
+      const t = (AIR.turns || [])[ti];
+      if (!t) return;
+      if (t.folded) t.folded = false;        // 折叠着的先展开，不然滚过去是空的
+      AIR.rev++;
+      this.$nextTick(() => {
+        const els = this.$el ? this.$el.querySelectorAll(".ai-turn") : [];
+        const el = els[ti];
+        if (!el) return;
+        el.scrollIntoView({block: "start", behavior: "smooth"});
+        el.classList.add("ai-flash");
+        setTimeout(() => el.classList.remove("ai-flash"), 1400);
+      });
+      AIR.altOn = false;
+    },
     /* ★ `V-258`：折叠 / 展开**某一轮**（点那一轮的「用户指令」卡，或卡右边那行字） */
     toggleTurn(ti){
       const t = (AIR.turns || [])[ti];
@@ -793,6 +826,15 @@ const MossAi = {
     }, 700);
     /* ★ `V-253`（照稿子）：刚进来时文本域是 56px，等一帧量一下（内容长的话自动长高） */
     this.$nextTick(() => this.autoGrow());
+    /* ★ `V-261`：Alt 那座"我说过的话"导航 —— 监听挂在 window 上（键盘焦点不一定在这一页里） */
+    this._kd = e => this.altDown(e);
+    this._ku = e => this.altUp(e);
+    window.addEventListener("keydown", this._kd, true);
+    window.addEventListener("keyup", this._ku, true);
+  },
+  beforeUnmount(){
+    window.removeEventListener("keydown", this._kd, true);
+    window.removeEventListener("keyup", this._ku, true);
   },
   template: `
   <div class="aiwrap">
@@ -966,6 +1008,21 @@ const MossAi = {
         </div>
       </footer>
 
+    </div>
+
+    <!-- ★ V-261：按住 Alt 浮出来的"我说过的话"（点一条就跳到那一轮）。
+         鼠标停在上面时不收（按住 Alt 再去点的动作才做得完）。 -->
+    <div class="ai-jump" v-if="A.altOn && A.turns.length"
+         @mouseenter="this._overJump = true" @mouseleave="this._overJump = false">
+      <div class="ai-jump-h">这个会话里我说过的（{{ A.turns.length }}）<span>点一条跳过去</span></div>
+      <div class="ai-jump-list">
+        <div class="ai-jump-i" v-for="(t, ti) in A.turns" :key="t.key"
+             :title="t.task" @click="jumpTurn(ti)">
+          <b>#{{ ti + 1 }}</b>
+          <span class="ai-jump-t">{{ t.task }}</span>
+          <span class="ai-jump-a">{{ (t.at || "").split(" · ").pop() }}</span>
+        </div>
+      </div>
     </div>
   </div>`,
 };
