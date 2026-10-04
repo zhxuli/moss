@@ -38,8 +38,11 @@ const AIR = Vue.reactive({
   contId: "", contTask: "", lastId: "", lastAdopted: "",
   curWhere: "",                // `V-251`：干活的"地方"也跟着包切换 —— 换地方就换会话
   /* ★ `V-253`（照稿子重排）：`sentTask` = 这次会话的那句指令（日志第一张「用户指令」卡用它）；
-     `muted` = "清空"按下去时的步数（那之前的步骤不再显示，新的照常冒出来）。 */
-  sentTask: "", muted: 0,
+     `muted` = "清空"按下去时的步数（那之前的步骤不再显示，新的照常冒出来）。
+     ★ `V-254`：`pickId` = 左上角那个会话下拉**现在选中的**那条（看得是哪条）。
+       它和 `contId`（下一次跑要不要接着哪条）**分开** —— 老记录没有对话，能看不能接，
+       以前把两个合成一个、又给选项加了 `disabled`，结果那个下拉**整个点不动**（你报的 bug）。 */
+  sentTask: "", muted: 0, pickId: "",
 });
 
 function aiPackage(){ return cur && cur.id ? cur : null; }
@@ -126,9 +129,10 @@ function normDir(p){
 async function aiAdoptLast(){
   const last = aiLastRunFor(aiWhereDir());
   AIR.lastId = (last && last.id) || "";
-  if (last && last.cont && !AIR.contId){
+  if (last && last.cont && !AIR.contId && !AIR.pickId){
     AIR.contId = last.id;
     AIR.contTask = last.task || "";
+    AIR.pickId = last.id;
     await aiOpenRun(last.id, true);
   }
 }
@@ -141,6 +145,7 @@ async function aiOpenRun(id, quiet){
     if (!got || !got.ok || !got.run){ if (!quiet) toast("读不到这条记录", true); return; }
     const r = got.run;
     AIR.viewing = id;
+    AIR.pickId = id;              // `V-254`：下拉跟着指到这份记录
     AIR.steps = r.steps || [];
     // ★ `V-253`：翻历史时，日志第一张卡还是**那次的任务原文**（照稿子的"用户指令"卡）
     AIR.sentTask = r.task || "";
@@ -203,6 +208,7 @@ async function aiPollOnce(){
         AIR.lastAdopted = res.run_id;
         AIR.lastId = res.run_id;
         AIR.contId = res.run_id;
+        AIR.pickId = res.run_id;          // `V-254`：左上角下拉跟着指到新这条
         AIR.contTask = (AIR.task || "").trim();
         aiLoadRuns();
       }
@@ -319,16 +325,18 @@ const MossAi = {
              "新会话 —— 在下面写你要它干什么";
     },
     /* ★ `V-253`（照稿子那个 `切换历史会话` 下拉）：
-       选中那条显示成 `当前: <任务>`，别的都是 `历史: <任务>`，最后一项是 `+ 新建空白会话`。 */
+       选中那条显示成 `当前: <任务>`，别的都是 `历史: <任务>`，最后一项是 `+ 新建空白会话`。
+       ★ `V-254`：**一个都不 disable** —— 老记录（没存对话）也能点开看，
+         点了会自动退回"能看不能接"（见 `pickSession`）。 */
     sessCurrent(){
       this.A.rev;
-      const id = this.A.contId || "";
+      const id = this.A.pickId || "";
       if (!id) return null;
       return (this.A.runs || []).filter(r => r.id === id)[0] || null;
     },
     sessOthers(){
       this.A.rev;
-      const id = this.A.contId || "";
+      const id = this.A.pickId || "";
       return (this.A.runs || []).filter(r => r.id !== id);
     },
     /* ★ `V-253`：日志流里的卡片（照稿子：每一步一张卡 + 第一张是"用户指令"）。
@@ -415,6 +423,7 @@ const MossAi = {
        ② 「清空」把日志清掉（那之前的步骤不再显示，新的照常冒出来）；
        ③ 空着点发送 → 输入框**抖一下**（稿子里的 `error-shake`），不是只弹个提示。 */
     autoGrow(){
+      this.shake = false;        // 稿子：一开始打字就把"抖"那个状态摘掉
       const ta = this.$refs.ta;
       if (!ta) return;
       ta.style.height = "56px";
@@ -457,8 +466,10 @@ const MossAi = {
           所以模板里要用的东西都得是"组件自己的方法 / 计算属性"，或者挂在
           `mountVue(..., {ico: ico})` 那种 `globalProperties` 上（文件末尾那行就是）。 */
     stepIcon(t){
-      return {list_dir: "folder-open", read_file: "file-text", grep: "search",
-              edit_file: "file-code", write_file: "file-plus", run_moss: "play",
+      // 稿子里那几张卡用的就是这几个名字（`list_dir` → `folder-search`、`read_file` → `file-text`、
+      // 写文件 → `file-code`）—— 照它来；其余工具按同一族补。
+      return {list_dir: "folder-search", read_file: "file-text", grep: "search",
+              edit_file: "file-code", write_file: "file-code", run_moss: "play",
               spec: "book-open", done: "check", snap_clean: "moss-camera"}[t] || "code";
     },
     runLine(r){
@@ -491,15 +502,28 @@ const MossAi = {
       aiStart();
     },
     /* ★ `V-252`：顶栏那两个下拉的处理器 —— 「会话」和「模型」都是"下一句话生效"的设置。 */
+    /* ★ `V-254`（修你报的"点了点不动"）：选一条会话 = **打开看它**；能接着聊的顺手接上，
+       老记录（那时候还没存对话）就明说"只能看、接不上"。
+       —— 以前这里所有选项都是 `disabled`（老记录 `cont=false`），整个下拉等于死的。 */
     pickSession(){
-      const id = this.A.contId || "";
+      const id = this.A.pickId || "";
       if (!id){
-        AIR.viewing = ""; AIR.lastId = ""; AIR.sentTask = "";
+        AIR.viewing = ""; AIR.sentTask = ""; AIR.steps = []; AIR.result = null;
+        AIR.contId = ""; AIR.contTask = ""; AIR.lastId = ""; AIR.muted = 0;
+        AIR.rev++;
         toast("新会话：下一条不带之前的对话");
         return;
       }
       const r = (AIR.runs || []).filter(x => x.id === id)[0];
-      if (r) this.contThis(r);
+      if (!r) return;
+      aiOpenRun(id);
+      if (r.cont){
+        AIR.contId = id; AIR.contTask = r.task || "";
+        toast("接着这条聊 —— 在下面写下一句，点发送");
+      } else {
+        AIR.contId = ""; AIR.contTask = "";
+        toast("这条是更早的记录（当时还没存对话）—— 只能看，接不上", true);
+      }
     },
     pickModel(){
       toast("这次用 " + (AIR.model || "?") + " 跑（换模型连带换上下文窗口）");
@@ -598,7 +622,7 @@ const MossAi = {
         AIR.curId = id; AIR.curWhere = where;
         AIR.contId = ""; AIR.contTask = ""; AIR.viewing = "";
         AIR.steps = []; AIR.result = null; AIR.lastId = ""; AIR.lastAdopted = "";
-        AIR.sentTask = ""; AIR.muted = 0;
+        AIR.sentTask = ""; AIR.muted = 0; AIR.pickId = "";
         aiRefreshInfo();
         aiLoadRuns();
       }
@@ -616,7 +640,7 @@ const MossAi = {
         <div class="toolbar-group">
           <div class="custom-select" title="切换历史会话">
             <span v-html='ico("history", "i")'></span>
-            <select class="ai-sess" v-model="A.contId" :disabled="A.running" @change="pickSession()">
+            <select class="ai-sess" v-model="A.pickId" :disabled="A.running" @change="pickSession()">
               <option v-if="sessCurrent" :value="sessCurrent.id"
                       >当前: {{ (sessCurrent.task || "").slice(0, 30) }}</option>
               <option v-for="r in sessOthers" :key="r.id" :value="r.id" :disabled="!r.cont"
@@ -672,7 +696,7 @@ const MossAi = {
 
         <div class="step-card ai-step" v-for="(c, i) in logCards" :key="c.key"
              :class="c.kind === 'user' ? '' : ('k-' + toolKind(c.tool))"
-             :data-tool="c.tool || ''" :style="{animationDelay: (0.06 * (i % 10)) + 's'}">
+             :data-tool="c.tool || ''">
           <div class="step-icon" v-html='ico(c.icon, "i")'></div>
           <div class="step-content">
             <div class="step-header">
@@ -704,35 +728,18 @@ const MossAi = {
         </div>
 
         <p class="ai-empty" v-if="!logCards.length && !A.result">
-          还没有跑过。它会：读契约 → 改文件 → 跑一次证明能跑 → 收工。<br>
-          读文件一次最多 20000 字符（约 400 行）；历史折叠照 DSH 的参数：上下文用到窗口的 80% 才开始把较早的工具结果折成一行，最新的 16% 逐字保留。
+          还没有跑过。它会：读契约 → 改文件 → 跑一次证明能跑 → 收工。
         </p>
 
-        <!-- 会话记录（稿子里没有；顶栏那个下拉只管切换，这块管"看 / 删 / 重跑"） -->
-        <div class="ai-runs" v-if="A.runs.length">
-          <div class="ai-runs-h">
-            <b>会话记录（{{ A.runs.length }}）</b>
-            <span class="sp"></span>
-            <span class="ai-eg" @click="forgetRun('')" title="清空全部任务记录（只是回顾用的记录，不影响包）">清空</span>
-          </div>
-          <div class="ai-run" v-for="r in A.runs" :key="r.id" :class="{on: r.id === A.viewing}">
-            <span class="ai-run-t" :title="r.task">{{ runLine(r) }}</span>
-            <span class="sp"></span>
-            <span class="ai-eg" @click="openRun(r.id)">看</span>
-            <span class="ai-eg on" v-if="r.cont" @click="contThis(r)"
-                  title="接着这条聊：它还记得那条会话里的全部对话，你写下一句就行">接着聊</span>
-            <span class="ai-eg" @click="again(r)">重跑</span>
-            <span class="ai-eg" @click="forgetRun(r.id)" title="删掉这一条记录">删</span>
-          </div>
-        </div>
-
-        <!-- 思考中指示器（永远在最下方） -->
-        <div class="thinking-indicator" :class="{on: A.running}">
-          <div class="pulse-dot"></div> {{ A.running ? "AI 正在思考并执行..." : "" }}
-          <span v-if="A.running" class="ai-ms">· {{ A.seconds }}s · 第 {{ curStep }} 步
-            · 已烧 {{ humanTokens(curTokens) }} / {{ humanTokens(A.maxTokens) }} token
-            <span v-if="curFolded">· 已折叠 {{ curFolded }} 条旧结果</span>
-            <span v-if="A.promptTokens">· 上下文 {{ humanTokens(A.promptTokens) }} / {{ humanTokens(A.compactAt) }}（{{ ctxPct }}%）</span></span>
+        <!-- 思考中指示器（永远在最下方）——照稿子：一个呼吸点 + 一行字。
+             进度（秒/步/token）塞进 title，别往那行字里加东西（稿子就那一句）。 -->
+        <div class="thinking-indicator" :class="{on: A.running}"
+             :title="A.running ? (A.seconds + 's · 第 ' + curStep + ' 步 · 已烧 ' + humanTokens(curTokens) +
+                     ' / ' + humanTokens(A.maxTokens) + ' token' +
+                     (curFolded ? (' · 已折叠 ' + curFolded + ' 条旧结果') : '') +
+                     (A.promptTokens ? (' · 上下文 ' + humanTokens(A.promptTokens) + ' / ' +
+                                        humanTokens(A.compactAt) + '（' + ctxPct + '%）') : '')) : ''">
+          <div class="pulse-dot"></div> AI 正在思考并执行...
         </div>
       </main>
 

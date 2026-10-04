@@ -459,7 +459,7 @@ MOCK_JS = r"""
        reason: "验收通过", started_text: "2026-10-04 00:12:33",
        usage: {prompt_tokens: 30000, completion_tokens: 1400, total_tokens: 31400},
        files: [], summary: ""},
-      {id: "r-old2", task: "帮我补一下 agent.md", steps: 58, ok: false, cont: true, msgs: 44,
+      {id: "r-old2", task: "帮我补一下 agent.md", steps: 58, ok: false, cont: false, msgs: 0,
        workdir: state.home + "\\system\\pkgs\\md5",
        reason: "用户按了停止", started_text: "2026-10-03 23:40:02",
        usage: {prompt_tokens: 90000, completion_tokens: 3000, total_tokens: 93000},
@@ -3771,13 +3771,15 @@ MOCK_JS = r"""
         const card = document.querySelector("#pane-ai .ai-result");
         const shownOld = !!card && /本来就有/.test(card.textContent);
         const adopted = dbg.contId === "r-old";
-        // 会话下拉：选中项就是接着的那条；选项里第一项是「＋ 新会话」
+        // ★ `V-254`：会话下拉 —— 聊天框里**不再有**那个「会话记录」列表（稿子里它在左上角），
+        //   所以历史全靠这个下拉：`当前: …` / `历史: …` / 分隔线 / `+ 新建空白会话`。
         const sessSel = document.querySelector("#pane-ai .ai-sess");
         const sessOpts = sessSel ? [].slice.call(sessSel.options).map(o => o.textContent) : [];
         const chipOk = !!sessSel && sessSel.value === "r-old" &&
-                       /指数和开方/.test(sessOpts.join(" ")) && /新会话/.test(sessOpts[0] || "");
-        const contRows = [].slice.call(document.querySelectorAll("#pane-ai .ai-run"))
-                                .filter(el => /接着聊/.test(el.textContent)).length;
+                       /指数和开方/.test(sessOpts.join(" ")) &&
+                       sessOpts.some(o => /新建空白会话/.test(o));
+        const noList = !document.querySelector("#pane-ai .ai-runs") &&
+                       !document.querySelector("#pane-ai .ai-run");
         // ③ 写下一句 → 点发送：宿主收到的 continue_id 必须是 r-old
         M.aiRun = null;
         const taskEl = document.querySelector("#pane-ai .ai-task");
@@ -3805,30 +3807,38 @@ MOCK_JS = r"""
         const freshCont = (M.aiRun || {}).cont;
         // 那一轮也跑完（跑着的时候"接着聊"那一行是藏着的 —— 那是"下一条"的设置）
         for (let i = 0; i < 20 && (window.__AIR || {}).running; i++) await sleep(300);
-        // ⑤ 在列表里**挑一条**接着聊（不是最新那条）—— 「找不到历史会话」这条路的正解
-        const row2 = [].slice.call(document.querySelectorAll("#pane-ai .ai-run"))
-                            .filter(el => /agent\.md/.test(el.textContent))[0];
-        const pick = row2 ? row2.querySelector(".ai-eg.on") : null;
-        if (pick) pick.click();
-        await sleep(400);
-        const picked = dbg.contId;
-        const pickedOk = picked === "r-old2" && !!sessSel && sessSel.value === "r-old2";
-        const ok = shownOld && stepsTxt.indexOf("run_moss") >= 0 && adopted && chipOk &&
-                   contRows === 2 && sentCont === "r-old" && /--json/.test(sentTask) &&
-                   freshCont === "" && pickedOk && !(window.__errors || []).length;
+        // ⑤ 在下拉里挑**另一条**（这里特意让它是一条"老记录：没存对话"）——
+        //    以前所有选项都是 disabled ⇒ 整个下拉**点不动**（你报的 bug）；
+        //    现在要能打开看，并且明说"接不上"。
+        if (sessSel){
+          sessSel.value = "r-old2";
+          sessSel.dispatchEvent(new Event("change", {bubbles: true}));
+        }
+        await sleep(500);
+        const picked = dbg.pickId;
+        const oldShown = dbg.viewing === "r-old2" &&
+                         /历史记录/.test(((document.querySelector("#pane-ai .ai-result") || {})
+                                          .textContent || ""));
+        const pickedOk = picked === "r-old2" && dbg.contId === "";
+        const ok = shownOld && stepsTxt.indexOf("run_moss") >= 0 && adopted && chipOk && noList &&
+                   sentCont === "r-old" && /--json/.test(sentTask) &&
+                   freshCont === "" && pickedOk && oldShown && !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n进来就看到上次那条 = " + shownOld + "（步骤 " + JSON.stringify(stepsTxt.slice(0, 46)) + "）" +
+          "\n聊天框里没有会话记录列表 = " + noList + "（稿子里它在左上角下拉里）" +
           "\n会话下拉 = " + JSON.stringify(sessOpts.map(x => x.slice(0, 18))) +
           "\n默认接着聊 = " + adopted + "（contId=" + JSON.stringify(dbg.contId) + "）" +
           " · 下拉选中 = " + JSON.stringify(sessSel ? sessSel.value : "") +
-          "\n列表里能接着聊的条数 = " + contRows + "（要 2）" +
           "\n接着聊那次发给宿主 = " + JSON.stringify([sentTask.slice(0, 20), sentCont]) +
-          "\n下拉切「＋ 新会话」之后 = " + JSON.stringify(freshCont) + "（要空）" +
-          "\n在列表里挑第二条接着聊 = " + JSON.stringify([picked, sessSel ? sessSel.value : ""]) +
+          "\n下拉切「＋ 新建空白会话」之后 = " + JSON.stringify(freshCont) + "（要空）" +
+          "\n挑那条老记录 = " + JSON.stringify([picked, dbg.contId]) +
+          "（pickId=r-old2、contId 空 = 能看不能接）· 它真显示出来了 = " + oldShown +
           " · 页内错误 = " + (window.__errors || []).length;
         document.title = ok ? "READY"
           : ("AICONT-FAIL 旧=" + (shownOld ? 1 : 0) + " 默认接=" + (adopted ? 1 : 0) +
-             " 下拉=" + (chipOk ? 1 : 0) + " 行=" + contRows + " 传=" + JSON.stringify(sentCont) +
+             " 下拉=" + (chipOk ? 1 : 0) + " 无列表=" + (noList ? 1 : 0) +
+             " 老记录=" + (pickedOk ? 1 : 0) + "/" + (oldShown ? 1 : 0) +
+             " 传=" + JSON.stringify(sentCont) +
              " 新=" + JSON.stringify(freshCont) + " 挑=" + JSON.stringify(picked) +
              " 下拉值=" + JSON.stringify(sessSel ? sessSel.value : "") +
              " steps=" + JSON.stringify(stepsTxt.slice(0, 30)) +

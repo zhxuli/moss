@@ -1155,6 +1155,16 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
 .aiwrap .btn-primary:hover{background:var(--aib-primary-hover);box-shadow:0 4px 8px rgba(59,130,246,.3)}
 .aiwrap .btn-primary:disabled{background:#94A3B8;cursor:not-allowed;box-shadow:none;transform:none}
 .aiwrap .spin{animation:spin 1s linear infinite}
+/* 图标尺寸照稿子那几处 width/height 定死（我们的 `ico()` 只给 class="i"，默认 16px）：
+   顶栏两个下拉 15px、会话标题 18px、步骤卡 16px、提示/按钮 14px。 */
+.aiwrap .custom-select svg.i{width:15px;height:15px}
+.aiwrap .token-input-group svg.i{width:15px;height:15px}
+.aiwrap .session-title svg.i{width:18px;height:18px}
+.aiwrap .step-icon svg.i{width:16px;height:16px}
+.aiwrap .tips svg.i,.aiwrap .btn svg.i{width:14px;height:14px}
+/* 步骤卡那行动作里，工具名跟前面的中文**一模一样**（稿子里就是一整串蓝字，
+   我们只是把工具名包了个 `b` 给探针用 —— 别让它变成黑体/等宽） */
+.aiwrap .step-action b{font-weight:inherit;color:inherit;font-family:inherit}
 
 .aiwrap .status-footer{
   display:flex;justify-content:space-between;align-items:center;padding:12px 0;
