@@ -7,7 +7,7 @@
 | `highlight.min.js` | 代码高亮引擎（官方 **common** 构建，34 种语言：python / go / json / markdown / yaml / ini / css / xml / javascript …） | 11.9.0 | BSD-3-Clause | 与 `system/pkgs/exec/ui/vendor/` 里那份**同一份**（exec 早就在用） |
 | `powershell.min.js` | 高亮语言包：PowerShell（`.ps1`） | 11.9.0 | BSD-3-Clause | highlight.js 官方语言包 |
 | `dos.min.js` | 高亮语言包：DOS 批处理（`.bat` / `.cmd`）—— common 构建里没有，单独补 | 11.9.0 | BSD-3-Clause | highlight.js 官方语言包 |
-| `lucide.js` | 图标函数：`ico(name)` → 一段 `<svg>`。**图标数据不在这里**了（`V-267`）：一个图标一个文件放在 `system/icon/svg/*.svg`（97 个），运行期由宿主读出来注入 `window.__MOSS_ICONS` | lucide-static 1.48.0 | ISC | `unpkg.com/lucide-static`，见 `lucide-LICENSE.txt` |
+| `lucide.js` | 图标函数：`ico(name)` → 一段 `<svg>`。**图标数据不在这里**了（`V-267`）：一个图标一个文件放在 `system/icon/svg/*.svg`（100 个），运行期由宿主读出来注入 `window.__MOSS_ICONS` | lucide-static 1.48.0 | ISC | `unpkg.com/lucide-static`，见 `lucide-LICENSE.txt` |
 | `vue.global.prod.js` | Vue **3 全局构建**（自带模板编译器，所以 `js/settings.js` 里的 `template:` 字符串能直接用） | 3.x | MIT | 与 `system/pkgs/bmi/ui/vendor/` 里那份**同一份**（`V-67` 界面组件化时拿过来的） |
 
 ## 为什么这么放
