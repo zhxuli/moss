@@ -213,7 +213,11 @@ async function aiPollOnce(){
     const cur = (AIR.turns || [])[AIR.cur];
     if (cur){
       cur.steps = AIR.steps;
-      if (got.result) cur.result = got.result;
+      if (got.result){
+        cur.result = got.result;
+        // ★ `V-259`：这一次到底**接着没有** —— 宿主把话说清楚，界面照实显示在那一轮上
+        cur.note = got.result.continue_note || "";
+      }
     }
     // ★ `V-249`：它干完活了、而且盘上真有文件变了 ⇒ 让「文件管理」那份缓存作废
     //   （你报的"AI 改完文件后「文件管理」页不自动刷新"，就是缺这一下）。
@@ -264,17 +268,34 @@ async function aiStart(){
   //   而且"清空"过的那一段不再显示。
   AIR.sentTask = task;
   AIR.muted = 0;
+  /* ★ `V-259`：**接着哪条** —— 这是"一个会话一直聊"的关键，之前只有 `contId` 一个来源，
+     它一旦被清掉（切包 / 切会话 / 兜底的竞态），下一次发送就**静默**变成新会话（你报的
+     "我每次输入它都当新的指令"）。现在三层兜底：
+       ① `contId`   —— 明确的"接着这条"（刚跑完那条 / 下拉里挑的那条）
+       ② `lastId`   —— **这个包最近跑的那条**（`aiAdoptLast` 从服务端列表认领，切包也认得回来）
+       ③ 都没有 → 新会话
+     ★ 例外：正在**翻历史记录**（`viewing`）时别自动接 —— 那只是"看看"。
+     ★★ 这行**必须在下面那个 push 之前**（它要用来写"接着聊 / 新会话"）——
+        `V-258`/`V-259` 我连着两次插在它前面，`cont` 进 TDZ，一按发送就报
+        `Cannot access 'cont' before initialization`（探针两次都当场抓住）。 */
+  const cont = AIR.contId || (AIR.viewing ? "" : (AIR.lastId || ""));
   // ★ `V-258`：**新起一轮** —— 前面几轮原样留着（这样接着聊时还看得到上文）；
   //   输入框发出去就清空（照稿子的 `handleInput.value = ""`）。
   AIR.turns.push({key: "t" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1), task: task,
-                  at: (AIR.contId ? "接着聊" : "新会话") + " · " +
+                  at: (cont ? "接着聊" : "新会话") + " · " +
                       new Date().toTimeString().slice(0, 8),
-                  steps: [], result: null, folded: false});
+                  steps: [], result: null, folded: false, note: ""});
   AIR.cur = AIR.turns.length - 1;
   AIR.task = "";
   AIR.diskNoted = "";            // `V-249`：新任务 = 允许再通知一次"盘上变了"
   AIR.snapNoted = "";            // `V-250`：新任务 = 允许再通知一次"快照存好了"
-  const cont = AIR.contId || ""; // `V-251`：接着哪条聊（空 = 新开一条）
+  /* ★ `V-259`：**接着哪条** —— 这是"一个会话一直聊"的关键，之前只有 `contId` 一个来源，
+     它一旦被清掉（切包 / 切会话 / 兜底的竞态），下一次发送就**静默**变成新会话（你报的
+     "我每次输入它都当新的指令"）。现在三层兜底：
+       ① `contId`   —— 明确的"接着这条"（刚跑完那条 / 下拉里挑的那条）
+       ② `lastId`   —— **这个包最近跑的那条**（`aiAdoptLast` 从服务端列表认领，切包也认得回来）
+       ③ 都没有 → 新会话
+     ★ 例外：正在**翻历史记录**（`viewing`）时别自动接 —— 那只是"看看"。 */
   try {
     // ★ `V-237` 把 14 提到 24（读一个 395 行的文件就花了 11 步）；`V-238` 再按你的定夺改成
     //   **硬顶 200 + 每 50 步提醒一次**（都在上面那两格里，随手可改）。
@@ -804,6 +825,9 @@ const MossAi = {
                 <span class="step-meta">{{ t.folded ? "已折叠 · 点一下展开" : t.at }}</span>
               </div>
               <span class="code-path">{{ t.task }}</span>
+              <!-- ★ V-259：宿主说清这次是"接着上次"还是"按新会话跑"（含"接不上"的原因） -->
+              <span class="ai-turnnote" v-if="t.note"
+                    :class="{bad: /接不上|新会话/.test(t.note)}">{{ t.note }}</span>
             </div>
           </div>
 

@@ -283,6 +283,15 @@ def main():
         chk("C2 ★ 新记录里写着从哪条接过来的（界面上能看出链条）",
             str((_new or {}).get("continued_from")) == _rid,
             "continued_from=%r（上一轮 %r）" % ((_new or {}).get("continued_from"), _rid))
+        # ★ `V-259`：**"接着没有"要能回到界面**（你报的"每次输入都当新指令"就是因为它不吭声）
+        _res2 = got2.get("result") or {}
+        chk("C2 ★★ 结果里带着「这次接着没有」那句话（界面显示在那一轮上）",
+            "接着上次那条聊" in str(_res2.get("continue_note")) and
+            str(_res2.get("asked_continue")) == _rid,
+            "note=%r asked=%r" % (_res2.get("continue_note"), _res2.get("asked_continue")))
+        chk("C2 新记录的 `asked_continue` 也记着（查盘就能定案）",
+            str((_new or {}).get("asked_continue")) == _rid,
+            "asked_continue=%r" % ((_new or {}).get("asked_continue"),))
         chk("C2 新记录的对话比上一轮长（老的留在里面了）",
             len((_new or {}).get("messages") or []) > (_rows[0].get("msgs") or 0),
             "%d 条" % len((_new or {}).get("messages") or []))

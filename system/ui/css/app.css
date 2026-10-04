@@ -1293,3 +1293,6 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
 .aiwrap .ai-th{cursor:pointer}
 .aiwrap .ai-th:hover{border-color:#CBD5E1;box-shadow:var(--aib-shadow-sm)}
 .aiwrap .ai-th .step-action b{color:var(--aib-primary)}
+/* ★ `V-259`：这一轮"接着上次聊 / 按新会话跑"那行小字（宿主说的，照实显示） */
+.aiwrap .ai-turnnote{font-size:12px;color:var(--aib-success)}
+.aiwrap .ai-turnnote.bad{color:var(--aib-warning)}

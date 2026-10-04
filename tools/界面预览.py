@@ -442,7 +442,14 @@ MOCK_JS = r"""
               max_tokens: 100000000,
               // `V-250`：开工前那条快照 —— 存好了就报（第一条轮询就给，不等跑完）
               snapshot: (M.aiN >= 1 ? (M.aiSnap || null) : null),
+              // ★ `V-259`：宿主会说明"这次接着没有" —— 界面把它显示在那一轮上
+              asked_continue: (M.aiRun && M.aiRun.cont) || "",
               result: running ? null : {ok: true, reason: "验收通过", summary: "给 :md5 加了 --dry-run：只打印不落盘。",
+                // （`V-259`：宿主的这两个字段是**塞在 result 里**回来的，别放顶层）
+                continue_note: (M.aiRun && M.aiRun.cont)
+                  ? "接着上次那条聊（它还记着之前 14 条对话）"
+                  : "新会话（没带之前的对话）",
+                asked_continue: (M.aiRun && M.aiRun.cont) || "",
                 caveats: "没测中文参数那条路。",
                 // 动了哪个文件：**照这次干活的地方算**（真后端也是绝对路径）——
                 // `ai-disk-refresh` 那条场景要靠它才认得出"盘上变了"的是哪一页
@@ -3800,6 +3807,10 @@ MOCK_JS = r"""
         const sentTask = (M.aiRun || {}).task || "";
         // 那一轮跑完（「发送指令」在跑的时候是灰的，不跑完点不动第二下）
         for (let i = 0; i < 20 && (window.__AIR || {}).running; i++) await sleep(300);
+        // ★ `V-259`：这一轮是**接着上次**的 —— 宿主那句话要写在那一轮卡上
+        //   （用户原话"我每次都当新指令、在一个会话里没法一直聊"，根子是"接没接上根本看不出来"）
+        const notesCont = [].slice.call(document.querySelectorAll("#pane-ai .ai-turnnote"))
+                                .map(e => e.textContent.trim());
         // ④ 下拉切回「＋ 新会话」→ 下一次不带老对话
         if (sessSel){
           sessSel.value = "";
@@ -3815,6 +3826,12 @@ MOCK_JS = r"""
         const freshCont = (M.aiRun || {}).cont;
         // 那一轮也跑完（跑着的时候"接着聊"那一行是藏着的 —— 那是"下一条"的设置）
         for (let i = 0; i < 20 && (window.__AIR || {}).running; i++) await sleep(300);
+        // ★ `V-259`：切成"新会话"之后那轮，写的是"没带之前的对话"
+        //   （★ 必须在这里取：下一步"挑老记录"会把轮次整个换掉。）
+        const notesNew = [].slice.call(document.querySelectorAll("#pane-ai .ai-turnnote"))
+                               .map(e => e.textContent.trim());
+        const noteOk = notesCont.some(x => /接着上次那条聊/.test(x)) &&
+                       notesNew.some(x => /新会话/.test(x));
         // ⑤ 在下拉里挑**另一条**（这里特意让它是一条"老记录：没存对话"）——
         //    以前所有选项都是 disabled ⇒ 整个下拉**点不动**（你报的 bug）；
         //    现在要能打开看，并且明说"接不上"。
@@ -3829,13 +3846,15 @@ MOCK_JS = r"""
                                           .textContent || ""));
         const pickedOk = picked === "r-old2" && dbg.contId === "";
         const ok = shownOld && stepsTxt.indexOf("run_moss") >= 0 && adopted && chipOk && noList &&
-                   allPickable && disabledCnt === 0 &&
+                   allPickable && disabledCnt === 0 && noteOk &&
                    sentCont === "r-old" && /--json/.test(sentTask) &&
                    freshCont === "" && pickedOk && oldShown && !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n进来就看到上次那条 = " + shownOld + "（步骤 " + JSON.stringify(stepsTxt.slice(0, 46)) + "）" +
           "\n聊天框里没有会话记录列表 = " + noList + "（稿子里它在左上角下拉里）" +
           "\n下拉里每个选项都能点 = " + allPickable + "（disabled 的 " + disabledCnt + " 个，要 0）" +
+          "\n每轮那句「接着没有」 = " + noteOk + " " +
+            JSON.stringify([notesCont.slice(0, 2), notesNew.slice(0, 2)]) +
           "\n会话下拉 = " + JSON.stringify(sessOpts.map(x => x.slice(0, 18))) +
           "\n默认接着聊 = " + adopted + "（contId=" + JSON.stringify(dbg.contId) + "）" +
           " · 下拉选中 = " + JSON.stringify(sessSel ? sessSel.value : "") +
@@ -3848,11 +3867,14 @@ MOCK_JS = r"""
           : ("AICONT-FAIL 旧=" + (shownOld ? 1 : 0) + " 默认接=" + (adopted ? 1 : 0) +
              " 下拉=" + (chipOk ? 1 : 0) + " 无列表=" + (noList ? 1 : 0) +
              " 老记录=" + (pickedOk ? 1 : 0) + "/" + (oldShown ? 1 : 0) +
+             " noteOk=" + (noteOk ? 1 : 0) + " notes=" +
+             JSON.stringify([notesCont.slice(0, 2), notesNew.slice(0, 2)]).slice(0, 110) +
              " 传=" + JSON.stringify(sentCont) +
              " 新=" + JSON.stringify(freshCont) + " 挑=" + JSON.stringify(picked) +
              " 下拉值=" + JSON.stringify(sessSel ? sessSel.value : "") +
              " steps=" + JSON.stringify(stepsTxt.slice(0, 30)) +
-             " 错=" + (window.__errors || []).length);
+             " 错=" + (window.__errors || []).length +
+             " E=" + JSON.stringify((window.__errors || []).slice(0, 1)).slice(0, 120));
       }
       // ★ 报错这条路本身也要能自证（`V-81`）：故意造一个"计算属性里抛错"的组件（和
       //   `MossList.rows` 读 `DATA.packages` 抛的那个是同一类），看它有没有被

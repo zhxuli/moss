@@ -1885,21 +1885,31 @@ class Api:
             wd = str(workdir or "").strip() or str(e.write_root())
             # ★ `V-251`：要接着哪条聊 —— 把那条记录里的对话取出来（取不到就当新开一条，
             #   但要**如实说一声**，别让用户以为"它还记着"）。
+            # ★ `V-259`：`cont_note` 现在会**跟着结果回到界面**（原来只在 `say` 里飘一下，
+            #   而界面根本不显示 `say` ⇒ "它到底接着没有"用户完全看不出来）。
             hist, cont_from, cont_note = [], "", ""
             cid = str(continue_id or "").strip()
-            if cid:
+            if not cid:
+                cont_note = "新会话（没带之前的对话）"
+            else:
                 try:
+                    ai_dir = str(HERE / "ai")
+                    if ai_dir not in sys.path:                         # noqa: PLC0415
+                        sys.path.insert(0, ai_dir)
                     import ai_runs as _runs                                # noqa: PLC0415
-                    rec = _runs.get(cid) or {}
-                    hist = [m for m in (rec.get("messages") or [])
-                            if isinstance(m, dict) and m.get("role")]
-                    if hist:
-                        cont_from = cid
-                        cont_note = "接着 %s 那条聊（它还记着之前 %d 条对话）" % (cid, len(hist))
+                    rec = _runs.get(cid)
+                    if not rec:
+                        cont_note = "接不上上次那条（没找到那条记录）—— 这次按新会话跑"
                     else:
-                        cont_note = "没找到 %s 那条对话（可能被清了）—— 这次按新会话跑" % cid
+                        hist = [m for m in (rec.get("messages") or [])
+                                if isinstance(m, dict) and m.get("role")]
+                        if hist:
+                            cont_from = cid
+                            cont_note = "接着上次那条聊（它还记着之前 %d 条对话）" % len(hist)
+                        else:
+                            cont_note = "接不上上次那条（那条记录里没存对话）—— 这次按新会话跑"
                 except Exception as exc:                                  # noqa: BLE001
-                    cont_note = "接不上 %s（%s）—— 这次按新会话跑" % (cid, exc)
+                    cont_note = "接不上上次那条（%s）—— 这次按新会话跑" % exc
             bud = self.ai_budget()                       # 预算：界面给就听界面的，否则读存的
             cap = int(max_tokens or bud.get("max_tokens") or 200000)
             # ★ `V-244`：上下文压缩照 DSH 的参数 —— 触发线 = 窗口 × 0.8、逐字保留 = 窗口 × 0.16
@@ -1947,6 +1957,10 @@ class Api:
                     if cont_note:
                         say(cont_note)
                     got = loop.run(task, history=hist, from_id=cont_from)
+                    # ★ `V-259`：这两条**跟着结果回界面**（界面把它显示在「用户指令」卡旁边）——
+                    #   用户一眼就能看出"这次到底接着没有"，不用猜、也不用等出问题再查盘。
+                    got["continue_note"] = cont_note
+                    got["asked_continue"] = cid
                 except Exception as exc:                                  # noqa: BLE001
                     got = {"ok": False, "reason": "%s: %s" % (type(exc).__name__, exc),
                            "steps": [], "usage": {}, "files": []}
@@ -1973,6 +1987,10 @@ class Api:
                         #   「接着聊」靠它，重启 moss 也不会"只能重新再来"。
                         "messages": got.get("messages") or [],
                         "continued_from": got.get("continued_from") or "",
+                        # ★ `V-259`：**界面这次要接的是哪条**（空 = 新会话）—— 排查
+                        #   "怎么每次都当新会话"时，这两个字段一眼就能定案。
+                        "asked_continue": got.get("asked_continue") or "",
+                        "continue_note": got.get("continue_note") or "",
                     })
                     got["run_id"] = saved.get("id")
                 except Exception as exc:                                  # noqa: BLE001
