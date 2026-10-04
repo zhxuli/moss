@@ -929,17 +929,26 @@ def main():
     _a2 = _t.call("done", {"summary": "很长的一段总结" * 5})
     chk("Q ★ `answer` / `done` 的回话**都不回显**正文（回显了步骤行会重复一遍、还撑满）",
         "很长的一段回答" not in _a1 and "很长的一段总结" not in _a2, "%r / %r" % (_a1, _a2))
-    #    ④ 纯问答收工时，那张"先说了一句"的 `(说话)` 卡要标 `mute`（界面不画它 —— 否则同一段话
-    #       在屏幕上出现两遍：`(说话)` 卡一次、下面的「回答」卡再一次）
+    #    ④ 纯问答收工时，**两张卡都不画**（你第二张截图的原话："如果后面回答要显示的话，
+    #       那么中间这个其它 answer 就不需要显示才对"）：`(说话)` 和 `answer` 都标 `mute`，
+    #       正文只在下面那张「回答」卡里出现**一次**。
     _mm = [s for s in q3["steps"] if s.get("tool") == "(说话)"]
     chk("Q ★★ 纯问答收工 ⇒ 那张 `(说话)` 卡被标 `mute`（同一段话不再出现两遍）",
         bool(_mm) and all(s.get("mute") for s in _mm),
         "步骤：%s" % [(s.get("tool"), bool(s.get("mute"))) for s in q3["steps"]])
-    chk("Q ★ 但 `answer` 那一步照旧要显示（该留的留着）",
-        any(s.get("tool") == "answer" and not s.get("mute") for s in q3["steps"]),
+    _ma = [s for s in q3["steps"] if s.get("tool") == "answer"]
+    chk("Q ★★ `answer` 那一步也标 `mute`（正文归下面的「回答」卡，步骤区别重复一遍）",
+        bool(_ma) and all(s.get("mute") for s in _ma),
         "步骤：%s" % [(s.get("tool"), bool(s.get("mute"))) for s in q3["steps"]])
     chk("Q ★ `mute` 只是「不画」，数据一条不少地留在记录里（steps 里那张卡还在）",
-        len(_mm) >= 1, "mute 了 %d 张" % len(_mm))
+        len(_mm) >= 1 and len(_ma) >= 1, "mute 了 %d 张" % (len(_mm) + len(_ma)))
+    #    ⑤ 干活那几轮**不许**跟着变哑巴（它是有信息量的："说了一句没干活" / "收尾"）
+    _work = L.Loop(FakeModel([call("run_moss", {"args": ":zz"}),
+                              call("done", {"summary": "干完了"})]),
+                   workdir=fake_pkg, max_steps=4, say=lambda s: None).run("干点活")
+    chk("Q ★ 干活轮次的步骤卡一张都不许 mute（别把干活那几轮也弄哑了）",
+        bool(_work["steps"]) and not any(s.get("mute") for s in _work["steps"]),
+        "步骤：%s" % [(s.get("tool"), bool(s.get("mute"))) for s in _work["steps"]])
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()

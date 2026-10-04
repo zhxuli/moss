@@ -829,8 +829,12 @@ const MossAi = {
        ★ `V-260`：优先用宿主给的 `disp`（完整的路径 / 完整的 summary，`done` 那种一整段回答
          一个字不截）—— 原来直接拆 `brief`，而 `brief` 是 `brief[:70]` 截过的 JSON，
          `JSON.parse` 必然失败，于是屏幕上就是 `{"summary": "……` 这种原始串（你报的那条）。
-       下面的 JSON 拆法留着当兜底（老记录 / 没有 `disp` 时）。 */
+       下面的 JSON 拆法留着当兜底（老记录 / 没有 `disp` 时）。
+       ★ `V-269` 补：宿主**明确给了空串**（`disp === ""`）就是"这一步没有正文可摆"
+         （`done` / `answer` 的正文归下面那张结论卡）—— 这时**不许再拿 `brief` 去反解**，
+         否则同一段话又会被捞出来贴一遍（你截图里那张 `answer` 卡就是这样）。 */
     stepPath(s){
+      if (s && s.disp === "") return "";
       if (s && s.disp) return String(s.disp);
       const b = String((s && s.brief) || "");
       try{
@@ -993,7 +997,7 @@ const MossAi = {
                   <span class="step-action" :style="{color: c.color}">{{ c.action }} <b>{{ c.tool }}</b></span>
                   <span class="step-meta">{{ c.meta }}</span>
                 </div>
-                <span class="code-path">{{ c.path }}</span>
+                <span class="code-path" v-if="c.path">{{ c.path }}</span>
               </div>
             </div>
 

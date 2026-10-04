@@ -501,12 +501,13 @@ MOCK_JS = r"""
       turns: [{id: "r-chat", task: "你是哪个大模型?", at: "2026-10-04 20:00:25", cont: true,
                steps: [
                  // ★ `V-269` 补：真机那条记录里前面还有一张 `(说话)` 卡（它先说了一句、
-                 //   被催之后才 answer）—— **`mute=true` 的这张界面不画**（否则同一段话
-                 //   在屏幕上出现两遍）。场景要靠"DOM 里只有 1 张步骤卡"证明这条。
+                 //   被催之后才 answer）—— **`mute=true` 的这张界面不画**。
                  {n: 1, tool: "(说话)", brief: "底层是哪个模型我看不到…", note: "没调工具",
                   mute: true, disp: "底层是哪个模型我自己看不到；我是 moss 的写插件助手。"},
+                 // ★ 纯问答那轮**两张卡都不画**：`answer` 的正文就和下面「回答」卡一模一样
+                 //   （你原话："如果后面回答要显示的话，那么中间这个其它 answer 就不需要显示才对"）。
                  {n: 1, tool: "answer", brief: '{"text": "底层是哪个模型…"}',
-                  note: "收到（这次是回答，没动文件）。", ms: 2, disp: ""}],
+                  note: "收到（这次是回答，没动文件）。", ms: 2, mute: true, disp: ""}],
                result: {ok: true, kind: "chat", reason: "问答收工（没动文件，不用跑命令）",
                         summary: "底层是哪个模型我自己看不到；我是 moss 的写插件助手。",
                         caveats: "", files: [],
@@ -523,7 +524,7 @@ MOCK_JS = r"""
                  {n: 2, tool: "read_file", brief: '{"path": "…/run.py"}', note: "共 395 行", ms: 5},
                  {n: 3, tool: "run_moss", brief: '{"args": ":calc 2^10"}', note: "退出码 0", ms: 900},
                  {n: 4, tool: "done", brief: '{"summary": "本来就有"}', note: "收到。", ms: 1,
-                  disp: "本来就有，写法：2^10 / sqrt(16) / 27^(1/3)"}],
+                  disp: ""}],
                result: {ok: true, reason: "验收通过",
                         summary: "本来就有，写法：2^10 / sqrt(16) / 27^(1/3)", caveats: "",
                         files: [], usage: {prompt_tokens: 30000, completion_tokens: 1400,
@@ -3960,23 +3961,48 @@ MOCK_JS = r"""
         const headOk = /回答/.test(head) && !/验收通过/.test(head) && !/没通过/.test(head);
         const noSnap = !document.querySelector("#pane-ai .ai-rsnap");
         const bodyOk = /写插件助手/.test(cardTxt);
+        // ★ `V-269` 补：纯问答那轮**一张步骤卡都不画**（`(说话)` 和 `answer` 都 mute 了）——
+        //   正文只在下那张「回答」卡里出现一次。你那句话："如果后面回答要显示的话，
+        //   那么中间这个其它 answer 就不需要显示才对。"
         const steps = document.querySelectorAll("#pane-ai .ai-step").length;
+        const noStep = steps === 0;
         const foot = ((document.querySelector("#pane-ai .status-footer") || {}).textContent || "");
         const footOk = /上次已回答/.test(foot) && /开工快照: —/.test(foot);
-        const ok = headOk && noSnap && bodyOk && steps === 1 && footOk &&
+        // ② 切到"干活"那条：`done` 那步**不摆正文**（正文在 ✅ 卡里），而 `run_moss` 那步照旧摆命令
+        //    （`disp === ""` = 宿主明确说"这一步没有正文"，界面不许再拿 brief 反解 —— 那会把
+        //     同一段话又捞出来贴一遍，就是这次报的问题）
+        if (sessSel){
+          sessSel.value = "r-old";
+          sessSel.dispatchEvent(new Event("change", {bubbles: true}));
+        }
+        await sleep(600);
+        const cards2 = [].slice.call(document.querySelectorAll("#pane-ai .ai-step"));
+        const bodyOf = el => {
+          const b = el.querySelector(".code-path");
+          return b ? b.textContent.trim() : "";
+        };
+        const doneCard = cards2.filter(el => (el.getAttribute("data-tool") || "") === "done")[0];
+        const runCard = cards2.filter(el => (el.getAttribute("data-tool") || "") === "run_moss")[0];
+        const doneNoBody = !!doneCard && bodyOf(doneCard) === "";
+        const runHasBody = !!runCard && /moss :calc/.test(bodyOf(runCard));
+        const ok = headOk && noSnap && bodyOk && noStep && footOk && doneNoBody && runHasBody &&
                    !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n结论卡抬头 = " + JSON.stringify(head.slice(0, 20)) +
           "（要含「回答」、不许出现「验收通过」）" +
-          "\n回答正文在卡里 = " + bodyOk + " · 步骤数 = " + steps + "（`answer` 一步就收工）" +
+          "\n回答正文在卡里 = " + bodyOk +
+          "\n★ 纯问答那轮画了几张步骤卡 = " + steps + "（要 0 —— 正文只在「回答」卡里出现一次）" +
           "\n没有「开工前已存快照」那一行 = " + noSnap + "（没动文件就没有快照）" +
+          "\n干活那条：`done` 卡不摆正文 = " + doneNoBody +
+          " · `run_moss` 卡照旧摆命令 = " + runHasBody +
           "\n底栏 = " + JSON.stringify(foot.replace(/\s+/g, " ").trim().slice(0, 40)) +
           " · 页内错误 = " + (window.__errors || []).length;
         document.querySelector("#meta").className = "meta";
         document.title = ok ? "READY"
           : ("AICHAT-FAIL 抬头=" + JSON.stringify(head.slice(0, 12)) +
              " 快照块=" + (noSnap ? 0 : 1) + " 正文=" + (bodyOk ? 1 : 0) +
-             " 步骤=" + steps + " 底栏=" + (footOk ? 1 : 0));
+             " 步骤=" + steps + " 底栏=" + (footOk ? 1 : 0) +
+             " done空=" + (doneNoBody ? 1 : 0) + " run有=" + (runHasBody ? 1 : 0));
       }
       if (h === "ai-alt-jump"){
         const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
