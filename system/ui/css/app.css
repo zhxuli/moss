@@ -1191,48 +1191,62 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
   40%,60%{transform:translate3d(4px,0,0)}
 }
 
-/* ---- 稿子里没有、但这一页真有的那几块（颜色仍取自上面那份调色板） ----
+/* ---- 稿子是**静态**的（只有一种状态），这一页是动态的，所以下面这几块必须有 ——
+   但一律**长在稿子这套 UI 里**：几何照 `.step-card`（radius 8 / padding 14 / 1px #E2E8F0 /
+   #F8FAFC），字级照稿子（13px 动作、12px meta、14px 输入），颜色只用上面那份调色板。
+   而且都是**条件渲染**（需要时才出现）：
    ① 警告条（没配 AI / 提示词缺了 / 这个包改不了）
    ② 结论卡（验收过没过 + 它说改了什么 + 开工前快照 + 退回按钮）
-   ③ 会话记录列表（看 / 接着聊 / 重跑 / 删 —— 顶栏那个下拉只管"切换") */
+   ③ 停止按钮（跑着才有；样式同「清空」的 btn-outline） */
 .aiwrap .ai-warn{
-  margin:10px 16px 0;font-size:12.5px;line-height:1.6;color:#92400E;
-  background:#FFFBEB;border:1px solid #FDE68A;border-radius:var(--aib-radius-md);
-  padding:8px 10px;flex:none;
+  margin:10px 16px 0;padding:12px 14px;border-radius:var(--aib-radius-md);
+  background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;
+  font-size:13px;line-height:1.6;flex:none;
 }
+.aiwrap .ai-warn b{font-weight:600}
 .aiwrap .ai-warn code{
-  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11.5px;
+  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;
+  background:#FEF3C7;padding:1px 5px;border-radius:4px;
 }
+/* 结论卡：和 `.step-card` 同一套几何，只在左边加一条状态色 + 标题那一行上色 */
 .aiwrap .ai-result{
-  border:1px solid var(--aib-border-color);border-radius:var(--aib-radius-md);
-  padding:12px 14px;background:var(--aib-code-bg);
-  border-left:3px solid var(--aib-text-light);
+  display:flex;flex-direction:column;gap:6px;padding:14px;
+  border-radius:var(--aib-radius-md);background:var(--aib-code-bg);
+  border:1px solid var(--aib-border-color);border-left:3px solid var(--aib-text-light);
 }
-.aiwrap .ai-result.ok{border-left-color:var(--aib-success);background:#F0FDF4;border-color:#BBF7D0}
-.aiwrap .ai-result.bad{border-left-color:var(--aib-danger);background:#FEF2F2;border-color:#FECACA}
+.aiwrap .ai-result.ok{border-left-color:var(--aib-success)}
+.aiwrap .ai-result.bad{border-left-color:var(--aib-danger)}
 .aiwrap .ai-rhead{font-weight:600;font-size:13px;color:var(--aib-text-main)}
-.aiwrap .ai-rsum{white-space:pre-wrap;font-size:12.5px;line-height:1.7;margin:6px 0 0;color:var(--aib-text-muted)}
-.aiwrap .ai-rcav{font-size:12px;line-height:1.7;color:var(--aib-warning);margin:6px 0 0}
+.aiwrap .ai-result.ok .ai-rhead{color:var(--aib-success)}
+.aiwrap .ai-result.bad .ai-rhead{color:var(--aib-danger)}
+.aiwrap .ai-rsum{white-space:pre-wrap;font-size:13px;line-height:1.6;margin:0;color:var(--aib-text-main)}
+.aiwrap .ai-rcav{font-size:12px;line-height:1.6;color:var(--aib-warning);margin:0}
 .aiwrap .ai-rfiles{
-  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11.5px;
-  color:var(--aib-text-muted);margin-top:6px;word-break:break-all;
+  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;
+  color:var(--aib-text-muted);margin:0;word-break:break-all;
 }
 .aiwrap .ai-rtok{
-  font-size:11.5px;color:var(--aib-text-light);margin-top:6px;
+  font-size:12px;color:var(--aib-text-light);margin:0;
   font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;
 }
 .aiwrap .ai-rsnap{
-  display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;padding-top:8px;
-  border-top:1px dashed var(--aib-border-color);font-size:12px;color:var(--aib-text-muted);
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:2px;padding-top:8px;
+  border-top:1px solid var(--aib-border-color);font-size:12px;color:var(--aib-text-muted);
 }
+/* 快照号用**和底栏那个 `.snapshot-tag` 一模一样**的样子 */
 .aiwrap .ai-rsnap code{
-  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11.5px;
-  background:#E2E8F0;padding:2px 6px;border-radius:4px;
+  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;
+  background:var(--aib-bg-panel);border:1px solid var(--aib-border-color);
+  padding:1px 6px;border-radius:4px;color:var(--aib-text-main);
 }
 .aiwrap .ai-old{
-  font-size:10.5px;background:var(--aib-primary-light);color:var(--aib-primary);
+  font-size:11px;background:var(--aib-primary-light);color:var(--aib-primary);
   border-radius:4px;padding:1px 6px;margin-right:6px;font-weight:500;
 }
+.aiwrap .ai-empty{
+  margin:2px;font-size:13px;line-height:1.6;color:var(--aib-text-light);
+}
+/* 下面这些是给探针/历史版本留的钩子类（当前模板已经不用了，留着不碍事） */
 .aiwrap .ai-runs{
   border:1px solid var(--aib-border-color);border-radius:var(--aib-radius-md);
   background:var(--aib-bg-panel);overflow:auto;max-height:26vh;flex:none;
@@ -1248,7 +1262,7 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
 .aiwrap .ai-run:last-child{border-bottom:none}
 .aiwrap .ai-run.on{background:var(--aib-primary-light)}
 .aiwrap .ai-run-t{
-  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11.5px;
+  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;
   color:var(--aib-text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;
 }
 .aiwrap .ai-eg{
@@ -1257,8 +1271,5 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
 }
 .aiwrap .ai-eg:hover{background:var(--aib-primary-light);color:var(--aib-primary)}
 .aiwrap .ai-run .ai-eg.on{color:var(--aib-primary);background:var(--aib-primary-light);font-weight:500}
-.aiwrap .ai-empty{
-  margin:4px 2px;font-size:12.5px;line-height:1.75;color:var(--aib-text-light);
-}
-.aiwrap .ai-n,.aiwrap .ai-ms{color:var(--aib-text-light);font-size:11px}
+.aiwrap .ai-n,.aiwrap .ai-ms{color:var(--aib-text-light);font-size:12px}
 .aiwrap .ai-log .sp{flex:1}
