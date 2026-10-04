@@ -56,6 +56,16 @@
   **没变化 = 灰**（`df-same`，只在快照边栏；左边那张表不变色）。方向另有记号
   `+/−/↑/↓`，两边共用 `core.js` 的 `bkDiffMark(rel)`；图标一律 `fileIconHTML(e)`（和文件管理同一张）。
   断言在 `backup-diff` 场景里是**数字**（把 `getComputedStyle().color` 转成 hsl 比 hue / 明度），别靠看截图。
+* ★★ **Vue 模板里不能用"全局函数"**（`V-252` 的血）：这个 build **不做 `with(this)` 回退** ——
+  模板里的标识符只能在"组件自己的 data / computed / methods / `globalProperties`"里找。
+  `ico` 明明是 `vendor/lucide.js` 里的全局函数（`typeof window.ico === "function"` 都量得到），
+  模板里照样报 `ico is not a function`。要就两条路：包一层方法（`stepIcon(){ return ico(...) }`），
+  或者 `mountVue(MossAi, "#pane-ai", {ico: ico})`（`js/console.js` 一直这么写）。**加完模板记得跑一遍
+  `ai-pane` 之外的场景** —— 这个错误会污染所有页（`PAGE-ERR`）。
+* **AI 那一页的骨架**（`V-252`，照你给的稿子）：`.ai-bar` 顶栏（会话 / 干活的地方 / 上限 / **模型** / 刷新）
+  → `.ai-log` 唯一滚动区（会话标题 + 一步一步的卡 + 结论卡 + 会话记录）
+  → `.ai-foot` 固定在底部（输入框 + 按钮 + 状态条）。**设置别再往中间的流里塞**。
+  模型是 `ai_info.models` + `ai_start(..., model=…)`（换模型连带换上下文窗口）；日志会跟着滚。
 * 改动它之后跑这两个：`python tools\ai循环探针.py`（loop，假模型）、
   `.\system\runtimes\python\3.12\python.exe tools\ai工作台探针.py`（宿主那半，假模型+假宿主），
   再加 `python tools\界面预览.py ai-pane ai-disk-refresh ai-snap-refresh ai-continue`

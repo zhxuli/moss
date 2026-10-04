@@ -26,6 +26,7 @@ const AIR = Vue.reactive({
   runs: [],                   // `V-243`：跑过的任务（存 user_data/ai/runs/，重启 moss 还在）
   viewing: "",                // 正在看哪条历史记录（空 = 看当前/最近这次）
   maxMillions: 100,            // 界面上那一格是**百万为单位**（100 = 1 亿）
+  model: "",                   // `V-252`：顶栏那个模型下拉选中的（空 = 用配置里第一个）
   diskNoted: "",               // `V-249`：已经通知过"盘上变了"的那一次（免得每轮轮询都刷一遍）
   snapNoted: "",               // `V-250`：已经通知过"快照存好了"的那一条（同上）
   /* ★ `V-251`：**会话**那三件 —— 你原话「怎么还是找不到历史会话记录，一旦重新打开 moss
@@ -67,6 +68,11 @@ async function aiRefreshInfo(force){
       AIR.maxMillions = Math.round((AIR.maxTokens / 1000000) * 1000) / 1000;
       if (AIR.info.context) AIR.context = AIR.info.context;
       if (AIR.info.compact_at) AIR.compactAt = AIR.info.compact_at;
+      // ★ `V-252`：模型那一格的初值 —— 只在"没选过 / 选的那个这家没有了"时才跟着配置走，
+      //   不然你每次刷新都被拨回第一个。
+      const ms = AIR.info.models || [];
+      if (AIR.info.model && (!AIR.model || (ms.length && ms.indexOf(AIR.model) < 0)))
+        AIR.model = AIR.info.model;
     }
     AIR.err = "";
   } catch (e) {
@@ -214,7 +220,7 @@ async function aiStart(){
   try {
     // ★ `V-237` 把 14 提到 24（读一个 395 行的文件就花了 11 步）；`V-238` 再按你的定夺改成
     //   **硬顶 200 + 每 50 步提醒一次**（都在上面那两格里，随手可改）。
-    const got = await window.pywebview.api.ai_start(task, dir, AIR.maxTokens, cont);
+    const got = await window.pywebview.api.ai_start(task, dir, AIR.maxTokens, cont, AIR.model || "");
     if (!got || !got.ok) { toast((got && got.msg) || "起不来。", true); AIR.busy = false; return; }
     AIR.running = true;
     toast((cont ? "接着上次那条聊" : "开了一条新会话") +
@@ -279,6 +285,35 @@ const MossAi = {
     },
     files(){ this.A.rev; return (this.A.result && this.A.result.files) || []; },
     resultOk(){ this.A.rev; return !!(this.A.result && this.A.result.ok); },
+    /* ★ `V-252`（照你给的稿子重做这一页）：顶上那两个下拉要的东西 ——
+       ① 这一家配了哪些模型（`ai_info.models`；只有一条就只显示那一条）；
+       ② 这个包上次那条（「重新跑」按钮填回它的任务原文）。 */
+    models(){
+      this.A.rev;
+      const ms = (this.A.info && this.A.info.models) || [];
+      if (ms.length) return ms;
+      return this.A.model ? [this.A.model] : [];
+    },
+    lastRun(){
+      this.A.rev;
+      return aiLastRunFor(aiWhereDir());
+    },
+    /* 会话那一栏现在长什么样（标题那一行 + 底部状态条都要） */
+    sessionTitle(){
+      this.A.rev;
+      if (this.A.viewing){
+        const r = (this.A.runs || []).filter(x => x.id === this.A.viewing)[0];
+        return (r && r.task) || this.A.contTask || "历史会话";
+      }
+      return (this.A.task || "").trim() || "新会话 —— 在下面写你要它干什么";
+    },
+  },
+  watch: {
+    /* ★ `V-252`：步骤/结论来了就**跟着往下滚**（agent 控制台该有的样子）。
+       ★ 但你自己往上翻看历史的时候不抢：只有"本来就贴着底"才跟。
+       （照稿子里那个"占位符，模拟滚动到底部"的意思做的。） */
+    "A.steps"(){ this.followLog(); },
+    "A.result"(){ this.followLog(); },
   },
   methods: {
     start: aiStart,
@@ -320,14 +355,77 @@ const MossAi = {
       return {read: "读", write: "写", run: "跑", spec: "约", done: "完",
               snap: "照", misc: "提"}[this.toolKind(t)] || "·";
     },
+    /* ★ `V-252`：步骤卡左边那个小图标（`ico()` 的名字）—— 按工具分。
+       ★★ 为什么非要做成方法：这个 Vue build 的模板**不从全局作用域取标识符**
+          （`window.ico` 明明是函数也白搭 —— 实测报的是 `ico is not a function`），
+          所以模板里要用的东西都得是"组件自己的方法 / 计算属性"，或者挂在
+          `mountVue(..., {ico: ico})` 那种 `globalProperties` 上（文件末尾那行就是）。 */
+    stepIcon(t){
+      return {list_dir: "folder-open", read_file: "file-text", grep: "search",
+              edit_file: "file-code", write_file: "file-plus", run_moss: "play",
+              spec: "book-open", done: "check", snap_clean: "moss-camera"}[t] || "code";
+    },
     runLine(r){
       const t = (r.started_text || "").slice(11, 19);
       return (r.ok ? "✅ " : "✗ ") + (r.task || "").slice(0, 42) +
              "　" + (r.steps || 0) + " 步 · " + humanTokens((r.usage || {}).total_tokens || 0) +
              (t ? " · " + t : "");
     },
+    /* ★ `V-252`：跟着往下滚（只有本来就贴着底才跟 —— 你往上翻看东西时别抢）。
+       `force` 用不上时也不用管：贴着底 = 用户在看最新。 */
+    followLog(){
+      this.$nextTick(() => {
+        const el = this.$el && this.$el.querySelector(".ai-log");
+        if (!el) return;
+        const near = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
+        if (near) el.scrollTop = el.scrollHeight;
+      });
+    },
     openRun(id){ aiOpenRun(id); },
     forgetRun(id){ aiForgetRun(id); },
+    /* ★ `V-252`：顶栏那两个下拉的处理器 —— 「会话」和「模型」都是"下一句话生效"的设置。 */
+    sessValue(){ return this.A.contId || ""; },
+    pickSession(){
+      const id = this.A.contId || "";
+      if (!id){ AIR.viewing = ""; AIR.lastId = ""; toast("新会话：下一条不带之前的对话"); return; }
+      const r = (AIR.runs || []).filter(x => x.id === id)[0];
+      if (r) this.contThis(r);
+    },
+    pickModel(){
+      toast("这次用 " + (AIR.model || "?") + " 跑（换模型连带换上下文窗口）");
+    },
+    /* 会话下拉里那一行：✅/✗ + 任务 + 时间。禁用那些没存对话的老记录（接不上）。 */
+    sessLabel(r){
+      const t = (r.started_text || "").slice(5, 16);
+      return (r.ok ? "✅ " : "✗ ") + (r.task || "").slice(0, 30) + (t ? ("　" + t) : "");
+    },
+    /* ★ `V-252`（照稿子）：步骤卡上面那行 —— **人话动作**（工具名由模板里那个 `b` 显示，
+       别在这儿再拼一遍，不然就是"改文件 edit_file edit_file"） */
+    stepTitle(s){
+      const zh = {list_dir: "读目录", read_file: "读文件", grep: "搜内容", edit_file: "改文件",
+                  write_file: "写文件", run_moss: "跑一遍", spec: "查契约", done: "收尾",
+                  snap_clean: "清快照"};
+      const t = (s && s.tool) || "";
+      return zh[t] || "其它";
+    },
+    /* 步骤卡第二行：把 brief 里那个 JSON 拆成人看的**路径**（`{"path": "…\\run.py"}` → `…\run.py`） */
+    stepPath(s){
+      const b = String((s && s.brief) || "");
+      try{
+        const j = JSON.parse(b);
+        if (j && typeof j === "object"){
+          const bits = [];
+          if (j.path) bits.push(String(j.path));
+          if (j.find !== undefined) bits.push("把 " + JSON.stringify(String(j.find)).slice(0, 40) + " 换掉");
+          if (j.args) bits.push("moss " + String(j.args));
+          if (j.section) bits.push("契约：" + String(j.section));
+          if (j.id) bits.push(String(j.id));
+          if (j.summary) bits.push(String(j.summary).slice(0, 80));
+          if (bits.length) return bits.join("　");
+        }
+      }catch(e){ /* 不是 JSON 就原样显示 */ }
+      return b;
+    },
     /* ★ `V-251`：接着这条聊 —— 摆出它的步骤/结论，并且把「下一句」接在它后面 */
     contThis(r){
       AIR.contId = r.id; AIR.contTask = r.task || "";
@@ -381,130 +479,182 @@ const MossAi = {
   },
   template: `
   <div class="aiwrap">
-    <div class="ai-head">
-      <span class="ai-model" :class="{bad: !ready}">模型：{{ model }}</span>
-      <span class="ai-where" v-if="target">干活的地方：{{ shortPath(target) || target }}</span>
+    <!-- ① 顶栏：所有"设置"都收在这里，不再往下滚着找（V-252，照你给的那份稿子）。
+         下拉一律用原生 select（键盘能用、暗色模式自动跟着主题走）。 -->
+    <header class="ai-bar">
+      <label class="ai-sel" :title="A.contId ? ('这条会话是从记录 ' + A.contId + ' 接过来的 —— 在下面写下一句就是接着说') : '新会话（不带之前的对话）。选一条历史会话就是接着它聊。'">
+        <span class="ai-sel-i" v-html='ico("history", "i")'></span>
+        <select class="ai-sess" v-model="A.contId" :disabled="A.running" @change="pickSession()">
+          <option value="">＋ 新会话</option>
+          <option v-for="r in A.runs" :key="r.id" :value="r.id" :disabled="!r.cont">{{ sessLabel(r) }}</option>
+        </select>
+      </label>
+
+      <label class="ai-sel" title="这次在哪儿干活。v1 只允许写 user_data/pkgs 下面；出厂件（system/）和宿主它碰不到。">
+        <span class="ai-sel-i" v-html='ico("folder-tree", "i")'></span>
+        <select v-model="A.where" :disabled="A.running" @change="refresh()">
+          <option value="pkg" :disabled="!pkg">{{ pkg ? ("当前包 :" + pkg.id) : "（左边还没选包）" }}</option>
+          <option value="new">pkgs 根目录（新建包）</option>
+        </select>
+      </label>
+
       <span class="sp"></span>
-      <!-- ★ V-240：预算就**一格**，而且**单位是百万**（token 本来就是这个量级，
-           写 100000000 又长又容易数错；「宽度不够」也是这个原因）。
-           默认 100（= 1 亿）：DeepSeek 闲时 + 缓存命中 99% 时 1 亿也就几块钱，
-           上限设小了纯属给自己添堵 —— 要防的是"失控"，不是"正常干活"。 -->
+
+      <!-- V-240：预算就一格，单位是百万（默认 100 = 1 亿）。到 80% 劝收尾、到顶停手。 -->
       <span class="ai-bud" :title="'token 上限（百万）：默认 100 = 1 亿。烧到 ' + humanTokens(A.warnTokens) + ' 时劝它收尾，到顶就停手。'">
         上限<input type="number" min="0.5" max="20000" step="10" class="ai-bud-n"
                     v-model.number="A.maxMillions" :disabled="A.running" @change="saveBudget()">百万
       </span>
-      <button class="btn" @click="refresh" title="重读模型 / 提示词 / 预算">刷新</button>
-    </div>
+
+      <!-- V-252：这次用哪个模型（这家配了哪些就列哪些）—— 换模型连带换上下文窗口 -->
+      <label class="ai-sel ai-sel-model" :title="'这次用哪个模型。这家配了 ' + models.length + ' 个；换模型连带换上下文窗口（压缩那条线按模型算）。'">
+        <span class="ai-sel-i" v-html='ico("file-sliders", "i")'></span>
+        <select class="ai-model" v-model="A.model" :disabled="A.running || !models.length" @change="pickModel()">
+          <option v-for="m in models" :key="m" :value="m">{{ m }}</option>
+          <option v-if="!models.length" value="">（还没配 AI）</option>
+        </select>
+      </label>
+
+      <button class="btn ai-ref" @click="refresh" title="重读模型 / 提示词 / 预算"
+              v-html='ico("refresh-cw", "i")'></button>
+    </header>
 
     <p class="ai-warn" v-if="A.err">⚠ {{ A.err }}</p>
     <p class="ai-warn" v-else-if="!ready">⚠ {{ (info && info.why) || "还没配好 AI —— 去「设置 → AI」挑一家、把 key 填上（或 moss --ai-profile-set）。" }}</p>
     <p class="ai-warn" v-if="missing.length">⚠ 提示词文件缺了：{{ missing.join("、") }} —— 在 <code>system/ui/ai/prompts/</code> 或 <code>user_data/ai/prompts/</code> 里补上（不补也跑，只是 AI 少了那几条规矩）。</p>
-
-    <div class="ai-target" v-if="pkg || A.where === 'new'">
-      <label>在哪干活：</label>
-      <select v-model="A.where" @change="refresh()">
-        <option value="pkg" :disabled="!pkg">{{ pkg ? ("当前包 :" + pkg.id) : "（左边还没选包）" }}</option>
-        <option value="new">新建包（user_data/pkgs）</option>
-      </select>
-      <span class="hint">v1 只允许写 <code>user_data/pkgs/**</code>；出厂件和宿主它碰不到。</span>
-    </div>
     <p class="ai-warn" v-if="target && !canWrite && A.where === 'pkg'">
-      ⚠ 这个包在 <code>system/</code> 下面 —— **它改不了**（v1 只许写 <code>user_data/pkgs/**</code>）。
-      想让 AI 真动手：用「新建包」，或者选一个装在 <code>user_data/pkgs</code> 里的包。
+      ⚠ 这个包在 <code>system/</code> 下面 —— <b>它改不了</b>（v1 只许写 <code>user_data/pkgs/**</code>）。
+      想让 AI 真动手：把上面「在哪干活」换成 pkgs 根目录，或者选一个装在 <code>user_data/pkgs</code> 里的包。
     </p>
-    <p class="ai-warn" v-else>左边先选一个包（或者选「新建包」）。</p>
 
-    <textarea class="ai-task" v-model="A.task" spellcheck="false" :disabled="A.running"
-      @keydown="onKey"
-      placeholder="要它干什么？例如：给这个包加一个 --dry-run 参数，只打印不落盘。&#10;（它会自己读契约、改文件、跑一遍证明能跑，最后把改动和验收结果给你）&#10;Ctrl+Enter 开始，Enter 换行"></textarea>
-    <!-- 空着的时候给几个例子（点一下填进去）—— 比一句干巴巴的占位话好用 -->
-    <div class="ai-egs" v-if="!A.task && !A.running">
-      <span>试试：</span>
-      <span class="ai-eg" v-for="t in ['给这个包加一个 --dry-run 参数',
-                                       '把这个包的错误提示改成中文人话',
-                                       '看看这个包怎么用，总结成 5 行']"
-            :key="t" @click="useExample(t)">{{ t }}</span>
-    </div>
-
-    <!-- ★ V-251：这次是**接着哪条聊** —— 一个包一条会话，进来就默认接上。
-         想重开点右边的「新开」；不带老对话跑。 -->
-    <div class="ai-cont" v-if="!A.running && A.contId">
-      <span class="ai-cont-t" :title="'这条会话是从记录 ' + A.contId + ' 接过来的'">
-        <b>接着聊</b>：{{ (A.contTask || "").slice(0, 34) || A.contId }}</span>
-      <span class="sp"></span>
-      <span class="ai-eg" @click="newChat()" title="下一条按新会话跑（不带之前那些对话）">新开一条</span>
-    </div>
-    <div class="ai-cont off" v-else-if="!A.running && A.lastId">
-      <span class="ai-cont-t">新会话（这个包上次跑过的那条还在「最近跑过」里，点它的「接着聊」就接上）</span>
-    </div>
-
-    <div class="ai-actions">
-      <button class="btn primary" :disabled="A.running || A.busy || !ready" @click="start">开始</button>
-      <button class="btn" :disabled="!A.running" @click="stop">停止</button>
-      <span class="hint" v-if="A.running">{{ phaseText }} · {{ A.seconds }}s · 第 {{ curStep }} 步
-        · 已烧 <b>{{ humanTokens(curTokens) }}</b> / {{ humanTokens(A.maxTokens) }} token
-        <span v-if="curFolded" class="ai-folded"
-              title="历史里较早的工具结果被折成一行（本地整理，不花模型调用）。DSH 的参数：上下文用到窗口的 80% 才开始压、最新的 16% 逐字保留。"
-              >· 已折叠 {{ curFolded }} 条旧结果</span>
-        <span v-if="A.promptTokens" class="ai-ctx"
-              :title="'现在发出去的上下文 = ' + A.promptTokens + ' token；到 ' + A.compactAt + '（窗口 ' + A.context + ' 的 80%）才开始折叠旧结果'"
-              >· 上下文 {{ humanTokens(A.promptTokens) }} / {{ humanTokens(A.compactAt) }}（{{ ctxPct }}%）</span></span>
-      <span class="hint" v-else-if="A.result">上一次：{{ resultOk ? "✅ 验收通过" : "✗ 没通过" }}</span>
-    </div>
-
-    <div class="ai-steps" v-if="A.steps.length">
-      <div class="ai-step" v-for="(s, i) in A.steps" :key="i" :class="'k-' + toolKind(s.tool)">
-        <span class="ai-n">{{ s.n }}</span>
-        <span class="ai-ico">{{ toolIcon(s.tool) }}</span>
-        <b>{{ s.tool }}</b>
-        <span class="ai-brief">{{ s.brief }}</span>
-        <span class="ai-ms" v-if="s.ms >= 500">{{ (s.ms / 1000).toFixed(1) }}s</span>
-        <span class="ai-note" v-if="s.note">{{ s.note }}</span>
-      </div>
-    </div>
-    <p class="hint" v-else-if="!A.running">还没有跑过。它会：读契约 → 改文件 → 跑一次证明能跑 → 收工。<br>
-      ★ 读文件：**一次最多 20000 字符（约 400 行）**，整个源文件一次读完就行（同一个文件读到第三回，它会把整篇给出来）。<br>
-      ★ 历史折叠（**照 DSH 的参数**）：上下文用到**窗口的 80%** 才开始把较早的工具结果折成一行，
-        最新的 **16%** 逐字保留；不到这条线一条都不折。折早了它看不见早先读过的内容，反而会重读。</p>
-
-    <!-- V-243：跑过的任务 —— 存盘的，重启 moss 还在。点「看」翻出来，点「再跑」填回输入框 -->
-    <div class="ai-runs" v-if="A.runs.length">
-      <div class="ai-runs-h">
-        <b>最近跑过（{{ A.runs.length }}）</b>
+    <!-- ② 对话流（只有这一块滚动） -->
+    <main class="ai-log">
+      <div class="ai-sess">
+        <span class="ai-sess-i" v-html='ico("terminal", "i")'></span>
+        <b>{{ sessionTitle }}</b>
+        <span class="ai-old" v-if="A.viewing">历史会话</span>
         <span class="sp"></span>
-        <span class="ai-eg" @click="forgetRun('')" title="清空全部任务记录（只是回顾用的记录，不影响包）">清空</span>
+        <span class="ai-where" v-if="target">{{ shortPath(target) || target }}</span>
       </div>
-      <div class="ai-run" v-for="r in A.runs" :key="r.id" :class="{on: r.id === A.viewing}">
-        <span class="ai-run-t" :title="r.task">{{ runLine(r) }}</span>
-        <span class="sp"></span>
-        <span class="ai-eg" @click="openRun(r.id)">看</span>
-        <span class="ai-eg on" v-if="r.cont" @click="contThis(r)"
-              title="接着这条聊：它还记得那条会话里的全部对话，你写下一句就行">接着聊</span>
-        <span class="ai-eg" @click="again(r)">再跑</span>
-        <span class="ai-eg" @click="forgetRun(r.id)" title="删掉这一条记录">删</span>
-      </div>
-    </div>
 
-    <div class="ai-result" v-if="A.result" :class="{ok: resultOk, bad: !resultOk}">
-      <div class="ai-rhead"><span v-if="A.viewing" class="ai-old">历史记录</span>{{ resultOk ? "✅ 验收通过" : "✗ 没通过" }}<span
-        v-if="A.result.reason && A.result.reason !== '验收通过'"> —— {{ A.result.reason }}</span></div>
-      <!-- ★ V-236：开工前那条快照存了没、能不能一键回去。
-           快照在「文件管理 → 快照」里带「AI」徽章（by=ai），跟你自己存的能分开。
-           （★ 这条注释里不许有反引号 —— 模板字符串会被它截断，契约 §8 第 9 条。） -->
-      <div class="ai-rsnap" v-if="A.result.snapshot">
-        <span>开工前已存快照 <code>{{ A.result.snapshot.id }}</code>（AI 存的，列表里带「AI」徽章）</span>
-        <button class="btn" @click="rollback()" title="回到这次动手之前（只写回：缺的补上、变了的回退）">回退到开工前</button>
+      <div class="ai-steps" v-if="A.steps.length">
+        <div class="ai-step" v-for="(s, i) in A.steps" :key="i" :class="'k-' + toolKind(s.tool)">
+          <div class="ai-step-i" v-html='ico(stepIcon(s.tool), "i")'></div>
+          <div class="ai-step-b">
+            <div class="ai-step-h">
+              <span class="ai-step-t">{{ stepTitle(s) }}</span>
+              <b>{{ s.tool }}</b>
+              <span class="sp"></span>
+              <span class="ai-n">{{ s.n }}</span>
+              <span class="ai-ms" v-if="s.ms >= 500">{{ (s.ms / 1000).toFixed(1) }}s</span>
+            </div>
+            <div class="ai-step-p">{{ stepPath(s) }}</div>
+            <div class="ai-step-n" v-if="s.note">{{ s.note }}</div>
+          </div>
+        </div>
       </div>
-      <p v-if="A.result.summary" class="ai-rsum">{{ A.result.summary }}</p>
-      <p v-if="A.result.caveats" class="ai-rcav">它自己标的不确定：{{ A.result.caveats }}</p>
-      <div v-if="files.length" class="ai-rfiles">动过的文件：<span v-for="f in files" :key="f">{{ shortPath(f) }}　</span></div>
-      <div class="ai-rtok" v-if="usage">
-        token：输入 {{ usage.prompt_tokens }} / 输出 {{ usage.completion_tokens }} / 合计 {{ usage.total_tokens }}
-        （上限 {{ humanTokens(A.maxTokens) }}）
-        <span v-if="A.result.folded">· 折叠了 {{ A.result.folded }} 条旧结果</span>
+      <p class="ai-empty" v-else-if="!A.running">还没有跑过。它会：读契约 → 改文件 → 跑一次证明能跑 → 收工。<br>
+        读文件一次最多 20000 字符（约 400 行）；历史折叠照 DSH 的参数：上下文用到窗口的 80% 才开始把较早的工具结果折成一行，最新的 16% 逐字保留。</p>
+
+      <div class="ai-result" v-if="A.result" :class="{ok: resultOk, bad: !resultOk}">
+        <div class="ai-rhead"><span v-if="A.viewing" class="ai-old">历史记录</span>{{ resultOk ? "✅ 验收通过" : "✗ 没通过" }}<span
+          v-if="A.result.reason && A.result.reason !== '验收通过'"> —— {{ A.result.reason }}</span></div>
+        <!-- V-236：开工前那条快照存了没、能不能一键回去。
+             快照在「文件管理 → 快照」里带「AI」徽章（by=ai），跟你自己存的能分开。
+             （★ 这条注释里不许有反引号 —— 模板字符串会被它截断，契约 §8 第 9 条。） -->
+        <div class="ai-rsnap" v-if="A.result.snapshot">
+          <span>开工前已存快照 <code>{{ A.result.snapshot.id }}</code>（AI 存的，列表里带「AI」徽章）</span>
+          <button class="btn" @click="rollback()" title="回到这次动手之前（只写回：缺的补上、变了的回退）">回退到开工前</button>
+        </div>
+        <p v-if="A.result.summary" class="ai-rsum">{{ A.result.summary }}</p>
+        <p v-if="A.result.caveats" class="ai-rcav">它自己标的不确定：{{ A.result.caveats }}</p>
+        <div v-if="files.length" class="ai-rfiles">动过的文件：<span v-for="f in files" :key="f">{{ shortPath(f) }}　</span></div>
+        <div class="ai-rtok" v-if="usage">
+          token：输入 {{ usage.prompt_tokens }} / 输出 {{ usage.completion_tokens }} / 合计 {{ usage.total_tokens }}
+          （上限 {{ humanTokens(A.maxTokens) }}）
+          <span v-if="A.result.folded">· 折叠了 {{ A.result.folded }} 条旧结果</span>
+        </div>
       </div>
-    </div>
+
+      <!-- V-243/V-251：跑过的那些会话 —— 存盘的，重启 moss 还在。
+           顶栏那个下拉是"接着聊"，这里管"看 / 删 / 重跑"。 -->
+      <div class="ai-runs" v-if="A.runs.length">
+        <div class="ai-runs-h">
+          <b>会话记录（{{ A.runs.length }}）</b>
+          <span class="sp"></span>
+          <span class="ai-eg" @click="forgetRun('')" title="清空全部任务记录（只是回顾用的记录，不影响包）">清空</span>
+        </div>
+        <div class="ai-run" v-for="r in A.runs" :key="r.id" :class="{on: r.id === A.viewing}">
+          <span class="ai-run-t" :title="r.task">{{ runLine(r) }}</span>
+          <span class="sp"></span>
+          <span class="ai-eg" @click="openRun(r.id)">看</span>
+          <span class="ai-eg on" v-if="r.cont" @click="contThis(r)"
+                title="接着这条聊：它还记得那条会话里的全部对话，你写下一句就行">接着聊</span>
+          <span class="ai-eg" @click="again(r)">重跑</span>
+          <span class="ai-eg" @click="forgetRun(r.id)" title="删掉这一条记录">删</span>
+        </div>
+      </div>
+    </main>
+
+    <!-- ③ 底部固定：输入框 + 按钮 + 状态条（照稿子：输入永远在下面，不用往上滚） -->
+    <footer class="ai-foot">
+      <div class="ai-box">
+        <textarea class="ai-task" v-model="A.task" spellcheck="false" :disabled="A.running"
+          @keydown="onKey"
+          placeholder="要它干什么？例如：给这个包加一个 --dry-run 参数，只打印不落盘。&#10;（它会自己读契约、改文件、跑一遍证明能跑，最后把改动和验收结果给你）&#10;Ctrl+Enter 发送，Enter 换行"></textarea>
+        <div class="ai-box-bar">
+          <span class="ai-tip" v-if="A.task || A.running">Ctrl+Enter 发送 · Enter 换行</span>
+          <div class="ai-egs" v-else>
+            <span>试试：</span>
+            <span class="ai-eg" v-for="t in ['给这个包加一个 --dry-run 参数',
+                                             '把这个包的错误提示改成中文人话',
+                                             '看看这个包怎么用，总结成 5 行']"
+                  :key="t" @click="useExample(t)">{{ t }}</span>
+          </div>
+          <span class="sp"></span>
+          <div class="ai-actions">
+            <button class="btn" v-if="lastRun" @click="again(lastRun)"
+                    title="把上次那条的任务填回输入框（按新会话跑）"
+                    v-html='ico("undo-2", "i") + " 重新跑"'></button>
+            <button class="btn" v-if="A.running" @click="stop"
+                    v-html='ico("square", "i") + " 停止"'></button>
+            <button class="btn primary" :disabled="A.running || A.busy || !ready"
+                    @click="start">发送指令</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="ai-status">
+        <span class="ai-st" v-if="A.running">{{ phaseText }} · {{ A.seconds }}s · 第 {{ curStep }} 步
+          · 已烧 <b>{{ humanTokens(curTokens) }}</b> / {{ humanTokens(A.maxTokens) }} token
+          <span v-if="curFolded" class="ai-folded"
+                title="历史里较早的工具结果被折成一行（本地整理，不花模型调用）。DSH 的参数：上下文用到窗口的 80% 才开始压、最新的 16% 逐字保留。"
+                >· 已折叠 {{ curFolded }} 条旧结果</span>
+          <span v-if="A.promptTokens" class="ai-ctx"
+                :title="'现在发出去的上下文 = ' + A.promptTokens + ' token；到 ' + A.compactAt + '（窗口 ' + A.context + ' 的 80%）才开始折叠旧结果'"
+                >· 上下文 {{ humanTokens(A.promptTokens) }} / {{ humanTokens(A.compactAt) }}（{{ ctxPct }}%）</span></span>
+        <span class="ai-st" v-else-if="A.result" :class="{bad: !resultOk}"
+              >上一次：{{ resultOk ? "✅ 验收通过" : "✗ 没通过" }}
+          <span v-if="A.result.reason && A.result.reason !== '验收通过'"> —— {{ A.result.reason }}</span></span>
+        <span class="ai-st dim" v-else>还没跑过</span>
+        <span class="ai-st-snap" v-if="A.result && A.result.snapshot"
+              title="AI 动手前自动存的那条（在「文件管理 → 快照」里带 AI 徽章）"
+              >开工前已存快照 <code>{{ A.result.snapshot.id }}</code></span>
+        <span class="sp"></span>
+        <span class="ai-st-tok" v-if="usage"
+              >Token 统计：输入 {{ usage.prompt_tokens }} / 输出 {{ usage.completion_tokens }} / 合计 {{ usage.total_tokens }}</span>
+        <span class="ai-st-tok dim" v-else>Token 统计：—</span>
+      </div>
+    </footer>
   </div>`,
 };
 
-mountVue(MossAi, "#pane-ai");
+/* ★★ `V-252`：第三个参数**不能省** —— 这一页的模板里用了 `ico(...)`（会话 / 模型 /
+   步骤卡那些小图标），而这个 Vue build 编译模板时**不做 `with(this)` 回退**：模板里
+   的标识符只能在"组件实例 / 计算属性 / 方法 / `globalProperties`"里找。`ico` 虽然在
+   `vendor/lucide.js` 里是个全局函数（`window.ico` 查得到），模板里照样报
+   `ico is not a function` —— 实测踩到，查了半天。别的页要这么干：
+   `js/console.js` 也是 `mountVue(MossConsole, "#pane-console", {ico: ico})`。 */
+mountVue(MossAi, "#pane-ai", {ico: ico});
+
+

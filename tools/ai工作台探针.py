@@ -63,7 +63,9 @@ class FakeClient:
         #: ★ `V-251`：把每次发出去的 messages 也留一份（验"接着聊"时老对话有没有真的发出去）
         self.msgs = []
         FakeClient.INSTANCES.append(self)
-        self.model = "fake-model"
+        # ★ `V-252`：第三个参数是**模型名**（宿主 `Client(base_url, key, model)`）——
+        #   以前这里写死 "fake-model"，于是"顶栏选了别的模型"这条根本验不出来。
+        self.model = args[2] if len(args) > 2 else (kw.get("model") or "fake-model")
         self.base_url = args[0] if args else kw.get("base_url", "")
         self.api_key = args[1] if len(args) > 1 else kw.get("api_key", "")
 
@@ -146,6 +148,15 @@ def main():
         info.get("model") == "fake-model" and info.get("key_from") == "宿主",
         "model=%r 来源=%r" % (info.get("model"), info.get("key_from")))
     chk("A key 也拿到了（能真发请求）", info.get("has_key") is True, "")
+    # ★ `V-252`：顶栏那个模型下拉要的"这家配了哪些模型"
+    chk("A ★ 这一家配的模型列表给到了（顶栏下拉用它）",
+        (info.get("models") or [])[:2] == ["fake-model", "fake-model-2"],
+        json.dumps(info.get("models"), ensure_ascii=False))
+    # ★ `V-252`：界面上那一行"上下文 xx / yy"以前**永远是默认值** —— 因为
+    #   `ai_info` 里算它的那段用了一个还没赋值的局部变量，`except: pass` 把它吞了。
+    chk("A ★★ 上下文窗口 / 压缩线也带上了（以前被一个未赋值的变量吞掉过）",
+        (info.get("compact_at") or 0) > 0 and (info.get("context") or 0) > 0,
+        "context=%r compact_at=%r" % (info.get("context"), info.get("compact_at")))
     chk("A base_url 取到了", info.get("base_url") == "https://fake.example/v1", str(info.get("base_url")))
     chk("A 提示词读到了（system/edit 都在）",
         "system.md" in (info.get("prompts") or []) and "edit.md" in (info.get("prompts") or []),
@@ -282,6 +293,24 @@ def main():
     _say = " ".join((api.ai_poll().get("say") or []))
     chk("C2 ★ 接不上就说清楚（**点名没找到**，然后按新会话跑），别让人以为它还记着",
         "没找到" in _say and "新会话" in _say, _say[-160:])
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        if not (api.ai_poll() or {}).get("running"):
+            break
+        time.sleep(0.3)
+
+    # ★ `V-252`：顶栏那个模型下拉 —— 选哪个就用哪个（连带换上下文窗口）
+    SCRIPT[:] = [call("run_moss", {"args": ":zz"}), call("done", {"summary": "换模型跑的"})]
+    _n_before = len(FakeClient.INSTANCES)
+    started3 = api.ai_start("换个模型跑一遍", str(pkgs), 100000000, "", "fake-model-2")
+    chk("C2 指定模型的这次起来了", started3.get("ok") is True,
+        json.dumps(started3, ensure_ascii=False)[:90])
+    chk("C2 ★ 宿主用的就是**下拉里选的那个**模型（不是配置里第一个）",
+        started3.get("model") == "fake-model-2", "model=%r" % started3.get("model"))
+    _inst3 = FakeClient.INSTANCES[-1] if len(FakeClient.INSTANCES) > _n_before else None
+    chk("C2 ★ 真发给网关的也是它（Client 是用这个模型建的）",
+        bool(_inst3) and getattr(_inst3, "model", "") == "fake-model-2",
+        "client.model=%r" % getattr(_inst3, "model", None))
     deadline = time.time() + 30
     while time.time() < deadline:
         if not (api.ai_poll() or {}).get("running"):

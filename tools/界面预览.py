@@ -389,6 +389,8 @@ MOCK_JS = r"""
       //   明明选的是 `user_data/pkgs` 里的包，那一页却显示"⚠ 这个包改不了"（假数据在骗人）。
       write_root: state.home + "\\user_data\\pkgs", workdir: workdir || "",
       model: "deepseek-flash", base_url: "https://api.deepseek.com/v1", has_key: true,
+      // `V-252`：这家配了哪些模型（顶栏那个下拉用它）—— 真宿主回的是配置里那一串
+      models: ["deepseek-flash", "deepseek-reasoner", "deepseek-chat"],
       prompts: ["system.md", "edit.md", "new_pkg.md"], missing_prompts: [],
       prompt_bytes: 4096, steps: 0,
       // `V-240`：预算（界面上那一格，单位是百万 ⇒ 100 = 1 亿）
@@ -399,8 +401,9 @@ MOCK_JS = r"""
       if (!(maxTokens >= 5000)) return {ok: false, msg: "太小了（最小 5000）"};
       return {ok: true, max_tokens: maxTokens, warn: Math.round(maxTokens * 0.8)};
     },
-    ai_start: async (task, workdir, steps, contId) => {
-      M.aiRun = {task: task, workdir: workdir, maxSteps: steps, cont: contId || ""};
+    ai_start: async (task, workdir, steps, contId, model) => {
+      M.aiRun = {task: task, workdir: workdir, maxSteps: steps, cont: contId || "",
+                 model: model || ""};
       M.aiN = 0;
       // ★ `V-250`：真宿主**动手之前**就给这个包存一条快照（`ai_snap.snapshot_before`，
       //   `by="ai"` + `by_task`），然后**马上**通知界面刷新「版本快照」那一列。
@@ -3515,6 +3518,21 @@ MOCK_JS = r"""
           await sleep(300);
         }
         const budSaved = String(M.bud);
+        // ★ `V-252`（照你给的稿子重排之后）：顶上那两个下拉 ——
+        //   「会话」列出跑过的记录 + 新会话；「模型」列出这家配的模型（并真的传给宿主）。
+        const sessSel = document.querySelector("#pane-ai .ai-sess");
+        const mdlSel = document.querySelector("#pane-ai .ai-model");
+        const sessOpts = sessSel ? [].slice.call(sessSel.options).map(o => o.textContent) : [];
+        const mdlOpts = mdlSel ? [].slice.call(mdlSel.options).map(o => o.value) : [];
+        const topBar = !!document.querySelector("#pane-ai .ai-bar");
+        const foot = !!document.querySelector("#pane-ai .ai-foot .ai-box .ai-task");
+        M.aiRun = null;
+        let mdlSent = "";
+        if (mdlSel && mdlOpts.length > 2){
+          mdlSel.value = mdlOpts[2];
+          mdlSel.dispatchEvent(new Event("change", {bubbles: true}));
+          await sleep(80);
+        }
         const btn = document.querySelector("#pane-ai .ai-actions .btn.primary");
         const btnOk = !!(btn && !btn.disabled);
         // 交个任务：照着"真人怎么点"来（填字 → 点开始）
@@ -3555,11 +3573,24 @@ MOCK_JS = r"""
         const snapOk = !!snapEl && /20261003-2130-ab12/.test(snapTxt) && /回退到开工前/.test(snapTxt);
         const noErr = !(window.__errors || []).length;
         const dbg = window.__AIR || {};
+        // ★ `V-252`：顶栏 / 底部那两块（照稿子重排的骨架）得真的在，而且
+        //   ① 会话下拉里列着跑过的记录（头一项是「＋ 新会话」）；
+        //   ② 模型下拉列出这家配的模型，**选了就传给宿主**（`M.aiRun.model`）。
+        mdlSent = started ? String(started.model || "") : "";
+        const sessOk = !!sessSel && sessOpts.length >= 2 && /新会话/.test(sessOpts[0]);
+        const mdlOk = !!mdlSel && mdlOpts.length === 3 && mdlOpts.indexOf("deepseek-flash") >= 0 &&
+                      mdlSent === mdlOpts[2];
+        const frameOk = topBar && foot;
+        // ★ `V-252`：跑完那一下日志要**跟着滚到底**（agent 控制台该有的样子）——
+        //   内容比窗口矮就当它本来就到底了，不算失败。
+        const logEl = document.querySelector("#pane-ai .ai-log");
+        const followOk = !!logEl && (logEl.scrollHeight <= logEl.clientHeight + 4 ||
+                                     logEl.scrollTop > 0);
         const ok = tabShown && paneOn && /deepseek-flash/.test(head) && btnOk &&
                    budVals.length === 1 && budVals[0] === "100" && /百万/.test(budUnit) &&
                    budSaved === "250000000" &&
                    !!started && /dry-run/.test(startArgs) && stepsOk && resOk && filesOk && tokOk &&
-                   snapOk && noErr;
+                   snapOk && frameOk && sessOk && mdlOk && followOk && noErr;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") +
           "\n「AI」选项卡在 = " + tabShown + "、这一页显示出来了 = " + paneOn +
@@ -3568,6 +3599,10 @@ MOCK_JS = r"""
             " info=" + JSON.stringify(dbg.info ? {ok: dbg.info.ok, model: dbg.info.model,
                                                   key: dbg.info.has_key} : null) +
             " err=" + (dbg.err || "") +
+          "\n顶栏 + 底部输入区 = " + frameOk + "（会话 / 干活的地方 / 上限 / 模型 / 刷新）" +
+          " · 日志跟到底 = " + followOk + "（滚了 " + (logEl ? Math.round(logEl.scrollTop) : -1) + "px）" +
+          "\n会话下拉 = " + JSON.stringify(sessOpts) +
+          "\n模型下拉 = " + JSON.stringify(mdlOpts) + " 选中的传给宿主 = " + JSON.stringify(mdlSent) +
           "\n交任务时传的 = " + startArgs +
           "\n步骤流渲染出 " + rows.length + " 行：" + JSON.stringify(tools) +
           "\n结果卡：验收通过 = " + resOk + "、列出了改过的文件 = " + filesOk + "、token 合计 = " + tokOk +
@@ -3577,6 +3612,9 @@ MOCK_JS = r"""
           "\n页内错误 = " + (window.__errors || []).length;
         document.title = ok ? "READY"
                             : ("AIPANE-FAIL 预算=" + JSON.stringify(budVals) + "→" + budSaved + " 快照=" + (snapOk ? 1 : 0) + " 页=" + (paneOn ? 1 : 0) + " 模型=" + (/deepseek/.test(head) ? 1 : 0) +
+                               " 骨架=" + (frameOk ? 1 : 0) + " 跟到底=" + (followOk ? 1 : 0) +
+                               " 会话=" + JSON.stringify(sessOpts).slice(0, 40) +
+                               " 模型选=" + JSON.stringify(mdlSent) +
                                " 按钮=" + (btnOk ? 1 : 0) + " 步骤=" + (stepsOk ? 1 : 0) +
                                " 结果=" + (resOk ? 1 : 0) + " 文件=" + (filesOk ? 1 : 0) +
                                " token=" + (tokOk ? 1 : 0) + " 错=" + (window.__errors || []).length +
@@ -3706,11 +3744,12 @@ MOCK_JS = r"""
              " 悬停=" + JSON.stringify(badgeTip.slice(0, 24)) +
              " 错=" + (window.__errors || []).length);
       }
-      // ★ `V-251`：**历史会话要能找回来、能接着聊** —— 你原话「怎么还是找不到历史会话记录，
-      //   一旦重新打开 moss 只能重新再来 …… 没法继续上一次的聊天继续沟通」。
+      // ★ `V-251`/`V-252`：**历史会话要能找回来、能接着聊** —— 你原话「怎么还是找不到历史
+      //   会话记录，一旦重新打开 moss 只能重新再来 …… 没法继续上一次的聊天继续沟通」。
       //   这条走真人那条路：进「AI」页（相当于重启 moss 后第一次进来）→
-      //   ① 上次那条的步骤/结论当场摆出来（不是空的）；② 默认已经是"接着它聊"；
-      //   ③ 写下一句点开始 ⇒ 传给宿主的是**那条记录的 id**；④ 点「新开一条」⇒ 不再接。
+      //   ① 上次那条的步骤/结论当场摆出来（不是空的）；② 顶栏那个**会话下拉**默认就接着它；
+      //   ③ 写下一句点发指令 ⇒ 传给宿主的是**那条记录的 id**；
+      //   ④ 下拉切回「＋ 新会话」⇒ 不再接；⑤ 在下面列表里挑另一条接着聊。
       if (h === "ai-continue"){
         const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
         select(p0.id);
@@ -3723,11 +3762,14 @@ MOCK_JS = r"""
         const card = document.querySelector("#pane-ai .ai-result");
         const shownOld = !!card && /本来就有/.test(card.textContent);
         const adopted = dbg.contId === "r-old";
-        const chip = (document.querySelector("#pane-ai .ai-cont") || {}).textContent || "";
-        const chipOk = /接着聊/.test(chip) && /指数和开方/.test(chip);
+        // 会话下拉：选中项就是接着的那条；选项里第一项是「＋ 新会话」
+        const sessSel = document.querySelector("#pane-ai .ai-sess");
+        const sessOpts = sessSel ? [].slice.call(sessSel.options).map(o => o.textContent) : [];
+        const chipOk = !!sessSel && sessSel.value === "r-old" &&
+                       /指数和开方/.test(sessOpts.join(" ")) && /新会话/.test(sessOpts[0] || "");
         const contRows = [].slice.call(document.querySelectorAll("#pane-ai .ai-run"))
                                 .filter(el => /接着聊/.test(el.textContent)).length;
-        // ③ 写下一句 → 点开始：宿主收到的 continue_id 必须是 r-old
+        // ③ 写下一句 → 点发送：宿主收到的 continue_id 必须是 r-old
         M.aiRun = null;
         const taskEl = document.querySelector("#pane-ai .ai-task");
         taskEl.value = "再给 :calc 加个 --json 参数";
@@ -3737,10 +3779,13 @@ MOCK_JS = r"""
         await sleep(600);
         const sentCont = (M.aiRun || {}).cont;
         const sentTask = (M.aiRun || {}).task || "";
-        // 那一轮跑完（「开始」在跑的时候是灰的，不跑完点不动第二下）
+        // 那一轮跑完（「发送指令」在跑的时候是灰的，不跑完点不动第二下）
         for (let i = 0; i < 20 && (window.__AIR || {}).running; i++) await sleep(300);
-        // ④ 点「新开一条」→ 下一次不带老对话
-        (document.querySelector("#pane-ai .ai-cont .ai-eg") || {click(){}}).click();
+        // ④ 下拉切回「＋ 新会话」→ 下一次不带老对话
+        if (sessSel){
+          sessSel.value = "";
+          sessSel.dispatchEvent(new Event("change", {bubbles: true}));
+        }
         await sleep(200);
         M.aiRun = null;
         taskEl.value = "换成新会话跑一句";
@@ -3758,24 +3803,25 @@ MOCK_JS = r"""
         if (pick) pick.click();
         await sleep(400);
         const picked = dbg.contId;
-        const chip2 = (document.querySelector("#pane-ai .ai-cont") || {}).textContent || "";
-        const pickedOk = picked === "r-old2" && /agent\.md/.test(chip2);
+        const pickedOk = picked === "r-old2" && !!sessSel && sessSel.value === "r-old2";
         const ok = shownOld && stepsTxt.indexOf("run_moss") >= 0 && adopted && chipOk &&
                    contRows === 2 && sentCont === "r-old" && /--json/.test(sentTask) &&
                    freshCont === "" && pickedOk && !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n进来就看到上次那条 = " + shownOld + "（步骤 " + JSON.stringify(stepsTxt.slice(0, 46)) + "）" +
+          "\n会话下拉 = " + JSON.stringify(sessOpts.map(x => x.slice(0, 18))) +
           "\n默认接着聊 = " + adopted + "（contId=" + JSON.stringify(dbg.contId) + "）" +
-          " · 那行字 = " + JSON.stringify(chip.replace(/\s+/g, " ").slice(0, 40)) +
+          " · 下拉选中 = " + JSON.stringify(sessSel ? sessSel.value : "") +
           "\n列表里能接着聊的条数 = " + contRows + "（要 2）" +
           "\n接着聊那次发给宿主 = " + JSON.stringify([sentTask.slice(0, 20), sentCont]) +
-          "\n点「新开一条」之后 = " + JSON.stringify(freshCont) + "（要空）" +
-          "\n在列表里挑第二条接着聊 = " + JSON.stringify([picked, chip2.replace(/\s+/g, " ").slice(0, 30)]) +
+          "\n下拉切「＋ 新会话」之后 = " + JSON.stringify(freshCont) + "（要空）" +
+          "\n在列表里挑第二条接着聊 = " + JSON.stringify([picked, sessSel ? sessSel.value : ""]) +
           " · 页内错误 = " + (window.__errors || []).length;
         document.title = ok ? "READY"
           : ("AICONT-FAIL 旧=" + (shownOld ? 1 : 0) + " 默认接=" + (adopted ? 1 : 0) +
-             " 字=" + (chipOk ? 1 : 0) + " 行=" + contRows + " 传=" + JSON.stringify(sentCont) +
+             " 下拉=" + (chipOk ? 1 : 0) + " 行=" + contRows + " 传=" + JSON.stringify(sentCont) +
              " 新=" + JSON.stringify(freshCont) + " 挑=" + JSON.stringify(picked) +
+             " 下拉值=" + JSON.stringify(sessSel ? sessSel.value : "") +
              " steps=" + JSON.stringify(stepsTxt.slice(0, 30)) +
              " 错=" + (window.__errors || []).length);
       }
@@ -4023,5 +4069,7 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
 
 

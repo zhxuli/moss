@@ -1812,6 +1812,10 @@ class Api:
             bud = self.ai_budget()
             out["max_tokens"] = bud.get("max_tokens")
             out["warn_tokens"] = bud.get("warn")
+            # ★ 顺序要紧（`V-252`）：下面两处都要用 `p`，而 `p` 原来是在**这之后**才赋值的
+            #   ⇒ `UnboundLocalError` 被那个 `except: pass` 吞掉，`context` / `compact_at`
+            #   从来就没带上过（界面上那一行"上下文 xx / yy（zz%）"一直吃的是默认值）。
+            p = self.ai_params(refresh=bool(refresh))
             # `V-244`：上下文窗口和两条线（DSH 的 80% / 16%）—— 那一小行提示要用
             try:
                 import ai_budget as _b2
@@ -1821,8 +1825,13 @@ class Api:
                 out["retain_tokens"] = _b2.retain_tokens(_m, out["context"])
             except Exception:                                          # noqa: BLE001
                 pass
-            p = self.ai_params(refresh=bool(refresh))
             out["model"] = p.get("model") or ""
+            # ★ `V-252`：**这一家配了哪些模型**（`core/config.py` 里 model 可以是一串）——
+            #   顶栏那个模型下拉用它。只有一条就只显示那一条。
+            _ms = [str(x).strip() for x in (p.get("models") or []) if str(x).strip()]
+            if not _ms and out["model"]:
+                _ms = [out["model"]]
+            out["models"] = _ms
             out["base_url"] = p.get("base_url") or ""
             out["has_key"] = bool(p.get("api_key"))
             out["key_from"] = p.get("source") or ""
@@ -1841,13 +1850,15 @@ class Api:
             out["steps"] = len(st.get("steps") or [])
         return out
 
-    def ai_start(self, task="", workdir="", max_tokens=None, continue_id=""):
+    def ai_start(self, task="", workdir="", max_tokens=None, continue_id="", model=""):
         """开始一次任务（后台线程跑 loop，界面靠 `ai_poll` 拿步骤流）。
 
         `workdir`：这次在哪儿干活 —— 当前选中的包目录，或者 `user_data/pkgs`（新建包）。
         `max_tokens`：这次任务的 token 上限（不给就读 `user_data/ai/budget.json`，默认 20 万）。
         `continue_id`（`V-251`）：**接着哪条记录聊** —— 把那条记录里的对话（`messages`）
             接上去，然后这次的任务作为新的一句追加在后面。空 = 新开一条。
+        `model`（`V-252`）：**这次用哪个模型**（顶栏那个下拉）。空 = 用这家配置里的第一个。
+            换模型连带换上下文窗口（压缩那条线按模型算，见 `ai_budget.context_window`）。
         ★ 为什么必须有：你原话「怎么还是找不到历史会话记录，一旦重新打开 moss 只能重新再来
           —— 你见哪个 AI 助手连历史记录都没有的？」。以前存了"任务 + 步骤流"，但**对话本身
           没存**，所以只能"看"，不能"接着说"。
@@ -1865,7 +1876,10 @@ class Api:
                 if not (p.get("base_url") and p.get("model")):
                     return {"ok": False, "msg": p.get("why") or
                             "还没配 AI —— 去「设置 → AI」挑一家、把 key 填上。"}
-                client = c.Client(p["base_url"], p.get("api_key") or "", p["model"])
+                # `V-252`：顶栏选的那个模型优先（列表里没有也照样发 —— 网关可能支持别名，
+                #   真发不出去时错误会照实回来，比在这儿瞎拦强）
+                _use_model = str(model or "").strip() or p["model"]
+                client = c.Client(p["base_url"], p.get("api_key") or "", _use_model)
             except Exception as exc:                                      # noqa: BLE001
                 return {"ok": False, "msg": "AI 起不来：%s" % exc}
             wd = str(workdir or "").strip() or str(e.write_root())
