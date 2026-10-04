@@ -379,7 +379,9 @@ class Tools:
         return "退出码 %d（第 %d 次运行）\n%s" % (code, self.run_seq, out)
 
     def _t_done(self, args):
-        return "收到。summary=%s" % str(args.get("summary") or "")[:400]
+        """★ 别回显 `summary`（`V-269` 补）：那一行会原样出现在步骤卡右边，而 summary
+        马上又出现在结论卡里 ⇒ 同一段话两遍。这里只回一句"收到"。"""
+        return "收到。"
 
     def _t_answer(self, args):
         """纯问答收工（`V-269`）。工具本身不做判断 —— **闸在 loop 里**：

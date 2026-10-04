@@ -497,7 +497,7 @@ const MossAi = {
       out.push({key: "user", kind: "user", icon: "message-circle",
                 color: "var(--aib-primary)", action: "用户指令", tool: "",
                 meta: t.at || "", path: t.task || ""});
-      (t.steps || []).forEach((s, i) => {
+      (this.visSteps(t.steps)).forEach((s, i) => {
         out.push({key: "s" + (s.n || i), kind: "step", icon: this.stepIcon(s.tool),
                   color: this.kindColor(s.tool), action: this.stepTitle(s), tool: s.tool,
                   meta: this.stepMeta(s), path: this.stepPath(s)});
@@ -663,9 +663,13 @@ const MossAi = {
       t.folded = !t.folded;
       AIR.rev++;
     },
-    /* ★ `V-258`：某一轮的步骤卡（`t.steps` 是那一轮自己的，不会互相冲掉） */
+    /* ★ `V-269` 补：某一轮的步骤卡（`t.steps` 是那一轮自己的，不会互相冲掉）
+       `mute` 的不画：目前只有一种 —— 纯问答那轮里"它先说了一句、被催之后才 answer"的
+       那张 `(说话)` 卡，它和下面的「回答」卡是**同一段话**，画出来就是同一段话出现两遍。
+       数据仍在记录里（`steps` 一条不少），只是不摆到脸上。 */
+    visSteps(steps){ return (steps || []).filter(s => !s.mute); },
     turnCards(t){
-      return (t.steps || []).map((s, i) => ({
+      return this.visSteps(t.steps).map((s, i) => ({
         key: "s" + (s.n || i), icon: this.stepIcon(s.tool), color: this.kindColor(s.tool),
         action: this.stepTitle(s), tool: s.tool, meta: this.stepMeta(s), path: this.stepPath(s),
       }));

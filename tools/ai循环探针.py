@@ -411,8 +411,11 @@ def main():
     print("P：`V-251` 会话 —— **接着上次那条聊**（你说「一旦重新打开 moss 只能重新再来」）")
     print("=" * 72)
     # ① 第一次跑：收尾时要把**整条对话**交出来（界面存盘，"接着聊"就靠它）
-    _m1 = FakeModel([call("done", {"summary": "第一趟干完了"})])
-    _g1 = L.Loop(_m1, workdir=fake_pkg, max_steps=3, say=lambda s: None).run("把 zz 改成能算加法")
+    #    ★ 先 `run_moss` 跑通（假宿主第二次起就退 0）—— 不然 `done` 过不了验收闸，
+    #      结论里就没有 summary，下面那两条"正文只出现一次、且不截"的断言就没得测。
+    _m1 = FakeModel([call("run_moss", {"args": ":zz"}),
+                     call("done", {"summary": "第一趟干完了"})])
+    _g1 = L.Loop(_m1, workdir=fake_pkg, max_steps=4, say=lambda s: None).run("把 zz 改成能算加法")
     _msgs = _g1.get("messages") or []
     chk("P ★ 跑完时把**对话本身**交出来了（不是只有任务原文）",
         len(_msgs) >= 3 and _msgs[0].get("role") == "system"
@@ -420,20 +423,28 @@ def main():
         "%d 条：%s" % (len(_msgs), [m.get("role") for m in _msgs]))
     chk("P 没接着谁的时候 `continued_from` 是空的", _g1.get("continued_from") == "",
         repr(_g1.get("continued_from")))
-    # ★ `V-260`：步骤行要另给一份**给人看的** `disp` —— 你报的"显示的是一个字典"就是
-    #   因为界面只拿到 `brief[:70]`（截断的 JSON），`JSON.parse` 必然失败。
+    # ★ `V-260`：界面里**不许**出现"截断的 JSON"（你报的"显示的是一个字典，而不是显示里面的文本"）。
+    #   ★ `V-269` 补：那段正文**只出现一次** —— 归下面的结论卡；步骤卡不再重复贴一遍
+    #   （真机截图里同一段回答出现了两遍）。所以这里钉两件事：**步骤卡不摆 JSON/不摆正文** +
+    #   **结论卡拿到完整正文（一个字不截）**。
     _done = [s for s in (_g1.get("steps") or []) if s.get("tool") == "done"]
-    chk("P ★ 步骤行给了「给人看」的那一份（`disp` = 完整 summary，不是截断的 JSON）",
-        bool(_done) and _done[-1].get("disp") == "第一趟干完了"
+    chk("P ★ 步骤卡不摆那坨 JSON（`done` 那步没有正文，正文归结论卡）",
+        bool(_done) and (_done[-1].get("disp") or "") == ""
         and str(_done[-1].get("brief") or "").startswith("{"),
         "disp=%r brief=%r" % ((_done[-1] or {}).get("disp"), (_done[-1] or {}).get("brief")))
+    chk("P ★ 结论里拿到完整 summary（一个字不截）",
+        (_g1.get("summary") or "") == "第一趟干完了", repr((_g1.get("summary") or "")[:40]))
     _long_sum = "回答" * 120                       # 240 字，超过 `brief[:70]`
-    _g1b = L.Loop(FakeModel([call("done", {"summary": _long_sum})]), workdir=fake_pkg,
-                  max_steps=3, say=lambda s: None).run("长长地回答我")
+    #   ★ 要让 `done` 真的收工（结论里才有 summary），得先**跑通一次** —— 验收闸要它
+    _g1b = L.Loop(FakeModel([call("run_moss", {"args": ":zz"}),
+                             call("done", {"summary": _long_sum})]),
+                  workdir=fake_pkg, max_steps=4, say=lambda s: None).run("长长地回答我")
     _d2 = [s for s in (_g1b.get("steps") or []) if s.get("tool") == "done"]
-    chk("P ★★ 长回答**一个字都不截**（`disp` 给全文）",
-        bool(_d2) and _d2[-1].get("disp") == _long_sum,
-        "disp %d 字（原文 %d 字）" % (len((_d2[-1] or {}).get("disp") or ""), len(_long_sum)))
+    chk("P ★★ 长回答一个字都不截（在结论里给全文；步骤卡不重复）",
+        bool(_d2) and (_d2[-1].get("disp") or "") == ""
+        and (_g1b.get("summary") or "") == _long_sum,
+        "步骤卡 %d 字 / 结论 %d 字（原文 %d 字）"
+        % (len((_d2[-1] or {}).get("disp") or ""), len(_g1b.get("summary") or ""), len(_long_sum)))
     # ② 存进任务记录 → 读回来 → 拿它当 history 接着跑：**老对话必须真的发出去**
     import ai_runs as R                                                    # noqa: E402
     _saved = R.save({"task": "把 zz 改成能算加法", "workdir": str(fake_pkg),
@@ -896,18 +907,39 @@ def main():
         any("answer(text=…)" in str(m.get("content") or "") for m in _m5.seen[-1]), "")
     chk("Q ★ 被打回之后它照做 ⇒ 照样能收工（kind=chat）",
         q3.get("ok") is True and q3.get("kind") == "chat", q3["reason"][:60])
-    # ④ 真机截图复验抓到的两处显示问题（`V-269` 补）
+    # ④ 真机截图复验抓到的三处显示问题（`V-269` 补）
     #    ① 步骤卡上摆的是 `{"text": "…"}` 原始 JSON（`V-260` 修过的毛病，新工具漏了）
     _d = L._step_disp("answer", {"text": "底层是哪个模型我自己看不到"})
-    chk("Q ★ `answer` 那一步给人看的是**回答正文**，不是原始 JSON",
-        _d == "底层是哪个模型我自己看不到", repr(_d))
-    chk("Q ★ `done` 那条没被带坏（还是 summary）",
-        L._step_disp("done", {"summary": "改好了"}) == "改好了",
-        repr(L._step_disp("done", {"summary": "改好了"})))
-    #    ② 工具回话别把整段回答回显进来 —— 否则同一段话在那一行右边又抄一遍、还把行撑满
-    _ack = T.Tools(workdir=fake_pkg).call("answer", {"text": "很长的一段回答" * 5})
-    chk("Q ★ `answer` 的回话**不回显**正文（回显了的话步骤行会重复一遍、还撑满）",
-        "很长的一段回答" not in _ack, repr(_ack))
+    chk("Q ★ `answer` 那一步**不许**把原始 JSON 摆出来",
+        "{" not in _d and "text" not in _d, repr(_d))
+    #    ② `done` / `answer` 的正文归**结论卡**，步骤卡不再重复贴一遍（同一段话两遍）
+    chk("Q ★ `done`/`answer` 的步骤卡不再重复正文（正文在下面的结论卡里）",
+        L._step_disp("done", {"summary": "改好了"}) == ""
+        and L._step_disp("answer", {"text": "回答正文"}) == "",
+        "done=%r answer=%r" % (L._step_disp("done", {"summary": "改好了"}),
+                               L._step_disp("answer", {"text": "回答正文"})))
+    chk("Q ★ 别的步骤照旧给人看（路径 / 命令这些不能一起砍掉）",
+        L._step_disp("read_file", {"path": "C:\\x\\run.py"}) == "C:\\x\\run.py"
+        and L._step_disp("run_moss", {"args": ":calc top=5"}) == "moss :calc top=5",
+        "%r / %r" % (L._step_disp("read_file", {"path": "C:\\x\\run.py"}),
+                     L._step_disp("run_moss", {"args": ":calc top=5"})))
+    #    ③ 工具回话别回显正文（`answer` 回显回答、`done` 回显 summary 都一样）
+    _t = T.Tools(workdir=fake_pkg)
+    _a1 = _t.call("answer", {"text": "很长的一段回答" * 5})
+    _a2 = _t.call("done", {"summary": "很长的一段总结" * 5})
+    chk("Q ★ `answer` / `done` 的回话**都不回显**正文（回显了步骤行会重复一遍、还撑满）",
+        "很长的一段回答" not in _a1 and "很长的一段总结" not in _a2, "%r / %r" % (_a1, _a2))
+    #    ④ 纯问答收工时，那张"先说了一句"的 `(说话)` 卡要标 `mute`（界面不画它 —— 否则同一段话
+    #       在屏幕上出现两遍：`(说话)` 卡一次、下面的「回答」卡再一次）
+    _mm = [s for s in q3["steps"] if s.get("tool") == "(说话)"]
+    chk("Q ★★ 纯问答收工 ⇒ 那张 `(说话)` 卡被标 `mute`（同一段话不再出现两遍）",
+        bool(_mm) and all(s.get("mute") for s in _mm),
+        "步骤：%s" % [(s.get("tool"), bool(s.get("mute"))) for s in q3["steps"]])
+    chk("Q ★ 但 `answer` 那一步照旧要显示（该留的留着）",
+        any(s.get("tool") == "answer" and not s.get("mute") for s in q3["steps"]),
+        "步骤：%s" % [(s.get("tool"), bool(s.get("mute"))) for s in q3["steps"]])
+    chk("Q ★ `mute` 只是「不画」，数据一条不少地留在记录里（steps 里那张卡还在）",
+        len(_mm) >= 1, "mute 了 %d 张" % len(_mm))
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()

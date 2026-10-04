@@ -499,9 +499,14 @@ MOCK_JS = r"""
       // ★ `V-269`：纯问答那一条 —— 一步 `answer`、kind=chat、没有快照
       ok: true, tail: "r-chat", cont: true,
       turns: [{id: "r-chat", task: "你是哪个大模型?", at: "2026-10-04 20:00:25", cont: true,
-               steps: [{n: 1, tool: "answer", brief: '{"text": "底层是哪个模型…"}',
-                        note: "收到（这次是回答，没动文件）。", ms: 2,
-                        disp: "底层是哪个模型我自己看不到；我是 moss 的写插件助手。"}],
+               steps: [
+                 // ★ `V-269` 补：真机那条记录里前面还有一张 `(说话)` 卡（它先说了一句、
+                 //   被催之后才 answer）—— **`mute=true` 的这张界面不画**（否则同一段话
+                 //   在屏幕上出现两遍）。场景要靠"DOM 里只有 1 张步骤卡"证明这条。
+                 {n: 1, tool: "(说话)", brief: "底层是哪个模型我看不到…", note: "没调工具",
+                  mute: true, disp: "底层是哪个模型我自己看不到；我是 moss 的写插件助手。"},
+                 {n: 1, tool: "answer", brief: '{"text": "底层是哪个模型…"}',
+                  note: "收到（这次是回答，没动文件）。", ms: 2, disp: ""}],
                result: {ok: true, kind: "chat", reason: "问答收工（没动文件，不用跑命令）",
                         summary: "底层是哪个模型我自己看不到；我是 moss 的写插件助手。",
                         caveats: "", files: [],

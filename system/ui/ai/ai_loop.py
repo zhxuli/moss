@@ -78,11 +78,11 @@ def _step_disp(name, args):
       宿主手里有**完整参数**，就在这儿拼好，界面直接显示。
     """
     a = args or {}
-    # ★ `V-269` 补：`answer` 跟 `done` 一样 —— **给人看的是那段回答本身**，
-    #   不是 `{"text": "…"}` 这坨 JSON（真机截图里就是这么显示的：卡片上摆了一整行原始 JSON，
-    #   正是 `V-260` 修过的那个毛病，我新加的工具漏了这一步）。
+    # ★ `V-269` 补（真机截图）：`done` / `answer` 的正文**不再重复贴进步骤卡** ——
+    #   它马上就出现在下面那张结论卡（✅ 验收通过 / 💬 回答）里，两处都贴 = 同一段话
+    #   在屏幕上出现两遍（你截图里那段回答就是这么重复的）。步骤卡只留"干了什么"。
     if name in ("done", "answer"):
-        return str(a.get("summary") or a.get("text") or "")[:DISP_MAX]
+        return ""
     if a.get("path"):
         return str(a["path"])
     if a.get("args"):
@@ -466,6 +466,13 @@ class Loop:
                     #   规矩：**一个文件都没动过**才准走这条；动过文件的必须 run_moss + done，
                     #   否则这道口子就成了"绕开验收硬闸"的后门。
                     if self.tools.edit_seq == 0:
+                        # ★ `V-269` 补（真机截图）：把它"先说了一句"的那几张 `(说话)` 卡标成
+                        #   `mute` —— 那段话紧接着会被原样写进 `answer`、显示在下面的「回答」卡里，
+                        #   画出来就是**同一段话在屏幕上出现两遍**（你截图里那轮就是这样）。
+                        #   ★ 数据**一条不少**地留在记录里（`steps` 仍带 `mute`）—— 只是不摆到脸上。
+                        for _s in self.steps:
+                            if _s.get("tool") == "(说话)":
+                                _s["mute"] = True
                         return self._finish(
                             True, "问答收工（没动文件，不用跑命令）", used, missing,
                             summary=str((call.get("args") or {}).get("text") or ""),
