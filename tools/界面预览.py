@@ -3778,6 +3778,13 @@ MOCK_JS = r"""
         const chipOk = !!sessSel && sessSel.value === "r-old" &&
                        /指数和开方/.test(sessOpts.join(" ")) &&
                        sessOpts.some(o => /新建空白会话/.test(o));
+        // ★ `V-256`：**一个选项都不许 disabled** —— 老记录也能点开看（你报的
+        //   "只能新建空白会话、选不了历史"就是漏了这个：`cont=false` 的那些全被 disable 了）。
+        const optEls = sessSel ? [].slice.call(sessSel.options) : [];
+        const disabledCnt = optEls.filter(o => o.disabled &&
+                                               !/─/.test(o.textContent)).length;
+        const allPickable = optEls.filter(o => !/─/.test(o.textContent))
+                                  .every(o => !o.disabled);
         const noList = !document.querySelector("#pane-ai .ai-runs") &&
                        !document.querySelector("#pane-ai .ai-run");
         // ③ 写下一句 → 点发送：宿主收到的 continue_id 必须是 r-old
@@ -3821,11 +3828,13 @@ MOCK_JS = r"""
                                           .textContent || ""));
         const pickedOk = picked === "r-old2" && dbg.contId === "";
         const ok = shownOld && stepsTxt.indexOf("run_moss") >= 0 && adopted && chipOk && noList &&
+                   allPickable && disabledCnt === 0 &&
                    sentCont === "r-old" && /--json/.test(sentTask) &&
                    freshCont === "" && pickedOk && oldShown && !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n进来就看到上次那条 = " + shownOld + "（步骤 " + JSON.stringify(stepsTxt.slice(0, 46)) + "）" +
           "\n聊天框里没有会话记录列表 = " + noList + "（稿子里它在左上角下拉里）" +
+          "\n下拉里每个选项都能点 = " + allPickable + "（disabled 的 " + disabledCnt + " 个，要 0）" +
           "\n会话下拉 = " + JSON.stringify(sessOpts.map(x => x.slice(0, 18))) +
           "\n默认接着聊 = " + adopted + "（contId=" + JSON.stringify(dbg.contId) + "）" +
           " · 下拉选中 = " + JSON.stringify(sessSel ? sessSel.value : "") +

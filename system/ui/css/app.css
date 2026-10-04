@@ -1010,9 +1010,10 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
   --aib-shadow-focus:0 0 0 3px rgba(59,130,246,.15);
   --aib-shadow-float:0 10px 30px -10px rgba(0,0,0,.1);
   --aib-transition-smooth:all .3s cubic-bezier(.4,0,.2,1);
-  /* 这一页自己的布局：稿子是"灰底上摆一张卡片"，这里照做（pane 就是那块灰底） */
-  flex:1;min-height:0;display:flex;justify-content:center;align-items:center;
-  background:var(--aib-bg-body);overflow:hidden;
+  /* 这一页自己的布局：稿子是"灰底上摆一张 900px 的卡片"，但**那是稿子的演示壳**
+     （`V-256` 你定的）：真界面上要**尽量把窗口用满**，别把自己卡在 900×90% 那一小块里。
+     所以：填满整个 pane，圆角/描边/投影都去掉（pane 自己就有边框），里面的三段照旧。 */
+  flex:1;min-height:0;display:flex;background:var(--aib-bg-body);overflow:hidden;
   font-family:'Inter',system-ui,-apple-system,sans-serif;color:var(--aib-text-main);
 }
 /* 自定义滚动条（类似 macOS）—— 稿子是 `::-webkit-scrollbar`，这里圈在 .aiwrap 里 */
@@ -1022,9 +1023,9 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
 .aiwrap ::-webkit-scrollbar-thumb:hover{background:#94A3B8}
 
 .aiwrap .ai-workspace{
-  width:100%;max-width:900px;height:90%;
-  background:var(--aib-bg-panel);border-radius:var(--aib-radius-lg);
-  border:1px solid var(--aib-border-color);box-shadow:var(--aib-shadow-float);
+  /* 填满（`V-256`）：不再 max-width:900px / height:90% —— 那在真界面上纯属浪费地方 */
+  width:100%;height:100%;max-width:none;
+  background:var(--aib-bg-panel);
   display:flex;flex-direction:column;overflow:hidden;
   transform:translateY(0);
   animation:workspaceEntrance .6s cubic-bezier(.16,1,.3,1) backwards;

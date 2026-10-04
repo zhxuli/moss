@@ -643,7 +643,7 @@ const MossAi = {
             <select class="ai-sess" v-model="A.pickId" :disabled="A.running" @change="pickSession()">
               <option v-if="sessCurrent" :value="sessCurrent.id"
                       >当前: {{ (sessCurrent.task || "").slice(0, 30) }}</option>
-              <option v-for="r in sessOthers" :key="r.id" :value="r.id" :disabled="!r.cont"
+              <option v-for="r in sessOthers" :key="r.id" :value="r.id"
                       >历史: {{ (r.task || "").slice(0, 30) }}</option>
               <option disabled>──────────</option>
               <option value="">+ 新建空白会话</option>
