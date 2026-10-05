@@ -30,9 +30,14 @@ if str(HERE) not in sys.path:
 
 import ai_client as C                                                 # noqa: E402
 import ai_edits as E                                                  # noqa: E402
-import ai_selftools as ST                                             # noqa: E402  (V-280：它自己造的工具)
-import ai_skills as K                                                 # noqa: E402  (V-278：技能)
+import ai_skills as K                                                 # noqa: E402  (V-278：写法指南)
 import ai_tools as T                                                  # noqa: E402
+
+# ★ `V-281`：技能（能干活的那些）的规矩住在 `system/ai/skill_lib.py` —— 宿主和 `:skill` 插件共用。
+_SK = str(E.HOME / "system" / "ai")
+if _SK not in sys.path:
+    sys.path.insert(0, _SK)
+import skill_lib as ST                                                # noqa: E402
 
 #: 每次都要装的两份（人格与硬规矩 / 改文件的格式约定）
 BASE_PROMPTS = ("system", "edit")
@@ -116,7 +121,7 @@ def compose_system(task, extra=(), self_tools=None):
     ★ `V-278`：`extra` 是**点名要加载的技能**（相当于 Pi 的 `/skill:名字`）—— 平时留空，
       正文由模型自己 `skill(名字)` 按需读；清单里只放"名字 + 描述 + 路径"。
     ★ 任务原文（`task`）不再参与挑选：以前靠关键词猜，现在不猜了。
-    ★ `V-280`：`self_tools` 是**这次跑已经允许它用的自制工具** —— 只在**真有**的时候加一段
+    ★ `V-280`/`V-281`：`self_tools` 是**这次跑已经允许它用的技能** —— 只在**真有**的时候加一段
       （"你已经有哪些手"），一只都没有就一个字都不加（不加噪音）。
     """
     names = list(BASE_PROMPTS)
@@ -145,7 +150,7 @@ def compose_system(task, extra=(), self_tools=None):
     mine = ST.note(self_tools)
     if mine:
         parts.append(mine)
-        used.append("自制工具（%d 个：%s）" % (len(self_tools or {}), "、".join(sorted(self_tools or {}))))
+        used.append("技能（%d 个：%s）" % (len(self_tools or {}), "、".join(sorted(self_tools or {}))))
     return "\n\n---\n\n".join(parts), used, missing
 
 
@@ -177,10 +182,10 @@ class Loop:
         self.snapshot = None
         self.want_snapshot = True
         self.task = ""
-        # ★ `V-280`：**这一次跑**的工具表在开工这一刻定死 —— 内置那些 + 已经允许它用的自制工具。
-        #   它这一次新造的手**下一次**才进表（也正好卡在"用户还没点允许"那一步）。
+        # ★ `V-280`/`V-281`：**这一次跑**的工具表在开工这一刻定死 —— 内置那些 + 已经允许它用的技能。
+        #   它这一次新造的技能**下一次**才进表（也正好卡在"用户还没点允许"那一步）。
         try:
-            self.self_tools = ST.usable(avoid=T.builtin_names())
+            self.self_tools = ST.usable()
         except Exception:                                              # noqa: BLE001
             self.self_tools = {}
         self.tool_table = T.tools_for(self.self_tools)

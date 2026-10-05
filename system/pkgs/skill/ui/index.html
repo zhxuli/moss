@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>技能</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <div class="tleft">
+      <h1>技能</h1>
+      <p class="sub" id="sub">正在读……</p>
+    </div>
+    <div class="tright">
+      <button class="btn" id="btn-seed" title="把出厂样例（--shot）补回来">补回出厂样例</button>
+      <button class="btn" id="btn-open" title="打开技能目录">打开目录</button>
+      <button class="btn" id="btn-reload">刷新</button>
+    </div>
+  </header>
+
+  <!-- 图标墙：像桌面一样，彩色图标 + 名字（不显示 `--`） -->
+  <main id="wall" class="wall"></main>
+  <p class="empty" id="empty" hidden>
+    还没有技能。<br>
+    <span class="dim">AI 干活时缺什么能力，会自己造一只放在这儿 —— 造好了这儿会多一个图标，
+    你点「允许」它下一次跑就能用。</span>
+  </p>
+
+  <!-- 详情：点图标进来 -->
+  <section id="detail" class="detail" hidden></section>
+</div>
+
+<!-- 一个自己画的确认框（内嵌在 iframe 里时 window.confirm 可能被挡） -->
+<div id="modal" class="modal" hidden>
+  <div class="card">
+    <h3 id="m-title"></h3>
+    <div id="m-body" class="mbody"></div>
+    <div id="m-extra" class="mextra" hidden>
+      <label for="m-input">新 id（小写字母开头，只用小写字母/数字/_/-）</label>
+      <input id="m-input" type="text" spellcheck="false">
+      <p class="dim" id="m-hint"></p>
+    </div>
+    <div class="mfoot">
+      <button class="btn" id="m-cancel">取消</button>
+      <button class="btn primary" id="m-ok">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="moss-embed.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

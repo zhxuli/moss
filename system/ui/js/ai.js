@@ -59,7 +59,7 @@ const AIR = Vue.reactive({
       · `selfTools` 宿主给的三堆：mine（已允许）/ pending（等你点允许）/ broken（写坏了）
       · `selfOpen`  那个小块展开没有（有"待批准"的时候自动展开一次，好让你看见）
       · `selfWho` / `selfText`  「看一眼」展开的是哪只、内容是什么 */
-  selfTools: {mine: [], pending: [], broken: []},
+  selfSkills: {skills: [], from_pkgs: [], broken: []},
   selfOpen: false, selfWho: "", selfText: "",
 });
 
@@ -269,57 +269,89 @@ async function aiForgetRun(id){
   }catch(e){ toast("删不掉：" + (e && e.message ? e.message : e), true); }
 }
 
-/* ---------------------------------------------------------------- 它自己造的工具（`V-280`）
-   ★ 这一层的来由（你 2026-10-05 原话的意思）：AI 干活时缺一只手（比如"给某个界面截屏"），
+/* ---------------------------------------------------------------- 技能（`V-280`/`V-281`）
+   ★ 这一层的来由（你 2026-10-05 的话）：AI 干活时缺一只手（比如"给某个界面截屏"），
      这种事**用户自己不需要**（他直接看屏幕就行），可 AI 需要、还要频繁调。
-     塞进 `user_data/pkgs/` 会让插件列表变得很乱 —— 所以另开一层，**用户看不见**：
-     不在插件页、不是 `:别名`、不算包；只在 AI 页这儿折叠着露一行。
-   ★ 规矩：出厂那几只是人写的（随版本走，默认能用）；**它自己写的第一次要你点「允许」**，
-     而且允许**绑指纹** —— 它事后改了 `TOOL.md` / `run.py`，就自动退回"待批准"。
-   ★ 它这一次新造的手**这一次跑用不上**（工具表是开工那一刻定死的）—— 这不是不方便，
+     塞进 `user_data/pkgs/` 会让插件列表变得很乱 —— 所以：
+       · **技能 = 一个包**（`pkg.json` + 入口 + `icon.svg`），id **必须 `--` 开头**；
+       · 本体住在 **`:skill` 插件的数据目录**里（`user_data/state/skill/<--名字>/`）——
+         跟 exec 把命令放 `state/exec/cmds/` 一个道理，只是技能是**一个目录**不是塞进 JSON；
+       · 插件列表里**一个都不多**（这一页只露一行灰字，管理在 `:skill` 那个界面里）。
+   ★ 规矩：`pkg.json` 里的 `ai.expose` 只是**声明**；**授权**在
+     `user_data/ai/skills_allow.json`（它写不到那个文件）而且**绑指纹** ——
+     它事后改了 pkg.json / 入口 / 图标，授权作废、退回"待批准"。
+   ★ 它这一次新造的技能**这一次跑用不上**（工具表是开工那一刻定死的）—— 这不是不方便，
      是"人点同意"这道闸本来就该在两次跑之间。 */
-async function aiLoadSelfTools(){
+async function aiLoadSkills(){
   try{
-    const got = await window.pywebview.api.ai_self_tools();
+    const got = await window.pywebview.api.ai_skills();
     if (!got || !got.ok) return;
-    AIR.selfTools = got;
+    AIR.selfSkills = got;
     // 有待批准的：**自动展开一次**（好让你看见），别指望你自己去点开
-    if ((got.pending || []).length) AIR.selfOpen = true;
+    if (skillPend(got).length) AIR.selfOpen = true;
     AIR.rev++;
   }catch(e){ /* 读不到就不显示那一块，不吵人 */ }
 }
-async function aiSelfLook(w){
+/* 这几条小工具在组件和模块两边都要用，就放模块级（`selfXxx` 那些计算属性调它们）。
+   ★ 为什么还要并上 `broken`：宿主给的 `broken` 本来就是 `skills`/`from_pkgs` 的子集，
+     但"只给 broken 不给 skills"这种形状也得能吃（探针/预览就造过这种），所以按 id 去重并一下。 */
+function skillAll(got){
+  got = got || {};
+  const out = [], seen = {};
+  (got.skills || []).concat(got.from_pkgs || []).concat(got.broken || []).forEach(w => {
+    if (!w || !w.id || seen[w.id]) return;
+    seen[w.id] = 1;
+    out.push(w);
+  });
+  return out;
+}
+function skillPend(got){ return skillAll(got).filter(w => !(w.problems || []).length && !w.allowed); }
+function skillOk(got){ return skillAll(got).filter(w => !(w.problems || []).length && w.allowed); }
+
+async function aiSkillLook(w){
   if (!w) return;
-  if (AIR.selfWho === w.name){ AIR.selfWho = ""; AIR.rev++; return; }   // 再点一下 = 收起
+  if (AIR.selfWho === w.id){ AIR.selfWho = ""; AIR.rev++; return; }   // 再点一下 = 收起
   try{
-    const got = await window.pywebview.api.ai_self_read(w.name);
+    const got = await window.pywebview.api.ai_skill_read(w.id);
     if (!got || !got.ok){ toast((got && got.msg) || "读不出来", true); return; }
-    AIR.selfWho = w.name;
-    AIR.selfText = "=== TOOL.md ===\n" + (got.md || "") +
-                   "\n\n=== run.py ===\n" + (got.script || "");
+    AIR.selfWho = w.id;
+    AIR.selfText = Object.keys(got.text || {}).map(
+      rel => "=== " + rel + " ===\n" + got.text[rel]).join("\n\n");
     AIR.rev++;
   }catch(e){ toast("读不出来：" + (e && e.message ? e.message : e), true); }
 }
-async function aiSelfAllow(w, yes){
+async function aiSkillAllow(w, yes){
   if (!w) return;
   try{
-    const got = await window.pywebview.api.ai_self_allow(w.name, !!yes);
+    const got = await window.pywebview.api.ai_skill_allow(w.id, !!yes);
     toast((got && got.msg) || ((got && got.ok) ? "好了" : "没成"), !(got && got.ok));
-    await aiLoadSelfTools();
+    await aiLoadSkills();
   }catch(e){ toast("没成：" + (e && e.message ? e.message : e), true); }
 }
-function aiSelfRm(w){
+function aiSkillRm(w){
   if (!w) return;
-  askConfirm("删掉这只手？",
-    "删掉 <code>" + esc(w.name) + "</code> 的整个目录（<code>" + esc(w.dir) +
-    "</code>）？它写的 <code>TOOL.md</code> 和 <code>run.py</code> 一起没。",
+  askConfirm("删掉这只技能？",
+    "删掉 <code>" + esc(w.id) + "</code> 的整个目录（<code>" + esc(w.dir) +
+    "</code>，" + (w.files_n || 0) + " 个文件）？它写的东西一起没。",
     async () => {
       try{
-        const got = await window.pywebview.api.ai_self_rm(w.name, true);
+        const got = await window.pywebview.api.ai_skill_rm(w.id, true);
         toast((got && got.msg) || "删了", !(got && got.ok));
-        await aiLoadSelfTools();
+        await aiLoadSkills();
       }catch(e){ toast("删不掉：" + (e && e.message ? e.message : e), true); }
     });
+}
+/* 「管理技能」= 把 `:skill` 那个插件的界面嵌出来（图标墙 + 详情 + 转为插件 / 删除都在那边） */
+function aiOpenSkills(){
+  const ps = (typeof state !== "undefined" && state.packages) || [];
+  const p = ps.filter(x => x.id === "skill" ||
+                           (x.aliases || []).indexOf("skill") >= 0)[0];
+  if (!p){ toast("找不到技能管理器（system/pkgs/skill）", true); return; }
+  if (typeof embedOpen === "function" && typeof embedSupported === "function" && embedSupported(p)){
+    embedOpen(p, {});
+    return;
+  }
+  toast("这个包没法内嵌 —— 去插件列表里运行它", true);
 }
 
 /* ---------------------------------------------------------------- 改 / 删一轮（`V-279`）
@@ -397,7 +429,7 @@ async function aiPollOnce(){
     //   刚给自己造了一只，那条「等你允许」得立刻冒出来（不然你要等下次进这一页才看见）。
     const _wasRunning = AIR.running;
     AIR.running = !!got.running;
-    if (_wasRunning && !AIR.running) aiLoadSelfTools();
+    if (_wasRunning && !AIR.running) aiLoadSkills();
     AIR.steps = got.steps || [];
     AIR.say = got.say || [];
     AIR.seconds = got.seconds || 0;
@@ -528,17 +560,20 @@ const MossAi = {
        顺序 = **待批准的在最前面**（那才是要你动手的），然后正在用的，最后是写坏了的。 */
     selfList(){
       this.A.rev;
-      const t = this.A.selfTools || {};
-      return [].concat(t.pending || [], t.mine || [], t.broken || []);
+      // **待批准的在最前面**（那才是要你动手的），然后能用的，最后写坏了的
+      const t = this.A.selfSkills || {};
+      return [].concat(skillPend(t), skillOk(t),
+                       skillAll(t).filter(w => (w.problems || []).length));
     },
-    selfN(){ this.A.rev; return (((this.A.selfTools || {}).mine) || []).length; },
-    selfPend(){ this.A.rev; return (((this.A.selfTools || {}).pending) || []).length; },
-    selfBroken(){ this.A.rev; return (((this.A.selfTools || {}).broken) || []).map(w => w.name); },
+    selfN(){ this.A.rev; return (((this.A.selfSkills || {}).skills) || []).length; },
+    selfPend(){ this.A.rev; return skillPend(this.A.selfSkills).length; },
+    selfBroken(){ this.A.rev;
+      return skillAll(this.A.selfSkills).filter(w => (w.problems || []).length).map(w => w.id); },
     /* 正在用的那几只的名字（步骤卡上"用自制工具"那个标签靠它认人） */
     selfNames(){
       this.A.rev;
       const o = {};
-      (((this.A.selfTools || {}).mine) || []).forEach(w => { o[w.name] = 1; });
+      skillOk(this.A.selfSkills).forEach(w => { o[w.name] = 1; });
       return o;
     },
     info(){ this.A.rev; return this.A.info; },
@@ -903,9 +938,10 @@ const MossAi = {
     forgetRun(id){ aiForgetRun(id); },
     /* ★ `V-280`：那个折叠块的三颗按钮 */
     selfToggle(){ AIR.selfOpen = !AIR.selfOpen; AIR.rev++; },
-    lookTool(w){ aiSelfLook(w); },
-    allowTool(w){ aiSelfAllow(w, !w.allowed); },
-    rmTool(w){ aiSelfRm(w); },
+    lookTool(w){ aiSkillLook(w); },
+    allowTool(w){ aiSkillAllow(w, !w.allowed); },
+    rmTool(w){ aiSkillRm(w); },
+    manageSkills(){ aiOpenSkills(); },
     /* ★ `V-279`：改这一轮 —— 回退到它开工前 + 删掉它和它之后的 + 把这句原话填回输入框。
        填回去之后 `contId` 指的是**前一轮**，所以你改好那句话再点发送，
        等于"从上一轮接着重跑一遍"，而不是接在已经作废的那轮后面。 */
@@ -1084,7 +1120,7 @@ const MossAi = {
   mounted(){
     aiRefreshInfo();
     aiLoadRuns();
-    aiLoadSelfTools();
+    aiLoadSkills();
     aiPollOnce();
     /* 700ms 一跳：① 选中的包换了就重读信息；② 正在跑就拉步骤流。
        要不要改成事件驱动？不用 —— 命令行那一页也是轮询（run_poll 200ms），
@@ -1166,41 +1202,47 @@ const MossAi = {
         想让 AI 真动手：把上面「在哪干活」换成整个项目区，或者选一个装在 <code>user_data/pkgs</code> 里的包。
       </p>
 
-      <!-- ★ V-280：**它自己造的工具** —— 用户平时看不到这一层（不在插件页、不是 :别名、不算包），
+      <!-- ★ V-280/V-281：**技能** —— 用户平时看不到这一层（不在插件页、不是 :别名、不算包），
            只在 AI 页这儿折叠着露一行；有待批准的时候那行变黄并自动展开。
-           规矩：出厂那几只是人写的（默认能用）；它自己写的第一次要你点「允许」，
-           而且允许绑指纹 —— 它事后改了 TOOL.md / run.py 就自动退回待批准。 -->
+           技能 = 一个包（pkg.json + 入口 + icon.svg），id 必须用两个短横开头，本体住在
+           :skill 插件的数据目录里（user_data/state/skill/）。第一次要你点「允许」，
+           而且允许绑指纹 —— 它事后改了 pkg.json / 入口 / 图标就自动退回待批准。
+           「管理技能」把 :skill 那个界面嵌出来（图标墙 / 详情 / 转为插件 / 删除都在那边）。 -->
       <section class="ai-selft" v-if="selfN || selfPend || selfBroken.length">
-        <div class="ai-selft-h" :class="{bad: selfPend}" @click="selfToggle()"
-             title="它给自己造的能力（不是给你的插件，插件页里看不到）">
-          <span v-html='ico("moss-plus", "i")'></span>
-          <span>它自己的工具 · {{ selfN }}</span>
+        <div class="ai-selft-h" :class="{bad: selfPend > 0}" @click="selfToggle()"
+             title="它给自己造的能力（技能 = 一个包，但不在插件页里）">
+          <span v-html='ico("sparkles", "i")'></span>
+          <span>技能 · {{ selfN }}</span>
           <span v-if="selfPend">· {{ selfPend }} 只等你允许</span>
           <span v-if="selfBroken.length">· {{ selfBroken.length }} 只写坏了</span>
           <span class="ai-selft-x">{{ A.selfOpen ? "收起" : "展开" }}</span>
         </div>
         <div class="ai-selft-b" v-if="A.selfOpen">
           <p class="ai-warn" v-if="selfPend">
-            ⚠ 它给自己造了 {{ selfPend }} 只手，<b>你点「允许」它下一次跑才能用</b>
+            ⚠ 它给自己造了 {{ selfPend }} 只技能，<b>你点「允许」它下一次跑才能用</b>
             （不放心就先点「看一眼」，看它到底写了什么）。
           </p>
-          <div class="ai-selft-i" v-for="w in selfList" :key="w.name">
-            <code>{{ w.name }}</code>
-            <span class="ai-selft-d" :title="w.desc">{{ w.desc }}</span>
+          <div class="ai-selft-i" v-for="w in selfList" :key="w.id">
+            <code>{{ w.id }}</code>
+            <span class="ai-selft-d" :title="w.desc || w.why">{{ w.desc || w.why || "（没写说明）" }}</span>
             <span class="ai-selft-t">
-              {{ w.layer === "system" ? "出厂" : "它自己造的" }} ·
+              {{ w.kind === "pkg" ? "插件" : (w.origin === "seed" ? "出厂样例" : "它自己造的") }} ·
               {{ w.problems.length ? w.problems.join("；") : (w.allowed ? "已允许" : "待批准") }}
             </span>
             <span class="ai-selft-a">
-              <button @click="lookTool(w)">{{ A.selfWho === w.name ? "收起" : "看一眼" }}</button>
+              <button @click="lookTool(w)">{{ A.selfWho === w.id ? "收起" : "看一眼" }}</button>
               <button v-if="w.layer !== 'system' && !w.problems.length"
                       @click="allowTool(w)">{{ w.allowed ? "撤销" : "允许" }}</button>
               <button v-if="w.layer !== 'system'" class="danger" @click="rmTool(w)">删除</button>
             </span>
-            <pre class="ai-selft-pre" v-if="A.selfWho === w.name">{{ A.selfText }}</pre>
+            <pre class="ai-selft-pre" v-if="A.selfWho === w.id">{{ A.selfText }}</pre>
           </div>
           <p class="ai-selft-p" v-if="selfBroken.length">
             这几只进不了工具表（先修好再说）：{{ selfBroken.join("、") }}
+          </p>
+          <p class="ai-selft-p">
+            <button class="btn btn-outline" @click="manageSkills()"
+                    title="图标墙 / 详情 / 文件列表 / 转为插件 / 删除 —— 都在技能界面里">管理技能…</button>
           </p>
         </div>
       </section>

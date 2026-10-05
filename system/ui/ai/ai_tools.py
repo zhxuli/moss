@@ -24,7 +24,12 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import ai_edits as E                                                  # noqa: E402
-import ai_selftools as ST                                             # noqa: E402  (V-280)
+
+# ★ `V-281`：技能那一层的规矩住在 `system/ai/skill_lib.py`（**宿主和 `:skill` 插件共用一份**）。
+_SK = str(E.HOME / "system" / "ai")
+if _SK not in sys.path:
+    sys.path.insert(0, _SK)
+import skill_lib as ST                                                # noqa: E402
 
 NO_WINDOW = 0x08000000
 #: 回给模型的东西**一律截断**（全量留在「命令行」页给人看）—— 这是省 token 的第 5 条
@@ -129,15 +134,15 @@ TOOLS = [
 
 
 def builtin_names():
-    """内置那 11 个的名字（自制工具**撞名的一律不进表** —— 否则会盖掉 read_file 那种）。"""
+    """内置那 11 个的名字（**技能撞名的一律不进表** —— 否则会盖掉 read_file 那种）。"""
     return tuple(t["function"]["name"] for t in TOOLS)
 
 
 def tools_for(self_tools=None):
-    """这次跑交给模型的**完整工具表** = 内置那些 + **已经允许它用的自制工具**（`V-280`）。
+    """这次跑交给模型的**完整工具表** = 内置那些 + **已经允许它用的技能**（`V-280`/`V-281`）。
 
-    ★ 自制那几张是从"这一次跑开工时的那份表"建出来的（`Loop.__init__` 定死），
-      所以**它这一刻新造的手**不会混进来 —— 正好卡在"用户还没点允许"那一步。
+    ★ 技能那几张是从"这一次跑开工时的那份表"建出来的（`Loop.__init__` 定死），
+      所以**它这一刻新造的技能**不会混进来 —— 正好卡在"用户还没点允许"那一步。
     """
     return list(TOOLS) + ST.specs_from(self_tools or {})
 
@@ -226,7 +231,7 @@ class Tools:
         # ★ `V-280`：内置的优先（撞名的自制工具压根进不了表）；没有同名的就交给自制工具。
         if fn is None:
             if str(name or "") in self.self_tools:
-                out = ST.run(name, args or {}, avoid=builtin_names())
+                out = ST.run(name, args or {})
                 self.log.append((name, str(out).replace("\n", " ")[:110]))
                 return out
             return "[错误] 没有这个工具：%s（可用：%s）" % (
@@ -380,6 +385,16 @@ class Tools:
         if "--snap" in low and any(w in low for w in (" rm", " del", " delete", " drop", " gc")):
             return ("[拒绝] 删快照不许用 run_moss —— 用 `snap_clean` 工具（它**只**删你自己存的，"
                     "用户自己存的那些一律跳过）。这是设计好的闸，不是提示。")
+        # ★ `V-281` 的硬闸：**`:skill` 里那几个"要人点头"的动作不给走**。
+        #   技能那一层的整个设计就是"人点一次允许"。要是它能 `run_moss(":skill allow --x")`，
+        #   就等于自己给自己发通行证 —— 那道闸白设。`new` / `list` 这类不含"决定"的照旧随便用。
+        toks = [t.lower() for t in shlex.split(line)] if line else []
+        if any(t in (":skill", "skill") for t in toks[:2]) and \
+                any(w in toks for w in ("allow", "revoke", "rm", "remove", "del",
+                                        "promote", "delete")):
+            return ("[拒绝] `:skill` 的「允许 / 撤销 / 删除 / 转为插件」不许你用 run_moss 调 —— "
+                    "那几下是**用户决定**的事（技能列表和 AI 页那行都能点）。"
+                    "你自己造技能、看技能、跑技能都照旧。这是设计好的闸，不是提示。")
         cmd = host_cmd() + shlex.split(line)
         self.run_seq += 1
         cwd = str(E.HOME) if os.path.isdir(str(E.HOME)) else None

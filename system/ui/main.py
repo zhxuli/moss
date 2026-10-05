@@ -2365,48 +2365,76 @@ class Api:
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 
-    # ------------------------------------------------ AI 自己的工具（`V-280`）
-    # ★ 你 2026-10-05 定的：它工作的时候缺一只手（比如"给某个界面截屏"），**可以自己造一只**；
-    #   但那东西**不能塞进 `user_data/pkgs/`** —— 那是面向用户的目录，混进去用户看着乱、
-    #   还能被 `--remove` 一键删掉。所以另开一层 `user_data/ai/tools/`：
-    #     · 它自己造的手 ⇒ 用户**看不见**（不在插件页、不是 `:别名`、不算包），只在 AI 页
-    #       那个折叠小块里露一眼；
-    #     · `system/ai/tools/` 是我们出厂的（随版本走，默认可用）；
-    #     · **第一次要人点一次「允许」**（`3ⓑ`）—— 而且绑指纹：它事后改了 `TOOL.md` / `run.py`
-    #       就自动退回"待批准"（不然"批准"就成了永久通行证）。
-    def _ai_selftools(self):
-        ai_dir = str(HERE / "ai")
-        if ai_dir not in sys.path:
-            sys.path.insert(0, ai_dir)
-        import ai_selftools as ST                                      # noqa: PLC0415
-        return ST
+    # ------------------------------------------------ AI 的技能（`V-280`/`V-281`）
+    # ★ 你 2026-10-05 定的：AI 干活缺一只手（比如"给某个界面截屏"），**可以自己造一只**；
+    #   但那东西不能塞进 `user_data/pkgs/` —— 那是面向用户的目录，混进去用户看着乱、
+    #   还能被 `--remove` 一键删掉。所以：
+    #     · **技能本体** = `user_data/state/skill/<--名字>/`（`:skill` 插件的**数据目录**，
+    #       跟 `:exec` 把命令放 `state/exec/cmds/` 一个道理）；每个技能是**一个目录**
+    #       （`pkg.json` + 入口 + `icon.svg` + 任意文件）= 插件那种多文件结构。
+    #     · **规矩**住在 `system/ai/skill_lib.py` —— 宿主和 `:skill` 插件 import 同一份。
+    #     · id **必须 `--` 开头**（`--shot`）：插件 id 要求首字母是字母，所以它永远污染不到
+    #       用户的命名空间；模型看到的工具名是去掉 `--` 的那个。
+    #     · **第一次要你在 AI 页那行或「技能」界面点一次「允许」**，并且绑指纹（它事后改了
+    #       `pkg.json` / 入口 / 图标，授权自动作废、退回待批准）。
+    #     · 界面上「看一眼 / 允许 / 转为插件 / 删除」都在这儿和 `:skill` 插件里（同一份规矩）。
+    def _skill_lib(self):
+        sk = str(HERE.parent / "ai")                    # system/ai
+        if sk not in sys.path:
+            sys.path.insert(0, sk)
+        import skill_lib                                               # noqa: PLC0415
+        return skill_lib
 
-    def ai_self_tools(self):
-        """它自己有哪些手 / 哪些还在等你点头 / 哪些坏了（AI 页那个折叠块 + 黄条用它）。"""
+    def ai_skills(self):
+        """技能那一页要的全部数据（AI 页那行 + `:skill` 界面都用它）。"""
         try:
-            return self._ai_selftools().summary()
+            return self._skill_lib().summary()
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e),
-                    "mine": [], "pending": [], "broken": [], "dirs": {}}
+                    "skills": [], "from_pkgs": [], "broken": [], "dirs": {}}
 
-    def ai_self_allow(self, name="", yes=True):
-        """允许 / 撤销一只**它自己造的**工具（出厂层不用批，也不许在这儿改）。"""
+    def ai_skill_allow(self, sid="", yes=True):
+        """允许 / 撤销一只技能（出厂样例播种来的也算你的，能撤销）。"""
         try:
-            return self._ai_selftools().allow(name, bool(yes))
+            return self._skill_lib().allow(sid, bool(yes))
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 
-    def ai_self_read(self, name=""):
-        """「看一眼」：把它写的 `TOOL.md` 和 `run.py` 原文拿出来（点允许之前先看）。"""
+    def ai_skill_read(self, sid=""):
+        """「看一眼」：把它写的那些文件原文拿出来（点允许之前先看）。"""
         try:
-            return self._ai_selftools().read(name)
+            return self._skill_lib().read(sid)
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 
-    def ai_self_rm(self, name="", confirm=False):
-        """删掉一只它自己造的手（`confirm=False` 时**什么都不删**，只回一句"确认一下"）。"""
+    def ai_skill_rm(self, sid="", confirm=False):
+        """删掉一只技能（`confirm=False` 时**什么都不删**，只回一句"确认一下"）。"""
         try:
-            return self._ai_selftools().rm(name, bool(confirm))
+            return self._skill_lib().rm(sid, bool(confirm))
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
+    def ai_skill_promote(self, sid="", confirm=False, new_id=""):
+        """把技能转成插件：去掉 `--`、搬进 `user_data/pkgs/`（id 撞了会拒，让你自己起名字）。"""
+        try:
+            sk = self._skill_lib()
+            avoid = ()
+            try:
+                ai_dir = str(HERE / "ai")
+                if ai_dir not in sys.path:
+                    sys.path.insert(0, ai_dir)
+                import ai_tools                                        # noqa: PLC0415
+                avoid = ai_tools.builtin_names()
+            except Exception:                                          # noqa: BLE001
+                pass
+            return sk.promote(sid, bool(confirm), new_id, builtin=avoid)
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
+    def ai_skill_plan(self, sid="", new_id=""):
+        """**只算不改**：转插件会不会撞 id（界面弹确认框之前先问这个）。"""
+        try:
+            return self._skill_lib().promote_plan(sid, new_id)
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 

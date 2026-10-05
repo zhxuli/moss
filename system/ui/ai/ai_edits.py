@@ -8,8 +8,8 @@
 代价是"找不到那段"会失败 —— 所以这里把失败**写清楚**（给候选行号、给最像的几行），
 让模型下一轮能自己修好，而不是瞎改别处。
 
-★ 写权限（v1，`C①`）：**只允许写 `user_data/pkgs/**`**，`V-280` 起多开一处
-  `user_data/ai/tools/**`（它自己造的手 —— 那层用户看不见，见 `ai_selftools.py`）。
+★ 写权限（v1，`C①`）：**只允许写 `user_data/pkgs/**`**，`V-280`/`V-281` 起多开一处
+  `user_data/state/skill/**`（它自己造的技能 —— 用户看不见，见 `system/ai/skill_lib.py`）。
   读不设这个限制（要读 `system/pkgs/bmi` 当样板、要读契约），但**写只有那两处** ——
   改坏了删包重来，碰不到出厂件，这也是"v1 不碰 system/ / 不碰 core/"的落地。
 """
@@ -44,17 +44,18 @@ def write_root():
 
 
 def tool_root():
-    """★ `V-280`：**第二处**可写的地方 —— 它自己造的手（`user_data/ai/tools/**`）。
+    """★ `V-280`/`V-281`：**第二处**可写的地方 —— 它自己造的技能（`:skill` 的数据目录）。
 
-    为什么单开一个根而不是放开 pkgs：那是**面向用户的目录**（插件页/`:别名`/`--remove`
-    都在那儿），AI 的手混进去用户会看着乱、还容易被一键删掉。所以手放这儿、用户看不见。
-    出厂工具在 `system/ai/tools/**`（跟着版本走，**不归 AI 写**）。
+    为什么单开一个根而不是放开 pkgs：那是**面向用户的目录**（插件页 / `:别名` / `--remove`
+    都在那儿），AI 造的东西混进去用户会看着乱、还容易被一键删掉。所以技能住
+    `user_data/state/skill/`（跟 `:exec` 存它那些命令一个位置），用户看不见；
+    「转为插件」是**由人点**的一步，会把它搬到 `user_data/pkgs/<id>/`。
     """
-    return user_data() / "ai" / "tools"
+    return user_data() / "state" / "skill"
 
 
 def write_roots():
-    """能写的地方就这两处：自己的包 + 自己的工具。"""
+    """能写的地方就这两处：自己的包 + 自己的技能。"""
     return [write_root(), tool_root()]
 
 
@@ -73,7 +74,7 @@ def check_writable(path):
     for root in write_roots():
         if inside(path, root):
             return None
-    return ("[拒绝] v1 只允许写两处：`%s`（你自己的包）和 `%s`（**你自己造的工具**）；"
+    return ("[拒绝] v1 只允许写两处：`%s`（你自己的包）和 `%s`（**你自己造的技能**）；"
             "`%s` 不在里面。（要改出厂件/宿主：那是第二阶段的事，现在必须由人来做。）"
             % (write_root(), tool_root(), path))
 
@@ -87,7 +88,7 @@ def read_roots():
       把"能读哪儿"框住，比在提示词里写"别乱读"硬得多（提示词是劝，这个是拦）。
     """
     return [write_root(),                                    # user_data/pkgs/**
-            tool_root(),                                     # user_data/ai/tools/**（V-280）
+            tool_root(),                                     # user_data/state/skill/**（V-281）
             HOME / "system" / "spec",                        # 契约（唯一真相）
             HOME / "system" / "pkgs"]                        # 样板包（照 bmi 抄）
 

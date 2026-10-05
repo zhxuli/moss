@@ -586,43 +586,82 @@ MOCK_JS = r"""
       return {ok: true, removed: [id], restored_from: "S-R-1", kept_snapshot: "S-R-1",
               dropped_snapshots: [], prev_id: "", msg: "（预览）删了 1 条会话，回退到镜像 S-R-1"};
     },
-    // ★ `V-280`：**它自己造的工具**那一层。预览里给齐三种状态：出厂（默认能用）、
-    //   它自己造的还没允许（要你点）、写坏了的。每次调用记进 `M.selfCalls`，场景据此断言。
-    ai_self_tools: async () => {
-      if (M.selfEmpty){
-        return {ok: true, mine: [], pending: [], broken: [], dirs: {}, allow_file: ""};
+    // ★ `V-281`：**技能**那一层。技能 = 一个包（id 带 `--`、住 `:skill` 的数据目录），
+    //   另外**插件里声明了 `ai.expose: true` 的也进 tool 表**（账本 §16.3）。
+    //   预览里给齐四种：它造的还没允许、它造的已允许（出厂样例）、来自插件、写坏了的。
+    //   每次调用记进 `M.skillCalls`，场景据此断言。
+    ai_skills: async () => {
+      if (M.skillEmpty){
+        return {ok: true, skills: [], from_pkgs: [], broken: [], dirs: {},
+                n_usable: 0, n_pending: 0};
       }
-      const d = n => state.home + "\\user_data\\ai\\tools\\" + n;
-      return {ok: true,
-        mine: [{name: "shot", desc: "截屏（整屏或某个窗口）存成 png，回路径和尺寸",
-                layer: "system", dir: state.home + "\\system\\ai\\tools\\shot",
-                allowed: true, why: "出厂工具（随版本走，不用批准）",
-                params: ["target", "out"], problems: [], timeout: 60}],
-        pending: [{name: "dom_snap", desc: "把当前界面的 DOM 存成 html（它自己造的）",
-                   layer: "user", dir: d("dom_snap"), allowed: false, why: "还没允许",
-                   params: ["out"], problems: [], timeout: 60}],
-        broken: [{name: "bad_one", desc: "它写坏了一只（缺 run.py）", layer: "user",
-                  dir: d("bad_one"), allowed: false, why: "还没允许", params: [],
-                  problems: ["缺 run.py（入口脚本）"], timeout: 60}],
-        dirs: {mine: state.home + "\\user_data\\ai\\tools",
-               factory: state.home + "\\system\\ai\\tools"},
-        allow_file: state.home + "\\user_data\\ai\\tools_allow.json"};
+      const S = n => state.home + "\\user_data\\state\\skill\\" + n;
+      const ICO = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="#0EA5E9"/></svg>';
+      const files = n => [{rel: "pkg.json", size: 420, mtime: "2026-10-05 16:00:00"},
+                          {rel: "run.py", size: 260, mtime: "2026-10-05 16:00:00"},
+                          {rel: "icon.svg", size: 130, mtime: "2026-10-05 16:00:00"}];
+      return {ok: true, n_usable: 3, n_pending: 1,
+        skills: [
+          {id: "--dom_snap", name: "dom_snap", layer: "user", kind: "skill",
+           allowed: false, why_allow: "还没允许", origin: "",
+           desc: "把当前界面的 DOM 存成 html（它自己造的）",
+           why: "界面改完要留一份 DOM 做对比 —— 用户不需要这个插件，我自己要",
+           risk: "low", params: ["out"], entry: "run.py", timeout: 60, icon_svg: ICO,
+           created: "2026-10-05 16:02:11", mtime: "2026-10-05 16:02:11", allowed_at: "",
+           problems: [], warns: [], files_n: 3, dir: S("--dom_snap"), files: files("--dom_snap")},
+          {id: "--shot", name: "shot", layer: "user", kind: "skill", allowed: true,
+           why_allow: "你已经允许过（2026-10-05 16:01:00）", origin: "seed",
+           desc: "截屏：整个屏幕或某个窗口，存成 png 并把路径、尺寸回给我",
+           why: "AI 干活要留证据（截个屏给用户看），但用户自己不需要一个截屏插件",
+           risk: "low", params: ["target", "out"], entry: "run.py", timeout: 60, icon_svg: ICO,
+           created: "2026-10-05 16:01:00", mtime: "2026-10-05 16:01:00",
+           allowed_at: "2026-10-05 16:01:00", problems: [], warns: [], files_n: 3,
+           dir: S("--shot"), files: files("--shot")}],
+        from_pkgs: [
+          {id: "md5", name: "md5", layer: "system", kind: "pkg", allowed: true,
+           why_allow: "出厂插件（AI 写不到这个根）", origin: "",
+           desc: "算字符串、文件或文件夹的 MD5", why: "", risk: "",
+           params: [], entry: "run.py", timeout: 60, icon_svg: ICO,
+           created: "2026-10-01 09:00:00", mtime: "2026-10-01 09:00:00", allowed_at: "",
+           problems: [], warns: [], files_n: 2,
+           dir: state.home + "\\system\\pkgs\\md5", files: []}],
+        broken: [
+          {id: "--bad_one", name: "bad_one", layer: "user", kind: "skill", allowed: false,
+           why_allow: "写坏了", origin: "", desc: "它写坏了一只（缺入口）", why: "",
+           risk: "", params: [], entry: "", timeout: 60, icon_svg: "",
+           created: "2026-10-05 16:03:00", mtime: "2026-10-05 16:03:00", allowed_at: "",
+           problems: ["入口文件不在：run.py"], warns: [], files_n: 1,
+           dir: S("--bad_one"), files: [{rel: "pkg.json", size: 300,
+                                         mtime: "2026-10-05 16:03:00"}]}],
+        dirs: {mine: state.home + "\\user_data\\state\\skill",
+               seed: state.home + "\\system\\pkgs\\skill\\seed",
+               pkgs: [state.home + "\\system\\pkgs", state.home + "\\user_data\\pkgs"]},
+        allow_file: state.home + "\\user_data\\ai\\skills_allow.json"};
     },
-    ai_self_read: async (name) => {
-      (M.selfCalls = M.selfCalls || []).push(["read", name]);
-      return {ok: true, name: name, layer: "user", dir: "…\\" + name, allowed: false,
-              why: "还没允许", problems: [],
-              md: "---\nname: " + name + "\ndescription: 预览里的假说明\n---\n（正文）",
-              script: "import json, sys\nprint('DOM-快照-假脚本')\n"};
+    ai_skill_read: async (sid) => {
+      (M.skillCalls = M.skillCalls || []).push(["read", sid]);
+      return {ok: true, id: sid, text: {
+        "pkg.json": '{\n  "id": "' + sid + '",\n  "ai": { "why": "预览里的假说明" }\n}',
+        "run.py": "import json, sys\nprint('DOM-快照-假脚本')\n"}};
     },
-    ai_self_allow: async (name, yes) => {
-      (M.selfCalls = M.selfCalls || []).push(["allow", name, !!yes]);
-      return {ok: true, name: name, allowed: !!yes,
-              msg: (yes ? "允许了：" : "撤销了：") + name};
+    ai_skill_allow: async (sid, yes) => {
+      (M.skillCalls = M.skillCalls || []).push(["allow", sid, !!yes]);
+      return {ok: true, id: sid, allowed: !!yes,
+              msg: (yes ? "允许了：" : "撤销了：") + sid};
     },
-    ai_self_rm: async (name, confirm) => {
-      (M.selfCalls = M.selfCalls || []).push(["rm", name, !!confirm]);
-      return {ok: true, name: name, msg: "删掉了：" + name};
+    ai_skill_rm: async (sid, confirm) => {
+      (M.skillCalls = M.skillCalls || []).push(["rm", sid, !!confirm]);
+      return {ok: true, id: sid, msg: "删掉了：" + sid};
+    },
+    ai_skill_plan: async (sid, new_id) => {
+      (M.skillCalls = M.skillCalls || []).push(["plan", sid]);
+      return {ok: true, id: sid, new_id: "dom_snap", can: true, problems: [],
+              dir_from: "…\\state\\skill\\" + sid, dir_to: "…\\pkgs\\dom_snap",
+              files: 3, why: "预览", desc: "预览"};
+    },
+    ai_skill_promote: async (sid, confirm, new_id) => {
+      (M.skillCalls = M.skillCalls || []).push(["promote", sid, !!confirm]);
+      return {ok: true, id: sid, new_id: new_id || "dom_snap", msg: "转成插件了：" + sid};
     },
     run_start: async (pid, args, cwd) => {
       (M.runs = M.runs || []).push({pid: pid, args: args, cwd: cwd});
@@ -4478,77 +4517,104 @@ MOCK_JS = r"""
         await sleep(300);
         (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
         await sleep(1200);
-        M.selfCalls = [];
-        M.selfEmpty = false;
-        await aiLoadSelfTools();
+        M.skillCalls = [];
+        await aiLoadSkills();
         await sleep(300);
         const strip = document.querySelector("#pane-ai .ai-selft-h");
         const stripTxt = ((strip && strip.textContent) || "").replace(/\s+/g, " ").trim();
         const yellow = !!strip && strip.classList.contains("bad");
         const rows = Array.from(document.querySelectorAll("#pane-ai .ai-selft-i"));
-        const names = rows.map(r => ((r.querySelector("code") || {}).textContent || "").trim());
+        const ids = rows.map(r => ((r.querySelector("code") || {}).textContent || "").trim());
         const firstRow = rows[0] || null;
-        const firstBtns = firstRow ? Array.from(firstRow.querySelectorAll("button")).map(b => b.textContent.trim()) : [];
+        const btnOf = r => r ? Array.from(r.querySelectorAll("button")).map(b => b.textContent.trim()) : [];
+        const firstBtns = btnOf(firstRow);
         const firstTxt = ((firstRow && firstRow.textContent) || "").replace(/\s+/g, " ");
-        const sysRow = rows.filter(r => /shot/.test((r.querySelector("code") || {}).textContent || ""))[0];
-        const sysBtns = sysRow ? Array.from(sysRow.querySelectorAll("button")).map(b => b.textContent.trim()) : [];
-        // 写坏了的那只**不该有「允许」**（它进不了表，允许了也没用）—— 只有「看一眼 / 删除」
-        const badRow = rows.filter(r => /bad_one/.test((r.querySelector("code") || {}).textContent || ""))[0];
-        const badBtns = badRow ? Array.from(badRow.querySelectorAll("button")).map(b => b.textContent.trim()) : [];
-        // ① 看一眼：内容真摊开了（TOOL.md 和 run.py 两段都在）
+        // ① 技能那一行：带 `--` 的 id 显示出来（墙上才只显示名字），待批准的在最前面
+        const idOk = ids[0] === "--dom_snap" && ids.indexOf("--shot") > 0 &&
+                     ids.indexOf("md5") > ids.indexOf("--shot");
+        // ② 来自插件的那只（system 层）不该有「允许 / 删除」（它不是 AI 造的、也删不得）
+        const pkgRow = rows.filter(r => /^md5$/.test((r.querySelector("code") || {}).textContent || ""))[0];
+        const pkgBtns = btnOf(pkgRow);
+        const pkgTag = ((pkgRow && pkgRow.textContent) || "").indexOf("插件") >= 0;
+        // ③ 写坏了的那只**不该有「允许」**（它进不了表，允许了也没用）—— 只有「看一眼 / 删除」
+        const badRow = rows.filter(r => /^--bad_one$/.test((r.querySelector("code") || {}).textContent || ""))[0];
+        const badBtns = btnOf(badRow);
+        // ④ 看一眼：内容真摊开了（pkg.json 和 run.py 两段都在）
         const lookBtn = firstRow ? Array.from(firstRow.querySelectorAll("button")).filter(b => /看一眼/.test(b.textContent))[0] : null;
         if (lookBtn) lookBtn.click();
         await sleep(400);
         const pre = document.querySelector("#pane-ai .ai-selft-pre");
         const preTxt = (pre && pre.textContent) || "";
-        const looked = /=== TOOL.md ===/.test(preTxt) && /DOM-快照-假脚本/.test(preTxt);
-        // ② 允许：走宿主那个口子，参数是这只工具的名字
+        const looked = /=== pkg.json ===/.test(preTxt) && /DOM-快照-假脚本/.test(preTxt);
+        // ⑤ 允许：走宿主那个口子，参数是**带 `--` 的 id**
         const allowBtn = firstRow ? Array.from(firstRow.querySelectorAll("button")).filter(b => /允许/.test(b.textContent))[0] : null;
         if (allowBtn) allowBtn.click();
         await sleep(500);
-        const allowed = (M.selfCalls || []).some(c => c[0] === "allow" && c[1] === "dom_snap" && c[2] === true);
-        // ③ 删除：先弹确认，确认了才真删（`confirm=true`）
+        const allowed = (M.skillCalls || []).some(c => c[0] === "allow" && c[1] === "--dom_snap" && c[2] === true);
+        // ⑥ 删除：先弹确认，确认了才真删（`confirm=true`）
         const delBtn = firstRow ? Array.from(firstRow.querySelectorAll("button")).filter(b => /删除/.test(b.textContent))[0] : null;
         if (delBtn) delBtn.click();
         await sleep(400);
         const modalOn = document.querySelector("#modal").classList.contains("on");
-        const noRmYet = !(M.selfCalls || []).some(c => c[0] === "rm");
+        const noRmYet = !(M.skillCalls || []).some(c => c[0] === "rm");
         (document.querySelector("#m-ok") || {click(){}}).click();
         await sleep(500);
-        const rmDone = (M.selfCalls || []).some(c => c[0] === "rm" && c[1] === "dom_snap" && c[2] === true);
-        // ④ 一只都没有 ⇒ 这一块整个不出现（用户不该被这层占视线）
-        M.selfEmpty = true;
-        await aiLoadSelfTools();
+        const rmDone = (M.skillCalls || []).some(c => c[0] === "rm" && c[1] === "--dom_snap" && c[2] === true);
+        // ⑦ 「管理技能…」= 把 `:skill` 那个插件的界面嵌出来（预览里 embed_start 是假的，
+        //    但"点了之后真去起那个包"这件事看得见）
+        const skillPkg = {id: "skill", name: "技能", desc: "(预览)", kind: "app", layer: "system",
+                          version: "1.0", params: [], aliases: ["skill"], tags: [], docs: {},
+                          ai_expose: false, icon: "", icon_svg: "",
+                          ui: {embed: state.home + "\\system\\pkgs\\skill\\ui\\index.html"},
+                          dir: state.home + "\\system\\pkgs\\skill"};
+        if (!state.packages.some(x => x.id === "skill")) state.packages.push(skillPkg);
+        const manageBtn = document.querySelector("#pane-ai .ai-selft-b .btn");
+        const manageLabel = manageBtn ? (manageBtn.textContent || "").trim() : "";
+        // ★ 这里**只验那颗按钮在**：它点下去要起 `:skill` 那个包（预览的假 state.packages
+        //   每轮轮询会重建，注入的包活不到点击那一刻 —— 点了只会弹"找不到管理器"，
+        //   截图里挂一条误导的提示）。那个包能不能跑、内嵌协议通不通，由宿主探针 I-θ 钉住。
+        const managed = !!manageBtn && /管理技能/.test(manageLabel);
+
+        // ⑧ 一只技能都没有 ⇒ 这一块整个不出现（用户不该被这层占视线）
+        M.skillEmpty = true;
+        await aiLoadSkills();
         await sleep(300);
         const gone = !document.querySelector("#pane-ai .ai-selft");
-        // 收尾把"有工具"那个样子摆回来 —— 截图（人看的那张）要的是有内容的样子
-        M.selfEmpty = false;
-        await aiLoadSelfTools();
+        // 收尾把"有技能"那个样子摆回来 —— 截图（人看的那张）要的是有内容的样子
+        M.skillEmpty = false;
+        await aiLoadSkills();
         await sleep(300);
-        const ok = !!strip && yellow && /它自己的工具 · 1/.test(stripTxt) && /1 只等你允许/.test(stripTxt) &&
-                   rows.length === 3 && names[0] === "dom_snap" && /待批准/.test(firstTxt) &&
-                   firstBtns.length === 3 && sysBtns.length === 1 &&
+        const ok = !!strip && yellow && /技能 · 2/.test(stripTxt) && /1 只等你允许/.test(stripTxt) &&
+                   /1 只写坏了/.test(stripTxt) && rows.length === 4 && idOk &&
+                   firstBtns.length === 3 && /待批准/.test(firstTxt) &&
+                   pkgTag && pkgBtns.length === 1 &&
                    badBtns.length === 2 && !badBtns.some(b => /允许/.test(b)) &&
-                   looked && allowed && modalOn && noRmYet && rmDone && gone &&
+                   looked && allowed && modalOn && noRmYet && rmDone && managed && gone &&
                    !(window.__errors || []).length;
+
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
-          "\n那一行 = " + JSON.stringify(stripTxt.slice(0, 46)) + " · 变黄 = " + yellow +
-          "\n列了 " + rows.length + " 只：" + JSON.stringify(names) +
-          "\n待批准那只的按钮 = " + JSON.stringify(firstBtns) + " · 状态行 = " + JSON.stringify(firstTxt.slice(0, 40)) +
-          "\n出厂那只的按钮 = " + JSON.stringify(sysBtns) + "（该只有「看一眼」）" +
-          "\n写坏那只的按钮 = " + JSON.stringify(badBtns) + "（该只有「看一眼 / 删除」，不许给「允许」）" +
-          "\n「看一眼」摊开了 TOOL.md + run.py = " + looked +
+          "\n那一行 = " + JSON.stringify(stripTxt.slice(0, 52)) + " · 变黄 = " + yellow +
+          "\n列了 " + rows.length + " 只：" + JSON.stringify(ids) +
+          "（待批准 / 已允许 / 来自插件 / 写坏 各一只）" +
+          "\n待批准那只的按钮 = " + JSON.stringify(firstBtns) + " · 状态行 = " + JSON.stringify(firstTxt.slice(0, 34)) +
+          "\n来自插件那只（md5）：按钮 = " + JSON.stringify(pkgBtns) + "（该只有「看一眼」）· 标着「插件」= " + pkgTag +
+          "\n写坏那只的按钮 = " + JSON.stringify(badBtns) + "（不许给「允许」）" +
+          "\n「看一眼」摊开了 pkg.json + run.py = " + looked +
           "\n点「允许」= " + allowed + " · 点「删除」先弹框 = " + modalOn +
           " 且**没确认之前一次都没删** = " + noRmYet + " · 确认后才删 = " + rmDone +
-          "\n一只工具都没有时那一块不出现 = " + gone +
+          "\n「管理技能…」那颗按钮在 = " + managed + "  ← " + JSON.stringify(manageLabel) +
+          "\n一只技能都没有时那一块不出现 = " + gone +
           " · 页内错误 = " + (window.__errors || []).length;
         document.title = ok ? "READY"
           : ("AISELF-FAIL 行=" + (strip ? 1 : 0) + " 黄=" + (yellow ? 1 : 0) +
-             " 只数=" + rows.length + " 首=" + names[0] +
-             " 按钮=" + firstBtns.length + "/" + sysBtns.length +
+
+             " 只数=" + rows.length + " 首=" + ids[0] + " id序=" + (idOk ? 1 : 0) +
+             " 按钮=" + firstBtns.length + "/" + pkgBtns.length + "/" + badBtns.length +
+             " 插件标=" + (pkgTag ? 1 : 0) +
              " 看=" + (looked ? 1 : 0) + " 允许=" + (allowed ? 1 : 0) +
              " 弹=" + (modalOn ? 1 : 0) + " 未删=" + (noRmYet ? 1 : 0) + " 删=" + (rmDone ? 1 : 0) +
-             " 空隐=" + (gone ? 1 : 0) + " 错=" + (window.__errors || []).length);
+             " 管理=" + (managed ? 1 : 0) + " 空隐=" + (gone ? 1 : 0) +
+             " 错=" + (window.__errors || []).length);
       }
       // ★ `V-267`：图标数据从 `lucide.js` 搬进 `system/icon/svg/*.svg`（宿主读出来注入成
       //   `window.__MOSS_ICONS`）。这条场景是那次搬迁的护栏，而且**只认数字**：
@@ -4740,9 +4806,23 @@ def main():
         print("[错误] 找不到 %s" % (SRC / "index.html"))
         return 1
 
-    if PRE.exists():
-        shutil.rmtree(PRE, ignore_errors=True)
-    shutil.copytree(SRC, PRE)
+    # ★ 临时副本目录：优先用固定的那个，**被占住就换一个后缀**。
+    #   踩过（2026-10-05）：上一轮跑被中途杀掉时，无头 Edge 还挂在那个目录的 profile 上
+    #   （Windows 上文件被占着删不掉）⇒ 下一次 `copytree` 直接 FileExistsError 崩在开头，
+    #   一整轮场景全没跑（而我还在那儿纳闷"怎么一个 FAIL 都没有"）。所以：删不掉就换地方。
+    global PRE
+    for _try in range(6):
+        cand = PRE if _try == 0 else PRE.with_name(PRE.name + "_%d" % (_try + 1))
+        if cand.exists():
+            shutil.rmtree(cand, ignore_errors=True)
+        if not cand.exists():
+            PRE = cand
+            break
+    try:
+        shutil.copytree(SRC, PRE)
+    except OSError as e:
+        print("[错误] 建不出临时副本（%s）：%s" % (PRE, e))
+        return 1
     page = (PRE / "index.html").read_text(encoding="utf-8")
     anchor = "\n<script>\n/* ====="
     if page.count(anchor) != 1:

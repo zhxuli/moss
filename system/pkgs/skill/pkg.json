@@ -1,0 +1,59 @@
+{
+  "spec": 1,
+  "id": "skill",
+  "kind": "app",
+  "version": "1.0",
+  "name": {
+    "zh-CN": "技能"
+  },
+  "desc": {
+    "zh-CN": "技能管理器：看 AI 给自己造的技能（图标墙 / 详情 / 文件列表 / 时间），允许·撤销·删除，一键转为插件"
+  },
+  "tags": [
+    "管理器",
+    "技能",
+    "AI",
+    "gui"
+  ],
+  "aliases": [
+    "skill"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.py"
+  },
+  "_uiWhy": "跟 exec 一个路子（V-222）：ui.embed 一份页面两种跑法 —— 内嵌时宿主用 MOSS_UI_EMBED=1 把它起成后端进程（embed.py，stdio 上的 JSON 行），独立窗口时 pywebview。界面跟后端说话全走 ui/moss-embed.js 垫片。",
+  "_whatWhy": "技能本体不在这个目录里：它们是**这个插件的数据目录**（user_data/state/skill/<--名字>/，跟 exec 把命令放 state/exec/cmds 一个道理），每个技能是一个**目录**（pkg.json + 入口 + icon.svg），不是把代码塞进 JSON。规矩（扫描 / 校验 / 指纹 / 授权 / 跑 / 转插件）住在 system/ai/skill_lib.py，**宿主 AI 工作台和管理器共用同一份**。",
+  "ui": {
+    "embed": "ui/index.html",
+    "title": {
+      "zh-CN": "技能"
+    }
+  },
+  "params": [
+    {
+      "name": "args",
+      "type": "string",
+      "rest": true,
+      "desc": "不填 = 打开管理器；list = 列出技能；show <id> = 看详情；allow/revoke <id> = 允许或撤销；rm <id> = 删掉；promote <id> [新id] = 转成插件"
+    }
+  ],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "net": []
+  },
+  "output": {
+    "mode": "text"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "medium",
+    "why": "它是**给人用的管理器**（像 exec）：AI 不需要调它 —— 它能用的技能已经在自己的工具表里了。而且「允许 / 删除 / 转为插件」这几下必须由人点，所以宿主那边把 run_moss 走 :skill 的这几个动词也挡掉了。"
+  }
+}

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""shot —— 截屏（整个屏幕 / 某个窗口）存成 png。契约见同目录 `TOOL.md`。
+"""shot —— 截屏（整个屏幕 / 某个窗口）存成 png。说明书在 `pkg.json`（跟插件一个规矩）。
 
-参数从 stdin 那行 JSON 来（也放在 `MOSS_TOOL_ARGS` 里）；只往 stdout 打**要跟模型说的话**。
+参数从 stdin 那行 JSON 来（宿主也放在 `MOSS_PKG_PARAMS` / `MOSS_TOOL_ARGS` 里）；
+只往 stdout 打**要跟模型说的话**（调试信息走 stderr —— stdout 是回给模型的正文）。
 """
 import json
 import os
@@ -17,12 +18,21 @@ def read_args():
     except Exception:                                                  # noqa: BLE001
         raw = ""
     if not raw.strip():
-        raw = os.environ.get("MOSS_TOOL_ARGS") or "{}"
+        raw = (os.environ.get("MOSS_PKG_PARAMS")
+               or os.environ.get("MOSS_TOOL_ARGS") or "{}")
     try:
         got = json.loads(raw) if raw.strip() else {}
     except ValueError:
         got = {}
     return got if isinstance(got, dict) else {}
+
+
+def out_dir():
+    """默认存哪儿：宿主给的插件数据目录（= `user_data/state/--shot`）下的 `shots/`。"""
+    d = (os.environ.get("MOSS_PLUGIN_DATA_DIR") or "").strip()
+    base = Path(d) if d else (Path(os.environ.get("MOSS_USER_DATA_DIR") or ".") /
+                              "state" / "--shot")
+    return base / "shots"
 
 
 def find_window(title_kw):
@@ -58,7 +68,7 @@ def main():
             return 2
         how = "窗口「%s」" % got
     if not out:
-        d = Path(os.environ.get("MOSS_USER_DATA_DIR") or ".") / "ai" / "shots"
+        d = out_dir()
         d.mkdir(parents=True, exist_ok=True)
         out = str(d / ("shot-%s.png" % time.strftime("%Y%m%d-%H%M%S")))
     try:
