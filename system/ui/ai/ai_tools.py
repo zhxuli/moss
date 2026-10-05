@@ -109,6 +109,15 @@ TOOLS = [
             "caveats": {"type": "string", "description": "拿不准的、没查的，写在这儿（可选）"}},
             "required": ["text"]}}},
     {"type": "function", "function": {
+        "name": "skill",
+        "description": ("读一份**技能**（写法指导）：写新包 / 收拖入 这类「方法论」。"
+                        "系统提示里列了有哪些（名字 + 描述），**需要哪份就读哪份**"
+                        "—— 读一次就够，别反复读。正文里提到的样板 / 文件都在技能目录里，"
+                        "回话里会带上目录的绝对路径。"),
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "技能名，例如 new-pkg / dragdrop"}},
+            "required": ["name"]}}},
+    {"type": "function", "function": {
         "name": "done", "description": ("收工。前提：最后一次改动之后**跑过一次且退出码 0**，"
                                         "否则会被打回来。summary 里写清改了什么、怎么验的。"),
         "parameters": {"type": "object", "properties": {
@@ -378,12 +387,29 @@ class Tools:
         out = tail("$ %s\n%s%s" % (" ".join(cmd[1:]), proc.stdout or "", proc.stderr or ""))
         return "退出码 %d（第 %d 次运行）\n%s" % (code, self.run_seq, out)
 
+    def _t_skill(self, args):
+        """读一份技能（`V-278`）。**名字必须在清单里**（不许拿它当任意文件读取的口子）。
+
+        ★ 为什么要走工具而不是让它 `read_file`：读守卫按"干活目录"放行（`E.check_readable`），
+          `system/skills/**` 不在那里面 —— 而且技能目录里的样板/骨架**本来就不该**进
+          "能随便读"的范围；由这里按名字取，一条不多一条不少。
+        """
+        import ai_skills as K                                          # noqa: PLC0415
+        want = str((args or {}).get("name") or "").strip()
+        got = K.usable().get(want)
+        if not got:
+            bad = K.broken().get(want)
+            if bad:
+                return "技能「%s」有问题、没进清单：%s\n可用的：%s" % (
+                    want, "；".join(bad["problems"]), "、".join(K.names()) or "（没有）")
+            return "没有这个技能：%r\n可用的：%s" % (want, "、".join(K.usable()) or "（没有）")
+        return ("# 技能：%s\n（这份在 %s；正文里提到的样板 / 文件都在这个目录下）\n\n%s"
+                % (got["name"], got["path"].parent, got["body"]))
+
     def _t_done(self, args):
         """★ 别回显 `summary`（`V-269` 补）：那一行会原样出现在步骤卡右边，而 summary
         马上又出现在结论卡里 ⇒ 同一段话两遍。这里只回一句"收到"。"""
         return "收到。"
-
-    def _t_answer(self, args):
         """纯问答收工（`V-269`）。工具本身不做判断 —— **闸在 loop 里**：
         只有"一个文件都没动过"才准用它收工（动过文件的必须走 `done` + 跑一遍）。
 

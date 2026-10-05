@@ -96,24 +96,60 @@ def main():
     import ai_client as C                                                 # noqa: E402
 
     print("=" * 72)
-    print("A：提示词是**两层数据文件**（user 覆盖 system），缺了要能报出来")
+    print("A：基底提示词两层（user 盖 system）＋ 技能（`V-278`：只列清单、正文按需读）")
     print("=" * 72)
     text, used, missing = L.compose_system("给我写个新包")
     chk("A 出厂那份读得到（system + edit 都在）",
         "moss 的写插件助手" in text and "search/replace" in text,
         "用了：" + "；".join(Path(u.split("← ")[-1]).name for u in used))
-    chk("A 提到「写新包」时注入了 new_pkg 片段", "写一个新包" in text or "--new" in text, "")
-    chk("A 没提到拖放就不注入 dragdrop 片段", "收拖入 / 内嵌界面" not in text, "")
-    text2, _u, _m = L.compose_system("要能收拖入的包")
-    chk("A 提到拖放才注入 dragdrop 片段", "收拖入 / 内嵌界面" in text2 or "captured" in text2, "")
+    # ★ `V-278`：技能清单进系统提示（名字 + 描述 + 路径），**正文不进** ——
+    #   "靠关键词整段塞进去"那套已经拆了（任务原文不再参与挑选）。
+    chk("A 系统提示里有技能清单（名字 + 描述 + 路径都在）",
+        "【可用技能】" in text and "new-pkg" in text and "dragdrop" in text
+        and "SKILL.md" in text, "")
+    chk("A ★ 而技能**正文不在**系统提示里（省 token、也不猜）",
+        "骨架优先" not in text and "别指望页面读" not in text, "")
+    text2, used2, _m = L.compose_system("给我写个新包")
+    chk("A 任务里出现关键词**不再**改变注入（换成按需读）",
+        "骨架优先" not in text2 and len(text2) == len(text), "")
+    text3, used3, _m2 = L.compose_system("随便什么任务", extra=["dragdrop"])
+    chk("A 点名加载（`extra=['名字']`，相当于 /skill:名字）才把正文装上",
+        "别指望页面读" in text3 and any("skill" in u.lower() for u in used3), "")
+    chk("A 点名一个不存在的技能 ⇒ 点名报缺（不静默）",
+        L.compose_system("随便", extra=["根本没有这个技能"])[2] == ["根本没有这个技能"], "")
+    # 技能本体：读得到 / 读不到要说清 / 缺 description 要点名
+    import ai_skills as K                                              # noqa: E402
+    chk("A `skill('new-pkg')` 能读到正文，并带上它自己目录的路径",
+        "骨架优先" in (K.body("new-pkg") or ""), "")
+    got_skill = T.Tools(workdir=pkgs).call("skill", {"name": "new-pkg"})
+    chk("A 工具 `skill()` 回的是正文 + 目录", "骨架优先" in got_skill and "skills" in got_skill,
+        got_skill.splitlines()[0][:60])
+    bad_skill = T.Tools(workdir=pkgs).call("skill", {"name": "没有这个"})
+    chk("A 工具 `skill()` 要一个不存在的 ⇒ 说清 + 列出可用的",
+        "没有这个技能" in bad_skill and "new-pkg" in bad_skill, bad_skill[:60])
+    # 两层：user_data/skills 盖 system/skills
+    sk = udata / "skills" / "new-pkg"
+    sk.mkdir(parents=True, exist_ok=True)
+    (sk / "SKILL.md").write_text("---\nname: new-pkg\ndescription: 【我的覆盖版】\n---\n正文我是覆盖版\n",
+                                 encoding="utf-8")
+    chk("A user_data/skills 里的同名技能**整个替换**出厂那份",
+        "覆盖版" in (K.body("new-pkg") or "") and "【我的覆盖版】" in K.note(), "")
+    (sk / "SKILL.md").unlink()
+    # 缺 description ⇒ 不进清单，而且要点名
+    sk2 = udata / "skills" / "no-desc"
+    sk2.mkdir(parents=True, exist_ok=True)
+    (sk2 / "SKILL.md").write_text("---\nname: no-desc\n---\n正文\n", encoding="utf-8")
+    chk("A 缺 description 的技能**不进清单**、但会被点名（不搞隐形兜底）",
+        "no-desc" not in K.usable() and "no-desc" in K.broken(), "")
+    (sk2 / "SKILL.md").unlink()
     over = udata / "ai" / "prompts"
     over.mkdir(parents=True, exist_ok=True)
     (over / "system.md").write_text("【我是用户覆盖版】只回三个字。", encoding="utf-8")
-    text3, used3 = L.compose_system("随便")[:2]
+    text4, used4 = L.compose_system("随便")[:2]
     chk("A user_data 的同名提示词**覆盖**出厂那份（两层规矩）",
-        "我是用户覆盖版" in text3 and "moss 的写插件助手" not in text3, "")
+        "我是用户覆盖版" in text4 and "moss 的写插件助手" not in text4, "")
     chk("A 覆盖时来源写的是 user_data 那份",
-        any("user_data" in u and "system.md" in u for u in used3), "；".join(used3))
+        any("user_data" in u and "system.md" in u for u in used4), "；".join(used4))
     chk("A 两层都缺的提示词会被点名（不搞隐形兜底）",
         L.missing_prompts(["根本不存在的片段"]) == ["根本不存在的片段"], "")
     (over / "system.md").unlink()                      # 还原，别影响后面的用例

@@ -422,7 +422,10 @@ MOCK_JS = r"""
       model: "deepseek-flash", base_url: "https://api.deepseek.com/v1", has_key: true,
       // `V-252`：这家配了哪些模型（顶栏那个下拉用它）—— 真宿主回的是配置里那一串
       models: ["deepseek-flash", "deepseek-reasoner", "deepseek-chat"],
-      prompts: ["system.md", "edit.md", "new_pkg.md"], missing_prompts: [],
+      // `V-278`：现在每次都装的只有这两份；"方法论"（写新包/收拖入）改成**技能**按需读
+      //   （系统提示里只列清单），所以这里不再有 new_pkg.md。
+      prompts: ["system.md", "edit.md", "技能清单（2 个：dragdrop、new-pkg）"],
+      skills: ["dragdrop", "new-pkg"], missing_prompts: [],
       prompt_bytes: 4096, steps: 0,
       // `V-240`：预算（界面上那一格，单位是百万 ⇒ 100 = 1 亿）
       max_tokens: 100000000, warn_tokens: 80000000}),

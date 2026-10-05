@@ -81,8 +81,29 @@ js_ids |= set(re.findall(r'\.id\s*=\s*["\']([A-Za-z0-9_\-]+)["\']', js))
 missing = sorted(used - set(ids) - js_ids)
 chk('$("#id") 都能找到', not missing, ("找不到：%s" % missing) if missing else "%d 个引用" % len(used))
 
-# ---------------- 4. 图标名都在 system/icon/svg/*.svg 里（`V-267`） ----------------
-# ★ 以前是去 `vendor/lucide.js` 里数那两张 JS 表（`V-96` 的实心族是第二张）。
+# ---------------- 3.5 技能：每个 SKILL.md 都要有 name + description（`V-278`） ----------------
+# ★ 为什么要这道闸：技能**没有 description 就进不了清单**（模型看不到它），而这是
+#   **静默**的 —— 你会以为"AI 今天不会写包了"。所以这里静态点名。
+_skill_dir = ROOT / "system" / "skills"
+_skills = sorted(_skill_dir.glob("*/SKILL.md")) if _skill_dir.is_dir() else []
+_skill_bad = []
+for _f in _skills:
+    _t = _f.read_text(encoding="utf-8", errors="replace")
+    _m = re.match(r"\A---\s*\n(.*?)\n---\s*\n", _t, re.S)
+    if not _m:
+        _skill_bad.append("%s(没有 frontmatter)" % _f.parent.name)
+        continue
+    _head = _m.group(1)
+    _name = re.search(r"^name:\s*(\S+)", _head, re.M)
+    _desc = re.search(r"^description:\s*(\S+)", _head, re.M)
+    if not _desc:
+        _skill_bad.append("%s(缺 description)" % _f.parent.name)
+    elif not _name or _name.group(1) != _f.parent.name:
+        _skill_bad.append("%s(name 和目录名不一致)" % _f.parent.name)
+chk("技能都有 frontmatter（name 与目录同名 + description）", not _skill_bad,
+    ("有问题：%s" % _skill_bad) if _skill_bad else "%d 个技能" % len(_skills))
+
+# ---------------- 4. 图标名都在 system/icon/svg/*.svg 里（`V-267`） ----------------# ★ 以前是去 `vendor/lucide.js` 里数那两张 JS 表（`V-96` 的实心族是第二张）。
 #   `V-267` 把 260 条 path 数据搬进了 `system/icon/svg/<名字>.svg`、`lucide.js` 只剩
 #   二十行 `ico()` ⇒ **那个文件里再没有名字可数**，检查必须跟着改（不改就是空集、
 #   永远绿 —— 假绿比失败更坏）。

@@ -30,20 +30,30 @@ if str(HERE) not in sys.path:
 
 import ai_client as C                                                 # noqa: E402
 import ai_edits as E                                                  # noqa: E402
+import ai_skills as K                                                 # noqa: E402  (V-278：技能)
 import ai_tools as T                                                  # noqa: E402
 
 #: 每次都要装的两份（人格与硬规矩 / 改文件的格式约定）
 BASE_PROMPTS = ("system", "edit")
 
-#: 按任务关键词"按需注入"的片段（文件在 prompts/ 下，缺了不报错、只是不注入）
-FRAGMENT_RULES = (
-    ("new_pkg", ("写", "新", "建", "做一个", "搞一个", "加一个", "生成")),
-    ("dragdrop", ("拖", "drag")),
-)
+# ★ `V-278`：原来这里有一张"按任务关键词整段注入片段"的表（`FRAGMENT_RULES` +
+#   `pick_fragments`）—— 任务里出现"写/新/建"就把 `new_pkg.md` 全文塞进系统提示。
+#   问题：**靠猜**（关键词命中 ≠ 需要它）、**不好扩展**（加一门只能改 Python 这张表）、
+#   **带不了东西**（技能目录里该能放样板/骨架）。现在改成 Pi 那套：系统提示里**只列
+#   "名字 + 描述 + 路径"**，正文由模型自己 `skill(名字)` 读（实现见 `ai_skills.py`）。
+
+
+def _parse_skill_placeholder():        # 占位：真正的技能逻辑在 `ai_skills.py`（`V-278`）
+    return None
 
 
 def prompts_dirs():
-    """提示词的两层：**后面的覆盖前面的**（user > system）。"""
+    """**基底提示词**的两层：**后面的覆盖前面的**（user > system）。
+
+    ★ `V-278`：这里只剩"每次都要装"的那两份（`system.md` 人格+硬规矩、`edit.md` 改文件
+      的格式与收尾闸）；"写新包 / 收拖入"这类**方法论**搬去了 `system/skills/`，
+      **按需读**（见 `ai_skills.py`）。
+    """
     return [E.HOME / "system" / "ui" / "ai" / "prompts",
             E.user_data() / "ai" / "prompts"]
 
@@ -97,19 +107,16 @@ def _step_disp(name, args):
         return str(a)[:DISP_MAX]
 
 
-def pick_fragments(task):
-    """按任务关键词挑要注入的片段（粗糙但够用；片段内容一律指向契约，不抄正文）。"""
-    low = str(task or "").lower()
-    out = []
-    for name, kws in FRAGMENT_RULES:
-        if any(k in low for k in kws):
-            out.append(name)
-    return out
-
-
 def compose_system(task, extra=()):
-    """拼出这次的系统提示：两份基底 + 按需片段。回 `(文本, 用了哪些文件, 缺了哪些)`。"""
-    names = list(BASE_PROMPTS) + [n for n in (list(extra) or pick_fragments(task))]
+    """拼出这次的系统提示：两份基底 + **技能清单**（正文不进！）+ 点名要装的技能正文。
+
+    回 `(文本, 用了哪些, 缺了哪些)`。
+
+    ★ `V-278`：`extra` 是**点名要加载的技能**（相当于 Pi 的 `/skill:名字`）—— 平时留空，
+      正文由模型自己 `skill(名字)` 按需读；清单里只放"名字 + 描述 + 路径"。
+    ★ 任务原文（`task`）不再参与挑选：以前靠关键词猜，现在不猜了。
+    """
+    names = list(BASE_PROMPTS)
     parts, used, missing = [], [], []
     for n in dict.fromkeys(names):                                   # 去重且保序
         text, where = find_prompt(n)
@@ -118,6 +125,19 @@ def compose_system(task, extra=()):
             continue
         used.append("%s ← %s" % (n, where))
         parts.append(text.strip())
+    # 点名的技能：正文直接装上（`extra`）
+    for n in dict.fromkeys(list(extra or ())):
+        got = K.list_skills().get(str(n))
+        if not got or not got["body"]:
+            missing.append(str(n))
+            continue
+        used.append("技能 %s ← %s" % (n, got["path"]))
+        parts.append(got["body"])
+    # 清单：**只有名字 + 描述 + 路径**（正文不进系统提示 —— 这是整套设计的关键）
+    note = K.note()
+    if note:
+        parts.append(note)
+        used.append("技能清单（%d 个：%s）" % (len(K.usable()), "、".join(K.names()) or "无"))
     return "\n\n---\n\n".join(parts), used, missing
 
 
