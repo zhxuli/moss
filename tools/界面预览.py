@@ -102,7 +102,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
-          "ai-turn-edit",
+          "ai-turn-edit", "ai-self-tools",
           "hl-window", "set-debounce"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
@@ -585,6 +585,44 @@ MOCK_JS = r"""
       (M.sessCalls = M.sessCalls || []).push(["truncate", id, !!confirm]);
       return {ok: true, removed: [id], restored_from: "S-R-1", kept_snapshot: "S-R-1",
               dropped_snapshots: [], prev_id: "", msg: "（预览）删了 1 条会话，回退到镜像 S-R-1"};
+    },
+    // ★ `V-280`：**它自己造的工具**那一层。预览里给齐三种状态：出厂（默认能用）、
+    //   它自己造的还没允许（要你点）、写坏了的。每次调用记进 `M.selfCalls`，场景据此断言。
+    ai_self_tools: async () => {
+      if (M.selfEmpty){
+        return {ok: true, mine: [], pending: [], broken: [], dirs: {}, allow_file: ""};
+      }
+      const d = n => state.home + "\\user_data\\ai\\tools\\" + n;
+      return {ok: true,
+        mine: [{name: "shot", desc: "截屏（整屏或某个窗口）存成 png，回路径和尺寸",
+                layer: "system", dir: state.home + "\\system\\ai\\tools\\shot",
+                allowed: true, why: "出厂工具（随版本走，不用批准）",
+                params: ["target", "out"], problems: [], timeout: 60}],
+        pending: [{name: "dom_snap", desc: "把当前界面的 DOM 存成 html（它自己造的）",
+                   layer: "user", dir: d("dom_snap"), allowed: false, why: "还没允许",
+                   params: ["out"], problems: [], timeout: 60}],
+        broken: [{name: "bad_one", desc: "它写坏了一只（缺 run.py）", layer: "user",
+                  dir: d("bad_one"), allowed: false, why: "还没允许", params: [],
+                  problems: ["缺 run.py（入口脚本）"], timeout: 60}],
+        dirs: {mine: state.home + "\\user_data\\ai\\tools",
+               factory: state.home + "\\system\\ai\\tools"},
+        allow_file: state.home + "\\user_data\\ai\\tools_allow.json"};
+    },
+    ai_self_read: async (name) => {
+      (M.selfCalls = M.selfCalls || []).push(["read", name]);
+      return {ok: true, name: name, layer: "user", dir: "…\\" + name, allowed: false,
+              why: "还没允许", problems: [],
+              md: "---\nname: " + name + "\ndescription: 预览里的假说明\n---\n（正文）",
+              script: "import json, sys\nprint('DOM-快照-假脚本')\n"};
+    },
+    ai_self_allow: async (name, yes) => {
+      (M.selfCalls = M.selfCalls || []).push(["allow", name, !!yes]);
+      return {ok: true, name: name, allowed: !!yes,
+              msg: (yes ? "允许了：" : "撤销了：") + name};
+    },
+    ai_self_rm: async (name, confirm) => {
+      (M.selfCalls = M.selfCalls || []).push(["rm", name, !!confirm]);
+      return {ok: true, name: name, msg: "删掉了：" + name};
     },
     run_start: async (pid, args, cwd) => {
       (M.runs = M.runs || []).push({pid: pid, args: args, cwd: cwd});
@@ -4428,6 +4466,89 @@ MOCK_JS = r"""
              " 只算=" + (onlyPlanned ? 1 : 0) + " 取消=" + (closedNoTruncate ? 1 : 0) +
              " 改框=" + (editOn ? 1 : 0) + " 真删=" + (confirmed ? 1 : 0) +
              " 填回=" + (refilled ? 1 : 0) + " 错=" + (window.__errors || []).length);
+      }
+      // ★ `V-280`：**它自己造的工具**那一块。要钉住三件事：
+      //   ① 有待批准的时候那一行**变黄 + 自动展开**（不然用户根本不知道要点允许）；
+      //   ② 出厂那只**没有**「允许 / 删除」按钮（它是发行版的一部分），它自己造的才有；
+      //   ③ 「看一眼」把 TOOL.md + run.py 摊开给人看；点「允许」/「删除」走的是宿主那两个口子
+      //      （删除要先确认）；而**一只工具都没有的时候，这一块完全不出现**（不占用户视线）。
+      if (h === "ai-self-tools"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        await sleep(300);
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(1200);
+        M.selfCalls = [];
+        M.selfEmpty = false;
+        await aiLoadSelfTools();
+        await sleep(300);
+        const strip = document.querySelector("#pane-ai .ai-selft-h");
+        const stripTxt = ((strip && strip.textContent) || "").replace(/\s+/g, " ").trim();
+        const yellow = !!strip && strip.classList.contains("bad");
+        const rows = Array.from(document.querySelectorAll("#pane-ai .ai-selft-i"));
+        const names = rows.map(r => ((r.querySelector("code") || {}).textContent || "").trim());
+        const firstRow = rows[0] || null;
+        const firstBtns = firstRow ? Array.from(firstRow.querySelectorAll("button")).map(b => b.textContent.trim()) : [];
+        const firstTxt = ((firstRow && firstRow.textContent) || "").replace(/\s+/g, " ");
+        const sysRow = rows.filter(r => /shot/.test((r.querySelector("code") || {}).textContent || ""))[0];
+        const sysBtns = sysRow ? Array.from(sysRow.querySelectorAll("button")).map(b => b.textContent.trim()) : [];
+        // 写坏了的那只**不该有「允许」**（它进不了表，允许了也没用）—— 只有「看一眼 / 删除」
+        const badRow = rows.filter(r => /bad_one/.test((r.querySelector("code") || {}).textContent || ""))[0];
+        const badBtns = badRow ? Array.from(badRow.querySelectorAll("button")).map(b => b.textContent.trim()) : [];
+        // ① 看一眼：内容真摊开了（TOOL.md 和 run.py 两段都在）
+        const lookBtn = firstRow ? Array.from(firstRow.querySelectorAll("button")).filter(b => /看一眼/.test(b.textContent))[0] : null;
+        if (lookBtn) lookBtn.click();
+        await sleep(400);
+        const pre = document.querySelector("#pane-ai .ai-selft-pre");
+        const preTxt = (pre && pre.textContent) || "";
+        const looked = /=== TOOL.md ===/.test(preTxt) && /DOM-快照-假脚本/.test(preTxt);
+        // ② 允许：走宿主那个口子，参数是这只工具的名字
+        const allowBtn = firstRow ? Array.from(firstRow.querySelectorAll("button")).filter(b => /允许/.test(b.textContent))[0] : null;
+        if (allowBtn) allowBtn.click();
+        await sleep(500);
+        const allowed = (M.selfCalls || []).some(c => c[0] === "allow" && c[1] === "dom_snap" && c[2] === true);
+        // ③ 删除：先弹确认，确认了才真删（`confirm=true`）
+        const delBtn = firstRow ? Array.from(firstRow.querySelectorAll("button")).filter(b => /删除/.test(b.textContent))[0] : null;
+        if (delBtn) delBtn.click();
+        await sleep(400);
+        const modalOn = document.querySelector("#modal").classList.contains("on");
+        const noRmYet = !(M.selfCalls || []).some(c => c[0] === "rm");
+        (document.querySelector("#m-ok") || {click(){}}).click();
+        await sleep(500);
+        const rmDone = (M.selfCalls || []).some(c => c[0] === "rm" && c[1] === "dom_snap" && c[2] === true);
+        // ④ 一只都没有 ⇒ 这一块整个不出现（用户不该被这层占视线）
+        M.selfEmpty = true;
+        await aiLoadSelfTools();
+        await sleep(300);
+        const gone = !document.querySelector("#pane-ai .ai-selft");
+        // 收尾把"有工具"那个样子摆回来 —— 截图（人看的那张）要的是有内容的样子
+        M.selfEmpty = false;
+        await aiLoadSelfTools();
+        await sleep(300);
+        const ok = !!strip && yellow && /它自己的工具 · 1/.test(stripTxt) && /1 只等你允许/.test(stripTxt) &&
+                   rows.length === 3 && names[0] === "dom_snap" && /待批准/.test(firstTxt) &&
+                   firstBtns.length === 3 && sysBtns.length === 1 &&
+                   badBtns.length === 2 && !badBtns.some(b => /允许/.test(b)) &&
+                   looked && allowed && modalOn && noRmYet && rmDone && gone &&
+                   !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n那一行 = " + JSON.stringify(stripTxt.slice(0, 46)) + " · 变黄 = " + yellow +
+          "\n列了 " + rows.length + " 只：" + JSON.stringify(names) +
+          "\n待批准那只的按钮 = " + JSON.stringify(firstBtns) + " · 状态行 = " + JSON.stringify(firstTxt.slice(0, 40)) +
+          "\n出厂那只的按钮 = " + JSON.stringify(sysBtns) + "（该只有「看一眼」）" +
+          "\n写坏那只的按钮 = " + JSON.stringify(badBtns) + "（该只有「看一眼 / 删除」，不许给「允许」）" +
+          "\n「看一眼」摊开了 TOOL.md + run.py = " + looked +
+          "\n点「允许」= " + allowed + " · 点「删除」先弹框 = " + modalOn +
+          " 且**没确认之前一次都没删** = " + noRmYet + " · 确认后才删 = " + rmDone +
+          "\n一只工具都没有时那一块不出现 = " + gone +
+          " · 页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+          : ("AISELF-FAIL 行=" + (strip ? 1 : 0) + " 黄=" + (yellow ? 1 : 0) +
+             " 只数=" + rows.length + " 首=" + names[0] +
+             " 按钮=" + firstBtns.length + "/" + sysBtns.length +
+             " 看=" + (looked ? 1 : 0) + " 允许=" + (allowed ? 1 : 0) +
+             " 弹=" + (modalOn ? 1 : 0) + " 未删=" + (noRmYet ? 1 : 0) + " 删=" + (rmDone ? 1 : 0) +
+             " 空隐=" + (gone ? 1 : 0) + " 错=" + (window.__errors || []).length);
       }
       // ★ `V-267`：图标数据从 `lucide.js` 搬进 `system/icon/svg/*.svg`（宿主读出来注入成
       //   `window.__MOSS_ICONS`）。这条场景是那次搬迁的护栏，而且**只认数字**：

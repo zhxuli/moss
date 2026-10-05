@@ -8,8 +8,9 @@
 代价是"找不到那段"会失败 —— 所以这里把失败**写清楚**（给候选行号、给最像的几行），
 让模型下一轮能自己修好，而不是瞎改别处。
 
-★ 写权限（v1，`C①`）：**只允许写 `user_data/pkgs/**`**。
-  读不设这个限制（要读 `system/pkgs/bmi` 当样板、要读契约），但**写只有那一个地方** ——
+★ 写权限（v1，`C①`）：**只允许写 `user_data/pkgs/**`**，`V-280` 起多开一处
+  `user_data/ai/tools/**`（它自己造的手 —— 那层用户看不见，见 `ai_selftools.py`）。
+  读不设这个限制（要读 `system/pkgs/bmi` 当样板、要读契约），但**写只有那两处** ——
   改坏了删包重来，碰不到出厂件，这也是"v1 不碰 system/ / 不碰 core/"的落地。
 """
 import os
@@ -42,6 +43,21 @@ def write_root():
     return user_data() / "pkgs"
 
 
+def tool_root():
+    """★ `V-280`：**第二处**可写的地方 —— 它自己造的手（`user_data/ai/tools/**`）。
+
+    为什么单开一个根而不是放开 pkgs：那是**面向用户的目录**（插件页/`:别名`/`--remove`
+    都在那儿），AI 的手混进去用户会看着乱、还容易被一键删掉。所以手放这儿、用户看不见。
+    出厂工具在 `system/ai/tools/**`（跟着版本走，**不归 AI 写**）。
+    """
+    return user_data() / "ai" / "tools"
+
+
+def write_roots():
+    """能写的地方就这两处：自己的包 + 自己的工具。"""
+    return [write_root(), tool_root()]
+
+
 def inside(path, root):
     """`path` 是不是在 `root` 里面（用 realpath 比，挡 `..` 和符号链接）。"""
     try:
@@ -54,11 +70,12 @@ def inside(path, root):
 
 def check_writable(path):
     """能写就回 None，不能写就回一句**给人看的原因**（会被原样回给模型）。"""
-    root = write_root()
-    if not inside(path, root):
-        return ("[拒绝] v1 只允许写 `%s` 下面的文件；`%s` 不在里面。"
-                "（要改出厂件/宿主：那是第二阶段的事，现在必须由人来做。）" % (root, path))
-    return None
+    for root in write_roots():
+        if inside(path, root):
+            return None
+    return ("[拒绝] v1 只允许写两处：`%s`（你自己的包）和 `%s`（**你自己造的工具**）；"
+            "`%s` 不在里面。（要改出厂件/宿主：那是第二阶段的事，现在必须由人来做。）"
+            % (write_root(), tool_root(), path))
 
 
 def read_roots():
@@ -70,6 +87,7 @@ def read_roots():
       把"能读哪儿"框住，比在提示词里写"别乱读"硬得多（提示词是劝，这个是拦）。
     """
     return [write_root(),                                    # user_data/pkgs/**
+            tool_root(),                                     # user_data/ai/tools/**（V-280）
             HOME / "system" / "spec",                        # 契约（唯一真相）
             HOME / "system" / "pkgs"]                        # 样板包（照 bmi 抄）
 
@@ -101,9 +119,10 @@ def check_readable(path, scope=None):
     for root in read_roots():
         if inside(path, root):
             return None
-    return ("[拒绝] 只允许读这三处：`%s`（自己写的包）、`system/spec/`（契约，**用 spec 工具**）、"
-            "`system/pkgs/`（样板包）。`%s` 不在里面 —— 要了解宿主实现请**问人**，"
-            "别读源码（那是浪费轮次和 token）。" % (write_root(), path))
+    return ("[拒绝] 只允许读这几处：`%s`（自己写的包）、`%s`（**你自己造的工具**）、"
+            "`system/spec/`（契约，**用 spec 工具**）、`system/pkgs/`（样板包）。"
+            "`%s` 不在里面 —— 要了解宿主实现请**问人**，别读源码（那是浪费轮次和 token）。"
+            % (write_root(), tool_root(), path))
 
 
 def read_text(path, offset=1, limit=400):

@@ -2365,6 +2365,51 @@ class Api:
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 
+    # ------------------------------------------------ AI 自己的工具（`V-280`）
+    # ★ 你 2026-10-05 定的：它工作的时候缺一只手（比如"给某个界面截屏"），**可以自己造一只**；
+    #   但那东西**不能塞进 `user_data/pkgs/`** —— 那是面向用户的目录，混进去用户看着乱、
+    #   还能被 `--remove` 一键删掉。所以另开一层 `user_data/ai/tools/`：
+    #     · 它自己造的手 ⇒ 用户**看不见**（不在插件页、不是 `:别名`、不算包），只在 AI 页
+    #       那个折叠小块里露一眼；
+    #     · `system/ai/tools/` 是我们出厂的（随版本走，默认可用）；
+    #     · **第一次要人点一次「允许」**（`3ⓑ`）—— 而且绑指纹：它事后改了 `TOOL.md` / `run.py`
+    #       就自动退回"待批准"（不然"批准"就成了永久通行证）。
+    def _ai_selftools(self):
+        ai_dir = str(HERE / "ai")
+        if ai_dir not in sys.path:
+            sys.path.insert(0, ai_dir)
+        import ai_selftools as ST                                      # noqa: PLC0415
+        return ST
+
+    def ai_self_tools(self):
+        """它自己有哪些手 / 哪些还在等你点头 / 哪些坏了（AI 页那个折叠块 + 黄条用它）。"""
+        try:
+            return self._ai_selftools().summary()
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e),
+                    "mine": [], "pending": [], "broken": [], "dirs": {}}
+
+    def ai_self_allow(self, name="", yes=True):
+        """允许 / 撤销一只**它自己造的**工具（出厂层不用批，也不许在这儿改）。"""
+        try:
+            return self._ai_selftools().allow(name, bool(yes))
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
+    def ai_self_read(self, name=""):
+        """「看一眼」：把它写的 `TOOL.md` 和 `run.py` 原文拿出来（点允许之前先看）。"""
+        try:
+            return self._ai_selftools().read(name)
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
+    def ai_self_rm(self, name="", confirm=False):
+        """删掉一只它自己造的手（`confirm=False` 时**什么都不删**，只回一句"确认一下"）。"""
+        try:
+            return self._ai_selftools().rm(name, bool(confirm))
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
     def ai_run_forget(self, run_id="", all_of_them=False):
         """删一条（或全清）任务记录。记录只是回顾用的，删了不影响包。"""
         try:

@@ -1339,6 +1339,46 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
 }
 .aiwrap .ai-th-x button:hover{border-color:var(--aib-primary);color:var(--aib-primary)}
 .aiwrap .ai-th-x button.danger:hover{border-color:var(--aib-danger);color:var(--aib-danger)}
+/* ★ `V-280`：**它自己造的工具**那一块 —— 用户平时看不见（不在插件页、不是 :别名、不算包），
+   只在 AI 页折叠成**一行灰字**；有待批准的时候整行变黄（那才需要你动手）。
+   做成"一行 + 展开"而不是常驻面板：这一层是给 AI 自己用的，不该占用户的注意力。 */
+.aiwrap .ai-selft{margin:0 0 10px}
+.aiwrap .ai-selft-h{
+  display:flex;align-items:center;gap:6px;padding:4px 8px;cursor:pointer;font-size:12px;
+  color:var(--aib-text-muted);background:var(--aib-code-bg);
+  border:1px solid var(--aib-border-color);border-radius:6px;
+  transition:var(--aib-transition-smooth);
+}
+.aiwrap .ai-selft-h:hover{border-color:var(--aib-primary);color:var(--aib-primary)}
+.aiwrap .ai-selft-h.bad{background:#FFFBEB;border-color:var(--aib-warning);color:#B45309}
+.aiwrap .ai-selft-x{margin-left:auto;color:var(--aib-text-light)}
+.aiwrap .ai-selft-b{
+  margin-top:6px;padding:8px;display:flex;flex-direction:column;gap:6px;
+  background:var(--aib-bg-panel);border:1px solid var(--aib-border-color);border-radius:6px;
+}
+.aiwrap .ai-selft-i{display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap}
+.aiwrap .ai-selft-i code{
+  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-weight:600;
+  color:var(--aib-primary);
+}
+.aiwrap .ai-selft-d{
+  flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:var(--aib-text-main);
+}
+.aiwrap .ai-selft-t{flex:none;color:var(--aib-text-light)}
+.aiwrap .ai-selft-a{display:flex;gap:6px;flex:none}
+.aiwrap .ai-selft-a button{
+  padding:1px 8px;font-size:12px;line-height:18px;border-radius:5px;cursor:pointer;
+  border:1px solid var(--aib-border-color);background:#fff;color:var(--aib-text-muted);
+}
+.aiwrap .ai-selft-a button:hover{border-color:var(--aib-primary);color:var(--aib-primary)}
+.aiwrap .ai-selft-a button.danger:hover{border-color:var(--aib-danger);color:var(--aib-danger)}
+.aiwrap .ai-selft-pre{
+  flex-basis:100%;margin:0;padding:8px;max-height:320px;overflow:auto;white-space:pre-wrap;
+  background:var(--aib-code-bg);border-radius:6px;font-size:11px;
+  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;color:var(--aib-text-main);
+}
+.aiwrap .ai-selft-p{margin:0;font-size:12px;color:var(--aib-warning)}
 /* ★ `V-259`：这一轮"接着上次聊 / 按新会话跑"那行小字（宿主说的，照实显示） */
 .aiwrap .ai-turnnote{font-size:12px;color:var(--aib-success)}
 .aiwrap .ai-turnnote.bad{color:var(--aib-warning)}

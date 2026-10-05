@@ -30,6 +30,7 @@ if str(HERE) not in sys.path:
 
 import ai_client as C                                                 # noqa: E402
 import ai_edits as E                                                  # noqa: E402
+import ai_selftools as ST                                             # noqa: E402  (V-280：它自己造的工具)
 import ai_skills as K                                                 # noqa: E402  (V-278：技能)
 import ai_tools as T                                                  # noqa: E402
 
@@ -107,7 +108,7 @@ def _step_disp(name, args):
         return str(a)[:DISP_MAX]
 
 
-def compose_system(task, extra=()):
+def compose_system(task, extra=(), self_tools=None):
     """拼出这次的系统提示：两份基底 + **技能清单**（正文不进！）+ 点名要装的技能正文。
 
     回 `(文本, 用了哪些, 缺了哪些)`。
@@ -115,6 +116,8 @@ def compose_system(task, extra=()):
     ★ `V-278`：`extra` 是**点名要加载的技能**（相当于 Pi 的 `/skill:名字`）—— 平时留空，
       正文由模型自己 `skill(名字)` 按需读；清单里只放"名字 + 描述 + 路径"。
     ★ 任务原文（`task`）不再参与挑选：以前靠关键词猜，现在不猜了。
+    ★ `V-280`：`self_tools` 是**这次跑已经允许它用的自制工具** —— 只在**真有**的时候加一段
+      （"你已经有哪些手"），一只都没有就一个字都不加（不加噪音）。
     """
     names = list(BASE_PROMPTS)
     parts, used, missing = [], [], []
@@ -138,6 +141,11 @@ def compose_system(task, extra=()):
     if note:
         parts.append(note)
         used.append("技能清单（%d 个：%s）" % (len(K.usable()), "、".join(K.names()) or "无"))
+    # `V-280`：它自己的手（有才写）
+    mine = ST.note(self_tools)
+    if mine:
+        parts.append(mine)
+        used.append("自制工具（%d 个：%s）" % (len(self_tools or {}), "、".join(sorted(self_tools or {}))))
     return "\n\n---\n\n".join(parts), used, missing
 
 
@@ -169,7 +177,15 @@ class Loop:
         self.snapshot = None
         self.want_snapshot = True
         self.task = ""
-        self.tools = T.Tools(workdir=workdir, before_write=self._before_first_write)
+        # ★ `V-280`：**这一次跑**的工具表在开工这一刻定死 —— 内置那些 + 已经允许它用的自制工具。
+        #   它这一次新造的手**下一次**才进表（也正好卡在"用户还没点允许"那一步）。
+        try:
+            self.self_tools = ST.usable(avoid=T.builtin_names())
+        except Exception:                                              # noqa: BLE001
+            self.self_tools = {}
+        self.tool_table = T.tools_for(self.self_tools)
+        self.tools = T.Tools(workdir=workdir, before_write=self._before_first_write,
+                             self_tools=self.self_tools)
         #: 现在在干什么（`V-242`：界面上显示"等模型回话 12s / 执行工具"，
         #  免得"模型在想"看起来像"卡死了"）
         self.on_phase = on_phase
@@ -358,7 +374,7 @@ class Loop:
         ★ 空会话（`[]`）和没给一样 —— 别把"新开一条"变成"少发一条用户消息"。
         `from_id`：这条会话是从哪条记录接过来的（写进新记录，界面上能看出链条）。
         """
-        sys_text, used, missing = compose_system(task, extra_fragments)
+        sys_text, used, missing = compose_system(task, extra_fragments, self.self_tools)
         self.task = str(task or "")
         self.want_snapshot = bool(snapshot)
         old = [m for m in (history or []) if str(m.get("role")) != "system"]
@@ -420,7 +436,7 @@ class Loop:
                 if self.on_phase:
                     self.on_phase("thinking")
                 self.cur_n = n
-                resp = self.client.chat(messages, T.TOOLS, stop_check=self.stop_check,
+                resp = self.client.chat(messages, self.tool_table, stop_check=self.stop_check,
                                         on_wait=self._on_wait, on_retry=self._on_retry)
             except C.Stopped:
                 # ★ `V-242`：请求**发到一半**按的停止 —— 立刻收工，不再等它把话说完。

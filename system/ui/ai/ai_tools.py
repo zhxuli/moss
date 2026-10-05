@@ -24,6 +24,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import ai_edits as E                                                  # noqa: E402
+import ai_selftools as ST                                             # noqa: E402  (V-280)
 
 NO_WINDOW = 0x08000000
 #: 回给模型的东西**一律截断**（全量留在「命令行」页给人看）—— 这是省 token 的第 5 条
@@ -127,6 +128,20 @@ TOOLS = [
 ]
 
 
+def builtin_names():
+    """内置那 11 个的名字（自制工具**撞名的一律不进表** —— 否则会盖掉 read_file 那种）。"""
+    return tuple(t["function"]["name"] for t in TOOLS)
+
+
+def tools_for(self_tools=None):
+    """这次跑交给模型的**完整工具表** = 内置那些 + **已经允许它用的自制工具**（`V-280`）。
+
+    ★ 自制那几张是从"这一次跑开工时的那份表"建出来的（`Loop.__init__` 定死），
+      所以**它这一刻新造的手**不会混进来 —— 正好卡在"用户还没点允许"那一步。
+    """
+    return list(TOOLS) + ST.specs_from(self_tools or {})
+
+
 def tail(text, lines=TAIL_LINES, chars=TAIL_CHARS):
     s = str(text or "")
     if not s:
@@ -190,9 +205,11 @@ class Tools:
       等于白写一条备份（还占列表一格）；而且快照点越贴近改动越准。
     """
 
-    def __init__(self, workdir=None, before_write=None):
+    def __init__(self, workdir=None, before_write=None, self_tools=None):
         self.workdir = Path(workdir) if workdir else E.write_root()
         self.before_write = before_write    # `V-269`：第一次写文件之前叫一次
+        #: ★ `V-280`：**这一次跑**已经允许它用的自制工具（开工那一刻定死的那份表）
+        self.self_tools = dict(self_tools or {})
         self._wrote = False                 # 只叫一次（失败重试也不重复存）
         self.edit_seq = 0          # 第几次成功改动
         self.run_seq = 0           # 第几次跑
@@ -206,9 +223,14 @@ class Tools:
     # ------------------------------------------------------------------ 派发
     def call(self, name, args):
         fn = getattr(self, "_t_" + str(name or ""), None)
+        # ★ `V-280`：内置的优先（撞名的自制工具压根进不了表）；没有同名的就交给自制工具。
         if fn is None:
+            if str(name or "") in self.self_tools:
+                out = ST.run(name, args or {}, avoid=builtin_names())
+                self.log.append((name, str(out).replace("\n", " ")[:110]))
+                return out
             return "[错误] 没有这个工具：%s（可用：%s）" % (
-                name, "、".join(t["function"]["name"] for t in TOOLS))
+                name, "、".join(t["function"]["name"] for t in tools_for(self.self_tools)))
         # ★ `V-269`：写文件之前先让 loop 存快照（`before_write` 里做的事**必须**在
         #   `fn(...)` 之前跑完 —— 不然存下来的就是"已经改了一半"的样子）。
         #   只认第一次：同一轮里连改三个文件也只存一条。存不上不影响改（loop 那边自己会记）。
@@ -410,12 +432,21 @@ class Tools:
         """★ 别回显 `summary`（`V-269` 补）：那一行会原样出现在步骤卡右边，而 summary
         马上又出现在结论卡里 ⇒ 同一段话两遍。这里只回一句"收到"。"""
         return "收到。"
+
+    def _t_answer(self, args):
         """纯问答收工（`V-269`）。工具本身不做判断 —— **闸在 loop 里**：
         只有"一个文件都没动过"才准用它收工（动过文件的必须走 `done` + 跑一遍）。
 
         ★ 别把 `text` 回显进来（第一版就是 `…。text=<整段回答>`）：那一行会原样出现在
           步骤卡的右边（`note`），于是同一段回答在界面上出现两遍，还把那一行撑满
           —— 真机截图里就是这样，你一眼就看出多余。
+        ★★ `V-280` 顺手修一个真 bug：**这个方法的函数头以前被 `_t_done` 顶掉了** ——
+          下面这两行（docstring + return）一直挂在 `_t_done` 的 `return` **之后**，
+          是死代码 ⇒ `answer` 这个工具实际回给模型的是
+          「[错误] 没有这个工具：answer（可用：…、answer、…）」（自相矛盾的一句话），
+          而且这句话会被当成工具结果**存进会话记录**、下一轮接着聊时又发回给模型。
+          步骤卡上那张是 `mute` 的，界面上一直没露馅，所以谁都没发现。
+          探针里也没有一条断言盯过 `answer` 的返回值 —— 这次一并补上。
         """
         return "收到（这次是回答，没动文件）。"
 

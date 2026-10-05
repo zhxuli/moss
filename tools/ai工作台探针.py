@@ -62,6 +62,8 @@ class FakeClient:
         self.seen = []
         #: ★ `V-251`：把每次发出去的 messages 也留一份（验"接着聊"时老对话有没有真的发出去）
         self.msgs = []
+        #: ★ `V-280`：工具表也留一份（验"自制工具点允许之后下一次跑才进表"）
+        self.tools_seen = []
         FakeClient.INSTANCES.append(self)
         # ★ `V-252`：第三个参数是**模型名**（宿主 `Client(base_url, key, model)`）——
         #   以前这里写死 "fake-model"，于是"顶栏选了别的模型"这条根本验不出来。
@@ -77,6 +79,7 @@ class FakeClient:
         # `V-242`：签名跟真 client 对上（多出来的两个参数是"能不能中途停"用的）
         self.seen.append(1)
         self.msgs.append(json.loads(json.dumps(messages, ensure_ascii=False)))
+        self.tools_seen.append(json.loads(json.dumps(tools or [], ensure_ascii=False)))
         if not self.script:
             return {"text": "（没了）", "tool_calls": [], "usage": {}, "native": True,
                     "message": {"role": "assistant", "content": "（没了）"}}
@@ -603,6 +606,221 @@ def main():
         pbad.get("ok") is False and "找不到" in str(pbad.get("msg")), str(pbad.get("msg"))[:70])
     api.ai_session_truncate(rn, True)
     chk("H 收尾：现场清干净（临时目录最后整个删掉）", _runs.get(rn) is None, "")
+
+    print()
+    print("=" * 72)
+    print("I：`V-280` AI 自己的工具 —— 两层 + 要人点头 + 绑指纹")
+    print("=" * 72)
+    import ai_selftools as ST                                             # noqa: E402
+    import ai_tools as _tl                                                # noqa: E402
+    AVOID = _tl.builtin_names()
+    tdir = udata / "ai" / "tools"
+    # ★ D 段把假模型换成了"卡住不回"的 `SlowClient`（验停止用的）—— 这一段要正常回话，换回来。
+    ai_client.Client = FakeClient
+
+    def _mk(name, md, script, root=None, extra=None):
+        d = (root or tdir) / name
+        d.mkdir(parents=True, exist_ok=True)
+        if md is not None:
+            (d / "TOOL.md").write_text(md, encoding="utf-8")
+        if script is not None:
+            (d / "run.py").write_text(script, encoding="utf-8")
+        for fn, body in (extra or {}).items():
+            (d / fn).write_text(body, encoding="utf-8")
+        return d
+
+    def _md(name, desc, params=None, timeout=0):
+        rows = ["---", "name: %s" % name]
+        if desc is not None:
+            rows.append("description: %s" % desc)
+        if params:
+            rows.append("params:")
+            rows += ["  %s: %s" % (k, v) for k, v in params]
+        if timeout:
+            rows.append("timeout: %d" % timeout)
+        rows += ["---", "（给人看的说明）", ""]
+        return "\n".join(rows)
+
+    PY_ADDER = ("import json, sys\n"
+                "a = json.loads(sys.stdin.read() or '{}')\n"
+                "print(int(a.get('a') or 0) + int(a.get('b') or 0))\n")
+    _mk("adder", _md("adder", "把 a 和 b 加起来", [("a", "第一个数"), ("b", "第二个数")]), PY_ADDER)
+    _mk("imports", _md("imports", "验同目录兄弟模块能不能 import"),
+        "import os, helper\nprint('兄弟=' + helper.NAME + ' cwd=' + os.path.basename(os.getcwd()))\n",
+        extra={"helper.py": "NAME = '兄弟模块也能 import'\n"})
+    _mk("envargs", _md("envargs", "验环境变量那条路"),
+        "import json, os\nprint('环境变量=' + str(json.loads(os.environ['MOSS_TOOL_ARGS']).get('k')))\n")
+    _mk("boom", _md("boom", "故意炸：打印一句然后退出码 3"),
+        "import sys\nprint('我不干了')\nsys.exit(3)\n")
+    _mk("slow", _md("slow", "故意卡住（验超时）", timeout=5),
+        "import time\nprint('开始等')\ntime.sleep(30)\n")
+    _mk("nodesc", _md("nodesc", None), PY_ADDER)                  # 缺 description
+    _mk("norun", _md("norun", "没有入口脚本"), None)                # 缺 run.py
+    _mk("read_file", _md("read_file", "故意和内置工具撞名"), PY_ADDER)
+
+    _all = ST.list_tools(avoid=AVOID)
+    chk("I 扫到用户层自己造的工具（list_tools）",
+        all(x in _all for x in ("adder", "imports", "envargs", "boom", "slow")),
+        "共 %d 只：%s" % (len(_all), "、".join(sorted(_all))))
+    chk("I ★★ 出厂层的默认已允许（人写的、随版本走）；它自己造的**要点头**",
+        _all["shot"]["layer"] == "system" and _all["shot"]["allowed"] is True and
+        _all["adder"]["layer"] == "user" and _all["adder"]["allowed"] is False and
+        "还没允许" in _all["adder"]["why"],
+        "shot: layer=%s allowed=%s ｜ adder: layer=%s allowed=%s why=%s"
+        % (_all["shot"]["layer"], _all["shot"]["allowed"], _all["adder"]["layer"],
+           _all["adder"]["allowed"], _all["adder"]["why"]))
+    chk("I ★★ 没点头的**进不了工具表**：usable 里没有、pending 里有",
+        "adder" not in ST.usable(avoid=AVOID) and "adder" in ST.pending(avoid=AVOID),
+        "usable=%s pending=%s" % (sorted(ST.usable(avoid=AVOID)), sorted(ST.pending(avoid=AVOID))))
+    _bad = ST.broken(avoid=AVOID)
+    chk("I 毛病要点名（缺 description / 缺 run.py / 和内置撞名）",
+        {"nodesc", "norun", "read_file"} <= set(_bad) and
+        "缺 description" in " ".join(_bad["nodesc"]["problems"]) and
+        "缺 run.py" in " ".join(_bad["norun"]["problems"]) and
+        "撞名" in " ".join(_bad["read_file"]["problems"]),
+        json.dumps({k: v["problems"] for k, v in _bad.items()}, ensure_ascii=False)[:170])
+    chk("I 坏工具也不许混进工具表", "read_file" not in ST.usable(avoid=AVOID), "")
+
+    # 出厂层"不用批准"这条规矩，用一组**合成目录**再钉一遍（别只信仓库里那份 shot）
+    syn_sys, syn_user = tmp / "syn_sys", tmp / "syn_user"
+    _mk("echo", _md("echo", "合成的出厂工具"), PY_ADDER, root=syn_sys)
+    _syn1 = ST.list_tools(roots_in=[(syn_sys, "system")])
+    _mk("echo", _md("echo", "合成的用户层同名工具"), PY_ADDER, root=syn_user)
+    _syn2 = ST.list_tools(roots_in=[(syn_sys, "system"), (syn_user, "user")])
+    chk("I ★ 出厂层不批就能用；用户层同名**整个盖上**（跟包/技能一个规矩：user > system）",
+        _syn1["echo"]["allowed"] is True and _syn1["echo"]["layer"] == "system" and
+        _syn2["echo"]["layer"] == "user" and _syn2["echo"]["allowed"] is False,
+        "合成 system allowed=%s ｜ 合成 user 盖后 layer=%s allowed=%s"
+        % (_syn1["echo"]["allowed"], _syn2["echo"]["layer"], _syn2["echo"]["allowed"]))
+
+    # ---- 点头 / 撤销 / 指纹 ----
+    _ok = ST.allow("adder")
+    chk("I ★★ 点了「允许」才进工具表",
+        _ok.get("ok") is True and "adder" in ST.usable(avoid=AVOID), str(_ok.get("msg"))[:70])
+    chk("I 出厂工具不用（也不许）在这儿批准",
+        ST.allow("shot").get("ok") is False, str(ST.allow("shot").get("msg"))[:60])
+    (tdir / "adder" / "run.py").write_text(PY_ADDER + "print('我事后改了一行')\n", encoding="utf-8")
+    chk("I ★★★ 它事后改了 run.py ⇒ 允许**自动作废**、退回待批准（不然批准就成了永久通行证）",
+        "adder" not in ST.usable(avoid=AVOID) and "adder" in ST.pending(avoid=AVOID) and
+        "又改过" in ST.list_tools(avoid=AVOID)["adder"]["why"],
+        ST.list_tools(avoid=AVOID)["adder"]["why"])
+    ST.allow("adder")
+    # 后面那几只要真跑的，也都得先点头（这就是那道闸本身）
+    for _n in ("imports", "envargs", "boom", "slow"):
+        ST.allow(_n)
+
+    # ---- 真跑 ----
+    _o1 = ST.run("adder", {"a": "2", "b": "3"}, avoid=AVOID)
+    chk("I ★★ 真跑起来了（参数进得去、stdout 回得来、退出码 0）",
+        "退出码 0" in _o1 and "5" in _o1, repr(_o1)[:110])
+    _o2 = ST.run("imports", {}, avoid=AVOID)
+    chk("I ★ 自带运行时经 bootstrap 跑 ⇒ 同目录兄弟模块能 import、cwd = 工具目录",
+        "兄弟模块也能 import" in _o2 and "cwd=imports" in _o2, repr(_o2)[:120])
+    _o3 = ST.run("envargs", {"k": "环境变量那条路也通"}, avoid=AVOID)
+    chk("I 参数从环境变量 MOSS_TOOL_ARGS 也拿得到", "环境变量那条路也通" in _o3, repr(_o3)[:90])
+    _o4 = ST.run("boom", {}, avoid=AVOID)
+    chk("I ★ 工具自己炸了 ⇒ 回人话 + 退出码（不冒泡、不把宿主拖下水）",
+        "退出码 3" in _o4 and "我不干了" in _o4, repr(_o4)[:110])
+    _o5 = ST.run("slow", {}, avoid=AVOID)
+    chk("I ★ 卡住的会被杀（超时那个数来自它自己 TOOL.md 里的 timeout: 5）",
+        "超时" in _o5, repr(_o5)[:90])
+    ST.allow("adder", False)
+    chk("I ★★ 撤销之后立刻调不动（同意是**拦**，不是提醒）",
+        "没允许" in ST.run("adder", {"a": "1", "b": "1"}, avoid=AVOID),
+        repr(ST.run("adder", {}, avoid=AVOID))[:90])
+    chk("I 撤销了但它**还在盘上**（只是进不了表）",
+        (tdir / "adder" / "run.py").is_file() and "adder" in ST.list_tools(avoid=AVOID), "")
+    ST.allow("adder")
+
+    # ---- 端到端：假模型**自己造一只手** → 待批准 → 人点允许 → 下一次跑就能用 ----
+    MD_MY = _md("mytool", "把 x 原样打回来（我自己造的）", [("x", "要说的话")])
+    PY_MY = ("import json, sys\n"
+             "print('自制工具收到：' + str(json.loads(sys.stdin.read() or '{}').get('x')))\n")
+    SCRIPT[:] = [
+        call("write_file", {"path": str(tdir / "mytool" / "TOOL.md"), "content": MD_MY}),
+        call("write_file", {"path": str(tdir / "mytool" / "run.py"), "content": PY_MY}),
+        call("answer", {"text": "我给自己造了一只手，你去 AI 页点一下「允许」"}),
+    ]
+    _n_before = len(FakeClient.INSTANCES)
+    api.ai_start("我缺一只手，自己造一只", str(pkgs), 100000000)
+    _got_i = None
+    _dl = time.time() + 40
+    while time.time() < _dl:
+        _last_i = api.ai_poll()
+        if _last_i and not _last_i.get("running") and _last_i.get("result"):
+            _got_i = _last_i
+            break
+        time.sleep(0.3)
+    chk("I ★★ 它自己写的 TOOL.md / run.py 真落进 `user_data/ai/tools/`（写权限只多开这一处）",
+        (tdir / "mytool" / "TOOL.md").is_file() and (tdir / "mytool" / "run.py").is_file(),
+        str(tdir / "mytool"))
+    chk("I ★★ 造完就躺在**待批准**里等你点头（这一次跑用不上）",
+        "mytool" in ST.pending(avoid=AVOID) and "mytool" not in ST.usable(avoid=AVOID), "")
+    _inst_i = FakeClient.INSTANCES[-1] if len(FakeClient.INSTANCES) > _n_before else None
+    _seen = [t["function"]["name"] for t in ((_inst_i.tools_seen or [[]])[0] if _inst_i else [])]
+    chk("I ★★ 这一次跑的工具表里**没有**它刚造的手（表是开工那一刻定死的）",
+        bool(_seen) and "mytool" not in _seen and "read_file" in _seen, "表里有 %d 个" % len(_seen))
+    _ans = [s for s in ((_got_i or {}).get("steps") or []) if s.get("tool") == "answer"]
+    chk("I ★★ `answer` 回的是人话（`V-280` 修的死代码 bug：以前回「[错误] 没有这个工具：answer」）",
+        bool(_ans) and str(_ans[0].get("note")).startswith("收到"),
+        json.dumps(_ans[:1], ensure_ascii=False)[:90])
+    ST.allow("mytool")
+    SCRIPT[:] = [call("mytool", {"x": "你好"}), call("answer", {"text": "用上了"})]
+    _n_before2 = len(FakeClient.INSTANCES)
+    api.ai_start("用一次我自己造的手", str(pkgs), 100000000)
+    _got_j = None
+    _dl = time.time() + 40
+    while time.time() < _dl:
+        _last_j = api.ai_poll()
+        if _last_j and not _last_j.get("running") and _last_j.get("result"):
+            _got_j = _last_j
+            break
+        time.sleep(0.3)
+    _inst_j = FakeClient.INSTANCES[-1] if len(FakeClient.INSTANCES) > _n_before2 else None
+    _seen2 = [t["function"]["name"] for t in ((_inst_j.tools_seen or [[]])[0] if _inst_j else [])]
+    _step_j = [s for s in ((_got_j or {}).get("steps") or []) if s.get("tool") == "mytool"]
+    chk("I ★★★ 点了允许之后：**下一次跑的工具表里有它**（模型真的看得见这只手）",
+        "mytool" in _seen2 and len(_seen2) == len(_seen) + 1,
+        "这次 %d 个（上次 %d 个）" % (len(_seen2), len(_seen)))
+    _blob_j = json.dumps((_inst_j.msgs or []), ensure_ascii=False) if _inst_j else ""
+    chk("I ★★ 而且真调通了：退出码 0 + 它打的那句话**回到了模型那边**（工具结果真进了对话）",
+        bool(_step_j) and "退出码 0" in str(_step_j[0].get("note")) and
+        "自制工具收到：你好" in _blob_j,
+        json.dumps(_step_j[:1], ensure_ascii=False)[:110])
+    chk("I 界面那个 API 的三堆给全了（mine / pending / broken + 目录）",
+        set(ST.summary()) >= {"ok", "mine", "pending", "broken", "dirs", "allow_file"},
+        "键=%s" % sorted(ST.summary()))
+
+    # ---- 闸 ----
+    chk("I ★★ 写权限只多开了这一处：自己造的工具能写、出厂工具和 core 写不了",
+        ai_edits.check_writable(tdir / "x" / "run.py") is None and
+        ai_edits.check_writable(ROOT / "system" / "ai" / "tools" / "x" / "run.py") is not None and
+        "只允许写" in str(ai_edits.check_writable(ROOT / "core" / "cli.py")),
+        str(ai_edits.check_writable(ROOT / "system" / "ai" / "tools" / "x" / "run.py"))[:60])
+    chk("I 能**读**自己那只手（不然没法改它）",
+        ai_edits.check_readable(tdir / "adder" / "run.py") is None, "")
+    _r1 = ST.rm("shot")
+    chk("I ★ 出厂工具删不得：**理由要点名是出厂件**（不是「要不要确认」那种拒绝）",
+        _r1.get("ok") is False and "出厂" in str(_r1.get("msg")),
+        str(_r1.get("msg"))[:70])
+    _mk("keeper", _md("keeper", "合成的出厂工具（验删不掉）"), PY_ADDER, root=syn_sys)
+    _r1b = ST.rm("keeper", True, roots_in=[(syn_sys, "system")])
+    chk("I ★★ 出厂工具**就算带 confirm 也不删**（合成现场验，不去碰仓库那份）",
+        _r1b.get("ok") is False and "出厂" in str(_r1b.get("msg")) and
+        (syn_sys / "keeper" / "run.py").is_file() and
+        (ROOT / "system" / "ai" / "tools" / "shot" / "run.py").is_file(),
+        str(_r1b.get("msg"))[:70])
+    _r2 = ST.rm("adder")
+    chk("I 删自己造的：不给 confirm **一个文件都不删**",
+        _r2.get("ok") is False and _r2.get("need_confirm") is True and (tdir / "adder").is_dir(), "")
+    _r3 = ST.rm("adder", True)
+    chk("I 给了 confirm 才真删（连「允许」那条记录一起清掉）",
+        _r3.get("ok") is True and not (tdir / "adder").is_dir() and
+        "adder" not in ST.allowed_map(), str(_r3.get("msg"))[:60])
+    _rd = ST.read("mytool")
+    chk("I 「看一眼」拿得到 TOOL.md 和 run.py 原文（点允许之前先看）",
+        _rd.get("ok") is True and "自己造的" in str(_rd.get("md")) and
+        "json.loads" in str(_rd.get("script")), str(_rd.get("dir")))
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()
