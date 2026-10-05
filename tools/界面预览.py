@@ -102,7 +102,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
-          "hl-window"]
+          "hl-window", "set-debounce"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
 #: 是场景（或它的假数据）跟不上 —— 待办记在账本 `V-203`。
@@ -801,6 +801,10 @@ MOCK_JS = r"""
                             msg: ""}),
     settings_check: async (vals) => {
       M.values = vals;                       // 记住"页面现在是什么值"（保存时要用）
+      // ★ `V-274`：数一下"这一趟被问了几次" —— 界面那条 250ms 防抖到底省了什么，
+      //   拿数字说话（拿掉防抖的话，敲 10 下就是 10 次；真机每次 ≈ 1 秒）。
+      M.chkN = (M.chkN || 0) + 1;
+      (M.chkLog = M.chkLog || []).push(vals["symbols.path_mode"] || "");
       const probs = [];
       const p = vals["symbols.path_mode"] || "", g = vals["symbols.plugin_mode"] || "";
       if (!p && !g) probs.push({key: "symbols.path_mode", level: "error",
@@ -3968,6 +3972,56 @@ MOCK_JS = r"""
       //   每一条我说的话，点其中某一条就快速定位到那一轮）。这条走真人那条路：
       //   进「AI」页 → 跑两轮（攒出两条"我说的话"）→ 按 Alt → 浮出那张表 →
       //   点第 1 条 → 那一轮**展开 + 闪一下**、面板收起；再按 Alt → 松开 Alt 自己收起来。
+      // ★ `V-274`：把"防抖到底防的是啥"用数字钉住 —— 在「路径调用」那个符号框里打字：
+      //     ① **连敲 10 下（每下 30ms）** ⇒ 只该问宿主 **1** 次（每敲一下都重置 250ms 定时器）；
+      //     ② **每敲一下停 400ms** ⇒ 问 **3** 次（每次停顿都真的发出去了）。
+      //   真机上"问一次"= 起一个 moss.exe ≈ 1 秒 ⇒ ①那种打法没有防抖就是 10 秒的进程风暴。
+      //   顺带钉住"回来了界面真标红"（`: ` 和「跑包」撞符号 ⇒ 两行都红 + 保存变灰）。
+      if (h === "set-debounce"){
+        document.title = "DEB-NO-RUN";
+        await openSettings();
+        await sleep(700);
+        const inp = document.querySelector('#set-body .set-pane.on .inp[data-key="symbols.path_mode"]');
+        if (!inp){ document.title = "DEB-ERR 没找到那个符号框"; return; }
+        const type = v => {
+          inp.value = v;
+          inp.dispatchEvent(new Event("input", {bubbles: true}));
+        };
+        M.chkN = 0; M.chkLog = [];
+        for (let i = 1; i <= 10; i++){ type(":".repeat(i)); await sleep(30); }   // 连敲 10 下
+        await sleep(700);                                                      // 等防抖那一下落地
+        const rapid = M.chkN;
+        M.chkN = 0; M.chkLog = [];
+        for (const v of ["x", "xy", "xyz"]){ type(v); await sleep(400); }        // 每下都停 400ms
+        await sleep(400);
+        const spaced = M.chkN;
+        // 界面这边真标红了吗（`:` 和「跑包」那个 `:` 撞了 —— 主行是 plugin_mode，
+        // path_mode 靠 `also` 一起红，这正是"两行一起红"那条规则的用处）
+        type(":");
+        await sleep(500);
+        const rowOf = k => document.querySelector('#set-body .set-field[data-key="' + k + '"]');
+        const rowA = rowOf("symbols.path_mode"), rowB = rowOf("symbols.plugin_mode");
+        const clsA = rowA ? rowA.className : "", clsB = rowB ? rowB.className : "";
+        const bothRed = /\bbad\b/.test(clsA) && /\bbad\b/.test(clsB);
+        const saveBtn = document.querySelector("#set-save");
+        const saveOff = !!saveBtn && saveBtn.disabled;
+        const probTxt = rowB ? ((rowB.querySelector(".set-prob") || {}).textContent || "") : "";
+        const shown = /用了同一个符号/.test(probTxt);
+        const ok = rapid === 1 && spaced === 3 && bothRed && saveOff && shown &&
+                   !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n① 连敲 10 下（每下 30ms）⇒ 问宿主 " + rapid + " 次（要 1 —— 防抖把 10 下并成 1 下）" +
+          "\n② 每敲一下停 400ms ⇒ 问宿主 " + spaced + " 次（要 3 —— 每次停顿都真发出去了）" +
+          "\n③ 撞符号之后：「路径调用」class=" + JSON.stringify(clsA) +
+          " ·「跑包」class=" + JSON.stringify(clsB) + "（两行都要含 bad —— also 那条）" +
+          "\n   保存变灰 = " + saveOff + " · 主行那句话 = " + JSON.stringify(probTxt.slice(0, 40)) +
+          "\n（真机上每次 = 起一个 moss.exe ≈ 1 秒 ⇒ ①没有防抖就是 10 秒）" +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.querySelector("#meta").className = "meta";
+        document.title = ok ? "READY"
+          : ("DEB-FAIL 连敲=" + rapid + " 停顿=" + spaced + " 红=" + (bothRed ? 1 : 0) +
+             " 灰=" + (saveOff ? 1 : 0) + " 话=" + (shown ? 1 : 0));
+      }
       // ★ `V-272`：代码高亮改成"只画看得见的一屏"（`HL_PAD=60`），防抖删掉、改按帧合并。
       //   这条场景是**当场量**出来的，钉五件事：
       //   ① 文字不许变形：高亮层的 `textContent` 必须和输入层**一模一样**（差一个字整篇错位）；
