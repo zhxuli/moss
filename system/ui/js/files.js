@@ -481,17 +481,99 @@ function fmSorted(s){
     return x < y ? -1 * dir : (x > y ? 1 * dir : 0);
   });
 }
-function hlInto(t, code){
-  const text = t.text || "";
-  if (text.length > 300000){ code.textContent = text + "\n"; return; }
-  if (window.hljs && t.lang && hljs.getLanguage(t.lang)){
-    try{
-      code.innerHTML = hljs.highlight(text, {language: t.lang, ignoreIllegals: true}).value + "\n";
-      return;
-    }catch(e){}
+/* ---------------------------------------------------------------- 代码高亮层
+   ★ `V-272`（照你说的：别拿防抖糊住"整篇重算"）：**只高亮看得见的那一屏**。
+     原做法是"每次输入 → 整篇 `hljs.highlight()` → 整块 `innerHTML`"。无头 Edge 实测
+     （同一份 `highlight.min.js`、同一个调用方式）：
+       · 整篇：`list.js` 832 行 **25.0 ms**、`ai.js` 1132 行 **26.3 ms**、`cli.py` 1616 行 **12.8 ms**
+         （再加上写 DOM 那几毫秒；194 KB 的文件是 124 ms + 42 ms）
+     打字时每敲一下都付这份钱 ⇒ 上一版拿 120ms 防抖把它压成"停下来才画一次"（权宜）。
+     现在只算一屏 + 上下各留 `HL_PAD` 行 ⇒ 实测 **2~5 ms**（同样三个文件：5.8 / 4.9 / 2.1 ms）
+     —— **防抖删掉**，改成按帧合并（`requestAnimationFrame`），打字时零延迟。
+   ★ 三条不许破的规矩：
+     ① 高亮层里的**文字必须和输入层一模一样**（差一个字就整篇错位 = 光标偏移）。所以窗口
+        之外的行用 `Text` 节点**原样**放（不转义、不丢字），只有窗口那一段是 HTML；
+     ② 跨行的 span（块注释 / 模板字符串）按行切开时要把标签**接着开**（`splitHlLines`），
+        否则那些行的颜色会"漏出去"；
+     ③ 窗口上下留 `HL_PAD` 行上下文：滚动时不至于马上露出没上色的行；而且万一窗口正好切在
+        块注释中间，重新开始 token 化的那几行也落在**离视口 20 行**的地方 —— 你看不见。
+   ★ 每次画完把这次的开销写进 `window.__hl`（探针的把手，跟 `ai.js` 的 `__followN` 一个路子）。 */
+//: 视口上下各多算几行。**20 是量出来的**：`HL_PAD=60`（画 160 行）要 5~6 ms，`20`（画 80 行）
+//: 只要 2~4 ms；而 20 行已经够那两件保险（滚动不露白、窗口起点不在视口里）。
+const HL_PAD = 20;
+const HL_MAX = 300000;          // 超过这么多字符就不上色（原来那道闸，照旧）
+
+/* 把 highlight.js 出来的一整段 HTML 按行切开，**跨行的 span 在下一行接着开**。
+   用法只在 `paintHl` 里；单独拎出来是为了能被探针直接钉住。 */
+function splitHlLines(html){
+  const out = [];
+  const stack = [];                       // 还没闭合的 `<span …>`
+  let cur = "";
+  const re = /<span\b[^>]*>|<\/span>|\n|[^<\n]+|</g;
+  let m;
+  while ((m = re.exec(html)) !== null){
+    const tk = m[0];
+    if (tk === "\n"){
+      out.push(cur + "</span>".repeat(stack.length));
+      cur = stack.join("");               // 下一行开头把还开着的标签补回来
+    } else if (tk === "</span>"){
+      stack.pop();
+      cur += tk;
+    } else if (tk.charAt(0) === "<" && tk.charAt(1) === "s"){
+      // ★ 这一行**必须**先判 `<`：`V-272` 第一版只写了 `tk.charAt(1) === "s"`，
+      //   于是正文 `(s).` 被当成"开头标签"压进了栈，下一行开头又"接着开"一次
+      //   ⇒ 屏幕上凭空多出 `(s).`（是那个"文字必须一模一样"的断言当场抓住的）。
+      stack.push(tk);
+      cur += tk;
+    } else {
+      cur += tk;
+    }
   }
-  code.textContent = text + "\n";
+  out.push(cur);
+  return out;
 }
+
+/* 画高亮层。`win = {first, last}` 是**看得见的行号区间**（0 基）；传 null = 整篇（兜底）。 */
+function paintHl(t, code, win){
+  const text = t.text || "";
+  const can = text.length <= HL_MAX && window.hljs && t.lang && hljs.getLanguage(t.lang);
+  if (!can){
+    code.textContent = text + "\n";
+    window.__hl = {mode: "plain", ms: 0, chars: text.length};
+    return window.__hl;
+  }
+  const lines = text.split("\n");
+  const n = lines.length;
+  const a = win ? Math.max(0, (win.first | 0) - HL_PAD) : 0;
+  const b = win ? Math.min(n - 1, (win.last | 0) + HL_PAD) : n - 1;
+  const t0 = performance.now();
+  let mid = "";
+  try{
+    mid = splitHlLines(hljs.highlight(lines.slice(a, b + 1).join("\n"),
+                                      {language: t.lang, ignoreIllegals: true}).value).join("\n");
+  }catch(e){ mid = ""; }
+  const ms = performance.now() - t0;
+  // 三段：前段纯文本 / 中间高亮 / 后段纯文本（末尾那个换行贴在最后一段上）
+  const before = a > 0 ? lines.slice(0, a).join("\n") + "\n" : "";
+  const after = (b < n - 1 ? "\n" + lines.slice(b + 1).join("\n") : "") + "\n";
+  if (!code.__parts){                       // 只在第一次建这三个节点，之后只换内容
+    code.textContent = "";
+    const pm = document.createElement("span");
+    pm.className = "hlwin";
+    code.append(document.createTextNode(""), pm, document.createTextNode(""));
+    code.__parts = true;
+  }
+  const p1 = code.childNodes[0], pm = code.childNodes[1], p2 = code.childNodes[2];
+  if (p1.nodeValue !== before) p1.nodeValue = before;       // 纯文本，不用转义、不丢字
+  if (pm.__html !== mid){ pm.innerHTML = mid; pm.__html = mid; }
+  if (p2.nodeValue !== after) p2.nodeValue = after;
+  window.__hl = {mode: "window", ms: ms, chars: text.length, lines: n,
+                 a: a, b: b, painted: b - a + 1};
+  return window.__hl;
+}
+
+/* 老名字（外面/老注释里还叫 `hlInto`）：整篇画一遍 —— 只在量不到视口时兜底 */
+function hlInto(t, code){ return paintHl(t, code, null); }
 
 /* ================================================================ 界面（Vue 3 组件）
    三个组件，一个状态：父组件管子选项卡条和页面容器，两个子组件各画一页。
@@ -539,7 +621,7 @@ const MossFilePage = {
   </div>
 </div>`,
   data(){
-    return {_hlTimer: null};       // 输入停下 120ms 再高亮（原来那套防抖，一个字没改）
+    return {_raf: 0};              // `V-272`：按帧合并（不再用 120ms 定时器）
   },
   watch: {
     /* ★ `V-249`：`t.text` 不一定是**在这儿**改的 —— AI 干完活、恢复快照、
@@ -547,6 +629,9 @@ const MossFilePage = {
        以前只有 `onInput` 会重画高亮层，于是"字换了、颜色还是旧的"（或者干脆全白）。
        所以改成盯住 `t.text`：不管谁改的，都会重画。 */
     "t.text"(){ this.scheduleHl(); },
+    /* ★ `V-272`：这一页从"藏着"变成"显示"时补画一次 —— 藏着的时候量不到视口高度
+       （`clientHeight = 0`），窗口会算成"从第一行开始的一小段"。 */
+    active(v){ if (v) this.scheduleHl(); },
   },
   computed: {
     // 后缀 → 图标 / 颜色 / 语言（`core.js` 的 `EXT` / `NO_EXT`，只有一份）
@@ -561,20 +646,43 @@ const MossFilePage = {
     },
   },
   mounted(){
-    // 组件刚挂上时 `t.text` 还没进过 textarea 的高亮层，画一遍
-    hlInto(this.t, this.$refs.code);
+    // 组件刚挂上时 `t.text` 还没进过 textarea 的高亮层，画一遍（这时可能还藏着，
+    // 靠 `active` 那个 watcher 在真正显示时补一次 —— 见 `V-272`）
+    this.scheduleHl();
     // 双击一个**已经开着**的文件也会走到这儿吗？不会 —— 那种情况组件早就挂着了，
     // 光标由 `fmFocusActiveSoon()` 负责（和原来的行为一致）。
   },
-  beforeUnmount(){ clearTimeout(this._hlTimer); },
+  beforeUnmount(){
+    if (this._raf) cancelAnimationFrame(this._raf);
+    this._raf = 0;
+  },
   methods: {
     /* ---- 编辑器：输入 / 滚动 / 快捷键 ---- */
-    /* 高亮层重画的**唯一**入口（输入、Tab 补空格、外面换了内容都走它） */
+    /* 现在看得见哪几行（0 基，含端点）—— 行高从计算样式拿（`.editor > pre` 是
+       `font:13px/1.55` ⇒ 20.15px；拿不到就退回 20）。 */
+    hlWindow(){
+      const ta = this.$refs.ta, pre = this.$refs.pre;
+      if (!ta) return null;
+      const cs = pre ? getComputedStyle(pre) : null;
+      const lh = (cs && parseFloat(cs.lineHeight)) || 20;
+      const first = Math.max(0, Math.floor((ta.scrollTop || 0) / lh));
+      const last = first + Math.ceil((ta.clientHeight || 0) / lh) + 1;
+      return {first: first, last: last};
+    },
+    /* 高亮层重画的**唯一**入口（输入、滚动、Tab 补空格、外面换了内容都走它）。
+       ★ `V-272`：按**帧**合并 —— 一帧里改几次都只画一次；不再用 120ms 那个时间常数。 */
     scheduleHl(){
-      clearTimeout(this._hlTimer);
-      this._hlTimer = setTimeout(() => {
-        if (this.$refs.code) hlInto(this.t, this.$refs.code);
-      }, 120);
+      if (this._raf) return;
+      this._raf = requestAnimationFrame(() => {
+        this._raf = 0;
+        this.paintHl();
+      });
+    },
+    paintHl(){
+      const code = this.$refs.code;
+      if (!code) return;
+      window.__hlWin = this.hlWindow();          // 探针的把手：这次用的是哪个窗口
+      paintHl(this.t, code, window.__hlWin);
     },
     onInput(ev){
       this.t.text = ev.target.value;
@@ -584,6 +692,8 @@ const MossFilePage = {
       // 高亮层和输入层是**两张叠在一起的层**，滚动得手动同步（原来也这样）
       const pre = this.$refs.pre, ta = this.$refs.ta;
       pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft;
+      // ★ `V-272`：窗口只画了"视口 ± 60 行" —— 滚出去了得把那几行补上色（按帧合并）
+      this.scheduleHl();
     },
     onKeydown(ev){
       const ta = this.$refs.ta;
@@ -592,7 +702,7 @@ const MossFilePage = {
         const p = ta.selectionStart;
         ta.value = ta.value.slice(0, p) + "    " + ta.value.slice(ta.selectionEnd);
         ta.selectionStart = ta.selectionEnd = p + 4;
-        this.t.text = ta.value; hlInto(this.t, this.$refs.code);
+        this.t.text = ta.value; this.paintHl();
       }
       if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s"){
         ev.preventDefault(); fmSave(this.t);
@@ -607,7 +717,7 @@ const MossFilePage = {
         if (!r.ok){ toast("✗ " + r.msg, true); return; }
         t.text = r.text || ""; t.original = r.text || "";
         // textarea 的 value 由 `:value="t.text"` 在下一帧补上；高亮层得自己补
-        this.$nextTick(() => { if (this.$refs.code) hlInto(t, this.$refs.code); });
+        this.$nextTick(() => this.scheduleHl());
       });
     },
     openDefault(){

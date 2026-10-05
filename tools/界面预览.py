@@ -60,6 +60,14 @@ SRC = ROOT / "system" / "ui"
 PRE = Path(__import__("tempfile").gettempdir()) / "moss_ui_preview"
 SHOTS = Path(__import__("tempfile").gettempdir()) / "moss_ui_shots"
 
+#: 无头浏览器的虚拟时钟预算（毫秒）。场景里的 `sleep` 总量必须小于它 —— 超了就会
+#: **半路截图**（标题停在场景自己写的中间值，或者干脆是初始的 `moss`）。
+#: ★ `V-272`：从 12000 提到 30000。新场景 `hl-window` 要开一个 1000+ 行的文件、
+#:   跑好几次整篇高亮（一次 20~30 ms）＋几个 `sleep`，而虚拟时钟还被应用自己的定时器
+#:   推着走 —— 实测 12000 时约每 4 次就有 1 次"没跑完"（它会以 `HLWIN-ERR 没跑完` 报出来，
+#:   不再假绿）。预算只是**上限**，跑得快的场景一点不受影响。
+VTB = 30000
+
 
 def icons_script():
     """图标表（`V-267`）：跟宿主走**同一份实现**（`system/ui/icons.py` 读 `system/icon/svg/`）。
@@ -93,7 +101,8 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "detail-fill", "ai-pane", "snap-by",
-          "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons"]
+          "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
+          "hl-window"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
 #: 是场景（或它的假数据）跟不上 —— 待办记在账本 `V-203`。
@@ -238,8 +247,16 @@ def mock_data():
             {"name": "run.py", "rel": "user/pkgs/preview-my-first/run.py", "dir": False,
              "size": 210, "mtime": 0, "ext": "py"}]}
 
+    # ★ `V-272`：高亮那条场景要一个**真的大文件**（现在假文件系统里回的是十几行的短样本，
+    #   量不出"整篇 vs 一屏"的差别）。把 `system/ui/js/ai.js` 的真内容塞进 mock ——
+    #   预览只读仓库、不改它。
+    _big = (ROOT / "system" / "ui" / "js" / "ai.js").read_text(encoding="utf-8", errors="replace")
+    fs["bench"] = {"ok": True, "rel": "bench", "writable": True, "path": str(ROOT / "system/ui/js"),
+                   "entries": [{"name": "big.js", "rel": "bench/big.js", "dir": False,
+                                "size": len(_big.encode("utf-8")), "mtime": 0, "ext": "js"}]}
+
     return {"payload": payload, "hist": hist, "fs": fs, "settings": settings, "ai": ai,
-            "aiPresets": ai_presets,
+            "aiPresets": ai_presets, "bigJs": _big,
             # 工具自己的场景清单：页面拿它对一下"这个场景名到底有没有实现"。
             "scenes": SCENES,
             # `--early-ready`：让 mock 在 js/*.js 之前就发 ready（`V-68` 的竞态场景）
@@ -946,6 +963,12 @@ MOCK_JS = r"""
     //   回一段假的 python 代码，编辑清单那些场景解析出来就没有 id，
     //   假后端会照着 `F-26` 把这个包丢掉，整个场景看起来像"包没了"（踩过）。
     fs_read: async (rel) => {
+      // ★ `V-272`：高亮那条场景要真的大文件（`bench/big.js` = `system/ui/js/ai.js` 的真内容）
+      if (rel === "bench/big.js"){
+        M.readOk = rel;
+        return {ok: true, text: M.bigJs, binary: false, too_big: false,
+                rel: rel, path: rel, writable: true};
+      }
       const parent = String(rel || "").split("/").slice(0, -1).join("/");
       if (!FS[parent]){
         M.readFail = rel;
@@ -3945,6 +3968,88 @@ MOCK_JS = r"""
       //   每一条我说的话，点其中某一条就快速定位到那一轮）。这条走真人那条路：
       //   进「AI」页 → 跑两轮（攒出两条"我说的话"）→ 按 Alt → 浮出那张表 →
       //   点第 1 条 → 那一轮**展开 + 闪一下**、面板收起；再按 Alt → 松开 Alt 自己收起来。
+      // ★ `V-272`：代码高亮改成"只画看得见的一屏"（`HL_PAD=60`），防抖删掉、改按帧合并。
+      //   这条场景是**当场量**出来的，钉五件事：
+      //   ① 文字不许变形：高亮层的 `textContent` 必须和输入层**一模一样**（差一个字整篇错位）；
+      //   ② 真只画了窗口那一小段（不是整篇）；
+      //   ③ 一屏的活儿比整篇**明显快**（两个都量给你看）；
+      //   ④ 跨行的 span 切开后，下一行把标签**接着开**（不然颜色漏出去）；
+      //   ⑤ 滚动之后窗口跟着走，文字照旧一模一样。
+      if (h === "hl-window"){
+        // ★ 先把标题写成"**没跑完**"（含 `ERR`，工具按 FAIL 算）——这样万一中途抛异常、
+        //   或者截图/取标题那次启动比场景快，也不会被当成"绿"（`V-140` 那个假绿的老毛病）。
+        document.title = "HLWIN-ERR 没跑完";
+        try{
+        setTab("file");
+        await sleep(350);
+        await fmOpenPage("bench/big.js");
+        await sleep(800);
+        const t = fmActiveTab();
+        const ta = document.querySelector(".editor > textarea");
+        const code = document.querySelector(".editor pre code");
+        if (!t || !ta || !code){ document.title = "HLWIN-ERR 没有编辑器"; return; }
+        const text = t.text || "";
+        const nLines = text.split("\n").length;
+        const same = () => code.textContent === text + "\n";
+        const same0 = same();                                   // 挂载时那一遍
+        const win = paintHl(t, code, {first: 400, last: 430});  // 一屏（中段）
+        const same1 = same();
+        const whole = paintHl(t, code, null);                   // 整篇（老做法，只作对照）
+        const same2 = same();
+        const back = paintHl(t, code, {first: 400, last: 430}); // 再画一次窗口
+        const same3 = same();
+        // ④ 跨行 span：切开后第二行必须以 `<span` 开头（标签接着开）。
+        //   ★ 这条当初真抓到了 bug：`tk.charAt(1) === "s"` 少判了 `<`，
+        //     正文 `(s).` 被当成标签压进栈 ⇒ 下一行凭空多出 `(s).`。
+        const parts = splitHlLines('<span class="hljs-comment">a\nb</span>tail');
+        const probe = document.createElement("code");
+        probe.innerHTML = parts.join("\n");
+        const splitOk = probe.textContent === "a\nbtail" &&
+                        /<\/span>$/.test(parts[0]) && /^<span/.test(parts[1]);
+        // ⑤ 滚动：窗口要跟着走，文字照旧
+        const lh = parseFloat(getComputedStyle(document.querySelector(".editor > pre")).lineHeight) || 20;
+        ta.scrollTop = Math.round(400 * lh);
+        ta.dispatchEvent(new Event("scroll", {bubbles: true}));
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const afterScroll = window.__hlWin || {};
+        const scrolled = (afterScroll.first || 0) >= 395;
+        const paintedAfterScroll = (window.__hl || {}).painted || 0;
+        const same4 = same();
+        // 预览里 rAF 到底跑不跑？（虚拟时钟下有可能被冻住 —— 那这条断言就得换个写法）
+        let rafN = 0;
+        requestAnimationFrame(() => { rafN++; });
+        await sleep(300);
+        // ③ "省了多少活"用**工作量**量，不拿毫秒 —— 预览是 `--virtual-time-budget` 跑的，
+        //   虚拟时钟在同步代码里不往前走（`performance.now()` 前后一个数），毫秒在这儿不可信。
+        //   真时间在 `%TEMP%` 那份独立基准里量（同一份 highlight.min.js）。
+        const winSpans = code.querySelectorAll("span[class^='hljs-']").length;
+        const wholeSpans = (() => {
+          const el = document.createElement("code");
+          el.innerHTML = hljs.highlight(text, {language: t.lang, ignoreIllegals: true}).value;
+          return el.querySelectorAll("span[class^='hljs-']").length;
+        })();
+        const ok = same0 && same1 && same2 && same3 && same4 &&
+                   win.mode === "window" && win.painted < nLines &&
+                   whole.painted === nLines && paintedAfterScroll < nLines &&
+                   winSpans * 3 < wholeSpans && splitOk && scrolled &&
+                   !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n文件 = bench/big.js（" + nLines + " 行 / " + text.length + " 字符）" +
+          "\n① 高亮层文字 === 输入层文字 = " + [same0, same1, same2, same3, same4].join("/") +
+          "\n② 窗口画了 " + win.painted + " 行（整篇 " + nLines + " 行）" +
+          " · 滚动到第 " + (afterScroll.first | 0) + " 行后画了 " + paintedAfterScroll + " 行" +
+          "\n③ 上的色块：一屏 " + winSpans + " 个 vs 整篇 " + wholeSpans + " 个" +
+          " ⇒ 只干了 " + (winSpans * 100 / Math.max(1, wholeSpans)).toFixed(1) + "% 的活" +
+          "\n④ 跨行 span 接着开 = " + splitOk + " · ⑤ 滚动后窗口跟着走 = " + scrolled +
+          "（预览里 rAF 跑了 " + rafN + " 次）" +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.querySelector("#meta").className = "meta";
+        document.title = ok ? "READY"
+          : ("HLWIN-FAIL 文字=" + [same0, same1, same2, same3, same4].join("/") +
+             " 窗=" + win.painted + "/" + nLines + " 块=" + winSpans + "/" + wholeSpans +
+             " 切=" + (splitOk ? 1 : 0) + " 滚=" + (scrolled ? 1 : 0));
+        }catch(_e){ document.title = "HLWIN-ERR " + ((_e && _e.message) || _e); }
+      }
       // ★ `V-269`：**纯问答**那一轮的结论卡措辞 —— 你问「你是哪个大模型?」那次，
       //   它答对了，但卡片写的是「✅ 验收通过」、底下还挂一条没意义的"开工快照"。
       //   现在：`kind="chat"` ⇒ 抬头写「💬 回答」、不显示"开工快照"、底栏写"上次已回答"。
@@ -4092,8 +4197,24 @@ MOCK_JS = r"""
         await sleep(200);
         const clickOff = !document.querySelector("#pane-ai .ai-jump");
         const gone = toggleOff && escOff && clickOff;
+        // ★ `V-273`：这里**再没有"猜出来的时间窗"**了（原来那句"120ms 内只算一次"已删）。
+        //   两条行为要钉住：
+        //     ① 两次**真的按键**（哪怕只隔 40ms）就该算两次 —— 每一下都是用户按的；
+        //     ② **按住不放**的连发（`e.repeat=true`，OS 故意发的重复）只算第一下。
+        const kd = (k, rep) => window.dispatchEvent(
+          new KeyboardEvent("keydown", {key: k, repeat: !!rep, bubbles: true, cancelable: true}));
+        const before2 = !!dbg.altOn;
+        kd("Alt", false); await sleep(40); kd("Alt", false); await sleep(250);
+        const twoPresses = (!!dbg.altOn) === before2;        // 翻了两次 ⇒ 回到原样
+        const beforeR = !!dbg.altOn;
+        kd("Alt", false); kd("Alt", true); kd("Alt", true);  // 按住不放的那几发
+        await sleep(250);
+        const repeatOnce = (!!dbg.altOn) !== beforeR;        // 只翻一次
+        dbg.altOn = false;                                   // 收干净，别影响后面
+        await sleep(60);
         const ok = turns >= 1 && listed && jumped && closed && again && keepAfterKeyup &&
-                   gone && titleOk && !(window.__errors || []).length;
+                   gone && titleOk && twoPresses && repeatOnce &&
+                   !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n这个会话里有 " + turns + " 条「我说过的话」（面板里列了 " + items.length + " 条）" +
           "\n标题（要=第一句 + 几轮）= " + JSON.stringify(title.slice(0, 40)) +
@@ -4102,6 +4223,8 @@ MOCK_JS = r"""
           "\n点完面板收起 = " + closed + " · 再按又出来 = " + again +
           " · ★ 松手**还留着** = " + keepAfterKeyup +
           "\n再按一下收 = " + toggleOff + " · Esc 收 = " + escOff + " · 点别处收 = " + clickOff +
+          "\n★ 两次真按键（隔 40ms）算两次 = " + twoPresses +
+          " · 按住不放的连发只算一次 = " + repeatOnce +
           " · 页内错误 = " + (window.__errors || []).length;
         document.title = ok ? "READY"
           : ("AIALT-FAIL 轮=" + turns + " 列=" + items.length + " 浮=" + (listed ? 1 : 0) +
@@ -4109,6 +4232,7 @@ MOCK_JS = r"""
              " 再=" + (again ? 1 : 0) + " 松手留=" + (keepAfterKeyup ? 1 : 0) +
              " 开关=" + (toggleOff ? 1 : 0) + " esc=" + (escOff ? 1 : 0) +
              " 点别处=" + (clickOff ? 1 : 0) +
+             " 两按=" + (twoPresses ? 1 : 0) + " 连发=" + (repeatOnce ? 1 : 0) +
              " 标题=" + (titleOk ? 1 : 0) + "/" + JSON.stringify(title.slice(0, 24)) +
              " 错=" + (window.__errors || []).length);
       }
@@ -4274,7 +4398,7 @@ def dom_title(exe, url, size, dark):
     cmd = [exe, "--headless=new", "--disable-gpu", "--hide-scrollbars",
            "--no-first-run", "--no-default-browser-check",
            "--user-data-dir=" + str(PRE / "_profile_dom"), "--allow-file-access-from-files",
-           "--window-size=" + size, "--virtual-time-budget=12000", "--dump-dom", url]
+           "--window-size=" + size, "--virtual-time-budget=" + str(VTB), "--dump-dom", url]
     if dark:
         cmd.insert(2, "--force-dark-mode")
     try:
@@ -4363,7 +4487,7 @@ def main():
         cmd = [exe, "--headless=new", "--disable-gpu", "--hide-scrollbars",
                "--no-first-run", "--no-default-browser-check",
                "--user-data-dir=" + str(prof), "--allow-file-access-from-files",
-               "--window-size=" + size, "--virtual-time-budget=12000",
+               "--window-size=" + size, "--virtual-time-budget=" + str(VTB),
                "--screenshot=" + str(out), url + "#" + sc]
         if dark:
             cmd.insert(2, "--force-dark-mode")

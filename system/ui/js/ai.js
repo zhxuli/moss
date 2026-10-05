@@ -617,14 +617,17 @@ const MossAi = {
          在 WebView2/Chromium 里，单独按 Alt 会去激活**窗口菜单栏** ——
          那一下就"喂给菜单了"，页面要等第二下才收到 ⇒ 现象正好是"按两下才出来、
          再按两下才隐藏"。`preventDefault()` 之后第一下就归页面。
-         ★ 再加一道"同一按只算一次"的防抖：万一某些环境 keydown 来两发，
-           也不会自己抵消成"按了没反应"。 */
+         ★ V-273（你指出的）：这里**不是"防抖"** —— 键盘的机械抖动在硬件/驱动那一层就
+           滤掉了，页面收不到那种东西。代码里原来还留着一句"120ms 内只算一次"的**猜测**，
+           现在删掉：真正会重复的是这两件有据可依的事 ——
+             ① `e.repeat`：按住不放时 **OS 故意连发** `keydown`（合法事件，要去重）；
+             ② 同一次按键有**两个入口**（`keydown` / `keyup`），两个都翻转就会自己抵消成
+                "按了没反应" —— 那件事由 `_altDownSeen` 管（下面 `altUp` 里看它）。
+           ★ 换句话说：这里**没有任何"猜出来的时间数字"**了。要是将来真机出现"按一下没反应"，
+             那说明有环境会 keydown 双发 —— 到时候拿现场证据再加判断，别现在先猜。 */
       try{ e.preventDefault(); }catch(e2){}
       this._altDownSeen = true;        // `altUp` 靠它判断"这一按的 keydown 收到没有"
-      if (e.repeat) return;
-      const now = Date.now();
-      if (now - (this._altAt || 0) < 120) return;
-      this._altAt = now;
+      if (e.repeat) return;            // 长按连发：只算第一下
       AIR.altOn = !AIR.altOn;          // 再按一下 = 收起（开关）
     },
     /* ★ V-266 的兜底：万一 `keydown` 还是被窗口菜单吃掉，就用**同一次按键的 `keyup`** 顶上
@@ -636,9 +639,6 @@ const MossAi = {
       if (seen) return;                                  // 这一按已经处理过了
       if (typeof tab !== "undefined" && tab !== "ai") return;
       if (!(this.A.turns || []).length) return;
-      const now = Date.now();
-      if (now - (this._altAt || 0) < 120) return;
-      this._altAt = now;
       AIR.altOn = !AIR.altOn;
     },
     jumpTurn(ti){
