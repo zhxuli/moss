@@ -264,14 +264,22 @@ function load() {
      错过就永远等不到 ⇒ `load()` 从不运行 ⇒ **什么都不报，就一句"正在读"**。
      这是主界面当年修过的同一个坑（账本 `V-68`：`system/ui/js/app.js`）—— 照它两手准备。
 
-   ★ 你后来说的也对：「哪怕没有，也不能一直显示正在读吧」—— 所以再加一条：
-     3 秒还没起来就**明说读不出来**，并给一颗「重试」，不让人对着四个字干等。 */
+   ★ 你后来说的也对：「哪怕没有，也不能一直显示正在读吧」—— 所以加了兜底提示。
+   ★★ `V-285`（你报的"界面里点运行 → 先说读不出来、点了重试就好"）：
+      根因是我把兜底设成 8 秒、却**只轮询 6 秒** —— "界面里点「运行」"那条路（宿主给包加
+      `MOSS_INTERACTIVE=1`、stdio 全是管道）桥要 8 秒以后才就绪，于是提示先蹦出来、轮询早停了；
+      一点「重试」恰好赶上桥已就绪 ⇒ 看起来像"重试才管用"。现在分两档 + 一直轮询：
+        · 6 秒：只说「正在读……（后端起来得有点慢，再等一会儿）」+ 重试
+        · 20 秒：才说「读不出来 —— 后端没上来」
+        · 轮询**一直继续**（500ms 一次，很便宜），桥什么时候到就什么时候自己起来，不用人点 */
 let _booted = false;
+let _hintTimer = null;
 let _bootTimer = null;
 
 function boot(){
   if (_booted) return;
   _booted = true;
+  if (_hintTimer){ clearTimeout(_hintTimer); _hintTimer = null; }
   if (_bootTimer){ clearTimeout(_bootTimer); _bootTimer = null; }
   load();
   $('#btn-reload').onclick = load;
@@ -288,28 +296,44 @@ function boot(){
   });
 }
 
+/* 「重试」那颗按钮：两档计时重新起，并立刻再试一次 boot（桥要是在了就成了） */
+function _retryBtn(){
+  const b = $('#btn-retry');
+  if (b) b.onclick = () => {
+    _booted = false;
+    _hintTimer = setTimeout(slowHint, 6000);
+    _bootTimer = setTimeout(notReady, 20000);
+    boot();
+  };
+}
+
+function slowHint(){
+  if (_booted) return;
+  $('#sub').innerHTML = '正在读……（后端起来得有点慢，再等一会儿）' +
+    '<button class="btn" id="btn-retry" style="margin-left:8px">重试</button>';
+  _retryBtn();
+}
+
 function notReady(){
   if (_booted) return;
-  const el = $('#sub');
-  el.innerHTML = '读不出来 —— 后端没上来。' +
+  $('#sub').innerHTML = '读不出来 —— 后端没上来。' +
     '<button class="btn" id="btn-retry" style="margin-left:8px">重试</button>' +
     '<br><span class="dim">（关掉这个界面重开一次也行；要是还不行，' +
     '把 <code>moss :skill</code> 在终端里跑一遍看它报什么。）</span>';
-  const b = $('#btn-retry');
-  if (b) b.onclick = () => { _booted = false; _bootTimer = setTimeout(notReady, 8000); boot(); };
+  _retryBtn();
 }
 
 moss.on('ready', boot);
-/* ★ 桥可能在 `ready` 之前就绪、也可能 `ready` 已经错过 —— 所以**独立窗口**那条路自己轮询；
+/* ★ 桥可能在 `ready` 之前就绪、也可能 `ready` 已经错过 ⇒ **独立窗口**那条路一直自己轮询；
    而**内嵌**那条路老实等垫片的 `ready`：宿主是靠那个握手把这一帧登记下来的
    （`EMB.alive[pid]`），抢在它前面调 `list` 反而可能被丢掉。谁先到算谁，`boot()` 幂等。 */
 if (!(moss.env && moss.env.embedded)){
-  (function waitBridge(n){
+  (function waitBridge(){
     if (_booted) return;
     if (window.pywebview && window.pywebview.api && window.pywebview.api.list){ boot(); return; }
-    if (n > 120) return;                      // 最多等 6 秒（跟主界面一个量级）
-    setTimeout(() => waitBridge(n + 1), 50);
-  })(0);
+    setTimeout(waitBridge, 500);
+  })();
 }
-_bootTimer = setTimeout(notReady, 8000);
+_hintTimer = setTimeout(slowHint, 6000);
+_bootTimer = setTimeout(notReady, 20000);
 

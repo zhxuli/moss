@@ -35,7 +35,7 @@ BROWSERS = [r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
             r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"]
-VTB = 30000                     # 虚拟时间给足（页面里有 8 秒那条兜底）
+VTB = 60000                     # 虚拟时间给足（页面里有 8 秒那条兜底）
 RES = []
 
 
@@ -103,6 +103,7 @@ def judge_script():
         var closed = !!document.querySelector("#detail") &&
                      document.querySelector("#detail").hidden;
         document.title = "SKILL-OK tiles=" + names.length + " names=" + names.join(",") +
+          " scared=" + (window.__scared ? 1 : 0) +
           " modal=" + (modal ? 1 : 0) + " card=" + (card ? 1 : 0) +
           " doc=" + (docBtn ? 1 : 0) + " closed=" + (closed ? 1 : 0);
       }, 120);
@@ -114,6 +115,7 @@ def judge_script():
     names = Array.prototype.map.call(document.querySelectorAll(".tile .nm"),
                                      function(e){ return (e.textContent || "").trim(); });
     var sub = ((document.querySelector("#sub") || {}).textContent || "");
+    if (/读不出来/.test(sub)) window.__scared = 1;
     if (tiles > 0){ clearInterval(t); step2(); }
     else if (/读不出来|后端没上来/.test(sub)){ clearInterval(t); document.title = "SKILL-NOBACKEND"; }
     else if (n > 600){ clearInterval(t); document.title = "SKILL-STUCK sub=" + sub.slice(0, 30); }
@@ -129,6 +131,17 @@ def build(case, tmp):
     inject = ""
     if case == "A":
         inject = fake_bridge()
+    elif case == "D":
+        # ★ 你报的那个 bug 的现场：桥**晚到**（9 秒）、而且 `pywebviewready` 也不发。
+        #   旧代码只轮询 6 秒 ⇒ 8 秒时先弹"读不出来"，得人点「重试」才好；
+        #   现在轮询一直在，桥一到就自己起来（**不用人手点**）。
+        inject = """<script>
+setTimeout(function(){
+  var s = document.createElement("script");
+  s.textContent = %s;
+  document.body.appendChild(s);
+}, 9000);
+</script>""" % json.dumps(re.sub(r"</?script>", "", fake_bridge()))
     elif case == "C":
         inject = """<script>
 setTimeout(function(){
@@ -230,6 +243,19 @@ def main():
     tc, domc = title_of(exe, uc, tmp, "c")
     chk("C ★ 晚到的桥也要能起来（垫片那条 `ready` 路照旧通）",
         tc.startswith("SKILL-OK"), tc)
+
+    print()
+    print("=" * 72)
+    print("D：桥**9 秒后**才到、也不发 `pywebviewready`（= 你报的「界面里点运行」那个现场）")
+    print("=" * 72)
+    ud = build("D", tmp)
+    td, domd = title_of(exe, ud, tmp, "d")
+    chk("D ★★★ 桥晚到也要**自己起来、不用人点重试**（旧代码只轮询 6 秒，这里就卡住了）",
+        td.startswith("SKILL-OK") and "tiles=2" in td, td)
+    # ★ 本来还想钉一条"不许先弹那句「读不出来」"（scared=0）—— 试过，**在这个无头环境里判据不稳**：
+    #   页面其实 9 秒就自己起来了、墙上也有图标，可"取标题"和"判据结案"之间有时序差，
+    #   同一份代码改坏/不改坏都可能出 `SKILL-NOBACKEND`。宁可不留假红假绿的断言：
+    #   这一条（两档提示）写进代码注释和账本 `V-285`，靠上面那条"自己起得来"兜住真正的行为。
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()
