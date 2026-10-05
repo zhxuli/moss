@@ -51,11 +51,23 @@ def browser():
     return None
 
 
-def fake_bridge():
-    """一段假桥：**在垫片之前**就把它摆好 —— 模拟"桥早就绪、ready 事件已错过"。"""
-    return """<script>
-window.pywebview = {api: {
-  list: async () => ({ok: true, n_usable: 2, n_pending: 1, dir: "X",
+def fake_bridge(hang_first=False):
+    """一段假桥：**在垫片之前**就把它摆好 —— 模拟"桥早就绪、ready 事件已错过"。
+
+    `hang_first=True`：**第一次 `list` 永远不回**（返回一个永不 settle 的 promise）——
+    这就是 `V-285` 报的那个真现场：消息在桥还没接好时发出去、没人接，promise 一直挂着；
+    第二次调用才接上。（pywebview 的桥是消息式的：`api.js` 的 `_jsApiCallback` →
+    `chrome.webview.postMessage`，回话从 `_returnValuesCallbacks` 里取。）
+    """
+    if hang_first:
+        api_list = ('  list: (function(){ var n = 0; return function(){\n'
+                    '      n = n + 1;\n'
+                    '      if (n === 1) return new Promise(function(){});  // 第一次永远挂着\n'
+                    '      return Promise.resolve(PAYLOAD()); }; })(),')
+    else:
+        api_list = "  list: async () => PAYLOAD(),"
+    return ("""<script>
+function PAYLOAD(){ return {ok: true, n_usable: 2, n_pending: 1, dir: "X",
     skills: [{id: "harness", name: "harness", layer: "user", kind: "skill", allowed: true,
               why_allow: "试出来的", origin: "", desc: "假桥里的一只技能", why: "为了证明不再卡住",
               risk: "low", params: ["x"], entry: "run.py", timeout: 60, icon_svg: "",
@@ -74,13 +86,15 @@ window.pywebview = {api: {
                  why: "", risk: "", params: [], entry: "run.py", timeout: 60, icon_svg: "",
                  created: "", mtime: "", allowed_at: "", problems: [], warns: [], files_n: 0,
                  dir: "X", files: []}],
-    dirs: {}, allow_file: ""}),
+    dirs: {}, allow_file: ""}; }
+window.pywebview = {api: {
+""" + api_list + """
   read: async () => ({ok: true, text: {}}), allow: async () => ({ok: true, msg: "ok"}),
   rm: async () => ({ok: true, msg: "ok"}), seed: async () => ({ok: true, msg: "ok"}),
   reveal: async () => ({ok: true, msg: "ok"}), plan: async () => ({ok: true}),
   promote: async () => ({ok: true, msg: "ok"}), run_once: async () => ({ok: true, msg: "ok"})}};
 </script>
-"""
+""")
 
 
 def judge_script():
@@ -131,6 +145,10 @@ def build(case, tmp):
     inject = ""
     if case == "A":
         inject = fake_bridge()
+    elif case == "E":
+        # ★★ 你报的那个真现场（`V-285`）：桥**已经就绪**，可第一次 `list` 的消息丢了
+        #    （promise 一直挂着）—— 页面必须**自己**靠超时+重试恢复，不用人点「重试」。
+        inject = fake_bridge(hang_first=True)
     elif case == "D":
         # ★ 你报的那个 bug 的现场：桥**晚到**（9 秒）、而且 `pywebviewready` 也不发。
         #   旧代码只轮询 6 秒 ⇒ 8 秒时先弹"读不出来"，得人点「重试」才好；
@@ -250,12 +268,28 @@ def main():
     print("=" * 72)
     ud = build("D", tmp)
     td, domd = title_of(exe, ud, tmp, "d")
+    _tiles_d = len(re.findall(r'class="tile', domd))
     chk("D ★★★ 桥晚到也要**自己起来、不用人点重试**（旧代码只轮询 6 秒，这里就卡住了）",
-        td.startswith("SKILL-OK") and "tiles=2" in td, td)
+        _tiles_d >= 2 and "读不出来" not in sub_text(domd),
+        "墙上 %d 个图标 ｜ %s" % (_tiles_d, sub_text(domd)[:40]))
     # ★ 本来还想钉一条"不许先弹那句「读不出来」"（scared=0）—— 试过，**在这个无头环境里判据不稳**：
     #   页面其实 9 秒就自己起来了、墙上也有图标，可"取标题"和"判据结案"之间有时序差，
     #   同一份代码改坏/不改坏都可能出 `SKILL-NOBACKEND`。宁可不留假红假绿的断言：
     #   这一条（两档提示）写进代码注释和账本 `V-285`，靠上面那条"自己起得来"兜住真正的行为。
+
+    print()
+    print("=" * 72)
+    print("E：桥在、但**第一次 `list` 永远不回**（消息丢了 —— 你报的那个真现场）")
+    print("=" * 72)
+    ue = build("E", tmp)
+    te, dome = title_of(exe, ue, tmp, "e")
+    _tiles_e = len(re.findall(r'class="tile', dome))
+    chk("E ★★★ 第一次调用丢了也要**自己恢复**（超时 + 自动重试），不用人点「重试」",
+        _tiles_e >= 2 and "读不出来" not in sub_text(dome),
+        "墙上 %d 个图标 ｜ 标题=%s" % (_tiles_e, te[:40]))
+    _sub = sub_text(dome)
+    chk("E ★★ 最后那句提示要**回到正常**（不能停在「正在读」/「读不出来」）",
+        "读不出来" not in _sub and "正在读" not in _sub, _sub[:60])
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()

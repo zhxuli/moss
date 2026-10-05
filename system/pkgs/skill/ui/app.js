@@ -247,12 +247,62 @@ function call(method, params, justToast) {
   }).catch((e) => { toast('出错了：' + (e && e.message ? e.message : e), true); });
 }
 
-function load() {
-  return moss.call('list', {}).then((got) => {
-    DATA = got || { skills: [], broken: [], n_usable: 0, dir: '' };
-    render();
-    if (CUR) { const it = find(CUR.id); if (it) showDetail(it.id); else { $('#detail').hidden = true; CUR = null; } }
-  }).catch((e) => { $('#sub').textContent = '读不出来：' + (e && e.message ? e.message : e); });
+/* ---------------------------------------------------------------- 读数据（★ 这里栽过）
+
+   ★★ `V-285` 你报的："在 moss 里点启动 → 说读不出来，点一下重试就好；`moss :skill gui` 一次就成"。
+      查清了：**不是慢、也不是超时设短了** —— 是"第一次调用把消息丢了 / 永远不回"。
+      pywebview 那座桥是**消息式**的（`api.js` 里 `_jsApiCallback` → `chrome.webview.postMessage`，
+      回话从 `_returnValuesCallbacks` 里取；`finish.js` 把方法名填上之后才发 `pywebviewready`）。
+      第一次 `list` 要是在桥刚好还在接线的时候发出去，这条消息可能没人接 —— 那个 promise
+      **既不 resolve 也不 reject，一直挂着**：页面就永远停在"正在读……"；
+      你再点一次「重试」发了第二个调用，这次接上了 ⇒ 看起来像"重试才管用"。
+      我上一版还把 `_booted` 一次性锁死（失败也不放开），等于连"再试一次"的机会都堵了。
+   ★ 所以这里三条规矩：**每次调用都有超时**（桥不回不能把我们挂死）、**失败/超时自动重试**
+      （700ms 一次，最多 20 次，不用人点）、**只有成功才算起来**（失败不锁死）。 */
+let _booted = false;        // 只有 list **成功**过才是 true（失败不算）
+let _tries = 0;             // 连续失败次数（成功清零）
+let _loading = false;       // 同一条请求不叠着发
+let _everTried = false;     // 有没有真的把 list 发出去过（区分「桥没出现」和「调了没回」）
+const LOAD_TIMEOUT = 4000;  // 一次 list 最多等这么久
+
+function load(){
+  if (_loading) return Promise.resolve();
+  _loading = true;
+  _everTried = true;
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (fn) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      _loading = false;
+      fn();
+      resolve();
+    };
+    const timer = setTimeout(() => finish(() => retryLater('等了 ' + LOAD_TIMEOUT +
+      'ms 没回（桥大概把这条消息丢了）')), LOAD_TIMEOUT);
+    moss.call('list', {}).then((got) => finish(() => {
+      DATA = got || { skills: [], broken: [], n_usable: 0, dir: '' };
+      _booted = true;
+      _tries = 0;
+      render();
+      if (CUR){
+        const it = find(CUR.id);
+        if (it) showDetail(it.id); else { $('#detail').hidden = true; CUR = null; }
+      }
+    })).catch((e) => finish(() => retryLater((e && e.message) ? e.message : String(e))));
+  });
+}
+
+/* 一次没成：**自动再试**（不用人点）；连着 20 次都不成才把话说死 */
+function retryLater(why){
+  _tries++;
+  if (_tries <= 20){
+    $('#sub').textContent = '读不出来：' + why + '（正在自动重试，第 ' + _tries + ' 次…）';
+    setTimeout(load, 700);
+    return;
+  }
+  notReady(why);
 }
 
 /* ---------------------------------------------------------------- 启动（★ 这里栽过一次）
@@ -265,23 +315,14 @@ function load() {
      这是主界面当年修过的同一个坑（账本 `V-68`：`system/ui/js/app.js`）—— 照它两手准备。
 
    ★ 你后来说的也对：「哪怕没有，也不能一直显示正在读吧」—— 所以加了兜底提示。
-   ★★ `V-285`（你报的"界面里点运行 → 先说读不出来、点了重试就好"）：
-      根因是我把兜底设成 8 秒、却**只轮询 6 秒** —— "界面里点「运行」"那条路（宿主给包加
-      `MOSS_INTERACTIVE=1`、stdio 全是管道）桥要 8 秒以后才就绪，于是提示先蹦出来、轮询早停了；
-      一点「重试」恰好赶上桥已就绪 ⇒ 看起来像"重试才管用"。现在分两档 + 一直轮询：
-        · 6 秒：只说「正在读……（后端起来得有点慢，再等一会儿）」+ 重试
-        · 20 秒：才说「读不出来 —— 后端没上来」
-        · 轮询**一直继续**（500ms 一次，很便宜），桥什么时候到就什么时候自己起来，不用人点 */
-let _booted = false;
-let _hintTimer = null;
-let _bootTimer = null;
-
-function boot(){
-  if (_booted) return;
-  _booted = true;
-  if (_hintTimer){ clearTimeout(_hintTimer); _hintTimer = null; }
-  if (_bootTimer){ clearTimeout(_bootTimer); _bootTimer = null; }
-  load();
+   ★★ `V-285`/`V-286`：**我第一版修错了地方**（以为"轮询只等 6 秒"），你回「一点没变，
+      肯定跟时间无关」是对的 —— 真正的根因在 `load()` 那段注释里（**第一次调用把消息丢了、
+      promise 一直挂着**，而 `_booted` 又被一次性锁死）。现在：**每次调用有超时 +
+      失败自动重试 + 只有成功才算起来**，所以不用人点任何东西也能自己好。
+      下面那两句（6 秒"慢"提示 / 20 秒"桥都没出现"）只是**最后**的兜底，不再是唯一的出路。 */
+function wireUI(){
+  if (wireUI._done) return;
+  wireUI._done = true;
   $('#btn-reload').onclick = load;
   $('#btn-seed').onclick = () => call('seed', {});
   $('#btn-open').onclick = () => call('reveal', { dir: (DATA && DATA.dir) || '' }, true);
@@ -296,14 +337,19 @@ function boot(){
   });
 }
 
-/* 「重试」那颗按钮：两档计时重新起，并立刻再试一次 boot（桥要是在了就成了） */
+function boot(){
+  wireUI();
+  if (_booted) return;          // 已经读到了就别重复发请求
+  load();
+}
+
+/* 「重试」那颗按钮：计数清零、立刻再来一遍 */
 function _retryBtn(){
   const b = $('#btn-retry');
   if (b) b.onclick = () => {
+    _tries = 0;
     _booted = false;
-    _hintTimer = setTimeout(slowHint, 6000);
-    _bootTimer = setTimeout(notReady, 20000);
-    boot();
+    load();
   };
 }
 
@@ -314,10 +360,11 @@ function slowHint(){
   _retryBtn();
 }
 
-function notReady(){
+function notReady(why){
   if (_booted) return;
   $('#sub').innerHTML = '读不出来 —— 后端没上来。' +
-    '<button class="btn" id="btn-retry" style="margin-left:8px">重试</button>' +
+    (why ? '<br><span class="dim">' + esc(why) + '</span>' : '') +
+    '<br><button class="btn" id="btn-retry" style="margin-top:6px">重试</button>' +
     '<br><span class="dim">（关掉这个界面重开一次也行；要是还不行，' +
     '把 <code>moss :skill</code> 在终端里跑一遍看它报什么。）</span>';
   _retryBtn();
@@ -334,6 +381,10 @@ if (!(moss.env && moss.env.embedded)){
     setTimeout(waitBridge, 500);
   })();
 }
-_hintTimer = setTimeout(slowHint, 6000);
-_bootTimer = setTimeout(notReady, 20000);
+setTimeout(slowHint, 6000);
+/* 20 秒还没起来、而且**连一次 list 都没发出去**（= 桥根本没出现，比如 WebView2 没装）⇒
+   这才把话说死。要是「发出去了但没回」，那是 retryLater 那条路在自动重试，由它决定什么时候认输。 */
+setTimeout(function(){
+  if (!_booted && !_everTried) notReady('后端一直没起来（桥都没出现）');
+}, 20000);
 
