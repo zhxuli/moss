@@ -60,9 +60,12 @@ function render() {
   }
   $('#empty').hidden = !!(skills.length || pkgs.length);
   const pend = skills.concat(pkgs).filter((x) => !x.problems.length && !x.allowed).length;
-  $('#sub').textContent = skills.length + ' 只技能（能用 ' + DATA.n_usable + '）' +
-    (pkgs.length ? ' · ' + pkgs.length + ' 个插件也暴露给 AI' : '') +
-    (pend ? ' · ' + pend + ' 只等你允许' : '') + ' · ' + DATA.dir;
+  // ★ 后端没给 `dir` 的时候别摆一个 "undefined" 出来（假桥探针里就撞见过一次）
+  const bits = [skills.length + ' 只技能（能用 ' + DATA.n_usable + '）'];
+  if (pkgs.length) bits.push(pkgs.length + ' 个插件也暴露给 AI');
+  if (pend) bits.push(pend + ' 只等你允许');
+  if (DATA.dir) bits.push(DATA.dir);
+  $('#sub').textContent = bits.join(' · ');
 }
 
 /* ---------------------------------------------------------------- 详情 */
@@ -219,10 +222,52 @@ function load() {
   }).catch((e) => { $('#sub').textContent = '读不出来：' + (e && e.message ? e.message : e); });
 }
 
-/* 初始化：等垫片的 ready（内嵌时它是宿主派活之后发的） */
-moss.on('ready', () => {
+/* ---------------------------------------------------------------- 启动（★ 这里栽过一次）
+
+   ★ 第一版只挂了 `moss.on('ready', ...)` 一句 —— 结果独立窗口那种跑法（`moss :skill` /
+     插件列表里点「运行」）**可能永远停在"正在读……"**：
+     `moss-embed.js` 在非内嵌时是把 `ready` 挂在 `pywebviewready` 上的，而那个事件
+     **只发一次**、还有可能在 `app.js` 执行之前就发过了（页面拆成外部脚本之后就有这个竞态）。
+     错过就永远等不到 ⇒ `load()` 从不运行 ⇒ **什么都不报，就一句"正在读"**。
+     这是主界面当年修过的同一个坑（账本 `V-68`：`system/ui/js/app.js`）—— 照它两手准备。
+
+   ★ 你后来说的也对：「哪怕没有，也不能一直显示正在读吧」—— 所以再加一条：
+     3 秒还没起来就**明说读不出来**，并给一颗「重试」，不让人对着四个字干等。 */
+let _booted = false;
+let _bootTimer = null;
+
+function boot(){
+  if (_booted) return;
+  _booted = true;
+  if (_bootTimer){ clearTimeout(_bootTimer); _bootTimer = null; }
   load();
   $('#btn-reload').onclick = load;
   $('#btn-seed').onclick = () => call('seed', {});
   $('#btn-open').onclick = () => call('reveal', { dir: (DATA && DATA.dir) || '' }, true);
-});
+}
+
+function notReady(){
+  if (_booted) return;
+  const el = $('#sub');
+  el.innerHTML = '读不出来 —— 后端没上来。' +
+    '<button class="btn" id="btn-retry" style="margin-left:8px">重试</button>' +
+    '<br><span class="dim">（关掉这个界面重开一次也行；要是还不行，' +
+    '把 <code>moss :skill</code> 在终端里跑一遍看它报什么。）</span>';
+  const b = $('#btn-retry');
+  if (b) b.onclick = () => { _booted = false; _bootTimer = setTimeout(notReady, 8000); boot(); };
+}
+
+moss.on('ready', boot);
+/* ★ 桥可能在 `ready` 之前就绪、也可能 `ready` 已经错过 —— 所以**独立窗口**那条路自己轮询；
+   而**内嵌**那条路老实等垫片的 `ready`：宿主是靠那个握手把这一帧登记下来的
+   （`EMB.alive[pid]`），抢在它前面调 `list` 反而可能被丢掉。谁先到算谁，`boot()` 幂等。 */
+if (!(moss.env && moss.env.embedded)){
+  (function waitBridge(n){
+    if (_booted) return;
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.list){ boot(); return; }
+    if (n > 120) return;                      // 最多等 6 秒（跟主界面一个量级）
+    setTimeout(() => waitBridge(n + 1), 50);
+  })(0);
+}
+_bootTimer = setTimeout(notReady, 8000);
+
