@@ -1334,6 +1334,38 @@ def _pump_output(rid):
             pass
 
 
+# ================================================================ 设置：界面内校验（`V-276`）
+# ★ 你说得对：界面进程**就是 Python**，而"校验设置"是**纯计算**（不读盘不写盘）——
+#   没有任何理由为它起一个 `moss.exe`（那一趟真机实测 0.73~1.07 秒，算本身 ≈20ms）。
+#   规则放在 `system/option/rules.py`（**不 import core**，所以界面能直接用），
+#   宿主 `core/config.py` 用的是**同一套逻辑**，`tools/设置规则探针.py` 逐字对比两边输出。
+_SETTINGS_RULES = {"mod": None, "tried": False}
+#: 面板打开时宿主给的那份"当前生效值"（`settings_current` 用；`check` 只拿它兜底）
+_SETTINGS_CUR = {}
+
+
+def _settings_rules():
+    """加载 `system/option/rules.py`；拿不到返回 None（调用方退回"叫宿主"那条老路）。"""
+    if _SETTINGS_RULES["tried"]:
+        return _SETTINGS_RULES["mod"]
+    _SETTINGS_RULES["tried"] = True
+    try:
+        import importlib.util                                        # noqa: PLC0415
+        path = HOME / "system" / "option" / "rules.py"
+        spec = importlib.util.spec_from_file_location("moss_settings_rules", str(path))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _SETTINGS_RULES["mod"] = mod
+    except Exception as e:                                            # noqa: BLE001
+        _note("settings: 读不到 system/option/rules.py（%r）—— 校验退回叫宿主" % (e,))
+    return _SETTINGS_RULES["mod"]
+
+
+def _settings_current():
+    """宿主给的"当前生效值"（键 → 值）；没打开过面板就是空的（那时 `check` 用默认值兜底）。"""
+    return dict(_SETTINGS_CUR)
+
+
 class Api:
     """给页面用的接口。每个方法都是一个前端可 await 的调用。"""
 
@@ -3161,6 +3193,15 @@ class Api:
         # 那些话在 stdout 上、不当错误，但**别扔**：拼进 msg 让用户看得见。
         extra = [l for l in (r.get("out") or "").splitlines()
                  if l.strip() and not l.strip().startswith("{")]
+        # ★ `V-276`：把这份"当前生效值"记下来 —— `settings_check` 现在在**本进程**里算，
+        #   需要它来兜底（界面每次都把整份值送过来，所以它通常用不上）。
+        try:
+            _SETTINGS_CUR.clear()
+            for g in (data.get("groups") or []):
+                for it in (g.get("items") or []):
+                    _SETTINGS_CUR[it["key"]] = it.get("value")
+        except Exception:                                             # noqa: BLE001
+            pass
         return {"ok": True, "path": str(data.get("path") or ""),
                 "groups": data.get("groups") or [],
                 "msg": " ".join(x.strip() for x in extra)[:400]}
@@ -3174,12 +3215,25 @@ class Api:
         return self._settings_call("--settings-set", pairs, with_notes=False)
 
     def settings_check(self, values):
-        """**只校验、不写盘**（`V-63`）：界面每改一下就问一次，用来标红 + 决定保存能不能点。
+        """**只校验、不写盘**：用来标红 + 决定"保存"能不能点。
 
-        回 `{"ok", "problems", "notes", "live", "msg"}` —— 规则全在宿主那边
-        （`core/config.py` 的 `_check_values`），界面**不自己实现一遍**：
-        两处规则早晚会不一致，那种 bug 最难看出来。
+        ★ `V-276`：**在界面进程里直接算**了 —— 不再起一个 `moss.exe`。
+          为什么可以：规则本身是**纯计算**（不读盘、不写盘），而界面进程**就是 Python**；
+          真机实测那一趟 `moss.exe --settings-check` 要 **0.73~1.07 秒**（其中校验 ≈20ms，
+          其余全是 onefile 冷启动），而这里算一遍 **<1ms**。
+          规则只有一份：`system/option/rules.py`（宿主 `core/config.py` 也用同一套逻辑，
+          `tools/设置规则探针.py` 拿同一批输入把两边的输出**逐字对比**，谁漂了探针就红）。
+        ★ 拿不到那份模块（老安装 / 被人删了）就**退回老路**：叫宿主算 —— 慢，但不会算错。
         """
+        try:
+            r = _settings_rules()
+            if r is not None:
+                cur = _settings_current()
+                got = r.check(values, cur)
+                return {"ok": bool(got["ok"]), "problems": got["problems"],
+                        "notes": got["notes"], "live": got["live"], "msg": ""}
+        except Exception as e:                                        # noqa: BLE001
+            _note("settings: 界面内校验失败（%r），退回叫宿主" % (e,))
         return self._settings_call("--settings-check", values, with_notes=True)
 
     def _settings_call(self, flag, payload, with_notes):
