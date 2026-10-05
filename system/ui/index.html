@@ -5,9 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>moss</title>
 <!-- 窗口图标（`V-181`）：**根路径、绝对地址**，别写成 `favicon.ico`。
-     页面自己的地址是 `/<token>/user_data/state/_ui_inline.html`，相对写法会被拼成
-     `/<token>/user_data/state/favicon.ico` —— 那条路径正好在 `_EMBED_DENY` 的
-     `user_data/state/` 底下，403。写绝对路径才落到服务专门开的那条 `/favicon.ico` 上
+     页面自己的地址是 `/<token>/__ui_live.html`（`V-277`：自包含那一份在内存里，
+     虚拟地址由宿主直接答），相对写法会被拼成 `/<token>/favicon.ico` —— 那条路径也在
+     `user_data/state/` 那种被挡的地方之外，但仍然会被当成"要相对找文件"，
+     写绝对路径才落到服务专门开的那条 `/favicon.ico` 上
      （图标文件和构建时嵌进 exe 的是同一份：`system/icon/moss.ico`）。 -->
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 <!-- 样式全在两份外部表里：`css/app.css`（外壳）+ `css/settings.css`（设置面板）。

@@ -330,11 +330,12 @@ EMBED_LOCK = threading.Lock()
 #: 这个界面服务**不许发**的路径（相对安装根，`V-170`）。
 #: ★ 为什么：服务的根是整个安装根，而界面真正需要的只有 `system/ui/**` 和自包含页面 ——
 #:   配置（明文 key）、快照库、命令历史、各包运行期数据没理由经一个 HTTP 端口发出去。
-#:   `user_data/state/` 里那份 `_ui_inline.html` 是例外（它就是界面本身）。
+#: 敏感路径一律不发（`V-170`）。★ `V-277`：界面那一页**不在这个名单里** —— 它现在只在内存里
+#: （虚拟地址 `__ui_live.html`，由 `_EmbedHandler._serve_live()` 直接答），所以原来那条
+#: "给 `user_data/state/_ui_inline.html` 开后门"的例外（`_EMBED_ALLOW`）**已经删掉了**。
 _EMBED_DENY = ("user_data/config.toml", "user_data/backups/", "user_data/history/",
                "user_data/state/", "user_data/trash/", "user_data/snapshot.ignore",
                "user_data/runners.json", ".git/", "core/", "venv/")
-_EMBED_ALLOW = ("user_data/state/_ui_inline.html",)
 
 #: 界面窗口的 favicon（`V-181`）：**一份图标，两个消费者** —— 构建时嵌进 exe 的
 #: `--windows-icon-from-ico`（`tools/build.py` 里的 `ICON_REL`）和这里发出去的
@@ -1165,10 +1166,28 @@ class _EmbedHandler(http.server.SimpleHTTPRequestHandler):
             p = p[len(tk) + 1:]
         return p.lstrip("/")
 
+    def _serve_live(self):
+        """`V-277`：界面那一页现在在**内存**里 —— 虚拟地址要它就直接答，不碰磁盘。
+
+        返回 True = 这个请求已经处理完了（调用方别再走静态文件那条路）。
+        """
+        if self._rel_of(self.path) != LIVE_NAME:
+            return False
+        html = _LIVE.get("html") or ""
+        if not html:
+            self.send_error(404, "no live page")
+            return True
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()                      # `end_headers` 会给它加 `Cache-Control: no-store`
+        if self.command != "HEAD":
+            self.wfile.write(body)
+        return True
+
     def _blocked(self, rel):
         """敏感路径一律挡住（`V-170`）；目录也不给列（要拿文件得知道确切路径）。"""
-        if rel in _EMBED_ALLOW:
-            return None
         for d in _EMBED_DENY:
             if rel == d or rel.startswith(d):
                 return "denied"
@@ -1177,6 +1196,10 @@ class _EmbedHandler(http.server.SimpleHTTPRequestHandler):
         return None
 
     def send_head(self):
+        # ★ `V-277`：界面那一页是内存里那份（虚拟地址），先问它 —— 它不落盘，
+        #   所以也不该受"目录不给列 / 敏感路径"那套静态规则管。
+        if self._serve_live():
+            return None
         rel = self._rel_of(self.path)
         why = self._blocked(rel)
         if why:
@@ -3405,16 +3428,20 @@ def _note(text):
         pass
 
 
-def _inline_page():
-    """把界面的 css/js **就地展开**成一份自包含的 HTML，返回它的路径（`V-78`）。
+def _inline_html():
+    """把界面的 css/js **就地展开**成一份自包含的 HTML，返回**字符串**（`V-78` / `V-277`）。
 
     ★ 为什么非这么做：页面里十几个 `script`/`link`，每一个都要过一次本地 http。
       实测那条路会抖（同一个源、同一秒：一半请求 200，另一半连服务都没进到，
       浏览器报 `ERR_CONNECTION_REFUSED`）⇒ `Vue is not defined` / `$ is not defined`
       ⇒ 界面半死不活。展开成一份之后，**子资源请求数变成 0**，它再抖也伤不到界面。
-    ★ 源码仍然是拆开的多文件（`system/ui/css|js/*`）；这一步只是运行时的组装，
-      生成的那份放在 `user_data/state/_ui_inline.html`，能直接打开、也能看。
-    ★ 展开不了就返回 None，调用方退回原来的做法（绝不因为这点事让界面开不了）。
+    ★ 源码仍然是拆开的多文件（`system/ui/css|js/*`）；这一步只是运行时的组装。
+    ★ `V-277`（你提的）：**组装结果只放内存，不落盘** —— 以前写在
+      `user_data/state/_ui_inline.html`，可那是**界面的构建产物、不是用户数据**，
+      放那儿名不正言不顺（还逼着服务在 `_EMBED_ALLOW` 里为它开一个例外）。
+      现在由 `_EmbedHandler` 用一个虚拟地址（`__ui_live.html`）直接从内存发出去；
+      `moss ui --debug` 时另外 dump 一份到 `%TEMP%` 供人打开看（那份不对外服务）。
+    ★ 组装不了就返回 None，调用方退回原来的做法（绝不因为这点事让界面开不了）。
     """
     try:
         page = HERE / "index.html"
@@ -3443,23 +3470,41 @@ def _inline_page():
         #   但页面里 `paintStaticIcons()` 之类是加载期就调 `ico()` 的 —— 表得先在那儿。
         html = re.sub(r"(<body[^>]*>)", lambda m: m.group(1) + "\n" + icons.script_tag(), html,
                       count=1, flags=re.I)
-        # ★ `V-271`：在文件里**自己写一句"这是生成物"** —— 不然有人（包括我自己）打开这份
-        #   上万行的文件，会以为界面就长在这儿、然后改它（改完下次启动就没了）。
-        #   放在 doctype **后面**（放前面虽然也合法，但没必要跟标准模式的规矩较劲）。
+        # ★ `V-271` / `V-277`：在页面里**自己写一句"这是运行时组装的"** —— 不然谁在 devtools
+        #   里看到这一大坨，会以为界面就长在这儿。放在 doctype **后面**。
         html = re.sub(r"(<!doctype[^>]*>)",
                       lambda m: m.group(1) + "\n"
-                      "<!-- 这是 moss 每次启动时自动生成的自包含页面（把 css/js/图标表全部内联进"
-                      "这一份，好让页面一个子请求都不用发）。**别改这个文件**：改完下次启动就没了。"
+                      "<!-- 这是 moss 启动时**在内存里**把 css/js/图标表组装成的一份自包含页面"
+                      "（好让页面一个子请求都不用发）。它**不在磁盘上**，你看到的这一坨不是源："
                       "要改界面请改 system/ui/**（index.html / css/*.css / js/*.js），然后重启 moss；"
-                      "生成逻辑在 system/ui/main.py 的 _inline_page()。 -->",
+                      "组装逻辑在 system/ui/main.py 的 _inline_html()。"
+                      "想看它长什么样：`moss ui --debug` 会在 %TEMP% 留一份。 -->",
                       html, count=1, flags=re.I)
-        out = USER_DATA / "state" / "_ui_inline.html"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(html, encoding="utf-8", newline="")
-        return out
+        return html
     except Exception as e:                                            # noqa: BLE001
-        _note("page: 展开自包含页面失败（%r），退回原做法" % (e,))
+        _note("page: 组装自包含页面失败（%r），退回原做法" % (e,))
         return None
+
+
+#: `V-277`：组装好的那份自包含页面（**只放内存**）。`_page_url()` 填，`_EmbedHandler` 发。
+#: 虚拟地址就叫这个 —— 它不是磁盘上的文件，服务认得这个词、直接从内存答。
+_LIVE = {"html": ""}
+LIVE_NAME = "__ui_live.html"
+
+
+def _drop_legacy_inline():
+    """`V-277`：把老版本遗留在 `user_data/state/` 里的 `_ui_inline.html` 删掉（一次性）。
+
+    ★ 它在 `user_data/` 里不进 git、删了也不影响运行；只是别再让那个"看着像用户数据"的
+     856 KB 文件躺在那儿了（你提的：那个文件本来就不该在用户目录里）。
+    """
+    p = USER_DATA / "state" / "_ui_inline.html"
+    try:
+        if p.is_file():
+            p.unlink()
+            _note("page: 清掉了老位置的 _ui_inline.html（那份自包含页面现在只放内存）")
+    except OSError:
+        pass
 
 
 def _page_url():
@@ -3483,19 +3528,33 @@ def _page_url():
     if not port:
         _note("page: 本地服务起不来（%s），退回 file://" % token)
         return str(HERE / "index.html")
-    # ★ 优先用"展开成一份"的页面（`V-78`）：子资源请求 0，那条会抖的传输碰不到它
-    inlined = _inline_page()
-    if inlined is not None:
-        try:
-            rel = inlined.resolve().relative_to(HOME.resolve())
-            url = "http://127.0.0.1:%d/%s/%s" % (port, token, rel.as_posix())
-            _note("page: 界面从 %s 加载（自包含：css/js 已内联）" % url)
-            return url
-        except (OSError, ValueError):
-            _note("page: 展开后的页面不在安装根下面，用原始页面")
+    _drop_legacy_inline()
+    # ★ 优先用"组装成一份"的页面（`V-78`）：子资源请求 0，那条会抖的传输碰不到它。
+    #   `V-277`：这份**不落盘**，走一个虚拟地址、由 `_EmbedHandler` 从内存答。
+    html = _inline_html()
+    if html:
+        _LIVE["html"] = html
+        url = "http://127.0.0.1:%d/%s/%s" % (port, token, LIVE_NAME)
+        _note("page: 界面从 %s 加载（自包含：css/js 已内联，%d KB，只在内存里）"
+              % (url, len(html.encode("utf-8")) // 1024))
+        _dump_live_for_debug(html)
+        return url
     url = "http://127.0.0.1:%d/%s/%s" % (port, token, rel.as_posix())
-    _note("page: 界面从 %s 加载" % url)
+    _note("page: 界面从 %s 加载（没组装成自包含，按多文件走）" % url)
     return url
+
+
+def _dump_live_for_debug(html):
+    """`--debug` 时把这份自包含页面**另存一份**到 `%TEMP%`，方便直接打开看（不对外服务）。"""
+    if not any(a in ("--debug", "--dev", "-d") for a in sys.argv[1:]):
+        return
+    try:
+        import tempfile                                               # noqa: PLC0415
+        p = Path(tempfile.gettempdir()) / "moss_ui_inline.html"
+        p.write_text(html, encoding="utf-8", newline="")
+        _note("page: （--debug）这份自包含页面也存了一份到 %s" % p)
+    except OSError:
+        pass
 
 
 # ================================================================ 窗口图标（`V-182`）
