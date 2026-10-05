@@ -96,6 +96,14 @@ def call(name, args):
 SCRIPT = []
 
 
+def _man_ok(S, snap):
+    """这条快照的清单还读得出来吗（读不出来就当它没了）—— 只给 `V-279` 那段用。"""
+    try:
+        return bool(S._store().manifest(snap["id"], snap.get("group")))
+    except Exception:                                                     # noqa: BLE001
+        return False
+
+
 def main():
     tmp = Path(tempfile.mkdtemp(prefix="moss_aipane_"))
     udata = tmp / "user_data"
@@ -453,6 +461,148 @@ def main():
     chk("G 删一条也通", api.ai_run_forget(first.get("id") or "").get("ok") is True, "")
     chk("G 清空也通（只清记录，不动包）", api.ai_run_forget("", True).get("ok") is True, "")
     chk("G 清完列表就空了", api.ai_runs(10).get("runs") == [], "")
+
+    print()
+    print("=" * 72)
+    print("H：`V-279` 会话的**改 / 删** —— 只删后缀 + 回退到那一轮的开工快照")
+    print("=" * 72)
+    # ★ 现场自己造（全在临时 user_data 里）：三条链式记录，每轮开工前一条 AI 快照。
+    #   断言里那条"文件回到 v1 而不是 v0"是关键 —— 它证明回退用的是**那一轮自己的**快照，
+    #   不是"反正退到最早"那种蒙对的写法。
+    # ★ 注意：G 段把 `_runs` 这个名字**覆盖成了列表**（那是记录列表），这里得把模块重新拿回来。
+    import ai_runs as _runs                                                # noqa: E402, F811
+    wd = pkgs / "sess"
+    wd.mkdir(parents=True, exist_ok=True)
+    f1 = wd / "a.txt"
+    _T = [1000.0]
+
+    def _mkrun(task, prev, snap, at, files=None, kind="work"):
+        _T[0] += 10.0
+        return (_runs.save({
+            "task": task, "workdir": str(wd), "kind": kind, "ok": True,
+            "reason": "验收通过", "summary": task,
+            "files": ([str(f1)] if files is None else files),
+            "usage": {}, "steps": [],
+            "snapshot": ({"id": snap["id"], "group": snap["group"]} if snap else None),
+            "messages": [{"role": "user", "content": task}],
+            "continued_from": prev or "", "finished": _T[0], "started_text": at}) or {}).get("id")
+
+    f1.write_text("v0\n", encoding="utf-8")
+    SA = ai_snap.snapshot_before("第一轮：建个文件", wd)
+    r1 = _mkrun("第一轮：建个文件", "", SA, "2026-01-01 10:00:00")
+    f1.write_text("v1\n", encoding="utf-8")
+    SB = ai_snap.snapshot_before("第二轮：改成 v1", wd)
+    r2 = _mkrun("第二轮：改成 v1", r1, SB, "2026-01-01 10:05:00")
+    # ★ 我自己存的那条（`by` 不是 ai）—— 清理**碰都不许碰**
+    SU = ai_snap._store().create([str(wd)], title="我自己存的", note="手动", by="")
+    f1.write_text("v2\n", encoding="utf-8")
+    SC = ai_snap.snapshot_before("第三轮：改成 v2", wd)
+    r3 = _mkrun("第三轮：改成 v2", r2, SC, "2026-01-01 10:10:00")
+    # 另一条会话（不接着谁）：同一个包、**更晚**也改过一次 —— 回退会连它一起撤掉
+    SD = ai_snap.snapshot_before("另一条会话：加个 readme", wd)
+    _mkrun("另一条会话：加个 readme", "", SD, "2026-01-01 10:20:00")
+    chk("H 现场搭好了（三轮链 + 一条别人的会话）",
+        all([r1, r2, r3]) and _runs.get(r3) is not None, "%r %r %r" % (r1, r2, r3))
+
+    p2 = api.ai_session_plan(r2)
+    chk("H 计划算得出来（**只算不改**）", p2.get("ok") is True, str(p2.get("msg") or "")[:90])
+    chk("H ★★ 只允许从链尾往回连续删 ⇒ 删第二轮 = 第二轮 + 第三轮（第一轮留下）",
+        (p2.get("delete_ids") or []) == [r2, r3], json.dumps(p2.get("delete_ids")))
+    chk("H 计划里带着要删那几轮的任务原文（确认框要摆给用户看）",
+        len(p2.get("delete_tasks") or []) == 2 and "第二轮" in str((p2.get("delete_tasks") or [""])[0]),
+        json.dumps(p2.get("delete_tasks"), ensure_ascii=False)[:110])
+    chk("H ★★ 回退到**它自己**开工前那条快照（不是更早那条）",
+        (p2.get("target") or {}).get("id") == SB.get("id") and p2.get("fallback") is None,
+        "target=%r fallback=%r" % ((p2.get("target") or {}).get("id"), p2.get("fallback")))
+    chk("H 上一轮 id 带出来了（改完从上一轮接着往下走）", p2.get("prev_id") == r1, repr(p2.get("prev_id")))
+    chk("H ★★ 跨链告警：另一条会话更晚改过同一个包，回退会连它一起撤 —— 必须说出来",
+        any("其它会话" in w for w in (p2.get("warnings") or [])),
+        json.dumps(p2.get("warnings"), ensure_ascii=False)[:170])
+    chk("H 连删好几轮也明说（不是偷偷多删）",
+        any("一起删掉" in w for w in (p2.get("warnings") or [])),
+        json.dumps(p2.get("warnings"), ensure_ascii=False)[:130])
+
+    # ★ 红的一半：**不给 confirm 就一个字节都不许动**（"先看事实再动手"那道闸）
+    dry = api.ai_session_truncate(r2)
+    chk("H ★★ confirm 不传 ⇒ 拒绝动手，只把计划回给你",
+        dry.get("ok") is False and dry.get("need_confirm") is True,
+        json.dumps(dry, ensure_ascii=False)[:110])
+    chk("H ★★ 假做之后盘上**一个字节没动**（记录还在、文件还是 v2、快照还在）",
+        _runs.get(r3) is not None and _runs.get(r2) is not None and
+        f1.read_text(encoding="utf-8") == "v2\n" and bool(ai_snap._store().manifest(SB["id"], SB["group"])),
+        "a.txt=%r r3=%s" % (f1.read_text(encoding="utf-8"), _runs.get(r3) is not None))
+
+    done2 = api.ai_session_truncate(r2, True)
+    chk("H 真删成功", done2.get("ok") is True, str(done2.get("msg") or "")[:90])
+    chk("H ★★ 文件回到了**第二轮开工前**（撤销第二、三轮改的东西，不是退回 v0）",
+        f1.read_text(encoding="utf-8") == "v1\n", repr(f1.read_text(encoding="utf-8")))
+    chk("H ★ 记录删了第二/三轮，**第一轮还在**",
+        _runs.get(r1) is not None and _runs.get(r2) is None and _runs.get(r3) is None,
+        "r1=%s r2=%s r3=%s" % (_runs.get(r1) is not None, _runs.get(r2) is not None, _runs.get(r3) is not None))
+    chk("H ★★ 回退要用的那条快照**保留**（不然这一步不可逆）",
+        done2.get("kept_snapshot") == SB.get("id") and
+        bool(ai_snap._store().manifest(SB["id"], SB["group"])),
+        "kept=%r dropped=%r" % (done2.get("kept_snapshot"), done2.get("dropped_snapshots")))
+    chk("H ★ 被删那两轮自己的快照清掉了（第三轮那条）",
+        SC.get("id") in (done2.get("dropped_snapshots") or []) and
+        not _man_ok(ai_snap, SC), "dropped=%r" % (done2.get("dropped_snapshots"),))
+    chk("H ★★ 我自己存的那条快照**一条没动**",
+        bool(ai_snap._store().manifest(SU["id"], SU.get("group"))), repr(SU.get("id")))
+    gate = ai_snap.clean_ai(group=SU.get("group") or "", bid=SU["id"])
+    chk("H ★★ 清理那道闸是**拦**不是劝：拿用户快照的 id 去 `clean_ai`，它直接拒绝",
+        gate.get("ok") is True and (gate.get("skipped") or []) == [SU["id"]] and
+        not (gate.get("deleted") or []) and bool(ai_snap._store().manifest(SU["id"], SU.get("group"))),
+        json.dumps(gate, ensure_ascii=False)[:110])
+
+    p1 = api.ai_session_plan(r1)
+    chk("H 删到只剩一轮时，链也塌成一条（计划跟着变小）",
+        p1.get("ok") is True and p1.get("chain_n") == 1 and (p1.get("delete_ids") or []) == [r1],
+        "chain_n=%r delete=%r" % (p1.get("chain_n"), p1.get("delete_ids")))
+    d1 = api.ai_session_truncate(r1, True)
+    chk("H ★ 删链头 = 这条会话没了：回到第一轮开工前 + 记录清零",
+        d1.get("ok") is True and f1.read_text(encoding="utf-8") == "v0\n" and _runs.get(r1) is None,
+        "a.txt=%r msg=%s" % (f1.read_text(encoding="utf-8"), str(d1.get("msg"))[:60]))
+
+    # ★ 纯问答那轮：没动过文件 ⇒ **不该回退**（回退反而会把别人后来的改动撤掉）
+    rc = _mkrun("你是哪个大模型?", "", None, "2026-01-01 11:00:00", files=[], kind="chat")
+    pc = api.ai_session_plan(rc)
+    chk("H ★★ 纯问答那轮：不用回退（没改过文件），只删记录",
+        pc.get("ok") is True and pc.get("chat_only") is True and pc.get("target") is None and
+        any("没改过文件" in w for w in (pc.get("warnings") or [])),
+        json.dumps({"chat_only": pc.get("chat_only"), "target": pc.get("target"),
+                    "warnings": pc.get("warnings")}, ensure_ascii=False)[:150])
+    f1.write_text("keep\n", encoding="utf-8")
+    dc = api.ai_session_truncate(rc, True)
+    chk("H ★★ 纯问答那轮删了，磁盘上**什么都没被回退**",
+        dc.get("ok") is True and dc.get("restored_from") == "" and
+        f1.read_text(encoding="utf-8") == "keep\n" and _runs.get(rc) is None,
+        "restored=%r a.txt=%r" % (dc.get("restored_from"), f1.read_text(encoding="utf-8")))
+
+    # ★ 自己那条快照没了（被清过 / 当时就没存上）⇒ 退到**再往前最近那条**，而且必须告警
+    f1.write_text("m0\n", encoding="utf-8")
+    SF = ai_snap.snapshot_before("有快照的一轮", wd)
+    rf = _mkrun("有快照的一轮", "", SF, "2026-01-01 12:00:00")
+    f1.write_text("m1\n", encoding="utf-8")
+    rb = _mkrun("快照丢了的那轮", rf, {"id": "20200101-000000-0000",
+                                       "group": SF.get("group") or ""}, "2026-01-01 12:05:00")
+    pb = api.ai_session_plan(rb)
+    chk("H ★★ 自己那条快照没了 ⇒ 退到**再往前最近那条**，并且把代价讲明白",
+        (pb.get("target") or {}).get("id") == SF.get("id") and bool(pb.get("fallback")) and
+        any("快照没了" in w for w in (pb.get("warnings") or [])),
+        json.dumps({"target": (pb.get("target") or {}).get("id"), "fallback": bool(pb.get("fallback")),
+                    "warnings": pb.get("warnings")}, ensure_ascii=False)[:160])
+    # 连一条可用的镜像都没有（新建包那种）⇒ 明说"只能删记录"，不许假装回退了
+    rn = _mkrun("连前面也没快照", "", None, "2026-01-01 13:00:00")
+    pn = api.ai_session_plan(rn)
+    chk("H ★★ 一条可回退的镜像都没有 ⇒ 明说只能删记录（不许假装回退了）",
+        pn.get("ok") is True and pn.get("target") is None and pn.get("chat_only") is False and
+        any("找不到任何可回退的镜像" in w for w in (pn.get("warnings") or [])),
+        json.dumps(pn.get("warnings"), ensure_ascii=False)[:150])
+    pbad = api.ai_session_plan("这条根本不存在")
+    chk("H 找不到那条会话时明说（不是默默成功）",
+        pbad.get("ok") is False and "找不到" in str(pbad.get("msg")), str(pbad.get("msg"))[:70])
+    api.ai_session_truncate(rn, True)
+    chk("H 收尾：现场清干净（临时目录最后整个删掉）", _runs.get(rn) is None, "")
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()

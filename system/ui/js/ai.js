@@ -187,6 +187,9 @@ async function aiOpenThread(id, quiet){
     }
     AIR.turns = got.turns.map((t, i) => ({
       key: "h" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1),
+      // ★ `V-279`：**每一轮自己的记录 id** 得带上 —— 抬头那两颗「编辑 / 删除」按钮
+      //   要拿它去问宿主"删这一轮会删掉什么、回退到哪条镜像"。
+      id: t.id || "",
       task: t.task || "", at: (t.at || "").slice(5, 16),
       steps: t.steps || [], result: t.result || null, folded: false,
       note: (t.result && t.result.continue_note) || "",
@@ -242,7 +245,8 @@ async function aiOpenRun(id, quiet){
                   caveats: r.caveats || "", files: r.files || [], usage: r.usage || {},
                   snapshot: r.snapshot || null, run_id: r.id};
     // ★ `V-258`：翻历史 = **一轮**（前面那些轮先收起来，别和这份记录混在一起）
-    AIR.turns = [{key: "v" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1), task: r.task || "",
+    //   `V-279`：`id` 照样带上（翻历史时抬头那两颗按钮也能用）
+    AIR.turns = [{key: "v" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1), id: r.id || "", task: r.task || "",
                   at: (r.started_text || "").slice(5, 16) || "历史记录",
                   steps: AIR.steps, result: AIR.result, folded: false}];
     AIR.cur = 0;
@@ -256,6 +260,73 @@ async function aiForgetRun(id){
     if (got && got.ok){ toast(id ? "删掉那条记录了" : "历史清空了"); AIR.viewing = ""; await aiLoadRuns(); }
     else toast((got && got.msg) || "删不掉", true);
   }catch(e){ toast("删不掉：" + (e && e.message ? e.message : e), true); }
+}
+
+/* ---------------------------------------------------------------- 改 / 删一轮（`V-279`）
+   ★ 你要的是"会话能改、能删"。规矩是你定的三条：
+     ① 改 N = 回到 **N 自己的开工快照**（撤销它改的东西）；快照没了就退到**再往前最近那条**
+        （并且明确告警"那之后的改动会一起撤掉"）；
+     ② 删镜像只删 `by=ai` 的，**回退要用的那条保留**，你自己存的一条不碰；
+     ③ **只允许从链尾往回连续删** —— 也就是删 N = 删 `N..链尾`（中间那条不许单独删）。
+   ★ 所以界面上这两颗按钮**都不是"直接动手"**：先让宿主算一份**只算不改**的计划
+     （`ai_session_plan`），把"删哪几条 / 回退到哪条镜像 / 有什么坑"摆进确认框，
+     确认了才 `ai_session_truncate(id, true)`。
+     —— 破坏性动作先把事实亮出来，这规矩和「清空历史」那类按钮一致。 */
+async function aiTurnPlan(id){
+  if (!id){ toast("这一轮没有记录 id（老记录）—— 改不了", true); return null; }
+  try{
+    const p = await window.pywebview.api.ai_session_plan(id);
+    if (!p || !p.ok){ toast("算不出这一轮要删什么：" + ((p && p.msg) || "?"), true); return null; }
+    return p;
+  }catch(e){ toast("算不出这一轮要删什么：" + (e && e.message ? e.message : e), true); return null; }
+}
+/* 把计划写成确认框里那段话（`askConfirm2` 认 `**粗体**` 和 `<br>`）。 */
+function aiPlanHtml(p){
+  const out = [];
+  const head = (p.delete_ids || []).length;
+  out.push("<b>会删掉 " + head + " 条记录</b>（这一轮" +
+           (head > 1 ? "，以及它**之后**那 " + (head - 1) + " 轮" : "") + "）：<br>" +
+           (p.delete_tasks || []).map((t, i) =>
+             "　#" + (p.index + 1 + i) + " " + esc(String(t || "（没写任务）").slice(0, 40))).join("<br>"));
+  if (p.target){
+    out.push("<b>先回退到镜像</b> <code>" + esc(p.target.id) + "</code>" +
+             (p.fallback ? "（**不是这一轮自己的**，是更早那条）" : "") +
+             " —— 那一刻的包目录。<br>也就是：这一轮改的东西**会被撤掉**" +
+             (p.fallback ? "，连同它那之后的改动" : "") + "。");
+  }else if (!p.chat_only){
+    out.push("<b>没有可回退的镜像</b> —— 删掉之后代码回不到那一刻，**只是记录没了**。");
+  }
+  (p.warnings || []).forEach(w => out.push("⚠ " + esc(String(w))));
+  out.push('<span class="dim">回退要用的那条快照**保留**；你自己存的快照一条都不动；覆盖前会留 ' +
+           '<code>.bak</code>。</span>');
+  return out.join("<br>");
+}
+async function aiDoTruncate(id){
+  try{
+    const r = await window.pywebview.api.ai_session_truncate(id, true);
+    if (!r || !r.ok){ toast("没删成：" + ((r && r.msg) || "?"), true); return null; }
+    toast(r.msg || "删好了");
+    return r;
+  }catch(e){ toast("没删成：" + (e && e.message ? e.message : e), true); return null; }
+}
+/* 删完了之后收场：把记录列表重读一遍，把**剩下的那半条会话**重新摆出来，
+   并且让"下一次跑"接着 `p.prev_id`（删掉的那轮已经没了，不能再接它）。
+   `fill` = 编辑那一支：把这句原话填回输入框（改好再发一次就是"重来"）。 */
+async function aiAfterTruncate(p, task, fill){
+  AIR.viewing = "";
+  await aiLoadRuns();
+  if (p.prev_id){
+    await aiOpenThread(p.prev_id, true);
+    if (AIR.contId){ AIR.contTask = (AIR.turns[AIR.turns.length - 1] || {}).task || ""; }
+    else { toast("前面那条是更早的记录（没存对话）—— 只能看，接不上了", true); }
+  }else{
+    // 删的就是链头 ⇒ 这条会话没了：日志清空，输入框回到"新会话"
+    AIR.turns = []; AIR.cur = -1; AIR.steps = []; AIR.result = null;
+    AIR.sentTask = ""; AIR.lastId = ""; AIR.pickId = "";
+    AIR.contId = ""; AIR.contTask = ""; AIR.muted = 0;
+  }
+  if (fill){ AIR.task = String(task || ""); }
+  AIR.rev++;
 }
 
 async function aiPollOnce(){
@@ -747,6 +818,33 @@ const MossAi = {
     },
     openRun(id){ aiOpenRun(id); },
     forgetRun(id){ aiForgetRun(id); },
+    /* ★ `V-279`：改这一轮 —— 回退到它开工前 + 删掉它和它之后的 + 把这句原话填回输入框。
+       填回去之后 `contId` 指的是**前一轮**，所以你改好那句话再点发送，
+       等于"从上一轮接着重跑一遍"，而不是接在已经作废的那轮后面。 */
+    async editTurn(t){
+      const p = await aiTurnPlan(t.id);
+      if (!p) return;
+      askConfirm2("改这一轮？", aiPlanHtml(p) +
+        "<br>改完**这句话会填回下面那个输入框**（你可以把它改成你想要的样子），" +
+        "接着从**上一轮**往下走 —— 改好再点一次「发送指令」。",
+        {label: "回退并填回输入框", danger: true, cb: async () => {
+          const r = await aiDoTruncate(p.id);
+          if (!r) return;
+          await aiAfterTruncate(p, t.task, true);
+        }});
+    },
+    /* ★ `V-279`：删这一轮 —— 记录删 `N..链尾`（只允许从链尾往回连续删），并按快照回退。 */
+    async delTurn(t){
+      const p = await aiTurnPlan(t.id);
+      if (!p) return;
+      askConfirm2("删这一轮？", aiPlanHtml(p) +
+        "<br>删掉之后**这条会话就从上一轮往后重新开始**（这条记录本身看不回来了）。",
+        {label: "删掉并回退", danger: true, cb: async () => {
+          const r = await aiDoTruncate(p.id);
+          if (!r) return;
+          await aiAfterTruncate(p, "", false);
+        }});
+    },
     /* ★ `V-253`：底部那颗「发送指令」—— 稿子里的行为是"空着点不给发 + 抖一下" */
     start(){
       const task = String(this.A.task || "").trim();
@@ -988,6 +1086,18 @@ const MossAi = {
             <span class="ai-th-a" :title="t.note || t.at"
                   :class="{bad: /接不上/.test(t.note || '')}"
                   >{{ t.folded ? "已折叠 · 点一下展开" : (t.note || t.at || "") }}</span>
+            <!-- ★ V-279：这一轮的「改」和「删」。
+                 · 都带 @click.stop —— 不然会顺手把这一轮折叠掉（父层是折叠开关）。
+                 · 「改」= 回到**这一轮自己的开工快照**（撤销它的改动），并把这句原话填回输入框；
+                   填好之后发出去 = 从上一轮接着重跑（contId 指向前一轮）—— 这就是改了再来一遍。
+                 · 「删」= 删掉**这一轮以及它之后**的记录（只允许从链尾往回连续删），并按快照回退。
+                 · 跑着的时候不给点（改一半把地基抽了，那才叫乱）。 -->
+            <span class="ai-th-x" v-if="t.id && !A.running">
+              <button @click.stop="editTurn(t)"
+                      title="改这一轮：回到它开工前的快照（撤销它改的东西），并把这句话填回输入框 —— 改好再发一次">编辑</button>
+              <button class="danger" @click.stop="delTurn(t)"
+                      title="删这一轮：从这一轮到会话末尾的记录一起删掉，并按快照回退">删除</button>
+            </span>
           </div>
 
           <template v-if="!t.folded">

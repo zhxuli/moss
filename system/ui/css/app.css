@@ -1327,6 +1327,18 @@ table.fb tr.row:hover .cmpbtn{opacity:1}
 .aiwrap .ai-th-a{font-size:12px;color:var(--aib-text-light);flex:none;max-width:40%;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .aiwrap .ai-th-a.bad{color:var(--aib-warning)}
+/* ★ `V-279`：这一轮抬头右边那两颗小按钮（编辑 / 删除）—— 平时**淡着**，鼠标到这一行才亮
+   （每条记录都挂两颗亮按钮，整片日志就被搅花了）。
+   `align-self:center` 是必须的：这一行是 `align-items:baseline`，按钮不写就会"吊"在字腰上。 */
+.aiwrap .ai-th-x{display:flex;gap:6px;flex:none;align-self:center;opacity:.4;
+  transition:var(--aib-transition-smooth)}
+.aiwrap .ai-th:hover .ai-th-x{opacity:1}
+.aiwrap .ai-th-x button{
+  padding:1px 8px;font-size:12px;line-height:18px;border-radius:5px;cursor:pointer;
+  border:1px solid var(--aib-border-color);background:#fff;color:var(--aib-text-muted);
+}
+.aiwrap .ai-th-x button:hover{border-color:var(--aib-primary);color:var(--aib-primary)}
+.aiwrap .ai-th-x button.danger:hover{border-color:var(--aib-danger);color:var(--aib-danger)}
 /* ★ `V-259`：这一轮"接着上次聊 / 按新会话跑"那行小字（宿主说的，照实显示） */
 .aiwrap .ai-turnnote{font-size:12px;color:var(--aib-success)}
 .aiwrap .ai-turnnote.bad{color:var(--aib-warning)}

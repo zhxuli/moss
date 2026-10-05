@@ -2166,6 +2166,205 @@ class Api:
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "turns": [], "msg": "读不到这条会话：%s" % e}
 
+    # ------------------------------------------------ 会话：编辑 / 删除（`V-279`）
+    # ★ 你定的三条（2026-10-05）：
+    #   ① **编辑会话 N = 回到它自己的开工快照**（撤销它的改动）；快照没了 ⇒ 退到**再往前
+    #      最近那个**（并明确告警"那之后的改动也会一起撤掉"）；
+    #   ② 删镜像**只删 `by=ai` 的**，而且**回退要用的那一条保留**（用户自己存的快照一律不碰）；
+    #   ③ **只允许"从链尾往回连续删"** —— 也就是任何一条 N 都只能删 `N..链尾`，中间那条
+    #      不许单独删（这也正是"删 N 及其之后的所有会话"）。
+    #   ★ 另外照样给**跨链告警**：回退是"整个包目录回到那一刻"，别的会话链后来做的改动
+    #     也会被一起撤掉 —— 这件事跟删哪几条无关，必须说在前面。
+    def _ai_chain(self, run_id):
+        """`run_id` 所在那条会话链（链头 → 链尾，按时间排）。回 `[{run...}, ...]`。
+
+        顺着 `continued_from` 往回走到头，再顺着"谁接着它"往前走。防环 500 步。
+        """
+        import ai_runs                                                 # noqa: PLC0415
+        rec = ai_runs.get(run_id)
+        if not rec:
+            return []
+        # 往回
+        back, rid, guard = [], str(run_id), 0
+        while rid and guard < 500:
+            r = ai_runs.get(rid)
+            if not r:
+                break
+            back.append(r)
+            rid = str(r.get("continued_from") or "")
+            guard += 1
+        back.reverse()                                                 # 链头在前
+        head = back[0].get("id")
+        # 往前（谁接着它 + 接着下一代……），按时间排序
+        rows = ai_runs.list_runs(limit=2000, with_steps=False)
+        kids = {}
+        for r in rows:
+            p = str(r.get("continued_from") or "")
+            if p:
+                kids.setdefault(p, []).append(r)
+        chain, seen, queue = [], set(), [head]
+        while queue:
+            cur = queue.pop(0)
+            if not cur or cur in seen:
+                continue
+            seen.add(cur)
+            r = next((x for x in rows if x.get("id") == cur), None)
+            if r is None:
+                r = ai_runs.get(cur)
+            if not r:
+                continue
+            chain.append(r)
+            for k in sorted(kids.get(cur, []), key=lambda x: x.get("finished") or 0):
+                queue.append(k.get("id"))
+        chain.sort(key=lambda r: (r.get("finished") or 0))
+        return chain
+
+    def _ai_snap_exists(self, snap):
+        """这条镜像在盘上还在吗（可能被 `snap_clean` 清掉了）。"""
+        if not snap or not snap.get("id"):
+            return False
+        try:
+            ai_dir = str(HERE / "ai")
+            if ai_dir not in sys.path:
+                sys.path.insert(0, ai_dir)
+            import ai_snap as S                                        # noqa: PLC0415
+            man = S._store().manifest(snap["id"], snap.get("group"))
+            return bool(man)
+        except Exception:                                              # noqa: BLE001
+            return False
+
+    def ai_session_plan(self, run_id=""):
+        """**只算不改**：把"这条要删什么、回退到哪条镜像、有什么坑"摆给界面看（确认框用它）。
+
+        回 `{ok, id, task, delete_ids, delete_tasks, snap, target, fallback, prev_id,
+             chat_only, group, warnings, chain_n, index}`。
+        """
+        try:
+            ai_dir = str(HERE / "ai")
+            if ai_dir not in sys.path:
+                sys.path.insert(0, ai_dir)
+            import ai_runs                                             # noqa: PLC0415
+            chain = self._ai_chain(run_id)
+            ids = [r.get("id") for r in chain]
+            if str(run_id) not in ids:
+                return {"ok": False, "msg": "找不到这条会话"}
+            i = ids.index(str(run_id))
+            cut = chain[i:]                                            # ★ 后缀：N..链尾
+            rec = chain[i]
+            snap = rec.get("snapshot") or None
+            snap_ok = self._ai_snap_exists(snap)
+            # 快照没了（或本来就没有）⇒ 往前找最近一条还在的
+            # ★ 注意 `fallback` 的语义：**只在这一轮自己的快照不可用、真退到更早那条时才给**。
+            #   一开始我写成了"只要有更早的候选就填上" —— 探针立刻抓住：正常那条会话也会
+            #   带着 fallback 回界面，于是确认框会冤枉地告警「不是这一轮自己的」。
+            cand, prev_id = None, (ids[i - 1] if i > 0 else "")
+            for r in reversed(chain[:i]):
+                s = r.get("snapshot") or None
+                if self._ai_snap_exists(s):
+                    cand = {"id": s["id"], "group": s.get("group"),
+                            "from_task": r.get("task") or "",
+                            "from_at": r.get("started_text") or ""}
+                    break
+            fallback = None if snap_ok else cand
+            target = ({"id": snap["id"], "group": snap.get("group"), "from_task": rec.get("task") or "",
+                       "from_at": rec.get("started_text") or ""} if snap_ok else cand)
+            files_made = any((r.get("files") or []) for r in cut)
+            chat_only = not files_made
+            warns = []
+            if chat_only:
+                warns.append("这条（以及它之后那几轮）**没改过文件**（纯问答）—— 不用回退，"
+                             "只删记录。")
+            elif not snap_ok and fallback:
+                warns.append("这条**自己的开工快照没了**，只能退到更早的那一条"
+                             "（「%s」%s）—— **那之后的改动会一起被撤掉**。"
+                             % (fallback["from_task"][:20], fallback["from_at"]))
+            elif not snap_ok and not fallback:
+                warns.append("找不到任何可回退的镜像 —— 删掉之后**代码回不到那一刻**，"
+                             "只是记录没了。")
+            # 跨链：同一个包里别的会话链，在这条快照之后还改过文件
+            if target:
+                group = str(target.get("group") or "")
+                after = target.get("from_at") or ""
+                others = []
+                for r in ai_runs.list_runs(limit=2000):
+                    if r.get("id") in ids or not (r.get("files") or []):
+                        continue
+                    s = r.get("snapshot") or {}
+                    if group and str(s.get("group") or "") != group:
+                        continue
+                    if str(r.get("started_text") or "") > str(after):
+                        others.append("%s（%s）" % ((r.get("task") or "")[:16],
+                                                   r.get("started_text") or ""))
+                if others:
+                    warns.append("★ 回退是**整个包目录**回到那一刻 —— 这些**其它会话**的改动"
+                                 "也会被一起撤掉：%s" % "；".join(others[:4]))
+            if len(cut) > 1:
+                warns.append("会连它**后面**那 %d 轮一起删掉（只允许「从链尾往回连续删」）。"
+                             % (len(cut) - 1))
+            return {"ok": True, "id": str(run_id), "task": rec.get("task") or "",
+                    "index": i, "chain_n": len(chain),
+                    "delete_ids": [r.get("id") for r in cut],
+                    "delete_tasks": [(r.get("task") or "")[:40] for r in cut],
+                    "snap": ({"id": snap["id"], "group": snap.get("group")} if snap else None),
+                    "snap_exists": snap_ok, "target": target, "fallback": fallback,
+                    "prev_id": prev_id, "chat_only": chat_only,
+                    "group": (target or {}).get("group") or "",
+                    "warnings": warns}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
+    def ai_session_truncate(self, run_id="", confirm=False):
+        """**真做**：删 `N..链尾` 的记录 + 回退到目标镜像 + 删掉被删会话**自己的**镜像。
+
+        ★ `confirm=False` 时**什么都不动**，只把计划回给你（界面要先弹确认框）。
+        ★ 回退要用的那一条镜像**保留**（你定的）—— 不然这一步不可逆。
+        ★ 删镜像只走 `ai_snap.clean_ai(bid=…)`，它内部只认 `by == "ai"` 的（用户自己存的碰不到）。
+        """
+        plan = self.ai_session_plan(run_id)
+        if not plan.get("ok"):
+            return plan
+        if not confirm:
+            return {"ok": False, "need_confirm": True, "plan": plan,
+                    "msg": "这是破坏性操作：先确认（界面把上面那些事实摆给用户看）"}
+        try:
+            ai_dir = str(HERE / "ai")
+            if ai_dir not in sys.path:
+                sys.path.insert(0, ai_dir)
+            import ai_runs                                             # noqa: PLC0415
+            import ai_snap as S                                        # noqa: PLC0415
+            target = plan.get("target")
+            restored = ""
+            if target:
+                r = self.backup_restore(target["id"], None, "all", False, target.get("group") or "")
+                if not r or not r.get("ok"):
+                    return {"ok": False, "msg": "回退失败，**什么都没删**：%s"
+                                                % ((r or {}).get("msg") or "")}
+                restored = target["id"]
+            # 删被删会话自己的镜像（**保留回退用的那一条**）
+            dropped, kept = [], []
+            for rid in plan["delete_ids"]:
+                rec = ai_runs.get(rid) or {}
+                s = rec.get("snapshot") or None
+                if not s or not s.get("id"):
+                    continue
+                if target and s["id"] == target["id"]:
+                    kept.append(s["id"])
+                    continue
+                got = S.clean_ai(group=s.get("group") or "", bid=s["id"])
+                if got.get("ok"):
+                    dropped.append(s["id"])
+            for rid in plan["delete_ids"]:
+                ai_runs.delete(rid)
+            return {"ok": True, "removed": plan["delete_ids"], "restored_from": restored,
+                    "kept_snapshot": (kept[0] if kept else ""), "dropped_snapshots": dropped,
+                    "prev_id": plan.get("prev_id") or "",
+                    "msg": "删了 %d 条会话%s%s" % (
+                        len(plan["delete_ids"]),
+                        ("，回退到镜像 %s" % restored) if restored else "（没有可回退的镜像）",
+                        ("，清掉 %d 条镜像" % len(dropped)) if dropped else "")}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
     def ai_run_forget(self, run_id="", all_of_them=False):
         """删一条（或全清）任务记录。记录只是回顾用的，删了不影响包。"""
         try:

@@ -102,6 +102,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
+          "ai-turn-edit",
           "hl-window", "set-debounce"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
@@ -565,6 +566,26 @@ MOCK_JS = r"""
         {n: 3, tool: "run_moss", brief: '{"args": ":calc 2^10"}', note: "退出码 0", ms: 900},
         {n: 4, tool: "done", brief: '{"summary": "本来就有"}', note: "收到。", ms: 1}]}}),
     ai_run_forget: async (id, all) => ({ok: true, removed: 1}),
+    // ★ `V-279`：会话的「改 / 删」那两个口子。
+    //   `plan` = **只算不改**（确认框里那些事实全从它来）；`truncate(id, confirm)` 只有
+    //   `confirm===true` 才真动手 —— 预览里把每次调用都记进 `M.sessCalls`，
+    //   场景据此断言"没确认之前**一次都不许动手**"（这条闸就是整个设计的要点）。
+    ai_session_plan: async (id) => {
+      (M.sessCalls = M.sessCalls || []).push(["plan", id]);
+      return {ok: true, id: id, task: "给 :calc 支持指数和开方", index: 0, chain_n: 1,
+              delete_ids: [id], delete_tasks: ["给 :calc 支持指数和开方"],
+              snap: {id: "S-R-1", group: "md5"}, snap_exists: true,
+              target: {id: "S-R-1", group: "md5", from_task: "给 :calc 支持指数和开方",
+                       from_at: "2026-10-04 00:12:00"},
+              fallback: null, prev_id: "", chat_only: false, group: "md5",
+              warnings: ["★ 回退是**整个包目录**回到那一刻 —— 这些**其它会话**的改动也会被一起撤掉：" +
+                         "另一条会话：加个 readme（2026-10-04 00:20:00）"]};
+    },
+    ai_session_truncate: async (id, confirm) => {
+      (M.sessCalls = M.sessCalls || []).push(["truncate", id, !!confirm]);
+      return {ok: true, removed: [id], restored_from: "S-R-1", kept_snapshot: "S-R-1",
+              dropped_snapshots: [], prev_id: "", msg: "（预览）删了 1 条会话，回退到镜像 S-R-1"};
+    },
     run_start: async (pid, args, cwd) => {
       (M.runs = M.runs || []).push({pid: pid, args: args, cwd: cwd});
       return {ok: true, run_id: "r1", pid: 1};
@@ -4330,6 +4351,83 @@ MOCK_JS = r"""
              " 两按=" + (twoPresses ? 1 : 0) + " 连发=" + (repeatOnce ? 1 : 0) +
              " 标题=" + (titleOk ? 1 : 0) + "/" + JSON.stringify(title.slice(0, 24)) +
              " 错=" + (window.__errors || []).length);
+      }
+      // ★ `V-279`：会话的「改 / 删」—— 两条规矩都要钉住：
+      //   ① 抬头那一轮上**真有**这两颗按钮（以前只能整条会话删，没法单独改某一轮）；
+      //   ② 点它们**不许直接动手**：先弹确认框（内容全是宿主算出来的事实），
+      //      点「取消」= **一次 truncate 都不许发**；只有点确定才带着 `confirm=true` 发出去。
+      //   ③ 「改」最后要把**那句原话填回输入框**（改好再发一次 = 从上一轮重来）。
+      if (h === "ai-turn-edit"){
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        await sleep(300);
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(1200);
+        const sessSel = document.querySelector("#pane-ai .ai-sess");
+        if (sessSel){
+          sessSel.value = "r-old";
+          sessSel.dispatchEvent(new Event("change", {bubbles: true}));
+        }
+        await sleep(600);
+        M.sessCalls = [];
+        const head = document.querySelector("#pane-ai .ai-th");
+        const btns = head ? Array.from(head.querySelectorAll(".ai-th-x button")) : [];
+        const labels = btns.map(b => (b.textContent || "").trim());
+        const hasBoth = labels.length === 2 && /编辑/.test(labels[0]) && /删除/.test(labels[1]);
+        // ① 点「删除」→ 弹框；点**取消** ⇒ 一条 truncate 都不许发（这条闸是重点）
+        if (btns[1]) btns[1].click();
+        await sleep(400);
+        const modalOn = document.querySelector("#modal").classList.contains("on");
+        const modalText = ((document.querySelector("#m-text") || {}).textContent || "")
+                            .replace(/\s+/g, " ");
+        const okTitle = ((document.querySelector("#m-title") || {}).textContent || "").indexOf("删这一轮") >= 0;
+        const saysSnap = /S-R-1/.test(modalText) && /回退/.test(modalText);
+        const saysCross = /其它会话/.test(modalText);
+        const saysSuffix = /删掉 1 条记录/.test(modalText);
+        const onlyPlanned = (M.sessCalls || []).every(c => c[0] === "plan");
+        (document.querySelector("#m-cancel") || {click(){}}).click();
+        await sleep(300);
+        const closedNoTruncate = !document.querySelector("#modal").classList.contains("on") &&
+                                 (M.sessCalls || []).every(c => c[0] === "plan");
+        // ② 点「编辑」→ 弹框 → 点确定 ⇒ 这一次才真带着 confirm=true 发出去
+        const btns2 = Array.from((document.querySelector("#pane-ai .ai-th") || {querySelectorAll(){return [];}})
+                                  .querySelectorAll(".ai-th-x button"));
+        if (btns2[0]) btns2[0].click();
+        await sleep(400);
+        const editOn = document.querySelector("#modal").classList.contains("on") &&
+                       ((document.querySelector("#m-title") || {}).textContent || "").indexOf("改这一轮") >= 0;
+        const editOkBtn = ((document.querySelector("#m-ok") || {}).textContent || "").trim();
+        (document.querySelector("#m-ok") || {click(){}}).click();
+        await sleep(900);
+        const calls = M.sessCalls || [];
+        const trunc = calls.filter(c => c[0] === "truncate");
+        const confirmed = trunc.length === 1 && trunc[0][2] === true && trunc[0][1] === "r-old";
+        const taskEl = document.querySelector("#pane-ai .ai-task");
+        const refilled = !!taskEl && /给 :calc 支持指数和开方/.test(taskEl.value || "");
+        const modalGone = !document.querySelector("#modal").classList.contains("on");
+        const ok = hasBoth && modalOn && okTitle && saysSnap && saysCross && saysSuffix &&
+                   onlyPlanned && closedNoTruncate && editOn && /回退并填回输入框/.test(editOkBtn) &&
+                   confirmed && refilled && modalGone && !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n抬头那两颗按钮 = " + JSON.stringify(labels) +
+          "\n点「删除」弹框 = " + modalOn + " · 标题写「删这一轮」= " + okTitle +
+          "\n框里摆了宿主的计划（快照 id / 跨链告警 / 删几条）= " +
+          [saysSnap, saysCross, saysSuffix].join("/") +
+          "\n★ 没确认之前**只发了 plan、没发 truncate** = " + onlyPlanned +
+          " · 取消之后还是没发 = " + closedNoTruncate +
+          "\n「编辑」框开了 = " + editOn + "（主按钮=" + JSON.stringify(editOkBtn) + "）" +
+          "\n★ 确认之后才发的那一次：truncate 调用 = " +
+          JSON.stringify(calls.filter(c => c[0] === "truncate")) +
+          "\n★ 原话填回输入框 = " + refilled +
+          "（" + JSON.stringify((taskEl ? taskEl.value : "").slice(0, 24)) + "）" +
+          " · 框关了 = " + modalGone +
+          " · 页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+          : ("AITURN-FAIL 按钮=" + labels.length + " 框=" + (modalOn ? 1 : 0) +
+             " 计划=" + [saysSnap, saysCross, saysSuffix].join("") +
+             " 只算=" + (onlyPlanned ? 1 : 0) + " 取消=" + (closedNoTruncate ? 1 : 0) +
+             " 改框=" + (editOn ? 1 : 0) + " 真删=" + (confirmed ? 1 : 0) +
+             " 填回=" + (refilled ? 1 : 0) + " 错=" + (window.__errors || []).length);
       }
       // ★ `V-267`：图标数据从 `lucide.js` 搬进 `system/icon/svg/*.svg`（宿主读出来注入成
       //   `window.__MOSS_ICONS`）。这条场景是那次搬迁的护栏，而且**只认数字**：
