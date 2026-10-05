@@ -611,7 +611,9 @@ def main():
     print("=" * 72)
     print()
     print("=" * 72)
-    print("I：`V-281` 技能 = 一个包（`--` 开头、住 `:skill` 的数据目录）+ 要人点头 + 绑指纹")
+    print()
+    print("=" * 72)
+    print("I：`V-281`/`V-284` 技能 = 一个包（住 `:skill` 的数据目录）+ 要人点头 + 绑指纹")
     print("=" * 72)
     _SK = str(ROOT / "system" / "ai")
     if _SK not in sys.path:
@@ -620,7 +622,7 @@ def main():
     import ai_tools as _tl                                                # noqa: E402
     import json as _json                                                  # noqa: E402
     import subprocess as _sp                                              # noqa: E402
-    SKDIR = udata / "state" / "skill"          # 技能本体（= `:skill` 插件的数据目录）
+    SKDIR = udata / "state" / "skill"
     SEED = ROOT / "system" / "pkgs" / "skill" / "seed"
 
     def _skill(sid, pkg, entry="run.py", code="import json, sys\nprint('hi')\n",
@@ -653,113 +655,112 @@ def main():
                 got.setdefault("ai", {})[k] = v
         return got
 
-    # ---- I-α：播种 + 扫描（技能就是一个包）
-    _first = ST.ensure_seed()                    # 别的段跑 ai_start 时可能已经顺带播过
+    # ---- I-α：播种 + 老名字迁移 + 扫描
     import shutil as _sh
-    _sh.rmtree(str(SKDIR / "--shot"), ignore_errors=True)
-    (SKDIR / "--shot").mkdir(parents=True, exist_ok=True)   # 留个空壳，验"补缺"
-    _back = ST.ensure_seed()
+    _sh.rmtree(str(SKDIR / "shot"), ignore_errors=True)
+    (SKDIR / "--old").mkdir(parents=True, exist_ok=True)     # 老一轮留下的带 `--` 的目录
+    (SKDIR / "--old" / "pkg.json").write_text(
+        _json.dumps(_pkg("--old", desc="老名字"), ensure_ascii=False), encoding="utf-8")
+    (SKDIR / "--old" / "run.py").write_text("print('old')\n", encoding="utf-8")
+    _mig = ST.migrate_dashes()
+    chk("I ★★ 老的 `--名字` 会被**改名**成不带前缀的（你说不用加 `--` 了，已有的得跟着走）",
+        any("--old" in x for x in _mig) and (SKDIR / "old" / "pkg.json").is_file()
+        and not (SKDIR / "--old").exists(),
+        "迁移：%s" % _mig)
+    _made = ST.ensure_seed()
     chk("I ★ 出厂样例**播种**进技能目录（删了还能补回来，只补缺的）",
-        "--shot" in _back and (SKDIR / "--shot" / "pkg.json").is_file()
-        and (SEED / "--shot" / "pkg.json").is_file() and (SKDIR / "--shot" / "run.py").is_file(),
-        "第一次=%s 补回来=%s" % (_first, _back))
+        (SKDIR / "shot" / "pkg.json").is_file() and (SEED / "shot" / "pkg.json").is_file(),
+        "补了：%s" % _made)
     _all = ST.list_skills()
-    _shot = _all.get("--shot") or {}
+    _shot = _all.get("shot") or {}
     chk("I ★★ 技能读的就是插件那套字段（pkg.json：name/desc/params/entry/runner/icon）",
         _shot.get("desc") and _shot.get("entry") == "run.py"
         and [p.get("name") for p in (_shot.get("params") or [])] == ["target", "out"]
         and bool(_shot.get("icon_svg")) and _shot.get("problems") == [],
-        "desc=%r entry=%r 图标=%s 毛病=%s" % ((_shot.get("desc") or "")[:16], _shot.get("entry"),
+        "desc=%r entry=%r 图标=%s 毛病=%s" % ((_shot.get("desc") or "")[:14], _shot.get("entry"),
                                             bool(_shot.get("icon_svg")), _shot.get("problems")))
-    chk("I ★★ 详情页要的「为什么造它」在 `ai.why` 里（不是猜的）",
-        "留证据" in (_shot.get("why") or ""), (_shot.get("why") or "")[:40])
-    chk("I 技能 id 带 `--`、模型看到的名字是去掉 `--` 的那个",
-        _shot.get("id") == "--shot" and _shot.get("name") == "shot", "%r / %r"
-        % (_shot.get("id"), _shot.get("name")))
+    chk("I ★★ 详情页要的「为什么造它」在 `ai.why` 里；时间/文件列表也给到了",
+        "留证据" in (_shot.get("why") or "") and bool(_shot.get("created"))
+        and len(_shot.get("files") or []) >= 3
+        and not any("__pycache__" in f["rel"] for f in _shot.get("files") or []),
+        "why=%s 创建=%s 文件=%s" % ((_shot.get("why") or "")[:18], _shot.get("created"),
+                                   [f["rel"] for f in _shot.get("files") or []]))
     chk("I ★ 播种来的**顺手带上授权**（否则装完就「待批准」，用户点不着）",
         _shot.get("allowed") is True and _shot.get("origin") == "seed",
         "allowed=%s origin=%s" % (_shot.get("allowed"), _shot.get("origin")))
-    chk("I 时间/文件列表都给到了（详情页那几行）",
-        bool(_shot.get("created")) and len(_shot.get("files") or []) >= 3
-        and not any("__pycache__" in f["rel"] for f in _shot.get("files") or []),
-        "创建=%s 文件=%s" % (_shot.get("created"),
-                            [f["rel"] for f in _shot.get("files") or []]))
 
-    # ---- I-β：插件那一层（`ai.expose = true` 的才进工具表）
+    # ---- I-β：**技能和插件两个圈子不互相出现**（`V-284`）
     _names = sorted(ST.usable())
-    chk("I ★★ 插件里声明了 `ai.expose: true` 的**自动进工具表**（账本 §16.3 那条）",
-        "md5" in _names and "ip" in _names and "tree" in _names and "shot" in _names,
+    _sum_keys = sorted(ST.summary())
+    chk("I ★★★ 插件**不再进 AI 的工具表**（AI 想用插件走 `run_moss(\":包名 …\")` 那条老路）",
+        "md5" not in _names and "ip" not in _names and "tree" not in _names
+        and "shot" in _names,
         "能用的：%s" % _names)
-    chk("I ★ 没声明 expose 的插件**一个都不进**（装了 100 个包不该 100 个都能被 AI 调）",
-        "bmi" not in _names and "exec" not in _names and "skill" not in _names,
-        "bmi/exec/skill 都不在：%s" % _names)
-    chk("I ★ 没声明 expose 的插件也**不算写坏**（不然技能页会列一堆「坏」的出厂插件）",
-        not ({"bmi", "exec", "skill"} & set(ST.broken())),
-        "broken 里有：%s" % sorted(ST.broken())[:8])
-    chk("I 出厂插件（system 层）默认可用，技能撞名的那套不适用",
-        (_all.get("md5") or {}).get("layer") == "system"
-        and (_all.get("md5") or {}).get("allowed") is True, "")
+    chk("I ★★ `summary()` 里也**没有** `from_pkgs` 了（插件不出现在技能那一页）",
+        "from_pkgs" not in _sum_keys and "skills" in _sum_keys,
+        "键=%s" % _sum_keys)
+    chk("I ★ AI 照样能调插件 —— 那是 `run_moss` 的事（跟工具表无关）",
+        "run_moss" in [t["function"]["name"] for t in _tl.TOOLS], "")
 
-    # ---- I-γ：写坏的东西要点名（哪一条都不许静默）
-    _skill("badid", _pkg("badid"))                      # 不带 --
-    _skill("--badkind", _pkg("--badkind", kind="app"))
-    _skill("--noentry", _pkg("--noentry"), entry=None)
-    _skill("--badjson", "{ 这不是 json")
-    _skill("--html", _pkg("--html", runner="html", entry={"file": "index.html"}),
+    # ---- I-γ：写坏的东西要点名
+    _skill("Bad_Id", _pkg("Bad_Id"))                    # 大写开头：id 不合法
+    _skill("badkind", _pkg("badkind", kind="app"))
+    _skill("noentry", _pkg("noentry"), entry=None)
+    _skill("badjson", "{ 这不是 json")
+    _skill("html", _pkg("html", runner="html", entry={"file": "index.html"}),
            entry="index.html", code="<html></html>")
-    _skill("--scripty", _pkg("--scripty"),
-           icon="<svg><script>alert(1)</script></svg>")
+    _skill("scripty", _pkg("scripty"), icon="<svg><script>alert(1)</script></svg>")
     _bad = ST.broken()
-    chk("I ★★ id 不带 `--` 的**进不了工具表**（这是「不许污染插件 id」那条的落点）",
-        "badid" in _bad and any("`--`" in p for p in _bad["badid"]["problems"]),
-        "；".join(_bad.get("badid", {}).get("problems") or [])[:70])
+    chk("I ★★ id 不合法（大写/数字开头）进不了工具表（跟插件 id 同一规格）",
+        "Bad_Id" in _bad and any("小写字母开头" in p for p in _bad["Bad_Id"]["problems"]),
+        "；".join(_bad.get("Bad_Id", {}).get("problems") or [])[:70])
     chk("I ★ kind 必须是 task（app 会开窗，AI 的手不该开窗）",
-        any("kind" in p for p in _bad.get("--badkind", {}).get("problems") or []),
-        "；".join(_bad.get("--badkind", {}).get("problems") or [])[:70])
+        any("kind" in p for p in _bad.get("badkind", {}).get("problems") or []),
+        "；".join(_bad.get("badkind", {}).get("problems") or [])[:70])
     chk("I 入口不在 / JSON 写坏 / runner=html 都要点名",
-        any("入口文件不在" in p for p in _bad.get("--noentry", {}).get("problems") or []) and
-        any("JSON" in p for p in _bad.get("--badjson", {}).get("problems") or []) and
-        any("当不了" in p for p in _bad.get("--html", {}).get("problems") or []),
+        any("入口文件不在" in p for p in _bad.get("noentry", {}).get("problems") or []) and
+        any("JSON" in p for p in _bad.get("badjson", {}).get("problems") or []) and
+        any("当不了" in p for p in _bad.get("html", {}).get("problems") or []),
         "｜".join((_bad.get(k, {}).get("problems") or ["?"])[0]
-                  for k in ("--noentry", "--badjson", "--html"))[:110])
-    _scr = ST.list_skills().get("--scripty") or {}
+                  for k in ("noentry", "badjson", "html"))[:110])
+    _scr = ST.list_skills().get("scripty") or {}
     chk("I ★★ 图标里的 `<script>` 会被洗掉（图标是它写的文件，界面要 innerHTML 进去）",
         _scr.get("icon_svg") == "" and any("icon.svg" in w for w in _scr.get("warns") or []),
         "icon_svg=%r 提醒=%s" % (_scr.get("icon_svg"), _scr.get("warns")))
 
     # ---- I-δ：要人点头 + 绑指纹
-    _skill("--pending", _pkg("--pending", desc="还没允许的一只"))
+    _skill("pending", _pkg("pending", desc="还没允许的一只"))
     chk("I ★★ 没点头的**进不了工具表**、躺在「待批准」里",
-        "pending" not in ST.usable() and "--pending" in ST.pending(),
+        "pending" not in ST.usable() and "pending" in ST.pending(),
         "usable=%s pending=%s" % (sorted(ST.usable()), sorted(ST.pending())))
-    chk("I 点「允许」才进表（而且是按**模型看到的名字**进）",
-        ST.allow("--pending").get("ok") is True and "pending" in ST.usable(), "")
-    (SKDIR / "--pending" / "run.py").write_text("import json, sys\nprint('改过了')\n",
-                                               encoding="utf-8")
+    ST.allow("pending")
+    chk("I 点「允许」才进表", "pending" in ST.usable(), "")
+    (SKDIR / "pending" / "run.py").write_text("import json, sys\nprint('改过了')\n",
+                                             encoding="utf-8")
     chk("I ★★★ 它事后改了入口 ⇒ 授权**自动作废**（不然批准就是永久通行证）",
-        "pending" not in ST.usable() and "--pending" in ST.pending()
-        and "又改过" in ST.list_skills()["--pending"]["why_allow"],
-        ST.list_skills()["--pending"]["why_allow"])
-    ST.allow("--pending")
+        "pending" not in ST.usable() and "pending" in ST.pending()
+        and "又改过" in ST.list_skills()["pending"]["why_allow"],
+        ST.list_skills()["pending"]["why_allow"])
+    ST.allow("pending")
 
-    # ---- I-ε：真跑（参数 / cwd / 兄弟 import / 环境变量 / 炸掉 / 超时）
-    _skill("--adder", _pkg("--adder", desc="把 a 和 b 加起来",
-                           params=[{"name": "a", "type": "int", "desc": "第一个"},
-                                   {"name": "b", "type": "int", "desc": "第二个"}]),
+    # ---- I-ε：真跑（参数 / cwd / 兄弟 import / 炸掉 / 超时）
+    _skill("adder", _pkg("adder", desc="把 a 和 b 加起来",
+                         params=[{"name": "a", "type": "int", "desc": "第一个"},
+                                 {"name": "b", "type": "int", "desc": "第二个"}]),
            code=("import json, sys, os\n"
                  "a = json.loads(sys.stdin.read() or '{}')\n"
                  "print('%d|%s' % (int(a.get('a') or 0) + int(a.get('b') or 0), os.path.basename(os.getcwd())))\n"))
-    _skill("--sib", _pkg("--sib", desc="验同目录兄弟模块"),
+    _skill("sib", _pkg("sib", desc="验同目录兄弟模块"),
            code="import helper\nprint('兄弟=' + helper.NAME)\n",
            extra={"helper.py": "NAME = '同目录也能 import'\n"})
-    _skill("--boom", _pkg("--boom", desc="故意炸"), code="import sys\nprint('我不干了')\nsys.exit(3)\n")
-    _skill("--slow", _pkg("--slow", desc="故意卡住", timeout=5),
+    _skill("boom", _pkg("boom", desc="故意炸"), code="import sys\nprint('我不干了')\nsys.exit(3)\n")
+    _skill("slow", _pkg("slow", desc="故意卡住", timeout=5),
            code="import time\nprint('开始等')\ntime.sleep(30)\n")
-    for _n in ("--adder", "--sib", "--boom", "--slow"):
+    for _n in ("adder", "sib", "boom", "slow"):
         ST.allow(_n)
     _o1 = ST.run("adder", {"a": "2", "b": "3"})
     chk("I ★★ 真跑起来了：参数进得去（stdin JSON）+ stdout 回到模型那边 + cwd = 技能目录",
-        "退出码 0" in _o1 and "5|--adder" in _o1, repr(_o1)[:110])
+        "退出码 0" in _o1 and "5|adder" in _o1, repr(_o1)[:110])
     _o2 = ST.run("sib", {})
     chk("I ★ 自带运行时经 bootstrap ⇒ 技能里能 import 同目录的兄弟文件（跟包一个待遇）",
         "同目录也能 import" in _o2, repr(_o2)[:90])
@@ -768,120 +769,126 @@ def main():
         repr(_o3)[:90])
     _o4 = ST.run("slow", {})
     chk("I ★ 卡住会被杀（超时那个数来自它 `ai.timeout`）", "超时" in _o4, repr(_o4)[:80])
-    ST.allow("--adder", False)
+    ST.allow("adder", False)
     chk("I ★★ 撤销之后当场调不动（同意是**拦**不是提醒）",
         "没允许" in ST.run("adder", {"a": "1", "b": "1"}), "")
-    ST.allow("--adder")
+    ST.allow("adder")
     _tools = _tl.Tools(workdir=str(pkgs), self_tools=ST.usable())
     chk("I ★★ 技能的参数类型照 pkg.json 来（int → integer，不再是清一色 string）",
         [t for t in _tl.tools_for(ST.usable()) if t["function"]["name"] == "adder"][0]
         ["function"]["parameters"]["properties"]["a"]["type"] == "integer", "")
     chk("I ★ 派发那条路也通（模型说 adder，宿主真去跑那只技能）",
-        "9|--adder" in str(_tools.call("adder", {"a": "4", "b": "5"})),
+        "9|adder" in str(_tools.call("adder", {"a": "4", "b": "5"})),
         str(_tools.call("adder", {"a": "4", "b": "5"}))[:60])
-
-    # ---- I-ζ：跑法照 runner 表（自带运行时那条链）
-    _argv = (_all.get("--shot") or {}).get("argv") or []
-    chk("I ★★ 跑法跟插件**同一张表**（system/runners.json）：自带运行时 + bootstrap 垫片",
+    _argv = (_all.get("shot") or {}).get("argv") or []
+    chk("I ★★ 跑法跟插件**同一张表**（runners.json）：自带运行时 + bootstrap 垫片",
         len(_argv) == 3 and "runtimes" in _argv[0] and _argv[0].endswith("python.exe")
         and _argv[1].endswith("bootstrap.py") and _argv[2].endswith("run.py"),
         "argv=%s" % _argv)
-    chk("I ★ `{runtime}` 指的是 `runtimes/python/<版本>/`（第一版拼成 runtimes/python 就退化到系统 Python 了）",
-        ST.runtime_dir("python").endswith("3.12") and
-        (ROOT / "system" / "runtimes" / "python" / "3.12" / "python.exe").is_file(),
-        ST.runtime_dir("python"))
 
-    # ---- I-η：转成插件（**去掉 `--` 之后查冲突**，冲突了让用户自己起名字）
-    _skill("--md5", _pkg("--md5", desc="故意和现有插件撞名"))
-    _p1 = ST.promote_plan("--md5")
-    chk("I ★★ 转插件：去掉 `--` 之后**先查 id 冲突**，撞了就明说、让用户自己起名字",
+    # ---- I-ζ：转成插件（查 id 冲突）
+    _skill("md5", _pkg("md5", desc="故意和现有插件撞名"))
+    _p1 = ST.promote_plan("md5")
+    chk("I ★★ 转插件：**先查 id 冲突**，撞了就明说、让用户自己起名字",
         _p1.get("can") is False and any("已经被占了" in p and "想一个新的" in p
                                         for p in _p1.get("problems") or []),
         "；".join(_p1.get("problems") or [])[:90])
-    _p2 = ST.promote_plan("--md5", "md5-tool")
-    chk("I 用户起的新名字（合法又没撞）⇒ 可以转", _p2.get("can") is True, "")
-    _p3 = ST.promote_plan("--adder", "Bad Id!!")
-    chk("I 新名字不合法（大写/空格）也要拦", _p3.get("can") is False, "；".join(_p3["problems"])[:60])
-    _did = ST.promote("--adder", True, "adder-tool")
+    chk("I 用户起的新名字（合法又没撞）⇒ 可以转",
+        ST.promote_plan("md5", "md5-tool").get("can") is True, "")
+    chk("I 新名字不合法（大写/空格）也要拦",
+        ST.promote_plan("adder", "Bad Id!!").get("can") is False, "")
+    _did = ST.promote("adder", True, "adder-tool")
     _newdir = udata / "pkgs" / "adder-tool"
-    chk("I ★★★ 真转过去了：目录搬到 user_data/pkgs、`pkg.json` 的 id 改成去掉 `--` 的新名字",
+    chk("I ★★★ 真转过去了：目录搬到 user_data/pkgs、`pkg.json` 的 id 改成新名字",
         _did.get("ok") is True and (_newdir / "pkg.json").is_file()
-        and not (SKDIR / "--adder").exists()
+        and not (SKDIR / "adder").exists()
         and _json.loads((_newdir / "pkg.json").read_text(encoding="utf-8"))["id"] == "adder-tool",
         str(_did.get("msg"))[:80])
-    chk("I ★★ 转过去之后 AI **照样能用它**（它是插件了，但授权跟着走、expose 还在）",
-        "adder-tool" in ST.usable() and "--adder" not in ST.list_skills(),
-        "能用的：%s" % sorted(ST.usable()))
-    _rmp = ST.rm("md5", True)
-    chk("I ★★ 技能层**不删插件**（卸插件是 `moss --remove` 的事）——插件行拦下",
-        _rmp.get("ok") is False and "插件" in str(_rmp.get("msg"))
-        and (ROOT / "system" / "pkgs" / "md5" / "pkg.json").is_file(),
-        str(_rmp.get("msg"))[:70])
-    chk("I ★ 播种来的 `--shot` 是**你的**（能改能删能转），只是详情里标着「出厂样例」",
-        ST.promote_plan("--shot").get("can") is True
-        and (ST.list_skills().get("--shot") or {}).get("origin") == "seed",
-        "plan.can=%s origin=%s" % (ST.promote_plan("--shot").get("can"),
-                                   (ST.list_skills().get("--shot") or {}).get("origin")))
+    chk("I ★★ 转过去之后它**不再是技能**（技能这一页只剩技能；AI 要用它走 run_moss）",
+        "adder-tool" not in ST.list_skills() and "adder" not in ST.usable(),
+        "技能：%s" % sorted(ST.list_skills()))
 
-    # ---- I-θ：`:skill` 插件本身（命令行 + 内嵌协议）
+    # ---- I-η：`:skill` 插件（命令行 + 内嵌协议）
     _env = dict(os.environ)
     _env.update({"MOSS_HOME": str(ROOT), "MOSS_USER_DATA_DIR": str(udata),
                  "MOSS_PLUGIN_DATA_DIR": str(SKDIR), "PYTHONIOENCODING": "utf-8"})
-    _env.pop("MOSS_UI_EMBED", None)
-    for _k in ("MOSS_PKG_PARAMS", "MOSS_ARGS", "MOSS_PKG_ID"):
+    for _k in ("MOSS_UI_EMBED", "MOSS_PKG_PARAMS", "MOSS_ARGS", "MOSS_PKG_ID",
+               "MOSS_INTERACTIVE"):
         _env.pop(_k, None)
     _py = str(ROOT / "system" / "runtimes" / "python" / "3.12" / "python.exe")
     _main = str(ROOT / "system" / "pkgs" / "skill" / "main.py")
     _boot = str(ROOT / "system" / "bootstrap.py")
-    _r = _sp.run([_py, _boot, _main, "list"], capture_output=True, text=True,
-                 encoding="utf-8", errors="replace", env=_env, timeout=120)
-    chk("I ★★ `moss :skill list` 能跑（终端里也能用，不只是界面）",
-        _r.returncode == 0 and "--shot" in (_r.stdout or "") and "--pending" in (_r.stdout or ""),
-        ((_r.stdout or "") + (_r.stderr or ""))[:110].replace("\n", " "))
-    _r2 = _sp.run([_py, _boot, _main, "show", "--shot"], capture_output=True, text=True,
-                  encoding="utf-8", errors="replace", env=_env, timeout=120)
-    chk("I ★ 详情那几行（为什么造它 / 状态 / 时间 / 文件数）命令行里也给",
-        "为什么" in (_r2.stdout or "") and "创建" in (_r2.stdout or "")
-        and "文件" in (_r2.stdout or ""), (_r2.stdout or "").splitlines()[:2])
-    _env2 = dict(_env, MOSS_UI_EMBED="1")
-    _r3 = _sp.run([_py, _boot, _main], input='{"id":7,"method":"list","params":{}}\n',
-                  capture_output=True, text=True, encoding="utf-8", errors="replace",
-                  env=_env2, timeout=120)
-    _line = [l for l in (_r3.stdout or "").splitlines() if l.strip().startswith("{")]
-    _got3 = _json.loads(_line[0]) if _line else {}
-    chk("I ★★ 内嵌模式（宿主「界面」选项卡那条路）说的是 JSON 行协议",
-        _got3.get("id") == 7 and _got3.get("ok") is True
-        and isinstance((_got3.get("result") or {}).get("skills"), list),
-        (_line[0][:100] if _line else (_r3.stderr or "")[:100]))
-    _r4 = _sp.run([_py, _boot, _main], input='{"id":8,"method":"nope","params":{}}\n',
-                  capture_output=True, text=True, encoding="utf-8", errors="replace",
-                  env=_env2, timeout=120)
-    chk("I 内嵌协议里瞎调一个方法 ⇒ 明说没有这个方法（不是静默）",
-        "没有这个方法" in (_r4.stdout or ""), (_r4.stdout or "")[:90])
 
-    # ---- I-ι：那两道闸
+    def _cli(*args, env=None):
+        """跑一次 `:skill` 的命令行。
+
+        ★ 超时要**当成一条 FAIL 报出来**，不能让它把整个探针崩掉：不带参数那条路以前会
+          `core.gui()` 去开窗口（探针里就会一直挂到超时）—— 那正是"AI 一调就弹窗口"那个 bug，
+          得看得见、说得清（第一版就是在这里崩的，整段结论都没打出来）。
+        """
+        try:
+            return _sp.run([_py, _boot, _main] + list(args), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", env=env or _env, timeout=60)
+        except _sp.TimeoutExpired:
+            return _sp.CompletedProcess(args=list(args), returncode=-9,
+                                        stdout="（超时没回 —— 它大概去开窗口了）", stderr="")
+
+    _r = _cli()
+    chk("I ★★★ **不带参数就是打用法 + 列表**（命令行/AI 调这一下**不开窗** —— 你报的「一调就弹窗口」）",
+        _r.returncode == 0 and "moss :skill" in (_r.stdout or "")
+        and "skill" in (_r.stdout or "") and "用法" in (_r.stdout or ""),
+        ((_r.stdout or "") + (_r.stderr or "")).splitlines()[:1])
+    _r2 = _cli("help")
+    chk("I ★ `moss :skill help` 也打那一份（`--help` 同理）",
+        "用法" in (_r2.stdout or "") and "doc" in (_r2.stdout or ""), "")
+    _r3 = _cli("doc", "shot")
+    chk("I ★★ `moss :skill doc <名字>` = 这只技能**自己的说明书**（AI 靠它看怎么用）",
+        _r3.returncode == 0 and "shot" in (_r3.stdout or ""), (_r3.stdout or "")[:60])
+    _r4 = _cli("run", "shot", "target=这个窗口不存在---")
+    chk("I ★★ `run <名字> k=v …` 参数真进得去（跟 AI 调它走同一条路）",
+        _r4.returncode == 0 and "这个窗口不存在---" in (_r4.stdout or ""),
+        ((_r4.stdout or "").splitlines() or [""])[0][:60])
+    _r5 = _cli("show", "shot")
+    chk("I ★ 详情那几行（为什么造它 / 状态 / 时间 / 文件数 / 看说明的提示）命令行里也给",
+        "为什么" in (_r5.stdout or "") and "创建" in (_r5.stdout or "")
+        and "doc" in (_r5.stdout or ""), (_r5.stdout or "").splitlines()[:1])
+    _env2 = dict(_env, MOSS_UI_EMBED="1")
+    _r6 = _sp.run([_py, _boot, _main], input='{"id":7,"method":"list","params":{}}\n',
+                  capture_output=True, text=True, encoding="utf-8", errors="replace",
+                  env=_env2, timeout=120)
+    _line = [l for l in (_r6.stdout or "").splitlines() if l.strip().startswith("{")]
+    _got6 = _json.loads(_line[0]) if _line else {}
+    chk("I ★★ 内嵌模式（宿主「界面」选项卡那条路）说的是 JSON 行协议，且**只有技能**",
+        _got6.get("id") == 7 and _got6.get("ok") is True
+        and isinstance((_got6.get("result") or {}).get("skills"), list)
+        and "from_pkgs" not in (_got6.get("result") or {}),
+        (_line[0][:90] if _line else (_r6.stderr or "")[:90]))
+
+    # ---- I-θ：那两道闸
     _gate = _tl.Tools(workdir=str(pkgs))
-    _g1 = str(_gate.call("run_moss", {"args": ":skill allow --pending"}))
+    _g1 = str(_gate.call("run_moss", {"args": ":skill allow pending"}))
     chk("I ★★★ `run_moss(\":skill allow …\")` **被拒**（不然 AI 能自己批准自己的技能）",
         "拒绝" in _g1 and ":skill" in _g1, _g1[:100])
-    for _verb in ("rm --pending", "promote --pending", "revoke --pending"):
+    for _verb in ("rm pending", "promote pending", "revoke pending"):
         if "拒绝" not in str(_gate.call("run_moss", {"args": ":skill " + _verb})):
             chk("I `:skill %s` 也该被拒" % _verb, False, "")
-    chk("I ★ 但 `:skill list` / `show` 这类不含「决定」的照旧随便用",
-        "拒绝" not in str(_gate.call("run_moss", {"args": ":skill list"})), "")
+    chk("I ★ 但 `:skill list` / `doc` / `run` 这类不含「决定」的照旧随便用",
+        "拒绝" not in str(_gate.call("run_moss", {"args": ":skill list"}))
+        and "拒绝" not in str(_gate.call("run_moss", {"args": ":skill doc shot"})), "")
     chk("I ★★ 写权限只多开这一处：技能目录能写、出厂插件目录和 core 写不了",
-        ai_edits.check_writable(SKDIR / "--x" / "pkg.json") is None and
+        ai_edits.check_writable(SKDIR / "x" / "pkg.json") is None and
         ai_edits.check_writable(ROOT / "system" / "pkgs" / "skill" / "core.py") is not None and
         "只允许写" in str(ai_edits.check_writable(ROOT / "core" / "cli.py")), "")
     chk("I 能**读**自己的技能（不然没法改它）",
-        ai_edits.check_readable(SKDIR / "--shot" / "pkg.json") is None, "")
+        ai_edits.check_readable(SKDIR / "shot" / "pkg.json") is None, "")
 
-    # ---- I-κ：界面那一份数据（AI 页那行 + `:skill` 界面都用它）
+    # ---- I-ι：给界面那一份数据
     _sum = ST.summary()
-    chk("I ★ 界面要的三堆都给全了（skills / from_pkgs / broken + 目录 + 能用的数量）",
-        set(["ok", "skills", "from_pkgs", "broken", "dirs", "n_usable", "n_pending"])
-        <= set(_sum) and _sum["n_pending"] >= 1, "键=%s 待批准=%s" % (sorted(_sum), _sum["n_pending"]))
-    _row = [r for r in _sum["skills"] if r["id"] == "--shot"][0]
+    chk("I ★ 界面要的三堆都给全了（skills / broken + 目录 + 能用的数量，**没有插件**）",
+        set(["ok", "skills", "broken", "dirs", "n_usable", "n_pending"]) <= set(_sum)
+        and "from_pkgs" not in _sum and _sum["n_pending"] >= 1,
+        "键=%s 待批准=%s" % (sorted(_sum), _sum["n_pending"]))
+    _row = [r for r in _sum["skills"] if r["id"] == "shot"][0]
     chk("I ★ 每只技能都带图标正文（墙上那排彩色图标）+ 为什么造它 + 时间 + 文件列表",
         bool(_row["icon_svg"]) and bool(_row["why"]) and bool(_row["created"])
         and isinstance(_row["files"], list) and len(_row["files"]) >= 3, "")

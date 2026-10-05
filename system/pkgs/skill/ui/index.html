@@ -19,16 +19,19 @@
     </div>
   </header>
 
-  <!-- 图标墙：像桌面一样，彩色图标 + 名字（不显示 `--`） -->
+  <!-- 图标墙：像桌面一样，彩色图标 + 名字（技能就是技能，**插件不出现在这儿**） -->
   <main id="wall" class="wall"></main>
   <p class="empty" id="empty" hidden>
     还没有技能。<br>
     <span class="dim">AI 干活时缺什么能力，会自己造一只放在这儿 —— 造好了这儿会多一个图标，
     你点「允许」它下一次跑就能用。</span>
   </p>
+</div>
 
-  <!-- 详情：点图标进来 -->
-  <section id="detail" class="detail" hidden></section>
+<!-- ★ 详情：**模态框**（你 2026-10-05 定的："点击以后 显示详情 必须要用模态框的形式展示"）。
+     点背景 / 右上角 ✕ / Esc 都能关。 -->
+<div id="detail" class="modal" hidden>
+  <div class="card dcard" id="detail-card" role="dialog" aria-modal="true"></div>
 </div>
 
 <!-- 一个自己画的确认框（内嵌在 iframe 里时 window.confirm 可能被挡） -->

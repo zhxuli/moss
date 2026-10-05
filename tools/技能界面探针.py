@@ -55,13 +55,26 @@ def fake_bridge():
     """一段假桥：**在垫片之前**就把它摆好 —— 模拟"桥早就绪、ready 事件已错过"。"""
     return """<script>
 window.pywebview = {api: {
-  list: async () => ({ok: true, n_usable: 1, n_pending: 0, n_skills: 1,
-    skills: [{id: "--harness", name: "harness", layer: "user", kind: "skill", allowed: true,
+  list: async () => ({ok: true, n_usable: 2, n_pending: 1, dir: "X",
+    skills: [{id: "harness", name: "harness", layer: "user", kind: "skill", allowed: true,
               why_allow: "试出来的", origin: "", desc: "假桥里的一只技能", why: "为了证明不再卡住",
               risk: "low", params: ["x"], entry: "run.py", timeout: 60, icon_svg: "",
               created: "2026-10-05 17:00:00", mtime: "", allowed_at: "", problems: [], warns: [],
-              files_n: 0, dir: "X", files: []}],
-    from_pkgs: [], broken: [], dirs: {}, allow_file: "", dir: "X"}),
+              files_n: 2, dir: "X",
+              files: [{rel: "pkg.json", size: 100, mtime: "2026-10-05 17:00:00"},
+                      {rel: "run.py", size: 50, mtime: "2026-10-05 17:00:00"}]},
+             {id: "waiting", name: "waiting", layer: "user", kind: "skill", allowed: false,
+              why_allow: "还没允许", origin: "", desc: "还没允许的一只", why: "为了验状态",
+              risk: "", params: [], entry: "run.py", timeout: 60, icon_svg: "",
+              created: "", mtime: "", allowed_at: "", problems: [], warns: [], files_n: 0,
+              dir: "X", files: []}],
+    broken: [],
+    from_pkgs: [{id: "md5", name: "md5", layer: "system", kind: "pkg", allowed: true,
+                 why_allow: "出厂", origin: "", desc: "这是个插件，不该出现在技能墙上",
+                 why: "", risk: "", params: [], entry: "run.py", timeout: 60, icon_svg: "",
+                 created: "", mtime: "", allowed_at: "", problems: [], warns: [], files_n: 0,
+                 dir: "X", files: []}],
+    dirs: {}, allow_file: ""}),
   read: async () => ({ok: true, text: {}}), allow: async () => ({ok: true, msg: "ok"}),
   rm: async () => ({ok: true, msg: "ok"}), seed: async () => ({ok: true, msg: "ok"}),
   reveal: async () => ({ok: true, msg: "ok"}), plan: async () => ({ok: true}),
@@ -75,11 +88,33 @@ def judge_script():
     return """<script>
 (function(){
   var n = 0;
+  var names = [];
+  function step2(){
+    var first = document.querySelector(".tile");
+    if (first) first.click();
+    setTimeout(function(){
+      var d = document.querySelector("#detail");
+      var modal = !!d && !d.hidden && d.classList.contains("modal");
+      var card = !!document.querySelector("#detail-card .kv");
+      var docBtn = !!document.querySelector("#d-doc");
+      var x = document.querySelector("#d-x");
+      if (x) x.click();
+      setTimeout(function(){
+        var closed = !!document.querySelector("#detail") &&
+                     document.querySelector("#detail").hidden;
+        document.title = "SKILL-OK tiles=" + names.length + " names=" + names.join(",") +
+          " modal=" + (modal ? 1 : 0) + " card=" + (card ? 1 : 0) +
+          " doc=" + (docBtn ? 1 : 0) + " closed=" + (closed ? 1 : 0);
+      }, 120);
+    }, 250);
+  }
   var t = setInterval(function(){
     n++;
     var tiles = document.querySelectorAll(".tile").length;
+    names = Array.prototype.map.call(document.querySelectorAll(".tile .nm"),
+                                     function(e){ return (e.textContent || "").trim(); });
     var sub = ((document.querySelector("#sub") || {}).textContent || "");
-    if (tiles > 0){ clearInterval(t); document.title = "SKILL-OK tiles=" + tiles; }
+    if (tiles > 0){ clearInterval(t); step2(); }
     else if (/读不出来|后端没上来/.test(sub)){ clearInterval(t); document.title = "SKILL-NOBACKEND"; }
     else if (n > 600){ clearInterval(t); document.title = "SKILL-STUCK sub=" + sub.slice(0, 30); }
   }, 50);
@@ -162,6 +197,14 @@ def main():
     ta, doma = title_of(exe, ua, tmp, "a")
     chk("A ★★ 这种现场下**要能起来**（墙上出图标）—— 这就是「永远正在读」的根因",
         ta.startswith("SKILL-OK") and 'class="tile' in doma, ta)
+    chk("A ★★ 详情是**模态框**（点一格 → 弹出 → ✕ 关得掉）",
+        "modal=1" in ta and "card=1" in ta and "closed=1" in ta, ta)
+    chk("A ★ 详情里有「看说明」那颗按钮（`doc` = 这只技能自己的 AGENT.md）",
+        "doc=1" in ta, ta)
+    # ★ 这里要**精确**比（第一版用 `in` 做子串匹配 —— 墙上多出一只插件照样通过，假绿）
+    _names = re.search(r"names=([^ ]*)", ta)
+    chk("A ★★ 墙上**只有技能** —— 插件那一行不许出现在这儿（你定的）",
+        bool(_names) and _names.group(1) == "harness,waiting", ta)
     chk("A 而且**不是**停在那句「正在读」上",
         "正在读" not in sub_text(doma), sub_text(doma)[:40])
     chk("A 起得来的时候那句兜底提示**不该**出现（别没事吓人）",

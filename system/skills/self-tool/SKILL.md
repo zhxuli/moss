@@ -18,19 +18,20 @@ description: 你缺一只手、想自己造一个的时候读它（技能 = 一�
 
 | | 插件 | 技能 |
 |---|---|---|
-| id | `md5`（小写字母开头） | **`--md5`（必须两个短横开头）** |
-| 住哪 | `user_data/pkgs/<id>/` | `user_data/state/skill/<--id>/` |
+| id | `md5`（小写字母开头） | **同一规格**（`shot`） |
+| 住哪 | `user_data/pkgs/<id>/` | `user_data/state/skill/<id>/` |
 | 谁批准 | 装了就归用户 | **第一次要用户点一次「允许」** |
 
-id 带 `--` 是硬规矩：插件 id 必须字母开头，所以带 `--` 的**永远不可能**被当成插件 id
-（不会污染用户的命名空间）。**模型那边看到的名字是去掉 `--` 的**（`--shot` → 你调 `shot`）。
+**不需要任何前缀**：技能不走包解析那条路（入口是 `moss :skill <动词> <名字>`），
+名字跟某个插件一样也互不干扰。
 
 ## 写到哪
 
 ```
-user_data/state/skill/<--名字>/pkg.json     ← 清单（照契约写：spec("pkg.json")）
-user_data/state/skill/<--名字>/run.py       ← 入口（pkg.json 的 entry.file 指过来）
-user_data/state/skill/<--名字>/icon.svg     ← 图标（列表里那个彩色图标；不写就一个默认的）
+user_data/state/skill/<名字>/pkg.json     ← 清单（照契约写：spec("pkg.json")）
+user_data/state/skill/<名字>/run.py       ← 入口（pkg.json 的 entry.file 指过来）
+user_data/state/skill/<名字>/icon.svg     ← 图标（列表里那个彩色图标；不写就一个默认的）
+user_data/state/skill/<名字>/AGENT.md     ← **这只技能自己的说明书**（`moss :skill doc <名字>` 打它）
 （同目录还能放别的文件，入口里能 import 它们）
 ```
 
@@ -39,7 +40,7 @@ user_data/state/skill/<--名字>/icon.svg     ← 图标（列表里那个彩色
 ```jsonc
 {
   "spec": 1,
-  "id": "--shot",                 // 必须跟目录名一样、必须 -- 开头
+  "id": "shot",                   // 必须跟目录名一样（小写字母开头）
   "kind": "task",                 // **必须 task**（app 会开窗，AI 的手不该开窗）
   "version": "1.0.0",
   "name": { "zh-CN": "截屏" },
@@ -87,7 +88,8 @@ print("收到：%s" % json.dumps(args, ensure_ascii=False))
    要么先用别的手段把这次任务干完。
 2. **`ai.why` 一定要写**：用户点开详情看的就是"当初为什么造它"。
    没写的话详情页会空着，而且列表里会挂着一条提醒。
-3. **`icon.svg` 画一个**：列表是**图标墙**（像桌面那样）。不画就是一个默认图标 + 一条提醒。
+3. **`icon.svg` 画一个 + `AGENT.md` 写一份**：列表是**图标墙**（像桌面那样）；
+   说明书给 `moss :skill doc <名字>` 用（人和 AI 都靠它知道怎么用你这只手）。
    图标里**别写 `<script>`、别写 `on…=`** —— 那种会被当成"没有图标"洗掉（界面要把它画出来）。
 4. 你**改了** `pkg.json` / 入口 / 图标，**授权会自动作废**（要用户重新允许）。改完说一声。
 5. 别拿它当"绕开写权限"的后门：这只手能碰的文件，跟你在这次任务里能碰的**一样多**
@@ -96,3 +98,5 @@ print("收到：%s" % json.dumps(args, ensure_ascii=False))
    **装不了新库**，也别假设有网络。
 7. **别用 `run_moss` 调 `:skill allow / rm / promote`** —— 那几个动词是**用户决定**的事，
    宿主会直接拒掉（这是设计好的闸，不是提示）。
+8. 相关命令（**都不会开窗口**，随便调）：`":skill"` 用法+列表、`":skill show <名字>"`、
+   `":skill doc <名字>"` 看说明、`":skill run <名字> k=v …"` 跑一次。

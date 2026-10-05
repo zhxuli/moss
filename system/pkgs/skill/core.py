@@ -28,6 +28,28 @@ if _AI not in sys.path:
 
 import skill_lib as S                                                  # noqa: E402
 
+#: 用法：`moss :skill` 不带参数、或者 `moss :skill help` 打这一份。
+#: ★ 写给**人和 AI** 都看得懂：AI 靠它知道有哪些动词、怎么查说明、怎么跑一只。
+HELP = """技能（AI 给自己造的能力）—— 用法
+
+  moss :skill                     打这一份用法 + 列出全部技能（**不开窗**）
+  moss :skill gui                 打开管理器界面（图标墙 / 详情 / 转为插件 / 删除）
+  moss :skill list                列出来（名字 · 状态 · 一句话说明）
+  moss :skill show <名字>         看详情：为什么造它 / 参数 / 入口 / 时间 / 文件清单
+  moss :skill doc <名字>          看**这只技能自己的说明书**（它目录里的 AGENT.md；
+                                  没有的话就把 pkg.json 的要点和文件清单列出来）
+  moss :skill run <名字> [k=v …]  跑一次（参数用 k=v；值里有空格就整体加引号）
+  moss :skill allow <名字>        允许 AI 用它        moss :skill revoke <名字>  撤销
+  moss :skill rm <名字>           删掉它（整个目录）   moss :skill seed           补回出厂样例
+  moss :skill plan <名字> [新id]  看"转成插件"会不会撞 id
+  moss :skill promote <名字> [新id]  真转成插件（搬进 user_data/pkgs，从此是普通插件）
+
+说明
+  · 技能本体在 user_data/state/skill/<名字>/（一个目录 = pkg.json + 入口 + icon.svg）。
+  · **批准那几下（allow / revoke / rm / promote）必须人来做** —— AI 拿 run_moss 调会被拒。
+  · 不带参数时：界面里点「运行」→ 开窗口；命令行 / AI 调 → 只打这一份用法（对 AI 友好）。
+"""
+
 
 def data_dir():
     """这个插件的数据目录（宿主注入；没注入就按约定推）。"""
@@ -49,9 +71,9 @@ class Api:
 
     # ---------------------------------------------------------------- 读
     def list(self, params=None):
-        """图标墙要的一切：技能 + 来自插件的可调用包 + 两边的目录。"""
+        """图标墙要的一切：**只有技能**（`V-284`：插件不出现在这一页）。"""
         got = S.summary()
-        for r in got["skills"] + got["from_pkgs"]:
+        for r in got["skills"]:
             r["files_h"] = "%d 个文件 · %s" % (
                 r["files_n"],
                 _human(sum(f.get("size") or 0 for f in (r.get("files") or []))))
@@ -70,6 +92,18 @@ class Api:
         """转成插件之前先算一遍（id 会不会撞）—— 界面弹确认框用它。"""
         p = dict(params or {})
         return S.promote_plan(str(p.get("id") or ""), str(p.get("new_id") or ""))
+
+    def doc(self, params=None):
+        """这只技能**自己的说明书**（`AGENT.md`；没有就退回 pkg.json + 文件清单）。
+
+        ★ AI 就是靠它"看说明"的（命令行里 `moss :skill doc <名字>`）。
+        """
+        p = dict(params or {})
+        return S.doc(str(p.get("id") or ""))
+
+    def help(self, params=None):
+        """用法（命令行/AI 调的时候不带参数就打这一份）。"""
+        return {"ok": True, "text": HELP}
 
     def reveal(self, params=None):
         """在资源管理器里打开这个技能的目录。"""
@@ -126,22 +160,29 @@ class Api:
         a = [str(x) for x in (args or []) if str(x).strip()]
         verb = (a[0].lower() if a else "")
         rest = a[1:]
-        if verb in ("", "list", "ls"):
+        # ★ 不带参数 / `help` / `--help`：打用法 + 列表。**不开窗**（AI 调这一下不该弹个窗口）。
+        if verb in ("", "help", "-h", "--help", "?"):
+            return 0, HELP.rstrip() + "\n\n" + self._list_text()
+        if verb in ("list", "ls"):
             return 0, self._list_text()
         if verb in ("show", "info") and rest:
             got = S.list_skills().get(rest[0])
             if not got:
                 return 1, "没有这只技能：%s" % rest[0]
             us = [str(p.get("name")) for p in (got.get("params") or []) if isinstance(p, dict)]
-            return 0, ("%s（%s）\n  名字   : %s\n  说明   : %s\n  为什么 : %s\n"
+            return 0, ("%s\n  名字   : %s\n  说明   : %s\n  为什么 : %s\n"
                        "  状态   : %s —— %s\n  入口   : %s\n  参数   : %s\n  目录   : %s\n"
-                       "  创建   : %s\n  改过   : %s\n  允许于 : %s\n  文件   : %d 个"
-                       % (got["id"], "技能" if got["kind"] == "skill" else "插件",
-                          got["name"], got.get("desc") or "（没写）", got.get("why") or "（没写）",
+                       "  创建   : %s\n  改过   : %s\n  允许于 : %s\n  文件   : %d 个\n"
+                       "（看它自己的说明书：moss :skill doc %s）"
+                       % (got["id"], got["name"], got.get("desc") or "（没写）",
+                          got.get("why") or "（没写）",
                           "可用" if got["allowed"] else "待批准", got.get("why_allow") or "",
                           got.get("entry") or "", "、".join(us) or "无",
                           got["dir"], got.get("created") or "", got.get("mtime") or "",
-                          got.get("allowed_at") or "—", len(got.get("files") or [])))
+                          got.get("allowed_at") or "—", len(got.get("files") or []), got["id"]))
+        if verb in ("doc", "readme", "agent") and rest:
+            got = S.doc(rest[0])
+            return (0, got.get("text") or "") if got.get("ok") else (1, str(got.get("msg")))
         if verb in ("allow", "revoke") and rest:
             return self._say(S.allow(rest[0], verb == "allow"))
         if verb in ("rm", "remove", "del", "delete") and rest:
@@ -162,11 +203,15 @@ class Api:
             got = S.list_skills().get(rest[0])
             if not got:
                 return 1, "没有这只技能：%s" % rest[0]
-            print(S.run(got["name"], {}))
+            # ★ 参数：`k=v` 那几段拆成一份 dict 交给技能（跟 AI 调它走的是同一条路）
+            params = {}
+            for one in rest[1:]:
+                k, sep, v = str(one).partition("=")
+                if sep:
+                    params[k.strip()] = v
+            print(S.run(got["name"], params))
             return 0, ""
-        return 2, ("用法：moss :skill [list | show <id> | allow <id> | revoke <id> | "
-                   "rm <id> | plan <id> | promote <id> [新id] | run <id> | seed]"
-                   "（不填 = 打开管理器）")
+        return 2, "认不出这个动词：%s\n\n%s" % (verb, HELP.rstrip())
 
     # ---------------------------------------------------------------- 内部
     def _say(self, got):
@@ -179,15 +224,11 @@ class Api:
         for r in got["skills"]:
             mark = "可用" if r["allowed"] else ("写坏" if r["problems"] else "待批准")
             rows.append(" %-14s %-6s %s" % (r["id"], mark, (r["desc"] or r["why"] or "")[:44]))
-        if got["from_pkgs"]:
-            rows.append("-" * 62)
-            rows.append("[来自插件]（pkg.json 里声明了 ai.expose = true，AI 也能调）")
-            for r in got["from_pkgs"]:
-                rows.append(" %-14s %-6s %s" % (r["id"], "可用" if r["allowed"] else "待批准",
-                                                (r["desc"] or "")[:44]))
+        if not got["skills"]:
+            rows.append(" （一只都没有 —— AI 缺能力时会自己造一只，造好会出现在这儿）")
         rows.append("-" * 62)
-        rows.append("细节：moss :skill show <id>；允许：moss :skill allow <id>；"
-                    "转插件：moss :skill promote <id> [新id]")
+        rows.append("看说明：moss :skill doc <名字>；详情：moss :skill show <名字>；"
+                    "跑一次：moss :skill run <名字> [k=v …]")
         return "\n".join(rows)
 
 

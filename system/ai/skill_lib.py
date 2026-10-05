@@ -1,31 +1,34 @@
 # -*- coding: utf-8 -*-
-"""**技能**（`V-281`）：AI 自己造的能力 —— **就是一个包**，只是 id 带 `--`、放在另一个根里。
+"""**技能**（`V-281`/`V-284`）：AI 自己造的能力 —— **就是一个包**，只是住在另一个根里。
 
-你 2026-10-05 的话（两层意思）
-------------------------------
+你 2026-10-05 的话
+------------------
 > 「既然我们之前的 pkgs 的插件格式 能完全和 ai 技能兼容，那我们不应该直接使用原来的格式，
 >   而把参数配置和路径稍稍不一样吗？这样的话我们还可以在它的技能和我们的插件之间相互转换，
 >   我们还可以使用我们已经有的工具对文件进行卸载管理」
-> 「每个技能的 id 必须是以 `--` 开头，防止它污染我们的用户的插件 id」
+> 「技能里面 现在不需要再添加 `--` 了 —— 当时是为了和用户的插件隔离开，防止相互干扰，
+>   但是技能无法干扰了，因为我们需要通过 `moss :skill` 参数来调用，所以干扰问题已经彻底解决了」
 
 所以这一层**不另造格式**：技能 = `pkg.json` + 入口文件（跟插件一字不差，`spec("pkg.json")`
 那份契约就是它的说明书），只是：
 
-* **id 必须 `--` 开头**（`--shot`）—— `core/paths.py` 的 `ID_RE` 要求首字符是字母，
-  所以带 `--` 的 id **永远不可能**被当成插件 id，也就污染不到用户的命名空间；
-  模型看到的名字是**去掉 `--`** 的那个（`shot`）。
-* **本体住在 `:skill` 插件自己的数据目录里**（跟你说的 exec 一样）：
+* **id 跟插件同一规格**（`shot`，小写字母开头）：技能**根本不走包解析那条路**
+  （入口是 `moss :skill <动词> <名字>`，见 `system/pkgs/skill/`），两个命名空间碰不到一起，
+  所以不需要任何前缀。
+* **本体住在 `:skill` 插件自己的数据目录里**（跟 `:exec` 把命令放 `state/exec/cmds/` 一样）：
 
 ```
 system/pkgs/skill/            管理器插件本身（跟 :exec 并排；出厂）
-system/pkgs/skill/seed/--shot/  出厂样例（第一次跑时播种进数据目录，之后就是你的、可改可删）
-user_data/state/skill/--shot/   **技能本体**：一个目录（pkg.json + 入口 + icon.svg + 任意文件）
+system/pkgs/skill/seed/shot/  出厂样例（第一次跑时播种进数据目录，之后就是你的、可改可删）
+user_data/state/skill/shot/   **技能本体**：一个目录（pkg.json + 入口 + icon.svg + 任意文件）
 user_data/ai/skills_allow.json  **你的授权**（AI 写不到这儿 —— 见下面「声明 ≠ 授权」）
 user_data/pkgs/<id>/            「转为插件」搬过去之后，它就是普通插件（插件页里看得见）
 ```
-* 反过来，**普通插件只要 `pkg.json` 里写了 `"ai": {"expose": true}`，也进 AI 的工具表**
-  （账本 §16.3 那条规矩的落地）—— 这一条让"技能 ↔ 插件"真的能来回转：
-  转换就是**搬目录**（`--shot` → `shot`，id 跟着改），转过去之后 AI 照样能用它。
+* **技能和插件两个圈子不互相出现**（`V-284`）：技能这一页只列技能；插件**不再自动进**
+  AI 的工具表 —— AI 想用插件就走它一直就有的那条路 `run_moss(":包名 …")`。
+  （账本 §16.3「只有 `ai.expose: true` 的插件才进工具列表」**留到商店/权限那轮**，那轮会有
+  正经的授权界面；现在只留字段，不做工具面。）
+
 
 声明 ≠ 授权（这条是旧设计必须补的）
 -----------------------------------
@@ -89,10 +92,11 @@ def user_data():
     env = (os.environ.get("MOSS_USER_DATA_DIR") or "").strip()
     return Path(env) if env else (HOME / "user_data")
 
-#: 去掉 `--` 之后那一段要长这样（跟插件 id 同一规格：小写字母开头）
+#: 技能 id：**跟插件 id 同一规格**（小写字母开头）。`V-284`：不再要求 `--` 前缀 ——
+#: 那是早期为了"别污染用户的插件 id"加的，但现在技能**根本不走包解析那条路**
+#: （`moss :skill <动词>` 才是入口，见 `system/pkgs/skill/`），两个命名空间碰不到一起，
+#: 前缀就成了纯粹的噪音（你 2026-10-05 的原话：「干扰问题已经彻底解决了」）。
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-#: 技能 id 的形状：`--` + 上面那一段
-SKILL_ID_RE = re.compile(r"^--[a-z][a-z0-9_-]{0,31}$")
 
 TIMEOUT = 60
 TIMEOUT_MAX = 300
@@ -120,16 +124,16 @@ def seed_dir():
 
 
 def roots():
-    """`[(目录, 层, 种类)]`。
+    """`[(目录, 层, 种类)]` —— **只有技能这一处**。
 
-    * `skill` 根 = 技能本体（只有数据目录这一处，里面全是"你的"，所以都要授权）
-    * `pkg` 根 = 插件那一层：**只收自己在 `pkg.json` 里声明了 `ai.expose: true` 的**
-      （账本 §16.3 那条：只有声明了的才出现在工具列表里）—— 这一条让"技能 ↔ 插件"转过去
-      之后 AI 照样能用它。
+    ★ `V-284`（你 2026-10-05 定的）：**插件不再自动进 AI 的工具表**。
+      技能是"AI 自己的手"（工具表里带参数类型、`moss :skill` 管）；插件是"用户的"，
+      AI 想用就走它一直就有的那条路 —— `run_moss(":包名 …")`（跟你在终端里敲一模一样）。
+      所以这里没有 `pkg` 根：`技能` 和 `插件` 两个圈子**不互相出现**。
+      （账本 §16.3 那条"只有 `ai.expose: true` 的插件才出现在工具列表里"**留到商店/权限那轮**
+       再做 —— 那轮会有正经的授权界面；现在只留字段，不做工具面。）
     """
-    return [(skill_dir(), "user", "skill"),
-            (HOME / "system" / "pkgs", "system", "pkg"),
-            (user_data() / "pkgs", "user", "pkg")]
+    return [(skill_dir(), "user", "skill")]
 
 
 def allow_path():
@@ -390,7 +394,7 @@ def _load(d, layer, kind):
     sid = d.name
     probs, warns = [], []
     pj = d / "pkg.json"
-    blank = {"id": sid, "name": sid.lstrip("-"), "layer": layer, "kind": kind, "dir": d,
+    blank = {"id": sid, "name": sid, "layer": layer, "kind": kind, "dir": d,
              "pkg": {}, "desc": "", "why": "", "risk": "", "params": [], "entry": "",
              "timeout": TIMEOUT, "icon": None, "icon_svg": "", "files": _files_of(d),
              "created": "", "mtime": "", "allowed": False, "why_allow": "写坏了",
@@ -406,9 +410,9 @@ def _load(d, layer, kind):
     except ValueError as e:
         pkg = {}
         probs.append("pkg.json 读不出来（JSON 写坏了）：%s" % e)
-    if kind == "skill" and not SKILL_ID_RE.match(sid):
-        probs.append("技能 id 必须长这样：`--` + 小写字母开头的一段（如 `--shot`）"
-                     "—— 现在是「%s」" % sid)
+    if kind == "skill" and not NAME_RE.match(sid):
+        probs.append("技能 id 要**小写字母开头**、只允许小写字母/数字/`_`/`-`，最长 32 个字符"
+                     "（现在是「%s」）" % sid)
     if str(pkg.get("id") or "") != sid:
         probs.append("pkg.json 里的 id（%s）和目录名（%s）不一样"
                      % (pkg.get("id") or "（空）", sid))
@@ -416,10 +420,9 @@ def _load(d, layer, kind):
         probs.append("技能的 kind 必须是 task（现在是「%s」）—— app 会开窗口，AI 的手不该开窗"
                      % (pkg.get("kind") or "（空）"))
     ai = pkg.get("ai") if isinstance(pkg.get("ai"), dict) else {}
-    if kind == "pkg" and not ai.get("expose"):
-        probs.append("插件要进 AI 的工具表，得自己在 pkg.json 里声明 `ai.expose: true`")
     if kind == "skill" and not ai.get("expose"):
-        warns.append("少了一句声明 `ai.expose: true`（技能目录里按规矩该有）")
+        warns.append("少了一句声明 `ai.expose: true`（技能目录里按规矩该有；现在它只是个声明，"
+                     "不代表授权）")
     entry = str((pkg.get("entry") or {}).get("file") or "")
     argv, rerr = runner_argv(pkg, d)
     if rerr:
@@ -484,6 +487,7 @@ def list_skills(roots_in=None):
     `roots_in` 只给探针用（造一组合成的根，别去动仓库里那两份出厂件）。
     """
     if roots_in is None:
+        migrate_dashes()                     # `V-284`：老的 `--名字` 改成不带前缀（幂等）
         ensure_seed()                        # 出厂样例：只补缺的（第一次跑或你删了它之后）
     out = {}
     for d, layer, kind in (roots_in if roots_in is not None else roots()):
@@ -493,20 +497,12 @@ def list_skills(roots_in=None):
         for sub in sorted(d.iterdir()):
             if not sub.is_dir():
                 continue
-            if kind == "pkg":
-                try:
-                    pkg = json.loads((sub / "pkg.json").read_text(encoding="utf-8"))
-                except Exception:                                      # noqa: BLE001
-                    continue
-                ai = pkg.get("ai") if isinstance(pkg.get("ai"), dict) else {}
-                if not ai.get("expose"):
-                    continue                      # 没声明可调用的插件，跟这一层无关
             out[sub.name] = _load(sub, layer, kind)
     return out
 
 
 def usable(roots_in=None):
-    """能进工具表：没毛病 + 已授权。**按模型看到的那个名字（去掉 `--`）去重**，先到先得。"""
+    """能进工具表：没毛病 + 已授权。"""
     out = {}
     for _sid, it in sorted(list_skills(roots_in).items()):
         if it["problems"] or not it["allowed"]:
@@ -582,7 +578,7 @@ def note(got=None):
         rows.append("  · %s(%s) —— %s" % (name, ps or "无参数",
                                           it.get("desc") or it.get("why") or ""))
     rows.append("  · 缺什么能力：先 `skill(\"self-tool\")` 看怎么写，然后照**插件契约**把一个包写到 "
-                "`%s/<--名字>/`（id 必须 `--` 开头、kind=task、带 icon.svg 和 `ai.why`）。"
+                "`%s/<名字>/`（id 小写字母开头、kind=task、带 icon.svg 和 `ai.why`）。"
                 "写完**要用户点一次「允许」**，下一次跑才生效。" % skill_dir())
     return "\n".join(rows)
 
@@ -739,7 +735,8 @@ def _taken_ids():
       `--md5` 转插件时不报冲突（而 `md5` 明明已经占了）。探针当场抓住。
     """
     out = {}
-    for d, _layer, _kind in roots()[1:]:
+    # ★ 根表里已经没有插件了（`V-284`）—— 转插件要查的是**两个 pkgs 根**，直接扫
+    for d in (HOME / "system" / "pkgs", user_data() / "pkgs"):
         d = Path(d)
         if not d.is_dir():
             continue
@@ -788,8 +785,8 @@ def promote_plan(sid, new_id="", roots_in=None, builtin=()):
 def promote(sid, confirm=False, new_id="", roots_in=None, builtin=()):
     """真转：搬目录 + 把 `pkg.json` 的 id 改成新名字（插件那边 id 必须 = 目录名）。
 
-    ★ 转换那一下是**你点的**，所以顺手把授权记上（指纹按新 id 重算）——
-      转过去之后 AI 照样能用它，不用再点一次。
+    ★ 转成插件之后它就是"用户的插件"了：AI 想用走 `run_moss(":新id …")`（那条路一直都在），
+      所以这边**不留**技能那套授权记录（留着反而是个说不清的影子）。
     """
     plan = promote_plan(sid, new_id, roots_in, builtin)
     if not plan.get("ok"):
@@ -819,11 +816,8 @@ def promote(sid, confirm=False, new_id="", roots_in=None, builtin=()):
     except Exception as e:                                             # noqa: BLE001
         return {"ok": False,
                 "msg": "包搬过去了，但 pkg.json 没改好：%s: %s" % (type(e).__name__, e)}
-    after = list_skills(roots_in).get(plan["new_id"]) if roots_in is None else None
     d = allowed_map()
-    d.pop(plan["id"], None)
-    d[plan["new_id"]] = {"fp": (after or {}).get("fp") or "",
-                         "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    d.pop(plan["id"], None)                    # 它已经不是技能了，把授权记录收掉
     _save_allow(d)
     return {"ok": True, "id": plan["id"], "new_id": plan["new_id"], "dir": str(dst),
             "msg": "转成插件了：%s —— 插件列表里现在能看到它（id「%s」）"
@@ -849,8 +843,90 @@ def _row(it, with_files=False):
     return row
 
 
+def migrate_dashes():
+    """`V-284`：把早期带 `--` 前缀的技能目录**改名成不带前缀的**（只做一次，之后无操作）。
+
+    为什么还要这一步：`--` 是上一轮加的，你这次说「不需要再添加 -- 了」—— 那已经存在的
+    `--shot` 就得跟着改，不然界面上会留着一只"名字带两个短横"的怪东西。顺手把
+    `pkg.json` 里的 `id` 和授权记录里的键一起搬过来（**不重算指纹**：文件内容没变，
+    只是名字变了；指纹里含名字，所以这里按新名字重算一次）。
+    """
+    moved = []
+    root = skill_dir()
+    if not root.is_dir():
+        return moved
+    d = allowed_map()
+    changed = False
+    for sub in sorted(root.iterdir()):
+        if not (sub.is_dir() and sub.name.startswith("--")):
+            continue
+        want = sub.name.lstrip("-")
+        dst = root / want
+        if not NAME_RE.match(want) or dst.exists():
+            continue                       # 新名字不合法 / 已经有一个同名的：留着别动（下面会点名）
+        try:
+            sub.rename(dst)
+        except OSError:
+            continue
+        try:
+            pj = dst / "pkg.json"
+            pkg = json.loads(pj.read_text(encoding="utf-8"))
+            pkg["id"] = want
+            pkg["aliases"] = [a for a in (pkg.get("aliases") or []) if str(a) != sub.name]
+            pj.write_text(json.dumps(pkg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except Exception:                                              # noqa: BLE001
+            pass
+        rec = d.pop(sub.name, None)
+        got = _load(dst, "user", "skill")
+        if rec:
+            rec["fp"] = got.get("fp") or ""
+            d[want] = rec
+            changed = True
+        moved.append(sub.name + " → " + want)
+    if changed:
+        _save_allow(d)
+    return moved
+
+
+def doc(sid, roots_in=None):
+    """这只技能**自己的说明书**（`AGENT.md`；没有就退回 `pkg.json` + 文件清单）。
+
+    ★ 为什么要有它：AI 得能"看说明"才知道这东西怎么用 —— 命令行里就是
+      `moss :skill doc <名字>`（你 2026-10-05 问的"有没有什么功能是查看某个插件的
+      `AGENT.md` 内容的"）。人这边是详情页那颗「看说明」。
+    """
+    got = list_skills(roots_in).get(str(sid or "").strip())
+    if not got:
+        return {"ok": False, "msg": "没有这只技能：%s" % sid}
+    d = Path(got["dir"])
+    text = ""
+    for name in ("AGENT.md", "README.md"):
+        if (d / name).is_file():
+            try:
+                text = (d / name).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = ""
+            if text:
+                break
+    if not text:
+        files = "\n".join("  · %s（%d 字节）" % (f["rel"], f["size"])
+                          for f in (got.get("files") or [])) or "  （空目录）"
+        text = ("（这只技能里没有 AGENT.md —— 下面把清单和文件列出来）\n\n"
+                "id      : %s\n它干什么: %s\n为什么造: %s\n参数    : %s\n入口    : %s\n文件:\n%s"
+                % (got["id"], got.get("desc") or "（没写）", got.get("why") or "（没写）",
+                   "、".join(str(p.get("name")) for p in (got.get("params") or [])
+                             if isinstance(p, dict)) or "无",
+                   got.get("entry") or "—", files))
+    return {"ok": True, "id": got["id"], "name": got["name"], "dir": str(d), "text": text,
+            "has_agent_md": (d / "AGENT.md").is_file()}
+
+
 def summary():
-    """`:skill` 那一页要的全部数据（图标墙 + 详情都在里面；宿主 AI 页那一行也用它）。"""
+    """`:skill` 那一页要的全部数据（图标墙 + 详情都在里面；宿主 AI 页那一行也用它）。
+
+    ★ `V-284`：**只有技能**（`skills`）—— 插件不出现在这儿（你说的"插件的东西不能放在技能这里"）。
+      `broken` 还是那堆"写坏了、进不了工具表"的技能（界面上要能看见它们）。
+    """
     got = list_skills()
     dup = conflicts()
     rows = [_row(v, with_files=True) for _k, v in sorted(got.items())]
@@ -861,9 +937,7 @@ def summary():
                 % (r["name"], dup[r["id"]]["kept"])]
     return {"ok": True,
             "skills": [r for r in rows if r["kind"] == "skill"],
-            "from_pkgs": [r for r in rows if r["kind"] == "pkg"],
             "broken": [r for r in rows if r["problems"]],
-            "dirs": {"mine": str(skill_dir()), "seed": str(seed_dir()),
-                     "pkgs": [str(roots()[1][0]), str(roots()[2][0])]},
+            "dirs": {"mine": str(skill_dir()), "seed": str(seed_dir())},
             "allow_file": str(allow_path()),
             "n_usable": len(usable()), "n_pending": len(pending())}

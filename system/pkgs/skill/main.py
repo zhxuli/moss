@@ -55,7 +55,22 @@ def main():
         argv = [a for a in line.split() if a.strip()]
     else:
         argv = [a for a in sys.argv[1:] if a not in ("-c", "") and not a.endswith("main.py")]
+
+    # ★★ 不带参数时**开不开窗，看是谁在调**（你 2026-10-05 定的："对 AI 友好，又不能影响
+    #    我们在窗口打开"）：
+    #      · 界面里点「运行」→ 宿主会加 `MOSS_INTERACTIVE=1`（说明有人在看着，下面还有输入行）
+    #        ⇒ **开窗口**（跟以前一样）；
+    #      · 命令行 / AI 通过 run_moss 调 ⇒ 没有人看着 ⇒ **只打用法和列表**（不开窗）。
+    #    另外 `moss :skill gui` 是显式开窗，任何时候都能用。
     if not argv:
+        interactive = str(os.environ.get("MOSS_INTERACTIVE") or "").strip() in ("1", "true", "yes")
+        if interactive:
+            core.gui()
+            return 0
+        code, text = core.Api().cli(["help"])
+        print(text)
+        return code
+    if argv[0].lower() in ("gui", "-g", "--gui"):
         core.gui()
         return 0
     code, text = core.Api().cli(argv)

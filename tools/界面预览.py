@@ -602,36 +602,30 @@ MOCK_JS = r"""
                           {rel: "icon.svg", size: 130, mtime: "2026-10-05 16:00:00"}];
       return {ok: true, n_usable: 3, n_pending: 1,
         skills: [
-          {id: "--dom_snap", name: "dom_snap", layer: "user", kind: "skill",
+          {id: "dom_snap", name: "dom_snap", layer: "user", kind: "skill",
            allowed: false, why_allow: "还没允许", origin: "",
            desc: "把当前界面的 DOM 存成 html（它自己造的）",
            why: "界面改完要留一份 DOM 做对比 —— 用户不需要这个插件，我自己要",
            risk: "low", params: ["out"], entry: "run.py", timeout: 60, icon_svg: ICO,
            created: "2026-10-05 16:02:11", mtime: "2026-10-05 16:02:11", allowed_at: "",
-           problems: [], warns: [], files_n: 3, dir: S("--dom_snap"), files: files("--dom_snap")},
-          {id: "--shot", name: "shot", layer: "user", kind: "skill", allowed: true,
+           problems: [], warns: [], files_n: 3, dir: S("dom_snap"), files: files("dom_snap")},
+          {id: "shot", name: "shot", layer: "user", kind: "skill", allowed: true,
            why_allow: "你已经允许过（2026-10-05 16:01:00）", origin: "seed",
            desc: "截屏：整个屏幕或某个窗口，存成 png 并把路径、尺寸回给我",
            why: "AI 干活要留证据（截个屏给用户看），但用户自己不需要一个截屏插件",
            risk: "low", params: ["target", "out"], entry: "run.py", timeout: 60, icon_svg: ICO,
            created: "2026-10-05 16:01:00", mtime: "2026-10-05 16:01:00",
            allowed_at: "2026-10-05 16:01:00", problems: [], warns: [], files_n: 3,
-           dir: S("--shot"), files: files("--shot")}],
-        from_pkgs: [
-          {id: "md5", name: "md5", layer: "system", kind: "pkg", allowed: true,
-           why_allow: "出厂插件（AI 写不到这个根）", origin: "",
-           desc: "算字符串、文件或文件夹的 MD5", why: "", risk: "",
-           params: [], entry: "run.py", timeout: 60, icon_svg: ICO,
-           created: "2026-10-01 09:00:00", mtime: "2026-10-01 09:00:00", allowed_at: "",
-           problems: [], warns: [], files_n: 2,
-           dir: state.home + "\\system\\pkgs\\md5", files: []}],
+           dir: S("shot"), files: files("shot")}],
+        // ★ `V-284`：**没有 `from_pkgs` 这个键了** —— 插件不出现在技能这一层
+
         broken: [
-          {id: "--bad_one", name: "bad_one", layer: "user", kind: "skill", allowed: false,
+          {id: "bad_one", name: "bad_one", layer: "user", kind: "skill", allowed: false,
            why_allow: "写坏了", origin: "", desc: "它写坏了一只（缺入口）", why: "",
            risk: "", params: [], entry: "", timeout: 60, icon_svg: "",
            created: "2026-10-05 16:03:00", mtime: "2026-10-05 16:03:00", allowed_at: "",
            problems: ["入口文件不在：run.py"], warns: [], files_n: 1,
-           dir: S("--bad_one"), files: [{rel: "pkg.json", size: 300,
+           dir: S("bad_one"), files: [{rel: "pkg.json", size: 300,
                                          mtime: "2026-10-05 16:03:00"}]}],
         dirs: {mine: state.home + "\\user_data\\state\\skill",
                seed: state.home + "\\system\\pkgs\\skill\\seed",
@@ -4530,14 +4524,12 @@ MOCK_JS = r"""
         const firstBtns = btnOf(firstRow);
         const firstTxt = ((firstRow && firstRow.textContent) || "").replace(/\s+/g, " ");
         // ① 技能那一行：带 `--` 的 id 显示出来（墙上才只显示名字），待批准的在最前面
-        const idOk = ids[0] === "--dom_snap" && ids.indexOf("--shot") > 0 &&
-                     ids.indexOf("md5") > ids.indexOf("--shot");
-        // ② 来自插件的那只（system 层）不该有「允许 / 删除」（它不是 AI 造的、也删不得）
-        const pkgRow = rows.filter(r => /^md5$/.test((r.querySelector("code") || {}).textContent || ""))[0];
-        const pkgBtns = btnOf(pkgRow);
-        const pkgTag = ((pkgRow && pkgRow.textContent) || "").indexOf("插件") >= 0;
+        // 顺序 = 待批准 → 已允许 → 写坏了（精确比，别用子串）
+        const idOk = ids.join(",") === "dom_snap,shot,bad_one";
+        // ② `V-284`：**插件那一行不许出现在这儿**（技能这一层只列技能）
+        const noPkgRow = !rows.some(r => /^md5$/.test((r.querySelector("code") || {}).textContent || ""));
         // ③ 写坏了的那只**不该有「允许」**（它进不了表，允许了也没用）—— 只有「看一眼 / 删除」
-        const badRow = rows.filter(r => /^--bad_one$/.test((r.querySelector("code") || {}).textContent || ""))[0];
+        const badRow = rows.filter(r => /^bad_one$/.test((r.querySelector("code") || {}).textContent || ""))[0];
         const badBtns = btnOf(badRow);
         // ④ 看一眼：内容真摊开了（pkg.json 和 run.py 两段都在）
         const lookBtn = firstRow ? Array.from(firstRow.querySelectorAll("button")).filter(b => /看一眼/.test(b.textContent))[0] : null;
@@ -4550,7 +4542,7 @@ MOCK_JS = r"""
         const allowBtn = firstRow ? Array.from(firstRow.querySelectorAll("button")).filter(b => /允许/.test(b.textContent))[0] : null;
         if (allowBtn) allowBtn.click();
         await sleep(500);
-        const allowed = (M.skillCalls || []).some(c => c[0] === "allow" && c[1] === "--dom_snap" && c[2] === true);
+        const allowed = (M.skillCalls || []).some(c => c[0] === "allow" && c[1] === "dom_snap" && c[2] === true);
         // ⑥ 删除：先弹确认，确认了才真删（`confirm=true`）
         const delBtn = firstRow ? Array.from(firstRow.querySelectorAll("button")).filter(b => /删除/.test(b.textContent))[0] : null;
         if (delBtn) delBtn.click();
@@ -4559,7 +4551,7 @@ MOCK_JS = r"""
         const noRmYet = !(M.skillCalls || []).some(c => c[0] === "rm");
         (document.querySelector("#m-ok") || {click(){}}).click();
         await sleep(500);
-        const rmDone = (M.skillCalls || []).some(c => c[0] === "rm" && c[1] === "--dom_snap" && c[2] === true);
+        const rmDone = (M.skillCalls || []).some(c => c[0] === "rm" && c[1] === "dom_snap" && c[2] === true);
         // ⑦ 「管理技能…」= 把 `:skill` 那个插件的界面嵌出来（预览里 embed_start 是假的，
         //    但"点了之后真去起那个包"这件事看得见）
         const skillPkg = {id: "skill", name: "技能", desc: "(预览)", kind: "app", layer: "system",
@@ -4585,9 +4577,9 @@ MOCK_JS = r"""
         await aiLoadSkills();
         await sleep(300);
         const ok = !!strip && yellow && /技能 · 2/.test(stripTxt) && /1 只等你允许/.test(stripTxt) &&
-                   /1 只写坏了/.test(stripTxt) && rows.length === 4 && idOk &&
+                   /1 只写坏了/.test(stripTxt) && rows.length === 3 && idOk &&
                    firstBtns.length === 3 && /待批准/.test(firstTxt) &&
-                   pkgTag && pkgBtns.length === 1 &&
+                   noPkgRow &&
                    badBtns.length === 2 && !badBtns.some(b => /允许/.test(b)) &&
                    looked && allowed && modalOn && noRmYet && rmDone && managed && gone &&
                    !(window.__errors || []).length;
@@ -4595,9 +4587,9 @@ MOCK_JS = r"""
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n那一行 = " + JSON.stringify(stripTxt.slice(0, 52)) + " · 变黄 = " + yellow +
           "\n列了 " + rows.length + " 只：" + JSON.stringify(ids) +
-          "（待批准 / 已允许 / 来自插件 / 写坏 各一只）" +
+          "（待批准 / 已允许 / 写坏 各一只 —— 插件不在这块）" +
           "\n待批准那只的按钮 = " + JSON.stringify(firstBtns) + " · 状态行 = " + JSON.stringify(firstTxt.slice(0, 34)) +
-          "\n来自插件那只（md5）：按钮 = " + JSON.stringify(pkgBtns) + "（该只有「看一眼」）· 标着「插件」= " + pkgTag +
+          "\n插件那一行**没有**出现在技能这块 = " + noPkgRow +
           "\n写坏那只的按钮 = " + JSON.stringify(badBtns) + "（不许给「允许」）" +
           "\n「看一眼」摊开了 pkg.json + run.py = " + looked +
           "\n点「允许」= " + allowed + " · 点「删除」先弹框 = " + modalOn +
@@ -4608,9 +4600,10 @@ MOCK_JS = r"""
         document.title = ok ? "READY"
           : ("AISELF-FAIL 行=" + (strip ? 1 : 0) + " 黄=" + (yellow ? 1 : 0) +
 
+
              " 只数=" + rows.length + " 首=" + ids[0] + " id序=" + (idOk ? 1 : 0) +
-             " 按钮=" + firstBtns.length + "/" + pkgBtns.length + "/" + badBtns.length +
-             " 插件标=" + (pkgTag ? 1 : 0) +
+             " 按钮=" + firstBtns.length + "/" + badBtns.length +
+             " 无插件行=" + (noPkgRow ? 1 : 0) +
              " 看=" + (looked ? 1 : 0) + " 允许=" + (allowed ? 1 : 0) +
              " 弹=" + (modalOn ? 1 : 0) + " 未删=" + (noRmYet ? 1 : 0) + " 删=" + (rmDone ? 1 : 0) +
              " 管理=" + (managed ? 1 : 0) + " 空隐=" + (gone ? 1 : 0) +

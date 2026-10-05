@@ -12,6 +12,20 @@ let CUR = null;           // 详情里正在看的那一只
 let OPEN_FILE = '';       // 详情里展开了哪个文件
 let FILE_TEXT = {};
 
+/* 把后端的 payload 拉平成一个数组：`skills` + 只在 `broken` 里的那些（按 id 去重）。
+   ★ 为什么还要并 `broken`：宿主那边的 `broken` 本来就是 `skills` 的子集，但"只给 broken
+     不给 skills"这种形状也得能吃（假桥探针就造过这种）。 */
+function skillAll(got){
+  got = got || {};
+  const out = [], seen = {};
+  (got.skills || []).concat(got.broken || []).forEach((w) => {
+    if (!w || !w.id || seen[w.id]) return;
+    seen[w.id] = 1;
+    out.push(w);
+  });
+  return out;
+}
+
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -47,22 +61,18 @@ function tile(it) {
 function render() {
   const wall = $('#wall');
   wall.innerHTML = '';
+  // ★ `V-284`：**只有技能** —— 插件不出现在这一页（你说的"插件的东西不能放在技能这里显示"）。
   const skills = (DATA && DATA.skills) || [];
-  const pkgs = (DATA && DATA.from_pkgs) || [];
+  const broken = (DATA && DATA.broken) || [];
   skills.forEach((it) => wall.appendChild(tile(it)));
-  if (pkgs.length) {
-    const sep = document.createElement('h2');
-    sep.className = 'sec';
-    sep.textContent = '来自插件（pkg.json 里声明了 ai.expose = true —— AI 也能调）';
-    sep.style.gridColumn = '1 / -1';
-    wall.appendChild(sep);
-    pkgs.forEach((it) => wall.appendChild(tile(it)));
-  }
-  $('#empty').hidden = !!(skills.length || pkgs.length);
-  const pend = skills.concat(pkgs).filter((x) => !x.problems.length && !x.allowed).length;
+  // 写坏了的那些宿主也放在 `skills` 里（带 problems），但万一后端只给了 broken，也别漏掉
+  broken.forEach((it) => {
+    if (!skills.some((x) => x.id === it.id)) wall.appendChild(tile(it));
+  });
+  $('#empty').hidden = !!(skills.length || broken.length);
+  const pend = skills.concat(broken).filter((x) => !x.problems.length && !x.allowed).length;
   // ★ 后端没给 `dir` 的时候别摆一个 "undefined" 出来（假桥探针里就撞见过一次）
   const bits = [skills.length + ' 只技能（能用 ' + DATA.n_usable + '）'];
-  if (pkgs.length) bits.push(pkgs.length + ' 个插件也暴露给 AI');
   if (pend) bits.push(pend + ' 只等你允许');
   if (DATA.dir) bits.push(DATA.dir);
   $('#sub').textContent = bits.join(' · ');
@@ -70,7 +80,8 @@ function render() {
 
 /* ---------------------------------------------------------------- 详情 */
 function find(id) {
-  const all = ((DATA && DATA.skills) || []).concat((DATA && DATA.from_pkgs) || []);
+  // 只有技能（`V-284`：插件不出现在这一页）
+  const all = skillAll(DATA);
   return all.filter((x) => x.id === id)[0] || null;
 }
 
@@ -90,33 +101,28 @@ function showDetail(id) {
   const it = find(id);
   if (!it) return;
   CUR = it;
+  OPEN_FILE = '';
+  FILE_TEXT = {};
   const st = status(it);
-  const canPromote = it.kind === 'skill' && it.layer === 'user';
+  const canPromote = it.layer === 'user';
   const chips = [];
   chips.push('<span class="chip ' + (st.dot === 'bad' ? 'bad' : (st.dot === 'pending' ? 'warn' : 'ok')) +
     '">' + esc(it.allowed ? 'AI 可以用它' : (it.problems.length ? '进不了工具表' : '还没允许')) + '</span>');
   if (it.origin === 'seed') chips.push('<span class="chip">出厂样例</span>');
   if (it.risk) chips.push('<span class="chip">风险 ' + esc(it.risk) + '</span>');
-  (it.params || []).forEach((p) => chips.push('<span class="chip">' + esc(p) + '</span>'));
+  (it.params || []).forEach((p) => chips.push('<span class="chip">参数 ' + esc(p) + '</span>'));
   (it.warns || []).forEach((w) => chips.push('<span class="chip warn">' + esc(w) + '</span>'));
   (it.problems || []).forEach((w) => chips.push('<span class="chip bad">' + esc(w) + '</span>'));
 
-  $('#detail').hidden = false;
-  $('#detail').innerHTML =
+  // ★ 模态框里的那张卡（内容全塞进 `#detail-card`）
+  const card = $('#detail-card');
+  card.innerHTML =
+    '<button class="x" id="d-x" title="关闭（Esc）" aria-label="关闭">✕</button>' +
     '<div class="dhead">' +
       '<div class="ico">' + iconHTML(it) + '</div>' +
       '<div class="dtitle"><h3>' + esc(it.name) + '</h3>' +
         '<div class="id">' + esc(it.id) + '</div>' +
         '<div class="dim">' + esc(it.desc || '（没写说明）') + '</div></div>' +
-      '<div class="dacts">' +
-        (it.layer === 'user' && !it.problems.length
-          ? '<button class="btn" id="d-allow">' + (it.allowed ? '撤销允许' : '允许') + '</button>' : '') +
-        (it.allowed ? '<button class="btn" id="d-run" title="像 AI 那样跑一次（空参数）">试跑一次</button>' : '') +
-        (canPromote ? '<button class="btn" id="d-promote">转为插件</button>' : '') +
-        '<button class="btn" id="d-open">打开目录</button>' +
-        (it.layer === 'user' ? '<button class="btn danger" id="d-rm">删除</button>' : '') +
-        '<button class="btn" id="d-back">返回</button>' +
-      '</div>' +
     '</div>' +
     (it.why ? '<div class="why"><b>为什么造它：</b>' + esc(it.why) + '</div>'
             : '<div class="why dim">（它没写 ai.why —— 「为什么造它」空着）</div>') +
@@ -130,10 +136,22 @@ function showDetail(id) {
       '<span class="k">允许于</span><span>' + esc(it.allowed_at || '—') + '</span>' +
       '<span class="k">目录</span><span class="dim">' + esc(it.dir) + '</span>' +
     '</div>' +
+    '<div class="dacts">' +
+      (it.layer === 'user' && !it.problems.length
+        ? '<button class="btn" id="d-allow">' + (it.allowed ? '撤销允许' : '允许') + '</button>' : '') +
+      '<button class="btn" id="d-doc" title="这只技能自己的说明书（AGENT.md）">看说明</button>' +
+      (it.allowed ? '<button class="btn" id="d-run" title="像 AI 那样跑一次（空参数）">试跑一次</button>' : '') +
+      (canPromote ? '<button class="btn" id="d-promote" title="去掉技能身份、搬进插件列表">转为插件</button>' : '') +
+      '<button class="btn" id="d-open">打开目录</button>' +
+      (it.layer === 'user' ? '<button class="btn danger" id="d-rm">删除</button>' : '') +
+    '</div>' +
+    '<pre class="code" id="d-docbox" hidden></pre>' +
     '<div><b>文件（' + it.files_n + '）</b>' + filesTable(it) + '</div>';
 
+  $('#detail').hidden = false;
+
   const on = (sel, fn) => { const b = $(sel); if (b) b.onclick = fn; };
-  on('#d-back', () => { $('#detail').hidden = true; CUR = null; });
+  on('#d-x', closeDetail);
   on('#d-allow', () => call('allow', { id: it.id, yes: !it.allowed }));
   on('#d-open', () => call('reveal', { dir: it.dir }, true));
   on('#d-rm', () => confirmBox('删掉这只技能？',
@@ -141,7 +159,17 @@ function showDetail(id) {
     () => call('rm', { id: it.id, confirm: true })));
   on('#d-run', () => call('run_once', { id: it.id, args: {} }, true));
   on('#d-promote', () => promoteFlow(it));
-  document.querySelectorAll('#detail tr.file').forEach((tr) => {
+  on('#d-doc', () => {
+    const box = $('#d-docbox');
+    if (!box) return;
+    if (!box.hidden){ box.hidden = true; return; }        // 再点一下收起
+    box.hidden = false;
+    box.textContent = '（正在读…）';
+    moss.call('doc', { id: it.id }).then((r) => {
+      box.textContent = (r && r.text) || '（没有说明）';
+    }).catch((e) => { box.textContent = '读不出来：' + (e && e.message ? e.message : e); });
+  });
+  document.querySelectorAll('#detail-card tr.file').forEach((tr) => {
     tr.onclick = () => {
       const rel = tr.dataset.file;
       if (OPEN_FILE === rel) { OPEN_FILE = ''; showDetail(it.id); return; }
@@ -152,6 +180,11 @@ function showDetail(id) {
       });
     };
   });
+}
+
+function closeDetail(){
+  $('#detail').hidden = true;
+  CUR = null;
 }
 
 /* ---------------------------------------------------------------- 转成插件 */
@@ -216,7 +249,7 @@ function call(method, params, justToast) {
 
 function load() {
   return moss.call('list', {}).then((got) => {
-    DATA = got || { skills: [], from_pkgs: [], n_usable: 0, dir: '' };
+    DATA = got || { skills: [], broken: [], n_usable: 0, dir: '' };
     render();
     if (CUR) { const it = find(CUR.id); if (it) showDetail(it.id); else { $('#detail').hidden = true; CUR = null; } }
   }).catch((e) => { $('#sub').textContent = '读不出来：' + (e && e.message ? e.message : e); });
@@ -244,6 +277,15 @@ function boot(){
   $('#btn-reload').onclick = load;
   $('#btn-seed').onclick = () => call('seed', {});
   $('#btn-open').onclick = () => call('reveal', { dir: (DATA && DATA.dir) || '' }, true);
+  // 模态框：点背景关、Esc 关（✕ 那颗在卡片里，showDetail 里绑）
+  const d = $('#detail');
+  if (d) d.onclick = (ev) => { if (ev.target === d) closeDetail(); };
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape'){
+      if (!$('#modal').hidden){ $('#modal').hidden = true; return; }
+      if (!$('#detail').hidden) closeDetail();
+    }
+  });
 }
 
 function notReady(){

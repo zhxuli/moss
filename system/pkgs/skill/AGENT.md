@@ -9,11 +9,11 @@
 ## 东西都放在哪
 
 ```
-system/pkgs/skill/               ← 管理器本身（就是本插件，跟 :exec 并排）
-system/pkgs/skill/seed/--shot/   ← 出厂样例；第一次跑时**播种**到数据目录（之后可改可删）
-user_data/state/skill/--shot/    ← **技能本体**：一个目录 = pkg.json + 入口 + icon.svg + 任意文件
-user_data/ai/skills_allow.json   ← **你的授权**（AI 写不到这个文件）
-user_data/pkgs/<id>/             ← 点「转为插件」搬过去之后，它就是普通插件
+system/pkgs/skill/              ← 管理器本身（就是本插件，跟 :exec 并排）
+system/pkgs/skill/seed/shot/    ← 出厂样例；第一次跑时**播种**到数据目录（之后可改可删）
+user_data/state/skill/shot/     ← **技能本体**：一个目录 = pkg.json + 入口 + icon.svg + AGENT.md
+user_data/ai/skills_allow.json  ← **你的授权**（AI 写不到这个文件）
+user_data/pkgs/<id>/            ← 点「转为插件」搬过去之后，它就是普通插件
 ```
 
 技能本体住**本插件的数据目录**（`MOSS_PLUGIN_DATA_DIR`，跟 `exec` 把命令放
@@ -22,8 +22,8 @@ user_data/pkgs/<id>/             ← 点「转为插件」搬过去之后，它�
 
 ## 两条规矩（代码拦的，不是提示词劝的）
 
-1. **id 必须 `--` 开头**（`--shot`）：`core/paths.py` 的 `ID_RE` 要求首字符是字母，
-   所以带 `--` 的 id **永远不可能**被当成插件 id。模型看到的工具名是去掉 `--` 的（`shot`）。
+1. **id 跟插件同一规格**（`shot`，小写字母开头）—— `V-284` 起**不要** `--` 前缀了：
+   技能不走包解析那条路（入口是 `moss :skill <动词> <名字>`），两个圈子碰不到一起。
 2. **声明 ≠ 授权**：`pkg.json` 里的 `ai.expose` 是包自己"声明我能被 AI 调"（AI 写得动这个
    字段），**授权**在 `user_data/ai/skills_allow.json` 里（AI 写不到），而且**绑指纹**——
    `pkg.json` + 入口 + 图标 改一个字，授权就作废、退回"待批准"。
@@ -32,17 +32,20 @@ user_data/pkgs/<id>/             ← 点「转为插件」搬过去之后，它�
 ## 命令行
 
 ```
-moss :skill                        打开管理器（图形界面）
-moss :skill list                   列出来
-moss :skill show --shot            看详情（为什么造它 / 时间 / 文件）
-moss :skill allow --shot           允许 AI 用它
-moss :skill revoke --shot          撤销
-moss :skill rm --shot              删掉
-moss :skill plan --shot            转插件之前先看 id 会不会撞
-moss :skill promote --shot [新id]  真的转成插件（去掉 `--` 搬进 user_data/pkgs）
-moss :skill run --shot             在这儿试跑一次
+moss :skill                       打用法 + 列表（**不开窗**；命令行/AI 调都走这条）
+moss :skill gui                   打开管理器窗口（图标墙 / 详情模态框 / 转为插件 / 删除）
+moss :skill list / show <名字>     列出来 / 看详情（为什么造它 · 时间 · 文件）
+moss :skill doc <名字>             **这只技能自己的说明书**（它目录里的 AGENT.md）
+moss :skill run <名字> [k=v …]     跑一次（参数用 k=v）
+moss :skill allow|revoke <名字>    允许 / 撤销（**必须人来做**）
+moss :skill rm <名字>              删掉
+moss :skill plan|promote <名字> [新id]  转插件之前先看冲突 / 真转
 moss :skill seed                   把出厂样例补回来
 ```
+
+★ **不开窗的规矩**（`V-284`，你定的"对 AI 友好、又不影响我们在窗口打开"）：
+不带参数时，**界面里点「运行」**（宿主会加 `MOSS_INTERACTIVE=1`）→ 开窗口；
+**命令行 / AI 通过 run_moss 调** → 只打用法和列表。想显式开窗就 `moss :skill gui`。
 
 ## AI 那边怎么接的
 
