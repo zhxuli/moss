@@ -3389,6 +3389,16 @@ def _inline_page():
         #   但页面里 `paintStaticIcons()` 之类是加载期就调 `ico()` 的 —— 表得先在那儿。
         html = re.sub(r"(<body[^>]*>)", lambda m: m.group(1) + "\n" + icons.script_tag(), html,
                       count=1, flags=re.I)
+        # ★ `V-271`：在文件里**自己写一句"这是生成物"** —— 不然有人（包括我自己）打开这份
+        #   上万行的文件，会以为界面就长在这儿、然后改它（改完下次启动就没了）。
+        #   放在 doctype **后面**（放前面虽然也合法，但没必要跟标准模式的规矩较劲）。
+        html = re.sub(r"(<!doctype[^>]*>)",
+                      lambda m: m.group(1) + "\n"
+                      "<!-- 这是 moss 每次启动时自动生成的自包含页面（把 css/js/图标表全部内联进"
+                      "这一份，好让页面一个子请求都不用发）。**别改这个文件**：改完下次启动就没了。"
+                      "要改界面请改 system/ui/**（index.html / css/*.css / js/*.js），然后重启 moss；"
+                      "生成逻辑在 system/ui/main.py 的 _inline_page()。 -->",
+                      html, count=1, flags=re.I)
         out = USER_DATA / "state" / "_ui_inline.html"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(html, encoding="utf-8", newline="")
