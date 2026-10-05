@@ -243,6 +243,9 @@ const MossSettings = {
           <!-- 快捷命令那页：底下一条预览行（宿主算的那句话） -->
           <div v-if="g.live" class="set-live" id="set-live" :class="{bad: /^⚠/.test(live || '')}">
             <b>预览：</b> {{ live }}
+            <!-- ★ V-275：改动还没保存时，这段预览是**上一次问宿主**（打开面板那次）算的 ——
+                 老实说一句，别让它看着像"实时反映你刚才的改动"。 -->
+            <span v-if="changed.length" style="opacity:.65">（改动还没保存 —— 这段预览是按已保存的值算的）</span>
           </div>
           </template>
         </div>
@@ -348,13 +351,16 @@ const MossSettings = {
       return this.problems.filter(p => p.level !== "warn").length;
     },
     canSave(){
-      return this.errs === 0 && this.changed.length > 0 && !this.saving;
+      // ★ `V-275`：**只看"改没改"**（纯前端），不再要求"宿主说没问题" —— 那样才能做到
+      //   "点保存才校验"。真有问题的话，保存那趟会把 problems 带回来并标红。
+      return this.changed.length > 0 && !this.saving;
     },
     footText(){
       if (this.saving) return "正在保存…";
-      if (this.errs) return "✗ " + this.errs + " 处冲突 —— 把标红的地方改好才能保存";
+      // 上一次保存被打回留下的那些冲突（改的时候还留着，方便照着改；存成功就清掉）
+      if (this.errs) return "✗ " + this.errs + " 处冲突 —— 改好再点一次保存";
       if (this.changed.length){
-        return "改了 " + this.changed.length + " 项 · 保存后下一次启动 moss 生效"
+        return "改了 " + this.changed.length + " 项 · 点保存写入 config.toml（下次启动 moss 生效）"
                + (this.msg ? "（" + this.msg + "）" : "");
       }
       // ★ `V-164`：没改动不是状态、更不是错，什么都不显示（只留宿主顺带说的话）
@@ -714,7 +720,13 @@ const MossSettings = {
     },
     setVal(key, v){
       this.values[key] = v;
-      this.scheduleCheck();           // 防抖后问宿主一次（规则在那边）
+      /* ★ `V-275`（你定的）：**打字不再问宿主**。以前这里调 `scheduleCheck()` —— 停手 250ms
+         就去起一个 `moss.exe`（真机 ≈1 秒）只为标个红。现在改成：
+           · 有没有改动 = **纯前端**算（`changed` 比 values 和 orig）；
+           · 「保存」按钮亮不亮只看"改没改"（不看宿主回的 problems）；
+           · 校验留到**点保存那一次**（`--settings-set` 本来就一次往返，顺带把
+             problems / notes / live 一起带回来）—— 也就是"点下去才告诉你哪儿不行"。
+         代价：丢掉"边改边标红 + 组底部那段预览实时更新"（预览会标成"按已保存的值算的"）。 */
       this.$forceUpdate();
     },
     bump(key, d){
@@ -751,15 +763,23 @@ const MossSettings = {
       const r = await pywebview.api.settings_save(pairs);
       this.saving = false;
       const list = (r && r.problems) || [];
+      // ★ `V-275`：这一趟的返回里**还带着 notes / live**（宿主 `--settings-set` 是
+      //   `with_notes=True`）—— 存成功就直接用它们刷新，**不再多跑一趟 `--settings-check`**。
+      if (r && r.notes) this.notes = r.notes;
+      if (r && r.live) this.live = r.live;
       if (!r || !r.ok || list.some(p => p.level !== "warn")){
         this.problems = list.length ? list
           : [{key: "", why: (r && r.msg) || "宿主没说为什么", level: "error", also: []}];
         toast("没保存 —— 看标红的地方", true);
         return;
       }
+      // ★ `V-275`：成功也可能带着 warn（"提醒，不拦保存"）—— **留着**，不然那条提醒白算了。
+      this.problems = list;
       Object.keys(pairs).forEach(k => { this.orig[k] = this.values[k]; });
-      toast("已保存到 config.toml（下一次启动 moss 生效）");
-      this.close();
+      toast(list.length ? ("已保存（有 " + list.length + " 条提醒）")
+                        : "已保存到 config.toml（下一次启动 moss 生效）");
+      // ★ `V-275`：**不关面板** —— 按钮自己变灰（没有改动了）、提醒 / 预览留在眼前，
+      //   这就是你描述的那个状态："点保存 → 灰一下 → 干完回到没编辑过的样子"。
     },
 
     /* ---- hover 提示（`?` 上悬停）---- */

@@ -110,7 +110,6 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
 #:   我却拿"51 个场景 OK"当全绿报了好几轮。现在每次跑都会把它们点名打出来（`STALE`），
 #:   直到真去修掉为止 —— 不许再藏。
 KNOWN_STALE = {
-    "settings-bad": "期望「预览行变红」（要 host 给的 live 以 ⚠ 开头），假数据没跟上",
     "settings-tip": "直接调提示函数那条路：期望的返回值形状变了",
     "settings-ai": "编辑视图里找返回箭头的选择器过期（`#ai-back` 现在在，但取到的是别的东西）",
     "settings-ai-tpl": "预制卡片副标题早改成 `desc`（\"官方 API\"），场景还在找主机名 `api.deepseek.com`",
@@ -854,6 +853,7 @@ MOCK_JS = r"""
     },
     settings_save: async (pairs) => {
       M.saved = pairs;
+      M.saveN = (M.saveN || 0) + 1;          // `V-275`：点了几次保存（场景拿它断言"一次往返"）
       // 真宿主是"把这几项叠在当前文件上"再校验；这里叠在最后一次检查时的全量值上
       const merged = Object.assign({}, M.values || {}, pairs);
       const ck = await window.pywebview.api.settings_check(merged);
@@ -2060,7 +2060,9 @@ MOCK_JS = r"""
         await saveSettings();
         await sleep(500);
         const saved = M.saved || {};
-        const closedAfterSave = !document.querySelector("#settings").classList.contains("on");
+        // ★ `V-275`：保存成功后**面板不关**（以前是点了就关）—— 按钮自己变灰、提醒留在眼前
+        const stayedOpen = document.querySelector("#settings").classList.contains("on");
+        const greyAfterSave = document.querySelector("#set-save").disabled;
         await openSettings();                     // 再打开：留给截图看个完整的
         await sleep(700);
         const opened = document.querySelector("#settings").classList.contains("on");
@@ -2081,7 +2083,8 @@ MOCK_JS = r"""
         const ok = navs === 5 && panes === 5 && activePane.group === "快捷命令" &&
                    pane2.group === "执行提示" && switches === 7 && inputs === 4 &&
                    labels === 4 && infos === 4 && liveBox && hasX && disabledAtStart &&
-                   enabledAfter && /改了 1 项/.test(stateMoved) && closedAfterSave && opened &&
+                   enabledAfter && /改了 1 项/.test(stateMoved) && stayedOpen && greyAfterSave &&
+                   opened &&
                    Object.keys(saved).length === 1 && saved["symbols.no_chdir_mode"] === "@" &&
                    segOk;
         document.querySelector("#meta").textContent =
@@ -2089,12 +2092,14 @@ MOCK_JS = r"""
           " 首屏=" + activePane.group + " 次屏=" + pane2.group + " 开关=" + switches +
           " 输入=" + inputs + " 标签=" + labels + " ?=" + infos + " 预览行=" + (liveBox ? 1 : 0) +
           " ×=" + (hasX ? 1 : 0) + " 存了=" + JSON.stringify(saved) +
+          " 存后仍在面板=" + stayedOpen + " 存后按钮灰=" + greyAfterSave +
           " 路径段=" + segEls.length + " 拼回原样=" + (joined === rawPath);
         document.title = ok ? "READY" : ("SETTINGS-FAIL 分类=" + navs + " 面板=" + panes +
           " 首屏=" + activePane.group + " 次屏=" + pane2.group + " 开关=" + switches +
           " 输入=" + inputs + " 标签=" + labels + " ?=" + infos + " 预览=" + liveBox +
           " ×=" + hasX + " 起灰=" + disabledAtStart + " 改亮=" + enabledAfter +
-          " 挪=" + /改了 1 项/.test(stateMoved) + " 关=" + closedAfterSave + " 开=" + opened +
+          " 挪=" + /改了 1 项/.test(stateMoved) + " 留守=" + stayedOpen +
+          " 存后灰=" + greyAfterSave + " 开=" + opened +
           " 存=" + Object.keys(saved).length + " 值=" + saved["symbols.no_chdir_mode"] +
           " 段=" + segEls.length + " 拼=" + (joined === rawPath) + " 点段=" + (gotMid === wantMid));
       }
@@ -2394,15 +2399,22 @@ MOCK_JS = r"""
           " 项数=" + n;
         document.title = ok ? "READY" : ("PANE-FAIL " + (pane ? pane.dataset.group : "-"));
       }
-      // ★ 冲突那一路（`V-63` / `V-66`）：把「跑包」的前缀清空 ⇒ 和「路径调用」同时留空。
-      //   期望：那两项飘红 + 导航上"快捷命令"点一个小红点 + 脚上一句话 + **保存禁用**。
+      // ★ 冲突那一路（`V-63` / `V-66` / `V-275`）：把「跑包」的前缀清空 ⇒ 和「路径调用」同时留空。
+      //   新政策（`V-275`）下流程是：**改了就能点保存** → 点下去那一次往返把冲突带回来 →
+      //   两项飘红 + 导航小红点 + 脚上一句话 + **还能再点**（改好再保存，不再"禁用按钮"）。
+      //   ★ 预览行：真宿主的 `live` 不**以** ⚠ 开头（那句 ⚠ 在末尾），所以 `.set-live.bad`
+      //     这个红样式今天其实用不上 —— 这里只断言"预览里确实说了这句 ⚠"（真行为）。
       if (h === "settings-bad"){
               await openSettings();
         await sleep(700);
         const inp = document.querySelector(
           '#set-body .set-pane.on .set-field[data-key="symbols.plugin_mode"] .inp');
         if (inp){ inp.value = ""; inp.dispatchEvent(new Event("input", {bubbles: true})); }
-        await sleep(800);
+        await sleep(300);
+        const litAfterEdit = !document.querySelector("#set-save").disabled;
+        M.saveN = 0;
+        if (inp) await saveSettings();
+        await sleep(300);
         let redCount = 0, reason = "";
         document.querySelectorAll("#set-body .set-pane.on .set-item, #set-body .set-pane.on .set-field")
           .forEach(b => {
@@ -2411,21 +2423,25 @@ MOCK_JS = r"""
             if (w && w.textContent) reason += " " + w.textContent;
           });
         const dot = document.querySelector("#set-nav .set-navitem.has-bad");
-        const live = document.querySelector("#set-live");
-        const liveBad = !!live && live.classList.contains("bad");
+        const liveTxt = ((document.querySelector("#set-live") || {}).textContent || "");
+        const liveWarn = /⚠/.test(liveTxt);
         const st = (document.querySelector("#set-state") || {}).textContent || "";
-        const disabled = document.querySelector("#set-save").disabled;
-        const ok = redCount === 2 && /不能同时留空/.test(reason) && !!dot && liveBad &&
-                   /冲突/.test(st) && disabled;
+        const canRetry = !document.querySelector("#set-save").disabled;
+        const saveN = M.saveN || 0;
+        const ok = litAfterEdit && saveN === 1 && redCount === 2 && /不能同时留空/.test(reason) &&
+                   !!dot && liveWarn && /冲突/.test(st) && canRetry;
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 红了几项=" + redCount +
-          " 导航红点=" + (dot ? 1 : 0) + " 预览红=" + (liveBad ? 1 : 0) +
-          " 保存禁用=" + (disabled ? 1 : 0) + " 脚上=" + JSON.stringify(st.slice(0, 30));
+          "DIAG " + (ok ? "OK" : "FAIL") + " 改了就亮=" + litAfterEdit + " 保存往返=" + saveN +
+          " 红了几项=" + redCount + " 导航红点=" + (dot ? 1 : 0) +
+          " 预览里说了⚠=" + liveWarn + " 还能再点=" + canRetry +
+          " 脚上=" + JSON.stringify(st.slice(0, 30));
         document.title = ok ? "READY" : ("SETTINGS-BAD-FAIL 红=" + redCount +
-          " 点=" + (dot ? 1 : 0) + " 预览红=" + liveBad + " 禁=" + disabled +
-          " 脚=" + JSON.stringify(st.slice(0, 24)));
+          " 点=" + (dot ? 1 : 0) + " ⚠=" + (liveWarn ? 1 : 0) + " 再点=" + (canRetry ? 1 : 0) +
+          " 存=" + saveN + " 脚=" + JSON.stringify(st.slice(0, 24)));
       }
-      // ★ 提醒那一路（`V-63`）：只提醒、**不拦保存**（黄的不是红的）。
+      // ★ 提醒那一路（`V-63` / `V-275`）：只提醒、**不拦保存**（黄的不是红的）。
+      //   新政策下：改完 → 点保存 → 那一次往返把 warn 带回来 → 黄 + 导航黄点 +
+      //   按钮变灰（已保存、没改动了）—— 面板不关，提醒就留在眼前。
       if (h === "settings-warn"){
               await openSettings();
         await sleep(600);
@@ -2433,20 +2449,25 @@ MOCK_JS = r"""
         await sleep(300);
         const num = document.querySelector("#set-body .set-pane.on .step .num");
         if (num){ num.value = "8"; num.dispatchEvent(new Event("change", {bubbles: true})); }
-        await sleep(800);
+        await sleep(250);
+        const litAfterEdit = !document.querySelector("#set-save").disabled;
+        M.saveN = 0;
+        if (num) await saveSettings();
+        await sleep(300);
         const item = num ? num.closest(".set-field") : null;
         const yellow = !!item && item.classList.contains("warn");
-        const why = item ? (item.querySelector('[data-role="prob"]') || {}).textContent || "" : "";
+        const why = item ? ((item.querySelector('[data-role="prob"]') || {}).textContent || "") : "";
         const dot = document.querySelector("#set-nav .set-navitem.has-warn");
-        const st = (document.querySelector("#set-state") || {}).textContent || "";
-        const canSave = !document.querySelector("#set-save").disabled;
-        const ok = yellow && /提醒/.test(why) && !!dot && canSave && /改了 1 项/.test(st);
+        const greyAfter = document.querySelector("#set-save").disabled;
+        const saveN = M.saveN || 0;
+        const ok = litAfterEdit && saveN === 1 && yellow && /提醒/.test(why) && !!dot && greyAfter;
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 黄=" + (yellow ? 1 : 0) +
-          " 导航黄点=" + (dot ? 1 : 0) + " 能存=" + (canSave ? 1 : 0) +
-          " ｜" + JSON.stringify(why.slice(0, 30));
+          "DIAG " + (ok ? "OK" : "FAIL") + " 改了就亮=" + litAfterEdit + " 保存往返=" + saveN +
+          " 黄=" + (yellow ? 1 : 0) + " 导航黄点=" + (dot ? 1 : 0) +
+          " 存后按钮灰=" + greyAfter + " ｜" + JSON.stringify(why.slice(0, 30));
         document.title = ok ? "READY" : ("SETTINGS-WARN-FAIL 黄=" + yellow +
-          " 点=" + !!dot + " 能存=" + canSave + " 脚=" + JSON.stringify(st.slice(0, 20)));
+          " 点=" + !!dot + " 灰=" + greyAfter + " 存=" + saveN +
+          " 脚=" + JSON.stringify(why.slice(0, 20)));
       }
       // ★ 说明挂在 `?` 上（`V-66`）：把鼠标放到"向上查找层数"那个 `?` 上，看提示弹不弹。
       if (h === "settings-tip"){
@@ -3972,55 +3993,72 @@ MOCK_JS = r"""
       //   每一条我说的话，点其中某一条就快速定位到那一轮）。这条走真人那条路：
       //   进「AI」页 → 跑两轮（攒出两条"我说的话"）→ 按 Alt → 浮出那张表 →
       //   点第 1 条 → 那一轮**展开 + 闪一下**、面板收起；再按 Alt → 松开 Alt 自己收起来。
-      // ★ `V-274`：把"防抖到底防的是啥"用数字钉住 —— 在「路径调用」那个符号框里打字：
-      //     ① **连敲 10 下（每下 30ms）** ⇒ 只该问宿主 **1** 次（每敲一下都重置 250ms 定时器）；
-      //     ② **每敲一下停 400ms** ⇒ 问 **3** 次（每次停顿都真的发出去了）。
-      //   真机上"问一次"= 起一个 moss.exe ≈ 1 秒 ⇒ ①那种打法没有防抖就是 10 秒的进程风暴。
-      //   顺带钉住"回来了界面真标红"（`: ` 和「跑包」撞符号 ⇒ 两行都红 + 保存变灰）。
+      // ★ `V-275`（你定的方案）：**打字不校验，保存才校验**。这条场景把数字钉死：
+      //     ① 打开面板 = 问宿主 **1** 次（只为拿 notes / live）；
+      //     ② 连敲 10 下 = 问宿主 **0** 次（以前是 1 次，更早"没防抖"是 10 次）；
+      //     ③ 按钮：没改动=灰 → 改动=亮（**纯前端**）→ 点保存=灰（保存中）；
+      //     ④ 有冲突时点保存 ⇒ 那一次往返把 problems 带回来、标红，**面板不关**（改好再点）；
+      //     ⑤ 改好再点保存 ⇒ 成功、面板关掉、"原值"对齐（再打开就是干净的）。
       if (h === "set-debounce"){
         document.title = "DEB-NO-RUN";
         await openSettings();
         await sleep(700);
+        const app = settingsApp();
         const inp = document.querySelector('#set-body .set-pane.on .inp[data-key="symbols.path_mode"]');
-        if (!inp){ document.title = "DEB-ERR 没找到那个符号框"; return; }
-        const type = v => {
-          inp.value = v;
-          inp.dispatchEvent(new Event("input", {bubbles: true}));
-        };
-        M.chkN = 0; M.chkLog = [];
+        const saveBtn = () => document.querySelector("#set-save");
+        if (!inp || !saveBtn()){ document.title = "DEB-ERR 面板没出来"; return; }
+        const type = v => { inp.value = v; inp.dispatchEvent(new Event("input", {bubbles: true})); };
+        const openN = M.chkN || 0;                       // 打开面板那一次
+        const greyAtStart = saveBtn().disabled;          // 没改动 = 灰
         for (let i = 1; i <= 10; i++){ type(":".repeat(i)); await sleep(30); }   // 连敲 10 下
-        await sleep(700);                                                      // 等防抖那一下落地
-        const rapid = M.chkN;
-        M.chkN = 0; M.chkLog = [];
-        for (const v of ["x", "xy", "xyz"]){ type(v); await sleep(400); }        // 每下都停 400ms
-        await sleep(400);
-        const spaced = M.chkN;
-        // 界面这边真标红了吗（`:` 和「跑包」那个 `:` 撞了 —— 主行是 plugin_mode，
-        // path_mode 靠 `also` 一起红，这正是"两行一起红"那条规则的用处）
+        await sleep(700);                                // 等够"以前那个防抖"的时间
+        const typeN = (M.chkN || 0) - openN;             // 打字期间又问了宿主几次
+        await sleep(50);
+        const litAfterEdit = !saveBtn().disabled;        // 改了 = 亮（纯前端，没问宿主）
+        // ④ 有冲突（`:` 和「跑包」撞）时点保存：往返一次 → 标红、面板不关
         type(":");
-        await sleep(500);
-        const rowOf = k => document.querySelector('#set-body .set-field[data-key="' + k + '"]');
-        const rowA = rowOf("symbols.path_mode"), rowB = rowOf("symbols.plugin_mode");
-        const clsA = rowA ? rowA.className : "", clsB = rowB ? rowB.className : "";
-        const bothRed = /\bbad\b/.test(clsA) && /\bbad\b/.test(clsB);
-        const saveBtn = document.querySelector("#set-save");
-        const saveOff = !!saveBtn && saveBtn.disabled;
-        const probTxt = rowB ? ((rowB.querySelector(".set-prob") || {}).textContent || "") : "";
-        const shown = /用了同一个符号/.test(probTxt);
-        const ok = rapid === 1 && spaced === 3 && bothRed && saveOff && shown &&
+        await sleep(80);
+        M.saveN = 0;
+        saveBtn().click();
+        await sleep(600);
+        const saveN1 = M.saveN || 0;
+        const rowB = document.querySelector('#set-body .set-field[data-key="symbols.plugin_mode"]');
+        const redAfterFail = !!rowB && /\bbad\b/.test(rowB.className);
+        const stillOpen = !!(app && app.show);
+        const canRetry = !saveBtn().disabled;
+        // ⑤ 改好再点：成功、面板关掉（★ 换个**不撞**的符号，别改回 "" —— 那就等于没改动、
+        //   按钮会一直灰着，这一条就测不到了）
+        type("@");
+        await sleep(80);
+        M.saveN = 0;
+        saveBtn().click();
+        await sleep(700);
+        const saveN2 = M.saveN || 0;
+        // ★ `V-275`：保存成功后**面板不关**（以前点了就关）—— 按钮变灰 = "回到没编辑过的状态"
+        const stayedOpenOk = !!(app && app.show);
+        const greyAfterOk = saveBtn().disabled;
+        const savedPairs = M.saved || {};
+        const ok = openN === 1 && typeN === 0 && greyAtStart && litAfterEdit &&
+                   saveN1 === 1 && redAfterFail && stillOpen && canRetry &&
+                   saveN2 === 1 && stayedOpenOk && greyAfterOk &&
+                   Object.prototype.hasOwnProperty.call(savedPairs, "symbols.path_mode") &&
                    !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
-          "\n① 连敲 10 下（每下 30ms）⇒ 问宿主 " + rapid + " 次（要 1 —— 防抖把 10 下并成 1 下）" +
-          "\n② 每敲一下停 400ms ⇒ 问宿主 " + spaced + " 次（要 3 —— 每次停顿都真发出去了）" +
-          "\n③ 撞符号之后：「路径调用」class=" + JSON.stringify(clsA) +
-          " ·「跑包」class=" + JSON.stringify(clsB) + "（两行都要含 bad —— also 那条）" +
-          "\n   保存变灰 = " + saveOff + " · 主行那句话 = " + JSON.stringify(probTxt.slice(0, 40)) +
-          "\n（真机上每次 = 起一个 moss.exe ≈ 1 秒 ⇒ ①没有防抖就是 10 秒）" +
+          "\n① 打开面板 = 问宿主 " + openN + " 次（要 1 —— 拿 notes / live）" +
+          "\n② 连敲 10 下 = 问宿主 " + typeN + " 次（要 0 —— 打字不校验了；以前是 1，没防抖是 10）" +
+          "\n③ 按钮：开局灰 = " + greyAtStart + " · 改了变亮 = " + litAfterEdit + "（纯前端）" +
+          "\n④ 有冲突点保存：往返 " + saveN1 + " 次（要 1）· 标红 = " + redAfterFail +
+          " · 面板不关 = " + stillOpen + " · 还能再点 = " + canRetry +
+          "\n⑤ 改好再点保存：往返 " + saveN2 + " 次（要 1）· 面板仍在 = " + stayedOpenOk +
+          " · 按钮变灰 = " + greyAfterOk +
+          " · 送出去的 = " + JSON.stringify(savedPairs).slice(0, 60) +
           "\n页内错误 = " + (window.__errors || []).length;
         document.querySelector("#meta").className = "meta";
         document.title = ok ? "READY"
-          : ("DEB-FAIL 连敲=" + rapid + " 停顿=" + spaced + " 红=" + (bothRed ? 1 : 0) +
-             " 灰=" + (saveOff ? 1 : 0) + " 话=" + (shown ? 1 : 0));
+          : ("DEB-FAIL 开=" + openN + " 打字=" + typeN + " 灰=" + (greyAtStart ? 1 : 0) +
+             " 亮=" + (litAfterEdit ? 1 : 0) + " 存1=" + saveN1 + " 红=" + (redAfterFail ? 1 : 0) +
+             " 不关=" + (stillOpen ? 1 : 0) + " 再点=" + (canRetry ? 1 : 0) +
+             " 存2=" + saveN2 + " 留守=" + (stayedOpenOk ? 1 : 0) + " 灰=" + (greyAfterOk ? 1 : 0));
       }
       // ★ `V-272`：代码高亮改成"只画看得见的一屏"（`HL_PAD=60`），防抖删掉、改按帧合并。
       //   这条场景是**当场量**出来的，钉五件事：
