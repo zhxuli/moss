@@ -2,16 +2,16 @@
   "spec": 1,
   "id": "fanyi",
   "kind": "app",
-  "version": "1.0",
+  "version": "2.0",
   "name": {
     "zh-CN": "快捷翻译"
   },
   "desc": {
-    "zh-CN": "双击 Ctrl 翻译选中文字并自动粘贴（Google 翻译，带本地缓存）"
+    "zh-CN": "双击 Ctrl 翻译选中文字并自动粘贴（Google 翻译，带本地缓存）；也能内嵌进 moss 界面手动翻译"
   },
   "tags": [
     "翻译",
-    "热键",
+    "剪贴板",
     "gui"
   ],
   "aliases": [
@@ -45,5 +45,16 @@
   "ai": {
     "expose": false,
     "risk": "medium"
+  },
+  "docs": {
+    "agent": "AGENT.md"
+  },
+  "_uiWhy": "界面从 Tk 换成网页（ui/index.html，原生 JS + Mac 风格 Pro 稿），照 bmi 的样板：一份界面两种跑法 —— 内嵌进 moss 的「界面」选项卡（MOSS_UI_EMBED=1，stdio 上的 JSON 行），或 moss :fanyi 自己开窗（pywebview）。页面是热键的可视化台：四步进度条 + 焦点任务卡片 + 日志 + 历史，全由后端推来的 hotkey 事件驱动。业务（翻译 / 缓存 / 剪贴板 / 热键）全在 main.py。",
+  "_depsWhy": "自带运行时是隔离的，装不了第三方库 —— 原来的 googletrans / pyperclip / pynput 全换成标准库：urllib 调 Google 免费接口、ctypes 读写 Windows 剪贴板。全局「双击 Ctrl」热键照旧保留：用 ctypes 直接调 Windows 的 SetWindowsHookEx(WH_KEYBOARD_LL) 低级键盘钩子 + SendInput 模拟 Ctrl+A/X/V（等价于 pynput 干的活），所以 capabilities.hotkey 仍是 true。",
+  "ui": {
+    "embed": "ui/index.html",
+    "title": {
+      "zh-CN": "快捷翻译"
+    }
   }
 }

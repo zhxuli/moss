@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>快捷翻译工具 Pro</title>
+    <style>
+        /* 基础重置与 Mac 字体栈 */
+        :root {
+            --primary: #007aff;
+            --primary-light: #e5f1ff;
+            --success: #34c759;
+            --success-light: #e8f8ec;
+            --bg-page: #f5f5f7;
+            --bg-card: #ffffff;
+            --text-main: #1d1d1f;
+            --text-secondary: #515154;
+            --text-muted: #86868b;
+            --border-color: #e5e5ea;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-page);
+            color: var(--text-main);
+            display: flex; justify-content: center; align-items: center;
+            height: 100vh; -webkit-font-smoothing: antialiased; overflow: hidden;
+        }
+
+        /* 滚动条美化 */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.3); }
+
+        /* 主容器 —— 不限制最大尺寸：撑满可用宽高 */
+        .app-container {
+            width: 100%; height: 100%;
+            background: var(--bg-card);
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+
+        /* --- 顶部 Header --- */
+        .header {
+            flex: 0 0 auto;
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 16px 24px; border-bottom: 1px solid var(--border-color);
+            background: rgba(255, 255, 255, 0.9); z-index: 10;
+        }
+
+        .title-group { display: flex; align-items: center; gap: 10px; }
+        .title-group h1 { font-size: 18px; font-weight: 600; }
+        .control-group { display: flex; align-items: center; gap: 20px; }
+        .status { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; cursor: pointer; user-select: none; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; background-color: var(--text-muted); }
+        .status-dot.running { background-color: var(--success); box-shadow: 0 0 0 rgba(52, 199, 89, 0.4); animation: pulse-green 2s infinite; }
+        @keyframes pulse-green { 0% { box-shadow: 0 0 0 0 rgba(52,199,89,0.4); } 70% { box-shadow: 0 0 0 6px rgba(52,199,89,0); } 100% { box-shadow: 0 0 0 0 rgba(52,199,89,0); } }
+
+        /* --- 核心内容区：左右两栏 + 可拖动分隔线 --- */
+        .main-content {
+            display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden;
+        }
+
+        /* 左侧面板 */
+        .left-panel {
+            flex: 1 1 auto; min-width: 0; min-height: 0;
+            padding: 20px; display: flex; flex-direction: column; gap: 16px;
+            overflow-y: auto; background: #fafafc;
+        }
+
+        /* 可拖动的分隔线 */
+        .splitter {
+            flex: 0 0 6px; cursor: col-resize; position: relative;
+            background: #fafafc;
+        }
+        .splitter::after {
+            content: ''; position: absolute; top: 0; bottom: 0; left: 50%;
+            width: 1px; margin-left: -0.5px; background: var(--border-color);
+            transition: background .15s, width .15s;
+        }
+        .splitter:hover::after, .splitter.dragging::after {
+            background: var(--primary); width: 2px; margin-left: -1px;
+        }
+
+        /* 焦点任务卡片 */
+        .focus-card {
+            background: var(--bg-card); border-radius: 16px; padding: 18px 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.03), inset 0 4px 0 var(--primary);
+            display: flex; flex-direction: column; gap: 14px;
+            flex: 1 1 auto; min-height: 0;
+        }
+
+        .card-header {
+            flex: 0 0 auto;
+            display: flex; justify-content: space-between; align-items: center;
+            font-size: 13px; font-weight: 600; color: var(--text-secondary);
+        }
+
+        /* 微型进度条 (Mini-Stepper) */
+        .mini-stepper {
+            flex: 0 0 auto;
+            display: flex; align-items: center; justify-content: space-between;
+            background: var(--bg-page); padding: 8px 16px; border-radius: 10px;
+            font-size: 13px; font-weight: 500; border: 1px solid var(--border-color);
+        }
+
+        .step-item {
+            display: flex; align-items: center; gap: 6px; color: var(--text-muted);
+            transition: all 0.3s ease; white-space: nowrap;
+        }
+        .step-icon {
+            display: flex; justify-content: center; align-items: center;
+            width: 20px; height: 20px; border-radius: 50%; font-size: 11px;
+            background: #e5e5ea; color: #fff; font-weight: bold;
+        }
+
+        .step-item.active { color: var(--primary); font-weight: 600; }
+        .step-item.active .step-icon { background: var(--primary); box-shadow: 0 0 0 3px rgba(0,122,255,0.15); }
+        .step-item.done { color: var(--success); }
+        .step-item.done .step-icon { background: var(--success); }
+
+        .step-divider { flex: 1; height: 2px; background: #e5e5ea; margin: 0 10px; border-radius: 1px; transition: 0.3s; min-width: 8px; }
+        .step-divider.done { background: var(--success); }
+
+        /* 文本展示区 —— ★ 最小高度调小/去掉，随容器伸缩 */
+        .text-box {
+            font-size: 15px; line-height: 1.6; color: var(--text-main);
+            padding: 12px 14px; border-radius: 8px;
+            flex: 1 1 0; min-height: 44px;
+            overflow-y: auto; word-break: break-word;
+        }
+        .text-box.source { background: var(--bg-page); border: 1px solid transparent; }
+        .text-box.target { background: var(--primary-light); color: #004085; font-weight: 500; border: 1px solid rgba(0,122,255,0.1); }
+        .empty-hint { color: var(--text-muted); font-style: italic; font-size: 14px; padding: 4px 0; }
+
+        /* 骨架屏加载动画 */
+        .skeleton-text {
+            height: 18px; background: linear-gradient(90deg, #d1d1d6 25%, #e5e5ea 50%, #d1d1d6 75%);
+            background-size: 200% 100%; animation: skeleton-loading 1.5s infinite;
+            border-radius: 4px; margin-bottom: 8px; width: 90%;
+        }
+        .skeleton-text.short { width: 60%; }
+        @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+        /* --- 底部日志 footer：透明底 + 深色字；默认只有 1 行高，悬停展开可滚动 --- */
+        .footer-log {
+            flex: 0 0 auto; height: 31px; overflow: hidden;
+            background: transparent; color: var(--text-secondary);
+            font-family: "SF Mono", "Consolas", monospace; font-size: 12px; line-height: 19px;
+            padding: 6px 16px; border-top: 1px solid var(--border-color);
+        }
+        .footer-log:hover { height: auto; max-height: 42vh; overflow-y: auto; }
+        .log-line { color: var(--text-secondary); margin-bottom: 2px; word-break: break-all; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+        .tag { font-weight: 600; color: var(--text-main); }
+
+        /* --- 右侧历史记录 --- */
+        .right-panel {
+            flex: 0 0 320px; min-width: 0; min-height: 0;
+            background: var(--bg-card); display: flex; flex-direction: column; overflow: hidden;
+        }
+        .history-header {
+            flex: 0 0 auto;
+            padding: 18px 20px 12px; font-size: 14px; font-weight: 600; color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-color);
+        }
+        .history-list {
+            flex: 1 1 auto; min-height: 0; padding: 16px 20px;
+            overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
+        }
+        .history-item { background: var(--bg-page); padding: 12px; border-radius: 10px; border: 1px solid transparent; transition: all 0.2s; animation: slideDown 0.4s ease forwards; cursor: pointer; }
+        .history-item:hover { border-color: #d1d1d6; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        .history-source { font-size: 13px; color: var(--text-muted); margin-bottom: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+        .history-target { font-size: 14px; color: var(--text-main); font-weight: 500; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+        kbd { background: #fff; border: 1px solid #d1d1d6; border-radius: 4px; box-shadow: 0 1px 1px rgba(0,0,0,0.1); font-size: 12px; padding: 2px 5px; font-family: inherit;}
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <header class="header">
+        <div class="title-group">
+            <h1>⚡ 快捷翻译工具</h1>
+        </div>
+        <div class="control-group">
+            <span style="font-size: 13px; color: var(--text-muted);">操作: 双击 <kbd>Ctrl</kbd></span>
+            <div class="status" id="status" title="点击启动 / 停止监听">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText" style="font-weight: 600; color: var(--text-muted);">已停止</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="main-content">
+        <!-- 左侧：焦点卡片 -->
+        <div class="left-panel">
+            <div class="focus-card">
+                <div class="card-header">
+                    <span>🎯 焦点任务 (实时)</span>
+                    <span id="lang-indicator" style="color: var(--text-muted); font-weight: normal; font-size: 12px; background: var(--bg-page); padding: 4px 8px; border-radius: 6px;">自动检测 &rarr; 英文</span>
+                </div>
+
+                <!-- 微型进度条 -->
+                <div class="mini-stepper" id="stepper">
+                    <div class="step-item" id="step-1"><div class="step-icon">1</div>提取文本</div>
+                    <div class="step-divider" id="div-1"></div>
+                    <div class="step-item" id="step-2"><div class="step-icon">2</div>网络翻译</div>
+                    <div class="step-divider" id="div-2"></div>
+                    <div class="step-item" id="step-3"><div class="step-icon">3</div>回填剪贴</div>
+                    <div class="step-divider" id="div-3"></div>
+                    <div class="step-item" id="step-4"><div class="step-icon">4</div>完成</div>
+                </div>
+
+                <!-- 文本展示区 (随容器伸缩) -->
+                <div id="source-box" class="text-box source">
+                    <div class="empty-hint">请选中文本后双击 Ctrl 键，等待任务触发...</div>
+                </div>
+
+                <div id="target-box" class="text-box target" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- 可拖动分隔线 -->
+        <div class="splitter" id="splitter" title="拖动调整左右宽度"></div>
+
+        <!-- 右侧：历史记录 -->
+        <div class="right-panel" id="right-panel">
+            <div class="history-header" id="history-header">历史记录 (近50条)</div>
+            <div class="history-list" id="history-list">
+                <!-- 历史项由 app.js 填充 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 底部日志 footer（默认 1 行高，移上去展开） -->
+    <div class="footer-log" id="console">
+        <div class="log-line"><span class="tag sys">[SYS]</span> 界面初始化完毕，等待操作...</div>
+    </div>
+</div>
+
+<script src="moss-embed.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

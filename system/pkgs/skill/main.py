@@ -11,7 +11,6 @@
   moss :skill plan <id>          看"转成插件"会有什么问题（id 会不会撞）
   moss :skill promote <id> [新id] 真的转成插件（去掉 `--` 搬进 user_data/pkgs）
   moss :skill run <id>           在这儿试跑一次
-  moss :skill seed               把出厂样例（`--shot`）补回来
 
 技能本体在**这个插件的数据目录**里（`user_data/state/skill/<--名字>/`，跟 exec 把命令放
 `state/exec/cmds/` 一个道理）；每个技能是一个目录（`pkg.json` + 入口 + `icon.svg`）——

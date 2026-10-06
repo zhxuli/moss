@@ -326,6 +326,11 @@ _pkg_hidden = {}         # 包 id -> [被藏起来的窗口句柄]（显示时�
 #:   的那套。**切走选项卡不会碰它**（这就是你要的"切走还在后台跑"）。
 EMBED = {}
 EMBED_LOCK = threading.Lock()
+#: 被「停止」**主动杀掉**的内嵌后端（`V-297`）：proc 对象集合。
+#: ★ 界面点「停止」时，`embed_stop` 先往这里记一笔；`_pump_embed` 收尾看到它，
+#:   就**不再**发 `__mossEmbedGone`（那会再弹一句"内嵌进程结束了（退出码 1）"）——
+#:   强杀必然是非 0，界面那边已经弹过「已停掉…」了，两个提示是重复的。
+EMBED_STOPPED = set()
 
 #: 这个界面服务**不许发**的路径（相对安装根，`V-170`）。
 #: ★ 为什么：服务的根是整个安装根，而界面真正需要的只有 `system/ui/**` 和自包含页面 ——
@@ -1259,6 +1264,11 @@ def _pump_embed(pid, proc):
         with EMBED_LOCK:
             if EMBED.get(pid, {}).get("proc") is proc:
                 EMBED.pop(pid, None)
+            was_stopped = proc in EMBED_STOPPED      # 是界面点「停止」杀掉的？
+            EMBED_STOPPED.discard(proc)
+        if was_stopped:
+            # ★ `V-297`：主动停掉的**不再报**"结束了（退出码 1）" —— 界面已经弹过「已停掉…」了。
+            return
         try:
             _js(_float_win(pid) or window,          # `V-192`：帧在浮动窗口里就送给它
                 "window.__mossEmbedGone(%s, %s)" % (json.dumps(pid), json.dumps(code)))
@@ -2394,7 +2404,7 @@ class Api:
                     "skills": [], "from_pkgs": [], "broken": [], "dirs": {}}
 
     def ai_skill_allow(self, sid="", yes=True):
-        """允许 / 撤销一只技能（出厂样例播种来的也算你的，能撤销）。"""
+        """允许 / 撤销一只技能（从样例抄来的也算你的，能撤销）。"""
         try:
             return self._skill_lib().allow(sid, bool(yes))
         except Exception as e:                                          # noqa: BLE001
@@ -3441,9 +3451,14 @@ class Api:
             rec = EMBED.get(pid)
         if not rec:
             return {"ok": False, "msg": "这个包没在内嵌运行"}
-        _kill_tree(rec["proc"].pid)          # 连子孙一起（包可能自己又起了进程）
+        proc = rec["proc"]
+        with EMBED_LOCK:
+            # ★ `V-297`：先记一笔"这是我们停的"，`_pump_embed` 收尾就**别**再弹
+            #   "内嵌进程结束了（退出码 1）"（强杀必然非 0，那个提示是重复的）。
+            EMBED_STOPPED.add(proc)
+        _kill_tree(proc.pid)                 # 连子孙一起（包可能自己又起了进程）
         try:
-            rec["proc"].kill()
+            proc.kill()
         except Exception:                                            # noqa: BLE001
             pass
         with EMBED_LOCK:

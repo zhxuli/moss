@@ -13,7 +13,6 @@
 界面那一侧（`ui/app.js`）只认这几个方法，所以这里的方法名就是界面协议。
 """
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -40,7 +39,7 @@ HELP = """技能（AI 给自己造的能力）—— 用法
                                   没有的话就把 pkg.json 的要点和文件清单列出来）
   moss :skill run <名字> [k=v …]  跑一次（参数用 k=v；值里有空格就整体加引号）
   moss :skill allow <名字>        允许 AI 用它        moss :skill revoke <名字>  撤销
-  moss :skill rm <名字>           删掉它（整个目录）   moss :skill seed           补回出厂样例
+  moss :skill rm <名字>           删掉它（整个目录）
   moss :skill plan <名字> [新id]  看"转成插件"会不会撞 id
   moss :skill promote <名字> [新id]  真转成插件（搬进 user_data/pkgs，从此是普通插件）
 
@@ -71,7 +70,11 @@ class Api:
 
     # ---------------------------------------------------------------- 读
     def list(self, params=None):
-        """图标墙要的一切：**只有技能**（`V-284`：插件不出现在这一页）。"""
+        """墙要的一切：**只有技能**（`V-284`：插件不出现在这一页）。
+
+        界面 `load()`（启动和点「重试」都走它）发来的 `list` 最后落到这儿，
+        查找本体是 `S.summary()`（扫技能目录）。
+        """
         got = S.summary()
         for r in got["skills"]:
             r["files_h"] = "%d 个文件 · %s" % (
@@ -116,6 +119,29 @@ class Api:
             return {"ok": False, "msg": "打不开：%s" % e}
         return {"ok": True, "msg": "打开了：%s" % d}
 
+    def sys_copy(self, params=None):
+        """把一段文字放进剪贴板（界面上点"复制路径"用它）。
+
+        ★ 为什么后端也要有一份：**独立窗口**（pywebview 的 WebView2）里
+          `navigator.clipboard` 在非安全上下文下常常是不给的，而 tkinter 那条路
+          一直通 —— 界面那边是"三条路依次退"（见 `ui/src/api.js` 的 `copy`），
+          这里是最靠得住的那一条。
+        """
+        text = str((params or {}).get("text") or "")
+        if not text:
+            return {"ok": False, "msg": "没有要复制的内容"}
+        try:
+            import tkinter                                                   # noqa: PLC0415
+            r = tkinter.Tk()
+            r.withdraw()
+            r.clipboard_clear()
+            r.clipboard_append(text)
+            r.update()
+            r.destroy()
+        except Exception as e:                                               # noqa: BLE001
+            return {"ok": False, "msg": "复制失败：%s: %s" % (type(e).__name__, e)}
+        return {"ok": True, "msg": "已复制"}
+
     def run_once(self, params=None):
         """在这儿**试跑一次**（跟 AI 调它走的是同一条路：stdin JSON → stdout）。
 
@@ -143,12 +169,6 @@ class Api:
         p = dict(params or {})
         return S.promote(str(p.get("id") or ""), bool(p.get("confirm")),
                          str(p.get("new_id") or ""))
-
-    def seed(self, params=None):
-        """把出厂样例补回来（你删了 `--shot` 之后想要它，点这个）。"""
-        made = S.ensure_seed()
-        return {"ok": True, "made": made,
-                "msg": ("补回来了：%s" % "、".join(made)) if made else "出厂样例都在，不用补"}
 
     # ---------------------------------------------------------------- 命令行那边共用的
     def cli(self, args):
@@ -196,9 +216,6 @@ class Api:
             if p["problems"]:
                 return 1, "不能转：%s" % "；".join(p["problems"])
             return 0, "可以转：%s → %s（搬去 %s）" % (p["id"], p["new_id"], p["dir_to"])
-        if verb == "seed":
-            made = S.ensure_seed()
-            return 0, ("补回来了：%s" % "、".join(made)) if made else "出厂样例都在，不用补"
         if verb in ("run", "try") and rest:
             got = S.list_skills().get(rest[0])
             if not got:

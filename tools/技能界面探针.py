@@ -90,15 +90,23 @@ function PAYLOAD(){ return {ok: true, n_usable: 2, n_pending: 1, dir: "X",
 window.pywebview = {api: {
 """ + api_list + """
   read: async () => ({ok: true, text: {}}), allow: async () => ({ok: true, msg: "ok"}),
-  rm: async () => ({ok: true, msg: "ok"}), seed: async () => ({ok: true, msg: "ok"}),
+  rm: async () => ({ok: true, msg: "ok"}),
   reveal: async () => ({ok: true, msg: "ok"}), plan: async () => ({ok: true}),
-  promote: async () => ({ok: true, msg: "ok"}), run_once: async () => ({ok: true, msg: "ok"})}};
+  promote: async () => ({ok: true, msg: "ok"}), run_once: async () => ({ok: true, msg: "ok"}),
+  sys_copy: async () => ({ok: true, msg: "ok"})}};
 </script>
 """)
 
 
 def judge_script():
-    """页面跑起来之后把结论写进 `document.title`（探针靠它判，截图看不出来）。"""
+    """页面跑起来之后把结论写进 `document.title`（探针靠它判，截图看不出来）。
+
+    ★ `V-289`：详情那一块从"居中弹窗"改成了**从右边滑进来的抽屉**（还是模态：有遮罩、
+      点遮罩 / Esc / ✕ 都能关）。判据跟着换成抽屉的标记：
+        `modal` = 遮罩在 + 抽屉在（`role="dialog"` + `aria-modal="true"`）；
+        `card`  = 抽屉里的键值区（`.kv`）画出来了；
+        `closed`= 点 `#d-x` 之后抽屉**真的没了**（`v-if` 拆掉）。
+    """
     return """<script>
 (function(){
   var n = 0;
@@ -107,20 +115,20 @@ def judge_script():
     var first = document.querySelector(".tile");
     if (first) first.click();
     setTimeout(function(){
-      var d = document.querySelector("#detail");
-      var modal = !!d && !d.hidden && d.classList.contains("modal");
-      var card = !!document.querySelector("#detail-card .kv");
+      var dr = document.querySelector(".drawer[role=dialog][aria-modal=true]");
+      var scrim = document.querySelector(".scrim");
+      var modal = !!dr && !!scrim;
+      var card = !!document.querySelector(".drawer .kv");
       var docBtn = !!document.querySelector("#d-doc");
       var x = document.querySelector("#d-x");
       if (x) x.click();
       setTimeout(function(){
-        var closed = !!document.querySelector("#detail") &&
-                     document.querySelector("#detail").hidden;
+        var closed = !document.querySelector(".drawer");
         document.title = "SKILL-OK tiles=" + names.length + " names=" + names.join(",") +
           " scared=" + (window.__scared ? 1 : 0) +
           " modal=" + (modal ? 1 : 0) + " card=" + (card ? 1 : 0) +
           " doc=" + (docBtn ? 1 : 0) + " closed=" + (closed ? 1 : 0);
-      }, 120);
+      }, 260);
     }, 250);
   }
   var t = setInterval(function(){
@@ -128,10 +136,17 @@ def judge_script():
     var tiles = document.querySelectorAll(".tile").length;
     names = Array.prototype.map.call(document.querySelectorAll(".tile .nm"),
                                      function(e){ return (e.textContent || "").trim(); });
-    var sub = ((document.querySelector("#sub") || {}).textContent || "");
+    /* ★ `V-289`：这一段要读**活 DOM**（querySelector），不能读页面 dump 的字符串 ——
+       模板就在 `#app` 里面，"编译之前"那一瞬 `textContent` 里是带花括号的原文，
+       正则一撞上就误判成"页面有问题"。另外给 3 秒宽限：桥晚到 / 第一次调用丢了
+       都要时间自己缓过来，"读不出来"这三个字**不能一出现就结案**。 */
+    var el = document.querySelector("#status");
+    var sub = el ? (el.textContent || "") : "";
     if (/读不出来/.test(sub)) window.__scared = 1;
     if (tiles > 0){ clearInterval(t); step2(); }
-    else if (/读不出来|后端没上来/.test(sub)){ clearInterval(t); document.title = "SKILL-NOBACKEND"; }
+    else if (n > 60 && /读不出来|后端没上来/.test(sub)){
+      clearInterval(t); document.title = "SKILL-NOBACKEND";
+    }
     else if (n > 600){ clearInterval(t); document.title = "SKILL-STUCK sub=" + sub.slice(0, 30); }
   }, 50);
 })();
@@ -140,7 +155,11 @@ def judge_script():
 
 
 def build(case, tmp):
-    """造一份现场：`case` = A（桥先说）/ B（没桥）/ C（桥晚到）。回 index.html 的路径。"""
+    """造一份现场：`case` = A（桥先说）/ B（没桥）/ C（桥晚到）。回 index.html 的路径。
+
+    ★ `V-289`：`ui/` 拆成了 `ui/src/**`（Vue 3 那几个文件）+ `ui/style/*.css`，
+      所以这里**整份 `ui/` 递归拷过来**（以前是写死一串文件名 —— 加一个文件就漏一个）。
+    """
     page = (UI / "index.html").read_text(encoding="utf-8")
     inject = ""
     if case == "A":
@@ -174,19 +193,22 @@ setTimeout(function(){
     page = page.replace("</body>", judge_script() + "</body>", 1)
     d = tmp / case
     d.mkdir(parents=True, exist_ok=True)
-    for f in ("moss-embed.js", "app.js", "style.css"):
-        shutil.copy(str(UI / f), str(d / f))
+    shutil.copytree(str(UI), str(d), dirs_exist_ok=True)
     (d / "index.html").write_text(page, encoding="utf-8", newline="")
     return d / "index.html"
 
 
 def sub_text(dom):
-    """把 `#sub` 那一段的**文字**抠出来。
+    """把状态字那一段（`#status`）的**文字**抠出来。
 
     ★ 为什么要单独抠：整个 DOM 里也含**探针自己注入的那段脚本源码**（里面有"读不出来"
       这几个字）—— 拿"整页里有没有这几个字"当判据会自己骗自己（第一版就这么假红了一条）。
+    ★ `V-289` 又加一道：**先去掉所有 script/style 块**。页面的模板就写在 HTML 里，
+      页面 dump 出来的字符串会带上"模板原文"（`v-if` / 花括号都在），而模板里也含
+      `id="status"` 那几个字 —— 不去掉的话，正则先撞上原文，判据就飘了。
     """
-    m = re.search(r'id="sub"[^>]*>(.*?)</p>', dom or "", re.S)
+    stripped = re.sub(r"(?s)<script\b.*?</script>|<style\b.*?</style>", " ", dom or "")
+    m = re.search(r'id="status"[^>]*>(.*?)</p>', stripped, re.S)
     if not m:
         return ""
     return re.sub(r"<[^>]+>", "", m.group(1)).strip()
@@ -228,7 +250,7 @@ def main():
     ta, doma = title_of(exe, ua, tmp, "a")
     chk("A ★★ 这种现场下**要能起来**（墙上出图标）—— 这就是「永远正在读」的根因",
         ta.startswith("SKILL-OK") and 'class="tile' in doma, ta)
-    chk("A ★★ 详情是**模态框**（点一格 → 弹出 → ✕ 关得掉）",
+    chk("A ★★ 详情是**模态抽屉**（点一格 → 滑出来 → ✕ 关得掉）",
         "modal=1" in ta and "card=1" in ta and "closed=1" in ta, ta)
     chk("A ★ 详情里有「看说明」那颗按钮（`doc` = 这只技能自己的 AGENT.md）",
         "doc=1" in ta, ta)

@@ -14,6 +14,14 @@
      · 独立窗口（包自己开的 pywebview）→ 直接走 `window.pywebview.api.<方法>`，
        事件则靠后端调 `window.moss.__emit(name, data)` 送进来。
 
+   ★★ `ready` 是**粘的**（`V-287`，这一条踩过，会让人看见"永远正在读"）：
+     这一枪**打得很早** —— 内嵌时就在本文件这一句上（`setTimeout(0)`，那一刻解析器正等着取
+     `app.js`，取的时候事件循环是转着的，所以它**先跑掉了**）；独立窗口时挂在 `pywebviewready`
+     上，而那个事件**只发一次**。而订阅它的 `app.js` 往往**晚一步**才执行 ⇒ 早打的那一枪没人接、
+     页面就永远停在"正在读……"（后端和桥其实一直是好的，手点一下「重试」就马上好）。
+     所以：`ready` 一发就记下来（`moss.ready`），**晚订阅的人补一枪**。别的（time / drop /
+     visible …）都是会重复发生的事，照旧不粘。
+
    ★ 还顺手把 `window.pywebview.api` 也垫出来了 —— 老包（img / exec 那种）直接写
      `window.pywebview.api.xxx()` 的，被内嵌时**一行都不用改**。
    ============================================================================ */
@@ -24,11 +32,22 @@
   const handlers = {};          // 事件名 -> [fn]
   const waiting = {};           // 请求 id -> {resolve, reject}
   let seq = 0;
+  let readyFired = false;       // `ready` 打过没有
+  let readyInfo = null;         // 打过的那个 payload（晚订阅的人照着补）
 
   function fire(name, data) {
     (handlers[name] || []).forEach(function (fn) {
       try { fn(data); } catch (e) { console.error('[moss] 事件处理出错', name, e); }
     });
+  }
+
+  /* `ready` 只许打一次，而且打过就记住（★ 粘的，见文件顶上那段） */
+  function markReady(info) {
+    if (readyFired) return;
+    readyFired = true;
+    readyInfo = info || { embedded: EMBEDDED };
+    moss.ready = true;
+    fire('ready', readyInfo);
   }
 
   /* ---------------------------------------------------------------- 事件
@@ -42,8 +61,16 @@
        time 等  后端自己推的业务事件（示例：Python 推的时间） */
   const moss = {
     env: { embedded: EMBEDDED },
+    ready: false,               // ★ 页面就绪了没有（晚订阅 / 不订阅的人读这个）
     on: function (name, fn) {
       (handlers[name] = handlers[name] || []).push(fn);
+      /* ★ `ready` 已经打过了 ⇒ **补一枪**（异步补，跟真事件一个节奏）。
+         没有这一句，"订阅晚了"就是"永远收不到" —— 页面永远停在"正在读"。 */
+      if (name === 'ready' && readyFired) {
+        setTimeout(function () {
+          try { fn(readyInfo); } catch (e) { console.error('[moss] ready 补枪出错', e); }
+        }, 0);
+      }
       return function () { moss.off(name, fn); };
     },
     off: function (name, fn) {
@@ -138,12 +165,14 @@
   /* 独立窗口里，后端要发事件就调 window.moss.__emit(...) —— 在这边把 pywebview 的
      就绪事件也转成统一的 ready，让界面只写一次初始化。 */
   window.addEventListener('pywebviewready', function () {
-    if (!EMBEDDED) fire('ready', { embedded: false });
+    if (!EMBEDDED) markReady({ embedded: false });
   }, { once: true });
 
   if (EMBEDDED) {
     // 内嵌：告诉宿主"我这边准备好了"（宿主会把它当成"可以开始派活了"）
     window.parent.postMessage({ moss: 1, kind: 'ready' }, '*');
-    setTimeout(function () { fire('ready', { embedded: true }); }, 0);
+    // ★ 这一枪**早得离谱**（此刻解析器正等着取 app.js）—— 所以 `markReady` 要记住它，
+    //   晚一步订阅的 `app.js` 才收得到（`V-287`）。
+    setTimeout(function () { markReady({ embedded: true }); }, 0);
   }
 })();

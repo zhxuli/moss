@@ -618,6 +618,7 @@ const MossFilePage = {
     <textarea spellcheck="false" wrap="off" ref="ta" :readonly="!!t.binary"
               :value="t.text" @input="onInput" @scroll="onScroll"
               @keydown="onKeydown"></textarea>
+    <div class="gutter" ref="gutter" aria-hidden="true"></div>
   </div>
 </div>`,
   data(){
@@ -683,6 +684,27 @@ const MossFilePage = {
       if (!code) return;
       window.__hlWin = this.hlWindow();          // 探针的把手：这次用的是哪个窗口
       paintHl(this.t, code, window.__hlWin);
+      this.paintGutter();                        // 行号跟高亮层一起重画
+    },
+    /* 左侧行号：行数 = 文本的行数（`wrap="off"` ⇒ 逻辑行 = 视觉行，1:1 对齐）。
+       只在行数变了才重铺；铺完立刻跟 textarea 对一次滚动位置。 */
+    paintGutter(){
+      const g = this.$refs.gutter;
+      if (!g) return;
+      const text = this.t.text || "";
+      const n = text.length ? text.split("\n").length : 1;
+      if (this._gn !== n){
+        this._gn = n;
+        let s = "";
+        for (let i = 1; i <= n; i++) s += i + "\n";
+        g.textContent = s;
+      }
+      this.syncGutter();
+    },
+    /* 行号和输入层是两层，纵向滚动得手动同步（横向不动 —— 行号永远贴在左边） */
+    syncGutter(){
+      const g = this.$refs.gutter, ta = this.$refs.ta;
+      if (g && ta) g.scrollTop = ta.scrollTop || 0;
     },
     onInput(ev){
       this.t.text = ev.target.value;
@@ -692,6 +714,7 @@ const MossFilePage = {
       // 高亮层和输入层是**两张叠在一起的层**，滚动得手动同步（原来也这样）
       const pre = this.$refs.pre, ta = this.$refs.ta;
       pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft;
+      this.syncGutter();                              // 行号立刻跟上，别等下一帧
       // ★ `V-272`：窗口只画了"视口 ± 60 行" —— 滚出去了得把那几行补上色（按帧合并）
       this.scheduleHl();
     },

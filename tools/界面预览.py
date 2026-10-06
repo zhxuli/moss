@@ -100,7 +100,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "settings-ai", "settings-ai-tpl", "settings-ai-new", "settings-ai-empty",
           "hist", "hist-console", "hist-file",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
-          "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "detail-fill", "ai-pane", "snap-by",
+          "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "fanyi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
           "ai-turn-edit", "ai-self-tools",
           "hl-window", "set-debounce"]
@@ -687,6 +687,32 @@ MOCK_JS = r"""
       const reply = (result) => window.__mossEmbedFromBackend(pid, JSON.stringify(
         {id: req.id, ok: true, result: result}));
       const d = new Date();
+      // ---- fanyi（快捷翻译）：内嵌时页面 onMounted 先问 targets / info / cache_info；
+      //      这几个名字**和别的包撞车**（path 也有 info），所以按 pid 单独拦在最前面。
+      if (pid === "fanyi") {
+        if (req.method === "targets") reply({ok: true, default: "auto", targets: [
+          {value: "auto", label: "自动（中↔英）"}, {value: "zh-CN", label: "中文（简体）"},
+          {value: "en", label: "English"}]});
+        else if (req.method === "info") reply({ok: true, pid: 4242, python: "3.12（预览）",
+          cwd: "(预览)", embedded: true, data_dir: "(预览) state/fanyi",
+          cache_path: "(预览) state/fanyi/cache/translation_cache.jsonl",
+          cache_count: 1, who: "(预览) 假后端"});
+        else if (req.method === "cache_info") reply({ok: true, count: 1, path: "(预览)",
+          dir: "(预览)", who: "(预览) 假后端",
+          history: [{src: "hello", dst: "你好", target: "zh-CN", at: "2026-10-06 10:00:00"}]});
+        else if (req.method === "translate") reply({ok: true, source: "en", target: "zh-CN",
+          original: (req.params || {}).text || "", translated: "（预览）你好世界",
+          cached: false, at: "2026-10-06 10:00:00", who: "(预览) 假后端"});
+        else if (req.method === "read_clipboard") reply({ok: true, text: "（预览）剪贴板文字"});
+        else if (req.method === "copy") reply({ok: true, why: ""});
+        else if (req.method === "cache_clear") reply({ok: true, removed: 1, count: 0});
+        else if (req.method === "history") reply({ok: true, items: []});
+        else if (req.method === "hotkey_status") reply({ok: true, running: false});
+        else if (req.method === "hotkey_start") reply({ok: true, running: true, msg: "已启动"});
+        else if (req.method === "hotkey_stop") reply({ok: true, running: false, msg: "已停止"});
+        else reply(null);
+        return {ok: true};
+      }
       // ---- img 那个包（`V-225`）：内嵌界面的假后端（bootstrap / scan / 拖放）
       const IMG_SCAN = {ok: true, dir: "(预览)", count: 0, exts: [], files: [], message: ""};
       const IMG_BOOT = {
@@ -3708,6 +3734,41 @@ MOCK_JS = r"""
                             : ("DAZIUI-FAIL 声明=" + (hasEmbed ? 1 : 0) + " 选项卡=" + (tabShown ? 1 : 0) +
                                " iframe=" + (frame ? 1 : 0) + " 地址=" + (srcOk ? 1 : 0) +
                                " bootstrap=" + (booted ? 1 : 0) + " 错=" + (window.__errors || []).length);
+      }
+      // ★ fanyi（快捷翻译）：和 exec / img / dazi 同一条链 —— 选中 → 「界面」选项卡 →
+      //   起后端 → iframe 加载**真的那一页**（Vue 全局版 + 垫片）→ 垫片 postMessage →
+      //   宿主 embed_send → 后端答话。页面 onMounted 会先问 `targets` / `info` /
+      //   `cache_info`，看到这几条就说明这一页真的转起来了。
+      //   （页面自己的渲染归 tools/包界面检查.py；后端协议归 main.py 的内嵌探针。）
+      if (h === "fanyi-ui"){
+        const p0 = state.packages.find(x => x.id === "fanyi");
+        if (!p0){ document.title = "NO-FANYI-PKG"; return; }
+        const hasEmbed = !!(p0.ui && p0.ui.embed);
+        select("fanyi");
+        await sleep(400);
+        const tabBtn = document.querySelector('.tab[data-tab="embed"]');
+        const tabShown = !!(tabBtn && !tabBtn.hidden);
+        M.embedCalls = [];
+        await embedOpen(p0);                       // = 点「运行」
+        await sleep(2800);                         // 等 iframe 加载 + Vue 挂载 + 问后端
+        const frame = document.querySelector("#embed-wrap iframe[data-pid='fanyi']");
+        const src = frame ? (frame.getAttribute("src") || "") : "";
+        const srcOk = /fanyi\/ui\/index\.html$/.test(src.replace(/\\\\/g, "/").replace(/\\/g, "/"));
+        const calls = (M.embedCalls || []).map(c => c.method);
+        const wired = calls.indexOf("cache_info") >= 0 && calls.indexOf("hotkey_status") >= 0;
+        const noErr = !(window.__errors || []).length;
+        const ok = hasEmbed && tabShown && !!frame && srcOk && wired && noErr;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") +
+          "\\n声明了内嵌界面 = " + hasEmbed + "（" + JSON.stringify(p0.ui || null) + "）" +
+          "\\n「界面」选项卡出现 = " + tabShown +
+          "\\niframe = " + (frame ? src.slice(-38) : "（没有）") + "  地址对不对 = " + srcOk +
+          "\\n后端被问到 = " + JSON.stringify(calls) + "（有 cache_info/hotkey_status = 整条链通了）" +
+          "\\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+                            : ("FANYIUI-FAIL 声明=" + (hasEmbed ? 1 : 0) + " 选项卡=" + (tabShown ? 1 : 0) +
+                               " iframe=" + (frame ? 1 : 0) + " 地址=" + (srcOk ? 1 : 0) +
+                               " wired=" + (wired ? 1 : 0) + " 错=" + (window.__errors || []).length);
       }
       // ★ AI 工作台那一页（`V-233`）：选中一个包 → 点「AI」→ 那一页要
       //   ① 真的有这个选项卡、② 显示模型、③ 「开始」可用、④ 交任务之后**步骤流一行行出来**、

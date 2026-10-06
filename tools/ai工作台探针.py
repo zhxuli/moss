@@ -655,7 +655,7 @@ def main():
                 got.setdefault("ai", {})[k] = v
         return got
 
-    # ---- I-α：播种 + 老名字迁移 + 扫描
+    # ---- I-α：老名字迁移 + 扫描（`V-288`：出厂样例**不再自动播种**了）
     import shutil as _sh
     _sh.rmtree(str(SKDIR / "shot"), ignore_errors=True)
     (SKDIR / "--old").mkdir(parents=True, exist_ok=True)     # 老一轮留下的带 `--` 的目录
@@ -667,10 +667,24 @@ def main():
         any("--old" in x for x in _mig) and (SKDIR / "old" / "pkg.json").is_file()
         and not (SKDIR / "--old").exists(),
         "迁移：%s" % _mig)
-    _made = ST.ensure_seed()
-    chk("I ★ 出厂样例**播种**进技能目录（删了还能补回来，只补缺的）",
-        (SKDIR / "shot" / "pkg.json").is_file() and (SEED / "shot" / "pkg.json").is_file(),
-        "补了：%s" % _made)
+    # ★★ `V-288`（你 2026-10-05 定的）：**「补回出厂样例」这个功能三处一起删了** ——
+    #    界面那颗按钮、`moss :skill seed`、以及"列技能时自动把缺的补回来"。
+    #    样例只留在 `system/pkgs/skill/seed/shot/`，当"照它抄"的样板。
+    #    所以这里**手动抄一份**进数据目录来当活样板，然后钉住"删了就是删了、不会自己回来"。
+    chk("I ★★ 「补回出厂样例」这个功能**真的没了**（`skill_lib` 里不再有 `ensure_seed`）",
+        not hasattr(ST, "ensure_seed"), "还有 ensure_seed 吗＝%s" % hasattr(ST, "ensure_seed"))
+    _sh.copytree(str(SEED / "shot"), str(SKDIR / "shot"), dirs_exist_ok=True)
+    ST.allow("shot", True)                          # 抄来的也算你的：得允许才进工具表
+    _am = ST.allowed_map()
+    _am.setdefault("shot", {})["from"] = "seed"     # 标一下来路（详情页那颗「出厂样例」标签）
+    ST._save_allow(_am)
+    _sh.rmtree(str(SKDIR / "shot"), ignore_errors=True)   # 删了再列一次：不许自己回来
+    _back = "shot" in ST.list_skills()
+    _sh.copytree(str(SEED / "shot"), str(SKDIR / "shot"), dirs_exist_ok=True)
+    chk("I ★★★ 删掉的样例**不会**被自动补回来（`list_skills()` 里那句自动播种已经去掉）",
+        not _back and (SKDIR / "shot" / "pkg.json").is_file()
+        and (SEED / "shot" / "pkg.json").is_file(),
+        "删完再列一遍，它回来了吗＝%s（应当 False）" % _back)
     _all = ST.list_skills()
     _shot = _all.get("shot") or {}
     chk("I ★★ 技能读的就是插件那套字段（pkg.json：name/desc/params/entry/runner/icon）",
@@ -685,7 +699,7 @@ def main():
         and not any("__pycache__" in f["rel"] for f in _shot.get("files") or []),
         "why=%s 创建=%s 文件=%s" % ((_shot.get("why") or "")[:18], _shot.get("created"),
                                    [f["rel"] for f in _shot.get("files") or []]))
-    chk("I ★ 播种来的**顺手带上授权**（否则装完就「待批准」，用户点不着）",
+    chk("I ★ 允许过 / 标了来路（`origin`）的技能才进工具表；详情页那颗「出厂样例」标签靠它",
         _shot.get("allowed") is True and _shot.get("origin") == "seed",
         "allowed=%s origin=%s" % (_shot.get("allowed"), _shot.get("origin")))
 

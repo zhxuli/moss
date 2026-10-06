@@ -143,7 +143,30 @@ STUB = """<script>
     copy: {ok:true}, save_config: {ok:true}
   };
 
-  var R = (PKG === "exec") ? R_EXEC : ((PKG === "img") ? R_IMG : R_PATH);
+  // ---- fanyi（V-xxx）：网页版翻译器，onMounted 会问 targets / info / cache_info ----
+  var R_FANYI = {
+    info: {ok:true, pid:1, python:"?（桩）", cwd:"（桩）", embedded:false,
+           data_dir:"（桩）", cache_path:"（桩）state/fanyi/cache/translation_cache.jsonl",
+           cache_count:2, who:"（桩）"},
+    targets: {ok:true, default:"auto",
+      targets:[{value:"auto", label:"自动（中↔英）"}, {value:"zh-CN", label:"中文（简体）"},
+               {value:"en", label:"English"}]},
+    translate: {ok:true, source:"en", target:"zh-CN", original:"hello",
+                translated:"你好", cached:false, at:"00:00:00", who:"（桩）"},
+    read_clipboard: {ok:true, text:"（桩）剪贴板里的文字"},
+    copy: {ok:true, why:""},
+    cache_info: {ok:true, count:2, path:"（桩）", dir:"（桩）", who:"（桩）",
+      history:[{src:"hello", dst:"你好", target:"zh-CN", at:"00:00:00"},
+               {src:"world", dst:"世界", target:"zh-CN", at:"00:00:00"}]},
+    cache_clear: {ok:true, removed:2, count:0},
+    history: {ok:true, items:[{src:"hello", dst:"你好", target:"zh-CN", at:"00:00:00"}]},
+    hotkey_status: {ok:true, running:false},
+    hotkey_start: {ok:true, running:true, msg:"已启动"},
+    hotkey_stop: {ok:true, running:false, msg:"已停止"}
+  };
+
+  var R = (PKG === "exec") ? R_EXEC : ((PKG === "img") ? R_IMG :
+          ((PKG === "fanyi") ? R_FANYI : R_PATH));
   R.report_error = function(p){ window.__reported.push(String((p && p.text) || "")); return {ok:true}; };
   R.set_title = {ok:true};
 

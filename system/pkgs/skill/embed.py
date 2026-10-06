@@ -18,7 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-from core import Api                                                  # noqa: E402
+from core import Api                                                 # noqa: E402
 
 
 def embedded_now():

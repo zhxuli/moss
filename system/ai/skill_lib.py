@@ -19,7 +19,7 @@
 
 ```
 system/pkgs/skill/            管理器插件本身（跟 :exec 并排；出厂）
-system/pkgs/skill/seed/shot/  出厂样例（第一次跑时播种进数据目录，之后就是你的、可改可删）
+system/pkgs/skill/seed/shot/  出厂样例（**只留作"照它抄"的样板**：不会再自己长进数据目录，`V-288`/`V-289`）
 user_data/state/skill/shot/   **技能本体**：一个目录（pkg.json + 入口 + icon.svg + 任意文件）
 user_data/ai/skills_allow.json  **你的授权**（AI 写不到这儿 —— 见下面「声明 ≠ 授权」）
 user_data/pkgs/<id>/            「转为插件」搬过去之后，它就是普通插件（插件页里看得见）
@@ -118,9 +118,12 @@ def skill_dir():
     return user_data() / "state" / "skill"
 
 
-def seed_dir():
-    """出厂样例的来源（`:skill` 插件自带）：第一次跑的时候播种进上面那个数据目录。"""
-    return HOME / "system" / "pkgs" / "skill" / "seed"
+#: 出厂样例（"照它抄"的样板）住在 `:skill` 插件自带的 `seed/` 里：`<这里>/shot/`。
+#: ★ `V-288`（你 2026-10-05 定的）：**不再往数据目录自动播种** —— 原来有个 `ensure_seed()`
+#:   每次列技能都把缺的样例补回去（于是界面里删掉它、下次刷新又冒出来），界面上还有一颗
+#:   「补回出厂样例」按钮、命令行还有 `moss :skill seed`；**这几个都已删除**（`V-289`）。
+#:   想要样例就自己复制一份成 `user_data/state/skill/<名字>/` —— 这个常量只是告诉你样板在哪。
+SEED_DIR = HOME / "system" / "pkgs" / "skill" / "seed"
 
 
 def roots():
@@ -145,36 +148,14 @@ def allow_path():
     return user_data() / "ai" / "skills_allow.json"
 
 
-def ensure_seed():
-    """把出厂样例播种到数据目录（**只补缺的，不覆盖你改过的**）。回播种了哪几个 id。
+def stats_path():
+    """**调用统计**（每只被调了几次 + 最近一次调用时间）住这儿。
 
-    ★ 「缺」按**有没有 `pkg.json`** 判，不是按目录在不在：目录还在但空着（或者 `pkg.json`
-      被你/它删了）也算缺 —— 不然一个空壳目录会让样例永远补不回来（探针就是这么抓住的）。
-      反过来，只要 `pkg.json` 还在，**一个字都不动**（你改过的就是你的）。
+    ★ 为什么放在 `user_data/ai/`（跟授权表同一层）、而不是技能目录里：技能目录里的东西
+      是"这个技能有哪些文件"的证据（详情页的文件清单就列它）—— 统计文件混进去会污染它；
+      而且技能目录是 AI 写得到的地方，统计该跟授权一样待在外面。
     """
-    made = []
-    src = seed_dir()
-    if not src.is_dir():
-        return made
-    for sub in sorted(src.iterdir()):
-        if not sub.is_dir():
-            continue
-        dst = skill_dir() / sub.name
-        if (dst / "pkg.json").is_file():
-            continue
-        try:
-            shutil.copytree(str(sub), str(dst), dirs_exist_ok=True)
-        except OSError:
-            continue
-        made.append(sub.name)
-    if made:
-        rec = allowed_map()
-        for sid in made:
-            got = _load(skill_dir() / sid, "user", "skill")
-            rec[sid] = {"fp": got.get("fp") or "", "from": "seed",
-                        "at": time.strftime("%Y-%m-%d %H:%M:%S")}
-        _save_allow(rec)
-    return made
+    return user_data() / "ai" / "skill_stats.json"
 
 
 # ------------------------------------------------------------------ 运行方式（照 runners.json）
@@ -333,6 +314,42 @@ def _save_allow(d):
     p.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+# ------------------------------------------------------------------ 调用统计
+def load_stats():
+    """`{id: {"n": 次数, "at": "最近一次调用时间"}}`（读不出来就当空）。"""
+    try:
+        got = json.loads(stats_path().read_text(encoding="utf-8"))
+        return got if isinstance(got, dict) else {}
+    except Exception:                                                  # noqa: BLE001
+        return {}
+
+
+def _save_stats(d):
+    p = stats_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def bump_stat(sid):
+    """记一次调用：次数 +1、把"最近调用时间"写成现在。
+
+    ★ 在 `run()` 真跑之前调它 —— **AI 调的、命令行调的、界面「运行测试」调的，都从 `run()`
+      这一条路走**，所以一处埋点就全覆盖了（不管成没成功，只要真发起了就算一次）。
+    """
+    sid = str(sid or "").strip()
+    if not sid:
+        return
+    d = load_stats()
+    rec = d.get(sid) if isinstance(d.get(sid), dict) else {}
+    rec["n"] = int(rec.get("n") or 0) + 1
+    rec["at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    d[sid] = rec
+    try:
+        _save_stats(d)
+    except OSError:
+        pass
+
+
 # ------------------------------------------------------------------ 扫描
 def _text(p):
     try:
@@ -389,16 +406,19 @@ def _files_of(pdir):
     return out
 
 
-def _load(d, layer, kind):
+def _load(d, layer, kind, stats_in=None):
     """读一只技能 / 一个可调用的插件 → 那一项（文件不全就带着 problems 回来）。"""
     sid = d.name
+    stats = stats_in if stats_in is not None else load_stats()
+    stat = stats.get(sid) if isinstance(stats.get(sid), dict) else {}
     probs, warns = [], []
     pj = d / "pkg.json"
     blank = {"id": sid, "name": sid, "layer": layer, "kind": kind, "dir": d,
              "pkg": {}, "desc": "", "why": "", "risk": "", "params": [], "entry": "",
              "timeout": TIMEOUT, "icon": None, "icon_svg": "", "files": _files_of(d),
              "created": "", "mtime": "", "allowed": False, "why_allow": "写坏了",
-             "allowed_at": "", "fp": "", "argv": [], "run_err": "", "problems": [], "warns": []}
+             "allowed_at": "", "fp": "", "argv": [], "run_err": "", "problems": [], "warns": [],
+             "calls": int(stat.get("n") or 0), "last_called": str(stat.get("at") or "")}
     if not pj.is_file():
         blank["problems"] = ["缺 pkg.json —— 技能就是一个包，清单照插件契约写"
                              "（`spec(\"pkg.json\")`）"]
@@ -469,6 +489,7 @@ def _load(d, layer, kind):
                 "allowed_at": (allowed_map().get(sid) or {}).get("at") or "",
                 "origin": (allowed_map().get(sid) or {}).get("from") or "",
                 "fp": fp, "argv": argv, "run_err": rerr,
+                "calls": int(stat.get("n") or 0), "last_called": str(stat.get("at") or ""),
                 "problems": probs, "warns": warns})
     return out
 
@@ -488,7 +509,7 @@ def list_skills(roots_in=None):
     """
     if roots_in is None:
         migrate_dashes()                     # `V-284`：老的 `--名字` 改成不带前缀（幂等）
-        ensure_seed()                        # 出厂样例：只补缺的（第一次跑或你删了它之后）
+    stats = load_stats()                     # 调用统计读一次，喂给每个 `_load`（别一个技能读一遍盘）
     out = {}
     for d, layer, kind in (roots_in if roots_in is not None else roots()):
         d = Path(d)
@@ -497,7 +518,7 @@ def list_skills(roots_in=None):
         for sub in sorted(d.iterdir()):
             if not sub.is_dir():
                 continue
-            out[sub.name] = _load(sub, layer, kind)
+            out[sub.name] = _load(sub, layer, kind, stats)
     return out
 
 
@@ -634,6 +655,7 @@ def run(name, args, roots_in=None):
     if not argv:
         return "[跑不起来] %s" % (got.get("run_err") or "拼不出启动命令")
     cmd = argv + [str(v) for v in (args or {}).values() if isinstance(v, str) and v]
+    bump_stat(got["id"])                    # 记一次调用（次数 +1 + 最近调用时间）
     try:
         p = subprocess.run(
             cmd, input=json.dumps(args or {}, ensure_ascii=False),
@@ -835,6 +857,7 @@ def _row(it, with_files=False):
            "icon_svg": it.get("icon_svg") or "",
            "origin": it.get("origin") or "",
            "created": it.get("created") or "", "mtime": it.get("mtime") or "",
+           "calls": int(it.get("calls") or 0), "last_called": it.get("last_called") or "",
            "allowed_at": it.get("allowed_at") or "",
            "problems": list(it.get("problems") or []), "warns": list(it.get("warns") or []),
            "files_n": len(it.get("files") or [])}
@@ -938,6 +961,6 @@ def summary():
     return {"ok": True,
             "skills": [r for r in rows if r["kind"] == "skill"],
             "broken": [r for r in rows if r["problems"]],
-            "dirs": {"mine": str(skill_dir()), "seed": str(seed_dir())},
+            "dirs": {"mine": str(skill_dir())},
             "allow_file": str(allow_path()),
             "n_usable": len(usable()), "n_pending": len(pending())}
