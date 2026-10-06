@@ -12,8 +12,12 @@
 
 界面那一侧（`ui/app.js`）只认这几个方法，所以这里的方法名就是界面协议。
 """
+import codecs
 import os
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -63,6 +67,126 @@ def _human(n):
             return ("%.0f %s" % (n, unit)) if unit == "B" else ("%.1f %s" % (n, unit))
         n /= 1024
     return "%.1f GB" % n
+
+
+# ================================================================ 交互式运行（`V-302`）
+#  「运行测试」不再是"一次跑完给你一段"，而是**起一个进程**：输出实时流去界面、
+#  界面能把输入写进它的 stdin（技能里 `input()` 的那一问就接得上）、还能停。
+#  ★ 参数走环境变量（`MOSS_PKG_PARAMS`，`S._env` 摆的）—— 这样 stdin 整条留给交互；
+#    技能要读参数就读环境变量（`S.run` 那条路上也是既给 stdin 又给环境变量的）。
+_RUNS = {}
+_RUN_LOCK = threading.Lock()
+_RID = [0]
+
+
+def _emit(rid, text):
+    if not text:
+        return
+    with _RUN_LOCK:
+        r = _RUNS.get(rid)
+        if not r:
+            return
+        r["out"].append(text)
+        if len(r["out"]) > 8000:                         # 别把内存撑爆
+            del r["out"][:3000]
+
+
+def _maybe_close_stdin(rid):
+    """给"卡在读 stdin 等 EOF"的技能兜底放行（`V-302`）。
+
+    技能按老契约用 `sys.stdin.read()` 读参数 —— 那要**等 EOF**；而交互模式把 stdin 一直开着，
+    它就永远卡住（"正在跑、没输出、不结束、没日志"）。折中：进程起来 1.2 秒后，
+    若它**一个字都没吐、也没人往它 stdin 写过**，就判定它是在等 stdin ⇒ 关掉 stdin（EOF）放它跑。
+    ★ 真·交互式的技能（`input('问一下')`）会在 1.2 秒内先把提示语打出来 ⇒ `out` 非空 ⇒ 不关。
+    """
+    with _RUN_LOCK:
+        r = _RUNS.get(rid)
+    if not r or r.get("code") is not None or r["out"] or r.get("sent_input"):
+        return
+    try:
+        r["proc"].stdin.close()
+    except Exception:                                                     # noqa: BLE001
+        pass
+    with _RUN_LOCK:
+        r["stdin_closed"] = True
+
+
+def _pump_run(rid):
+    """读线程 —— **照 moss 主界面 `_pump_output` 那套**（`V-86` / `V-219` 的结论）：
+
+    ① **按块读**（`os.read` 4096 + 增量 UTF-8 解码），不是 `for line in proc.stdout`；
+    ② 攒到 `\\n` 就交一整块；
+    ③ 手里那**没有换行的半行**（最典型：`input("你叫什么？ ")` 的提示语）超过 0.12 秒
+       也先交出去 —— 不然界面上就是"跑起来了却什么都不问"（你报的正是这个）；
+    ④ **子进程一退就算跑完，不等管道 EOF** —— 它拉起的孙进程可能叼着管道不放
+       （`.bat` 里 `start explorer` 那种），否则 `run_poll` 会永远回"在跑"。
+    """
+    r = _RUNS.get(rid)
+    if not r:
+        return
+    proc = r["proc"]
+    pending = [""]
+    stop = threading.Event()
+
+    def ticker():
+        while not stop.wait(0.12):
+            with _RUN_LOCK:
+                chunk, pending[0] = pending[0], ""
+            _emit(rid, chunk)
+
+    def watcher():
+        try:
+            proc.wait()
+        except Exception:                                                 # noqa: BLE001
+            return
+        time.sleep(0.35)                                 # 让读线程把管道里剩的读完
+        with _RUN_LOCK:
+            if r.get("code") is None:
+                r["code"] = proc.returncode
+
+    threading.Thread(target=ticker, daemon=True).start()
+    threading.Thread(target=watcher, daemon=True).start()
+
+    dec = codecs.getincrementaldecoder("utf-8")("replace")
+    try:
+        fd = proc.stdout.fileno()
+        while True:
+            buf = os.read(fd, 4096)
+            if not buf:
+                break
+            text = dec.decode(buf)
+            if not text:
+                continue
+            with _RUN_LOCK:
+                parts = (pending[0] + text).split("\n")
+                pending[0] = parts.pop()
+            if parts:
+                _emit(rid, "\n".join(parts) + "\n")
+    except Exception:                                                     # noqa: BLE001
+        pass
+    finally:
+        stop.set()
+        with _RUN_LOCK:
+            chunk, pending[0] = pending[0], ""
+        _emit(rid, chunk)
+        try:
+            proc.wait(timeout=5)
+        except Exception:                                                 # noqa: BLE001
+            pass
+        with _RUN_LOCK:
+            if r.get("code") is None:
+                r["code"] = proc.returncode
+        try:
+            proc.stdout.close()
+        except Exception:                                                 # noqa: BLE001
+            pass
+        try:                                             # 收尾记一条运行日志
+            S._log_run({"id": r["sid"], "name": r["name"], "at": r["at"], "args": r["args"],
+                        "code": r.get("code"), "out": S.tail("".join(r["out"])), "err": "",
+                        "dur": round(time.time() - r["t0"], 3), "cmd": r["cmd"],
+                        "ok": r.get("code") == 0})
+        except Exception:                                                 # noqa: BLE001
+            pass
 
 
 class Api:
@@ -146,6 +270,9 @@ class Api:
         """在这儿**试跑一次**（跟 AI 调它走的是同一条路：stdin JSON → stdout）。
 
         ★ 只在**已经允许**的技能上给按（没允许的那条路本来就不通）—— 这里不绕闸。
+        ★ `V-301`：回**结构化**结果（`text`/`out`/`err`/`code`/`dur`/`at`/`cmd`）——
+          界面的「命令行面板」就靠它显示这次跑了什么、输出是什么（以前只回一句 `msg`，
+          界面只能弹一行 toast）。同时 `S.run` 会记一条运行日志（「运行日志面板」读它）。
         """
         p = dict(params or {})
         sid = str(p.get("id") or "")
@@ -153,8 +280,148 @@ class Api:
         got = S.list_skills().get(sid)
         if not got:
             return {"ok": False, "msg": "没有这只技能：%s" % sid}
-        out = S.run(got["name"], args)
-        return {"ok": True, "msg": out}
+        r = S.run_detail(got["name"], args)
+        r["msg"] = r.get("text") or ""       # 兼容旧界面 / toast 那一行
+        return r
+
+    # ---------------------------------------------------------------- 交互式运行（`V-302`）
+    def _find_usable(self, sid):
+        for it in S.usable().values():
+            if str(it.get("id")) == str(sid):
+                return it
+        return None
+
+    def run_start(self, params=None):
+        """起一个技能进程**交互式**跑（`V-302`）：输出实时流、能给 stdin 写输入、能停。
+
+        ★ 参数走 `MOSS_PKG_PARAMS` 环境变量（`S._env` 摆的）—— **stdin 整条留给交互**；
+          技能要参数就读环境变量（技能 `input()` 的那一问才接得上）。没允许 / 写坏的不给跑。
+        """
+        p = dict(params or {})
+        sid = str(p.get("id") or "")
+        args = p.get("args") if isinstance(p.get("args"), dict) else {}
+        it = self._find_usable(sid)
+        if not it:
+            return {"ok": False, "msg": "没有可用技能：%s（没允许、写坏了、或不存在）" % sid}
+        argv = list(it.get("argv") or [])
+        if not argv:
+            return {"ok": False, "msg": "拼不出启动命令：%s" % (it.get("run_err") or "")}
+        try:
+            # ★ 二进制管道（**不用** text 模式）—— 读线程要 `os.read` 按块读、自己解码
+            #   （跟主界面 `_pump_output` 一致：半行提示语也能及时出来）。
+            proc = subprocess.Popen(
+                argv, cwd=str(it["dir"]), env=S._env(args, sid),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except OSError as e:
+            return {"ok": False, "msg": "起不来：%s" % e}
+        with _RUN_LOCK:
+            _RID[0] += 1
+            rid = "skill-%d" % _RID[0]
+            _RUNS[rid] = {"proc": proc, "out": [], "code": None,
+                          "sid": sid, "name": it.get("name") or sid, "args": args,
+                          "at": time.strftime("%Y-%m-%d %H:%M:%S"), "t0": time.time(),
+                          "cmd": argv}
+        S.bump_stat(sid)                                  # 记一次调用（次数 +1 + 最近时间）
+        threading.Thread(target=_pump_run, args=(rid,), daemon=True).start()
+        # ★ 兜底：技能要是卡在读 stdin 等 EOF，1.2 秒后自动把 stdin 关掉放它跑
+        threading.Timer(1.2, _maybe_close_stdin, args=(rid,)).start()
+        return {"ok": True, "rid": rid, "cmd": argv}
+
+    def run_poll(self, params=None):
+        """看这个运行现在怎么样了（输出 / 还在不在跑 / 退出码）。"""
+        p = dict(params or {})
+        rid = str(p.get("rid") or "")
+        with _RUN_LOCK:
+            r = _RUNS.get(rid)
+        if not r:
+            return {"ok": False, "msg": "没有这个运行：%s" % rid}
+        # ★ 「在跑」以**退出码**为准（`code is None` = 还在跑）：子进程一退就算完，
+        #   不等管道 EOF（孙进程可能叼着管道不放）。
+        return {"ok": True, "running": r.get("code") is None, "code": r.get("code"),
+                "out": "".join(r["out"]), "cmd": r["cmd"], "at": r["at"]}
+
+    def run_input(self, params=None):
+        """往这个运行的 stdin 写一行（技能 `input()` 的那一问就接上了）。"""
+        p = dict(params or {})
+        rid = str(p.get("rid") or "")
+        line = str(p.get("line") or "")
+        with _RUN_LOCK:
+            r = _RUNS.get(rid)
+        if not r or r.get("code") is not None:
+            return {"ok": False, "msg": "这个技能没在跑了"}
+        if r.get("stdin_closed"):
+            return {"ok": False, "msg": "它没在等输入（stdin 已经关了）"}
+        with _RUN_LOCK:
+            r["sent_input"] = True                        # 有人真写过输入 ⇒ 别再自动关 stdin
+        try:
+            r["proc"].stdin.write((line + "\n").encode("utf-8"))
+            r["proc"].stdin.flush()
+        except (BrokenPipeError, OSError, ValueError) as e:
+            return {"ok": False, "msg": "写不进去：%s" % e}
+        return {"ok": True}
+
+    def run_stop(self, params=None):
+        """停掉这个交互式运行（连子孙一起）。"""
+        p = dict(params or {})
+        rid = str(p.get("rid") or "")
+        with _RUN_LOCK:
+            r = _RUNS.get(rid)
+        if not r:
+            return {"ok": False, "msg": "没有这个运行"}
+        proc = r["proc"]
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception:                                                 # noqa: BLE001
+            pass
+        try:
+            proc.kill()
+        except Exception:                                                 # noqa: BLE001
+            pass
+        return {"ok": True, "msg": "已停掉"}
+
+    def runs(self, params=None):
+        """运行日志（新的在前）。`id` 给了就只看这只技能的。"""
+        p = dict(params or {})
+        sid = str(p.get("id") or "")
+        limit = int(p.get("limit") or 60)
+        return {"ok": True, "runs": S.list_runs(sid or None, limit),
+                "log": str(S.run_log_path())}
+
+    def clear_runs(self, params=None):
+        """清运行日志：`id` 给了就只清它那几行，否则全清（界面上「清空日志」用它）。"""
+        p = dict(params or {})
+        sid = str(p.get("id") or "")
+        ok, msg = S.clear_runs(sid or None)
+        return {"ok": ok, "msg": msg, "log": str(S.run_log_path())}
+
+    def open_path(self, params=None):
+        """在**资源管理器**里打开一个文件或目录（详情里那些可点的路径用它）。
+
+        · 目录 → 直接打开它；
+        · 文件 → 打开**它所在的目录并选中它**（`explorer /select,`）；
+        · 路径不在了 → 退到它的上级目录（也告诉用户一声）。
+        """
+        raw = str((params or {}).get("path") or "").strip().strip('"')
+        if not raw:
+            return {"ok": False, "msg": "没有路径"}
+        path = Path(raw)
+        try:
+            if path.is_dir():
+                os.startfile(str(path))                                  # noqa: S606  Windows
+            elif path.is_file():
+                subprocess.Popen('explorer /select,"%s"' % str(path))     # noqa: S603,S607
+            else:
+                parent = path.parent
+                if parent.is_dir():
+                    os.startfile(str(parent))
+                    return {"ok": True, "msg": "这个路径不在了，打开了上级：%s" % parent}
+                return {"ok": False, "msg": "路径不在：%s" % path}
+        except OSError as e:
+            return {"ok": False, "msg": "打不开：%s" % e}
+        return {"ok": True, "msg": "打开了：%s" % path}
 
     # ---------------------------------------------------------------- 写（都要人点）
     def allow(self, params=None):

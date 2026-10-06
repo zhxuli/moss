@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """shot —— 截屏（整个屏幕 / 某个窗口）存成 png。说明书在 `pkg.json`（跟插件一个规矩）。
 
-参数从 stdin 那行 JSON 来（宿主也放在 `MOSS_PKG_PARAMS` / `MOSS_TOOL_ARGS` 里）；
+参数优先从**环境变量** `MOSS_PKG_PARAMS` / `MOSS_TOOL_ARGS` 来（`V-302`：界面「运行测试」
+是**交互式**的，stdin 一直开着留给交互 —— 若去 `sys.stdin.read()` 会一直等 EOF、卡住）；
+只有拿不到环境变量时才退回读 stdin（一次性调用那条路）。
 只往 stdout 打**要跟模型说的话**（调试信息走 stderr —— stdout 是回给模型的正文）。
 """
 import json
@@ -12,14 +14,14 @@ from pathlib import Path
 
 
 def read_args():
-    raw = ""
-    try:
-        raw = sys.stdin.read()
-    except Exception:                                                  # noqa: BLE001
-        raw = ""
-    if not raw.strip():
-        raw = (os.environ.get("MOSS_PKG_PARAMS")
-               or os.environ.get("MOSS_TOOL_ARGS") or "{}")
+    # ★ 优先环境变量（`V-302`：交互式运行时 stdin 留给交互，读它会等 EOF 卡住）
+    raw = (os.environ.get("MOSS_PKG_PARAMS")
+           or os.environ.get("MOSS_TOOL_ARGS") or "").strip()
+    if not raw:
+        try:
+            raw = sys.stdin.read()
+        except Exception:                                              # noqa: BLE001
+            raw = ""
     try:
         got = json.loads(raw) if raw.strip() else {}
     except ValueError:

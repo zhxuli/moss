@@ -37,8 +37,14 @@
       closing: { type: Boolean, default: false },
       store: { type: Object, required: true },
     },
-    emits: ['close', 'act', 'toggle-doc', 'open-file', 'copy', 'copy-file', 'gone'],
+    emits: ['close', 'act', 'toggle-doc', 'open-file', 'copy', 'copy-file', 'gone',
+            'reload-runs', 'clear-runs', 'send-input', 'stop-run'],
+    // `openLog` = 运行日志里展开了哪一条（右侧当前选项卡 `store.rtab` 在根组件的 store 上）
+    data: function () { return { openLog: -1 }; },
     computed: {
+      /* `V-301`：运行面板的数据（都挂在根组件的 store 上，跟着当前技能变） */
+      con: function () { return this.store.console || {}; },
+      runs: function () { return this.store.runs || []; },
       broken: function () { return !!(this.it.problems && this.it.problems.length); },
       pending: function () { return !this.broken && !this.it.allowed; },
       /* 允许 / 撤销这颗只在"它还能被 AI 调"的时候给（出厂的、写坏的都轮不到它） */
@@ -81,6 +87,7 @@
          ★「详细说明」的展开状态由根组件统一管（默认展开），别在这儿把它关掉。 */
       'it.id': function () {
         this.store.openRel = '';
+        this.openLog = -1;                               // 换一只技能 ⇒ 日志展开收起来
       },
     },
     methods: {
@@ -146,6 +153,20 @@
         for (var i = 1; i <= n; i++) out.push(i);
         return out.join('\n');
       },
+      /* `V-302`：命令行那个输入框 —— 把这一行发给正在跑的技能，然后清空 */
+      sendLine: function (ev, force) {
+        var inp = this.$refs.rin;                         // 组件是**碎片模板**，`$el` 只到第一块，用 ref
+        if (!inp) return;
+        var v = inp.value;
+        if (!v && !force) return;
+        this.$emit('send-input', v);
+        inp.value = '';
+      },
+      /* `V-301`：把一段文本里的路径变成可点开链接（`paths.js`）—— 复制 / 输出里到处是路径 */
+      paths: function (t) {
+        return (window.SKILL_PATHS && window.SKILL_PATHS.linkify)
+          ? window.SKILL_PATHS.linkify(t) : String(t == null ? '' : t);
+      },
       /* 放大看 / 收起（那颗最大化按钮） */
       maxCode: function (rel) { this.store.codeMax = rel; },
       closeCode: function () { this.store.codeMax = ''; },
@@ -199,6 +220,15 @@
 
       /* ---- 右：数据与内容 ---- */
       '  <div class="detail-right">',
+      /* ★ `V-301`：右侧改成**三个平级选项卡**（数据概览 / 命令行 / 运行日志），各自占满右侧窗口。
+         数据是常驻的（`v-show`，切来切去不丢），默认落在「数据概览」。 */
+      '    <div class="right-tabs">',
+      '      <button type="button" :class="{ on: store.rtab === \'overview\' }" @click="store.rtab = \'overview\'">数据概览</button>',
+      '      <button type="button" :class="{ on: store.rtab === \'console\' }" @click="store.rtab = \'console\'">命令行</button>',
+      '      <button type="button" :class="{ on: store.rtab === \'log\' }" @click="store.rtab = \'log\'">运行日志</button>',
+      '    </div>',
+      '    <div class="right-body">',
+      '    <div class="rtab-pane scroll" v-show="store.rtab === \'overview\'">',
       '    <h3 class="section-title rise"><span v-html="ico(\'chartLine\')"></span>数据概览</h3>',
       /* ★ `.kv` 是探针的契约（`document.querySelector(".drawer .kv")`）—— 挂在这行统计上 */
       '    <div class="stats-row kv rise" style="animation-delay:40ms">',
@@ -284,6 +314,70 @@
       '          <pre class="prose" v-else>{{ store.docText }}</pre>',
       '        </div>',
       '      </transition>',
+      '    </div>',
+      '    </div>',
+
+      /* ---- 命令行（这次跑了什么 + 输出；整页占满右侧）---- */
+      '    <div class="rtab-pane full" v-show="store.rtab === \'console\'">',
+      '      <div class="run-panel">',
+      '        <div class="run-head">',
+      '          <h4><span v-html="ico(\'terminal\')"></span>命令行</h4>',
+      '          <span class="run-sub" v-if="con.running">● 正在跑</span>',
+      '          <span class="run-sub" v-else-if="con.code !== null && con.code !== undefined">退出码 {{ con.code }}</span>',
+      '          <span style="flex:1"></span>',
+      '          <button v-if="it.allowed && !con.running" type="button" class="icon-btn" title="再跑一次"',
+      '                  @click="act(\'run\')" v-html="ico(\'play\')"></button>',
+      '          <button v-if="con.running" type="button" class="icon-btn stop" title="停掉"',
+      '                  @click="$emit(\'stop-run\')" v-html="ico(\'x\')"></button>',
+      '        </div>',
+      '        <div class="run-body mono">',
+      '          <span v-if="!con.out && con.running" class="dim">正在跑… 输出会实时出现在这儿；它要是问了你什么，在下面输入后回车。</span>',
+      '          <span v-else-if="!con.out" class="dim">点右上角「运行测试」跑一次，输出会显示在这儿。</span>',
+      '          <pre class="run-out" v-html="paths(con.out || \'\')"></pre>',
+      '        </div>',
+      '        <div class="run-input">',
+      '          <input ref="rin" class="rin" type="text" spellcheck="false" autocomplete="off"',
+      '                 :disabled="!con.running"',
+      '                 placeholder="输入一行、回车发给正在跑的技能（它一问就能答）"',
+      '                 @keydown.enter.prevent="sendLine($event)">',
+      '          <button type="button" class="icon-btn" :disabled="!con.running" title="发送"',
+      '                  @click="sendLine($event, true)" v-html="ico(\'arrowRight\')"></button>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+
+      /* ---- 运行日志（历次记录，点开看输出；整页占满右侧）---- */
+      '    <div class="rtab-pane full" v-show="store.rtab === \'log\'">',
+      '      <div class="run-panel">',
+      '        <div class="run-head">',
+      '          <h4><span v-html="ico(\'clock\')"></span>运行日志</h4>',
+      '          <span class="run-sub" v-if="runs.length">{{ runs.length }} 条</span>',
+      '          <span style="flex:1"></span>',
+      '          <button type="button" class="icon-btn" title="刷新日志"',
+      '                  @click="$emit(\'reload-runs\')" v-html="ico(\'refresh\')"></button>',
+      '          <button type="button" class="icon-btn" title="清空这只技能的日志"',
+      '                  @click="$emit(\'clear-runs\')" v-html="ico(\'trash\')"></button>',
+      '        </div>',
+      '        <div class="run-body">',
+      '          <p class="dim run-empty" v-if="!runs.length">还没有运行记录 —— 点「运行测试」跑一次就有了。</p>',
+      '          <div v-else class="log-item" v-for="(r, i) in runs" :key="i" :class="{ bad: r.ok === false }">',
+      '            <div class="log-line" @click="openLog = (openLog === i ? -1 : i)">',
+      '              <span class="log-ico" v-html="ico(r.ok === false ? \'warn\' : \'check\')"></span>',
+      '              <span class="log-at">{{ r.at || \'—\' }}</span>',
+      '              <span class="log-code">退出 {{ r.code === null || r.code === undefined ? \'—\' : r.code }}</span>',
+      '              <span class="log-dur" v-if="r.dur != null">{{ r.dur }}s</span>',
+      '              <span class="log-chev" v-html="ico(openLog === i ? \'chevronUp\' : \'chevronDown\')"></span>',
+      '            </div>',
+      '            <div class="log-out mono" v-if="openLog === i">',
+      '              <div class="dim" v-if="r.cmd">{{ r.cmd }}</div>',
+      '              <pre v-if="r.out" v-html="paths(r.out)"></pre>',
+      '              <pre class="run-err" v-if="r.err" v-html="paths(r.err)"></pre>',
+      '              <div class="dim" v-if="!r.out && !r.err">（没有输出）</div>',
+      '            </div>',
+      '          </div>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
       '    </div>',
       '  </div>',
       '</aside>',

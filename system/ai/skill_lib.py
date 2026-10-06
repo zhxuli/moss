@@ -350,6 +350,89 @@ def bump_stat(sid):
         pass
 
 
+# ------------------------------------------------------------------ 运行日志（`V-301`）
+def run_log_path():
+    """技能**运行日志**：`user_data/ai/skill_runs.jsonl`（一行 = 一次运行）。
+
+    ★ 放在技能目录**外面**（跟 stats / 授权表一层）：技能目录回答的是"这只技能有哪些文件"，
+      运行日志不是它的文件。界面「运行日志面板」和"管理日志"都读这一份。
+    """
+    return user_data() / "ai" / "skill_runs.jsonl"
+
+
+def _log_run(rec):
+    """记一次运行（jsonl 追加）。日志是锦上添花 —— 坏了也不能影响这次调用。"""
+    try:
+        p = run_log_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        try:                                        # 别越攒越大：超 2MB 就裁到最近 400 行
+            if p.stat().st_size > 2 * 1024 * 1024:
+                lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+                p.write_text("\n".join(lines[-400:]) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+    except OSError:
+        pass
+
+
+def list_runs(sid=None, limit=50):
+    """最近的运行记录（**新的在前**）。`sid` 给了就只看这只技能的。"""
+    try:
+        lines = run_log_path().read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    want = str(sid or "").strip()
+    out = []
+    for ln in reversed(lines):
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            rec = json.loads(ln)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if want and str(rec.get("id") or "") != want:
+            continue
+        out.append(rec)
+        if len(out) >= int(limit):
+            break
+    return out
+
+
+def clear_runs(sid=None):
+    """清运行日志：给了 `sid` 就只清它那几行，否则整个清空。回 `(ok, 说明)`。"""
+    p = run_log_path()
+    want = str(sid or "").strip()
+    if not p.is_file():
+        return True, "本来就没有日志"
+    if not want:
+        try:
+            p.unlink()
+            return True, "已清空运行日志"
+        except OSError as e:
+            return False, "删不掉：%s" % e
+    try:
+        keep = []
+        for ln in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                if str(json.loads(ln).get("id") or "") == want:
+                    continue
+            except ValueError:
+                pass
+            keep.append(ln)
+        p.write_text(("\n".join(keep) + "\n") if keep else "", encoding="utf-8")
+        return True, "已清掉「%s」的运行日志" % want
+    except OSError as e:
+        return False, "写不回去：%s" % e
+
+
 # ------------------------------------------------------------------ 扫描
 def _text(p):
     try:
@@ -617,6 +700,9 @@ def _env(args, sid):
     env["MOSS_VIA"] = "ai"
     env["MOSS_ARGS"] = " ".join("%s=%s" % (k, v) for k, v in (args or {}).items())
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    # ★ `V-302`：**不缓冲输出** —— 交互式运行时（界面「运行测试」）输出是**流式**读的，
+    #   子进程要是把 stdout 攒在缓冲区里，界面就一直"正在跑却什么都没有"（要等进程结束才吐）。
+    env.setdefault("PYTHONUNBUFFERED", "1")
     return env
 
 
@@ -633,9 +719,21 @@ def tail(text, lines=TAIL_LINES, chars=TAIL_CHARS):
     return ("……（前面还有 %d 行，已省略）\n" % (len(ls) - lines) if cut else "") + s
 
 
-def run(name, args, roots_in=None):
-    """真跑一只技能。回一段**给模型看**的文本（跟 `run_moss` 一个口径）。"""
+def run(name, args, roots_in=None, _detail=False):
+    """真跑一只技能。默认回一段**给模型看**的文本（跟 `run_moss` 一个口径）；
+    `_detail=True` 时回**结构化** dict（给界面「运行测试」用）。
+
+    ★ 不论谁调（AI / 命令行 / 界面）都从这条路过 ⇒ 都在这里**记一条运行日志**。
+    """
     want = str(name or "").strip()
+
+    def _ret(text, ok=True, **kw):
+        if not _detail:
+            return text
+        d = {"ok": bool(ok), "text": text, "id": str(kw.pop("id", want))}
+        d.update(kw)
+        return d
+
     got = usable(roots_in).get(want)
     if not got:
         hit = None
@@ -644,18 +742,22 @@ def run(name, args, roots_in=None):
                 hit = it
                 break
         if hit and hit["problems"]:
-            return "[写坏了] 技能「%s」进不了工具表：%s" % (hit["id"], "；".join(hit["problems"]))
+            return _ret("[写坏了] 技能「%s」进不了工具表：%s" % (hit["id"], "；".join(hit["problems"])),
+                        ok=False, id=hit["id"])
         if hit:
-            return ("[没允许] 技能「%s」你造出来了、也写进盘了，但**用户还没点「允许」**"
-                    "（%s）—— 这一次跑用不了。先干别的，或者跟用户说一声。"
-                    % (hit["id"], hit["why_allow"]))
-        return ("[错误] 没有这个技能：%s（现在能用的：%s）"
-                % (want, "、".join(sorted(usable(roots_in))) or "（一只都没有）"))
+            return _ret("[没允许] 技能「%s」你造出来了、也写进盘了，但**用户还没点「允许」**"
+                        "（%s）—— 这一次跑用不了。先干别的，或者跟用户说一声。"
+                        % (hit["id"], hit["why_allow"]), ok=False, id=hit["id"])
+        return _ret("[错误] 没有这个技能：%s（现在能用的：%s）"
+                    % (want, "、".join(sorted(usable(roots_in))) or "（一只都没有）"), ok=False)
     argv = list(got.get("argv") or [])
     if not argv:
-        return "[跑不起来] %s" % (got.get("run_err") or "拼不出启动命令")
+        return _ret("[跑不起来] %s" % (got.get("run_err") or "拼不出启动命令"),
+                    ok=False, id=got["id"])
     cmd = argv + [str(v) for v in (args or {}).values() if isinstance(v, str) and v]
     bump_stat(got["id"])                    # 记一次调用（次数 +1 + 最近调用时间）
+    at = time.strftime("%Y-%m-%d %H:%M:%S")
+    t0 = time.time()
     try:
         p = subprocess.run(
             cmd, input=json.dumps(args or {}, ensure_ascii=False),
@@ -664,17 +766,38 @@ def run(name, args, roots_in=None):
             timeout=int(got.get("timeout") or TIMEOUT),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
-        return ("[超时] 技能「%s」跑了 %s 秒还没回 —— 被杀了。"
-                "（要更长就在 pkg.json 的 `ai.timeout` 里写，最多 %d 秒。）"
-                % (got["id"], got.get("timeout"), TIMEOUT_MAX))
+        dur = round(time.time() - t0, 3)
+        _log_run({"id": got["id"], "name": got.get("name") or "", "at": at, "args": args,
+                  "code": None, "out": "", "err": "超时", "dur": dur, "cmd": cmd, "ok": False})
+        return _ret("[超时] 技能「%s」跑了 %s 秒还没回 —— 被杀了。"
+                    "（要更长就在 pkg.json 的 `ai.timeout` 里写，最多 %d 秒。）"
+                    % (got["id"], got.get("timeout"), TIMEOUT_MAX),
+                    ok=False, id=got["id"], code=None, out="", err="超时",
+                    dur=dur, at=at, cmd=cmd, cwd=str(got["dir"]))
     except OSError as e:
-        return "[跑不起来] %s\n  命令 = %r\n  目录 = %r" % (e, cmd, str(got["dir"]))
+        dur = round(time.time() - t0, 3)
+        _log_run({"id": got["id"], "name": got.get("name") or "", "at": at, "args": args,
+                  "code": None, "out": "", "err": str(e), "dur": dur, "cmd": cmd, "ok": False})
+        return _ret("[跑不起来] %s\n  命令 = %r\n  目录 = %r" % (e, cmd, str(got["dir"])),
+                    ok=False, id=got["id"], code=None, out="", err=str(e),
+                    dur=dur, at=at, cmd=cmd, cwd=str(got["dir"]))
     out = (p.stdout or "").strip()
     err = (p.stderr or "").strip()
+    dur = round(time.time() - t0, 3)
+    _log_run({"id": got["id"], "name": got.get("name") or "", "at": at, "args": args,
+              "code": p.returncode, "out": tail(out), "err": tail(err),
+              "dur": dur, "cmd": cmd, "ok": p.returncode == 0})
     head = "技能「%s」退出码 %d" % (got["id"], p.returncode)
     if err:
         head += "\n[stderr]\n" + tail(err)
-    return head + "\n" + tail(out)
+    return _ret(head + "\n" + tail(out), ok=(p.returncode == 0), id=got["id"],
+                name=got.get("name") or "", code=p.returncode, out=out, err=err,
+                dur=dur, at=at, cmd=cmd, cwd=str(got["dir"]))
+
+
+def run_detail(name, args, roots_in=None):
+    """给界面用的**结构化**运行结果（同时记一条运行日志）。"""
+    return run(name, args, roots_in, _detail=True)
 
 
 # ------------------------------------------------------------------ 设置里那几个动作

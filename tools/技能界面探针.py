@@ -93,6 +93,14 @@ window.pywebview = {api: {
   rm: async () => ({ok: true, msg: "ok"}),
   reveal: async () => ({ok: true, msg: "ok"}), plan: async () => ({ok: true}),
   promote: async () => ({ok: true, msg: "ok"}), run_once: async () => ({ok: true, msg: "ok"}),
+  /* `V-302`：交互式运行那四条 —— 起进程 / 轮询 / 写输入 / 停（假后端按剧本吐输出） */
+  run_start: async () => ({ok: true, rid: "r1", cmd: ["python", "run.py"]}),
+  run_poll: (function(){ var n = 0; return async () => { n = n + 1;
+      return {ok: true, running: n < 2, code: n < 2 ? null : 0,
+              out: "hello-from-skill\\n", cmd: ["python", "run.py"],
+              at: "2026-10-05 17:00:00"}; }; })(),
+  run_input: async () => ({ok: true, msg: "ok"}),
+  run_stop: async () => ({ok: true, msg: "ok"}),
   sys_copy: async () => ({ok: true, msg: "ok"})}};
 </script>
 """)
@@ -119,6 +127,11 @@ def judge_script():
       var scrim = document.querySelector(".scrim");
       var modal = !!dr && !!scrim;
       var card = !!document.querySelector(".drawer .kv");
+      /* `V-301`：数据概览右侧那两个面板 ——「命令行」+「运行日志」 */
+      var panels = document.querySelectorAll(".drawer .run-panel").length;
+      /* `V-301`：右侧三个平级选项卡（数据概览 / 命令行 / 运行日志） */
+      var tabs = document.querySelectorAll(".drawer .right-tabs button").length;
+      var runBtn = !!document.querySelector("#d-run");
       var docBtn = !!document.querySelector("#d-doc");
       var x = document.querySelector("#d-x");
       if (x) x.click();
@@ -127,6 +140,7 @@ def judge_script():
         document.title = "SKILL-OK tiles=" + names.length + " names=" + names.join(",") +
           " scared=" + (window.__scared ? 1 : 0) +
           " modal=" + (modal ? 1 : 0) + " card=" + (card ? 1 : 0) +
+          " panels=" + panels + " tabs=" + tabs + " runbtn=" + (runBtn ? 1 : 0) +
           " doc=" + (docBtn ? 1 : 0) + " closed=" + (closed ? 1 : 0);
       }, 260);
     }, 250);
@@ -152,6 +166,38 @@ def judge_script():
 })();
 </script>
 """
+
+
+def judge_run():
+    """`V-302`：真点「运行测试」→ 应**自动切到「命令行」**并**显示出输出**。"""
+    return """<script>
+(function(){
+  var n = 0, done = false, started = false;
+  function finish(t){ if(done) return; done = true; document.title = t; }
+  var t = setInterval(function(){
+    n++;
+    if (!started && document.querySelectorAll(".tile").length > 0){
+      started = true; clearInterval(t); step();
+    } else if (n > 600){ clearInterval(t); finish("RUN-STUCK"); }
+  }, 50);
+  function step(){
+    document.querySelector(".tile").click();
+    setTimeout(function(){
+      var runBtn = document.querySelector("#d-run");
+      var hasBtn = !!runBtn;
+      if (runBtn) runBtn.click();
+      setTimeout(function(){
+        var onBtn = document.querySelector(".drawer .right-tabs button.on");
+        var consoleTab = onBtn && (onBtn.textContent || "").indexOf("命令行") >= 0;
+        var body = document.querySelector(".drawer .rtab-pane.full .run-body");
+        var shown = body ? (body.textContent || "") : "";
+        finish("RUN btn=" + (hasBtn ? 1 : 0) + " consoleTab=" + (consoleTab ? 1 : 0) +
+               " out=" + (/hello-from-skill/.test(shown) ? 1 : 0));
+      }, 1100);
+    }, 300);
+  }
+})();
+</script>"""
 
 
 def build(case, tmp):
@@ -188,9 +234,12 @@ setTimeout(function(){
   window.dispatchEvent(new Event("pywebviewready"));
 }, 300);
 </script>""" % json.dumps(re.sub(r"</?script>", "", fake_bridge()))
+    elif case == "F":
+        inject = fake_bridge()                        # `V-302`：点「运行测试」的交互
     page = page.replace('<script src="moss-embed.js"></script>',
                         inject + '<script src="moss-embed.js"></script>', 1)
-    page = page.replace("</body>", judge_script() + "</body>", 1)
+    page = page.replace("</body>",
+                        (judge_run() if case == "F" else judge_script()) + "</body>", 1)
     d = tmp / case
     d.mkdir(parents=True, exist_ok=True)
     shutil.copytree(str(UI), str(d), dirs_exist_ok=True)
@@ -252,6 +301,8 @@ def main():
         ta.startswith("SKILL-OK") and 'class="tile' in doma, ta)
     chk("A ★★ 详情是**模态抽屉**（点一格 → 滑出来 → ✕ 关得掉）",
         "modal=1" in ta and "card=1" in ta and "closed=1" in ta, ta)
+    chk("A ★ `V-301`：右侧是**三个平级选项卡**（数据概览 / 命令行 / 运行日志）+ 两个运行面板 + 「运行测试」按钮",
+        "tabs=3" in ta and "panels=2" in ta and "runbtn=1" in ta, ta)
     chk("A ★ 详情里有「看说明」那颗按钮（`doc` = 这只技能自己的 AGENT.md）",
         "doc=1" in ta, ta)
     # ★ 这里要**精确**比（第一版用 `in` 做子串匹配 —— 墙上多出一只插件照样通过，假绿）
@@ -312,6 +363,15 @@ def main():
     _sub = sub_text(dome)
     chk("E ★★ 最后那句提示要**回到正常**（不能停在「正在读」/「读不出来」）",
         "读不出来" not in _sub and "正在读" not in _sub, _sub[:60])
+
+    print()
+    print("=" * 72)
+    print("F：点「运行测试」→ **自动切到命令行** 且 **显示出输出**（`V-302`）")
+    print("=" * 72)
+    uf = build("F", tmp)
+    tf, domf = title_of(exe, uf, tmp, "f")
+    chk("F ★★ 点运行测试后：按钮在 / 切到了「命令行」/ 命令行里有输出",
+        "RUN btn=1 consoleTab=1 out=1" in tf, tf)
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()

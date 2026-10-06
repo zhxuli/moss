@@ -343,7 +343,9 @@ function aiSkillRm(w){
 }
 /* 「管理技能」= 把 `:skill` 那个插件的界面嵌出来（图标墙 + 详情 + 转为插件 / 删除都在那边） */
 function aiOpenSkills(){
-  const ps = (typeof state !== "undefined" && state.packages) || [];
+  // ★ 用 `DATA`（宿主给的那份包表），**不是 `state`** —— 界面里没有 `state` 这个全局，
+  //   之前 `typeof state !== "undefined"` 恒为假 ⇒ 包表为空 ⇒ 误报"找不到技能管理器"。
+  const ps = (typeof DATA !== "undefined" && DATA && DATA.packages) || [];
   const p = ps.filter(x => x.id === "skill" ||
                            (x.aliases || []).indexOf("skill") >= 0)[0];
   if (!p){ toast("找不到技能管理器（system/pkgs/skill）", true); return; }

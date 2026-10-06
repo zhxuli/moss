@@ -81,7 +81,16 @@
       return call('promote', { id: id, confirm: true, new_id: newId || '' });
     },
     runOnce:  function (id) { return call('run_once', { id: id, args: {} }); },
+    /* `V-302`：**交互式**运行 —— 起进程 / 轮询输出 / 写 stdin / 停 */
+    runStart: function (id) { return call('run_start', { id: id, args: {} }); },
+    runPoll:  function (rid) { return call('run_poll', { rid: rid }); },
+    runInput: function (rid, line) { return call('run_input', { rid: rid, line: line }); },
+    runStop:  function (rid) { return call('run_stop', { rid: rid }); },
     reveal:   function (dir) { return call('reveal', { dir: dir || '' }); },
+    /* `V-301`：运行日志（新的在前）+ 清日志 + 在资源管理器里打开某个路径（详情里可点的路径用） */
+    runs:     function (id) { return call('runs', { id: id || '' }); },
+    clearRuns: function (id) { return call('clear_runs', { id: id || '' }); },
+    openPath: function (path) { return call('open_path', { path: path || '' }); },
     copy:     copyText,
   };
 })();

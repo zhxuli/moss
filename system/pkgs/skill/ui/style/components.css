@@ -236,8 +236,22 @@
 .btn-danger { background: transparent; color: var(--ink-muted); border: 1px dashed transparent; }
 .btn-danger:hover { background: var(--bad-soft); color: var(--bad); border-color: var(--bad-line); }
 
-/* --- 右：数据与内容 --- */
-.detail-right { padding: 52px 44px 48px; overflow-y: auto; }
+/* --- 右：数据与内容（`V-301`：三个平级选项卡 —— 数据概览 / 命令行 / 运行日志）--- */
+.detail-right { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.right-tabs { flex: none; display: flex; gap: 4px; padding: 40px 44px 0; border-bottom: 1px solid var(--line); }
+.right-tabs button {
+  border: 0; background: transparent; cursor: pointer; font: inherit; font-size: 13px;
+  color: var(--ink-muted); padding: 10px 14px; margin-bottom: -1px; border-bottom: 2px solid transparent;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.right-tabs button:hover { color: var(--ink); }
+.right-tabs button.on { color: var(--primary); border-bottom-color: var(--primary); font-weight: 700; }
+.right-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 26px 44px 44px; }
+.rtab-pane { flex: 1; min-height: 0; }
+.rtab-pane.scroll { overflow-y: auto; }
+.rtab-pane.full { display: flex; flex-direction: column; }
+.rtab-pane.full .run-panel { flex: 1; min-height: 0; }
+.rtab-pane.full .run-body { max-height: none; flex: 1; min-height: 0; }
 .section-title {
   display: flex; align-items: center; gap: 9px; margin: 0 0 14px;
   font-size: .95rem; font-weight: 700; color: var(--ink);
@@ -425,7 +439,8 @@
   .detail-icon-wrap svg, .detail-icon-wrap .ico { width: 44px; height: 44px; }
   .detail-title { font-size: 1.35rem; }
   .detail-footer { margin-top: 4px; }
-  .detail-right { padding: 30px 22px 40px; }
+  .right-tabs { padding: 22px 22px 0; }
+  .right-body { padding: 20px 22px 40px; }
   .stats-row { gap: 22px; }
 }
 
@@ -480,3 +495,55 @@
   animation: bar var(--toast-ms, 2800ms) linear forwards;
 }
 @keyframes bar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+/* ============================================================================
+   ★ `V-301`：数据概览右侧的「命令行」+「运行日志」两个面板（照本包那套令牌）
+   ========================================================================== */
+.dim { color: var(--ink-muted); }
+.run-panel {
+  border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden;
+  background: var(--card); display: flex; flex-direction: column; min-width: 0;
+}
+.run-head {
+  display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+  border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.run-head h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink);
+  display: flex; align-items: center; gap: 6px; }
+.run-head h4 svg { width: 15px; height: 15px; color: var(--accent); }
+.run-sub { font-size: 11.5px; color: var(--ink-muted); }
+.run-body { padding: 10px 12px; max-height: 270px; overflow: auto; min-height: 70px; }
+.run-body.mono, .log-out.mono { font-family: var(--font-mono); font-size: 12px; line-height: 1.6; }
+.run-meta { color: var(--ink-muted); font-size: 11.5px; margin-bottom: 4px; }
+.run-cmd { color: var(--ink-soft); word-break: break-all; margin-bottom: 4px; }
+.run-out, .run-err { margin: 0; white-space: pre-wrap; word-break: break-all; color: var(--ink); }
+.run-err { color: var(--bad); }
+.run-empty { margin: 6px 0; font-size: 12.5px; }
+/* 运行日志：一条一行，点开看输出 */
+.log-item { border-bottom: 1px solid var(--line-soft); }
+.log-item:last-child { border-bottom: 0; }
+.log-line { display: flex; align-items: center; gap: 8px; padding: 7px 2px; cursor: pointer;
+  font-size: 12px; color: var(--ink-soft); border-radius: 6px; }
+.log-line:hover { background: var(--field); }
+.log-ico { display: inline-flex; }
+.log-ico svg { width: 14px; height: 14px; color: var(--accent); }
+.log-item.bad .log-ico svg { color: var(--bad); }
+.log-at, .log-code, .log-dur { color: var(--ink-muted); }
+.log-chev { margin-left: auto; color: var(--ink-muted); display: inline-flex; }
+.log-chev svg { width: 14px; height: 14px; }
+.log-out { padding: 6px 2px 10px; color: var(--ink-soft); }
+.log-out pre { margin: 0; white-space: pre-wrap; word-break: break-all; color: var(--ink); }
+/* `V-302`：命令行的输入行（交互式 —— 输入一行回车发给正在跑的技能）+ 停止按钮 */
+.run-input { flex: none; display: flex; gap: 8px; align-items: center; padding: 8px 10px;
+  border-top: 1px solid var(--line); background: var(--panel); }
+.run-input .rin { flex: 1; min-width: 0; height: 32px; padding: 0 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  font-family: var(--font-mono); font-size: 12.5px; outline: none; }
+.run-input .rin:focus { border-color: var(--primary); box-shadow: var(--ring); }
+.run-input .rin:disabled { opacity: .55; }
+.icon-btn.stop { color: var(--bad); }
+.icon-btn.stop:hover { background: var(--bad-soft); }
+/* 路径链接（`paths.js`）：能点、点了在资源管理器里打开 */
+.plink { color: var(--accent); text-decoration: underline; text-decoration-style: dotted;
+  text-underline-offset: 2px; cursor: pointer; word-break: break-all; }
+.plink:hover { text-decoration-style: solid; }

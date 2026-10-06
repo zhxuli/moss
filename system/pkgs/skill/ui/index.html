@@ -130,6 +130,8 @@
   <skill-drawer v-if="current" :it="current" :closing="drawerClosing" :store="store"
                 @close="closeDrawer()" @act="act" @toggle-doc="toggleDoc"
                 @open-file="openFile" @copy="copyPath" @copy-file="copyFile"
+                @reload-runs="loadRuns(current.id)" @clear-runs="clearRuns()"
+                @send-input="sendInput" @stop-run="stopRun"
                 @gone="closeDrawer(true)"></skill-drawer>
 
   <!-- 确认框：删技能 / 转插件之前那一问 -->
@@ -142,6 +144,7 @@
 
 <script src="src/icons.js"></script>
 <script src="src/api.js"></script>
+<script src="src/paths.js"></script>
 <script src="src/comp-tile.js"></script>
 <script src="src/comp-drawer.js"></script>
 <script src="src/comp-sheet.js"></script>

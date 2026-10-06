@@ -33,6 +33,14 @@
       var t = this.fileTextMap[rel];
       return t === undefined ? '（正在读…）' : t;
     },
+    /* ★ `V-301`/`V-302`：右侧三个选项卡 + 运行那两块。
+       rtab：当前选项卡；console：这次运行的实时输出（交互式，边跑边出）；
+       runId：交互式运行的 id（'' = 没在跑）；runs：从宿主日志读回来的历次记录（当前技能）。 */
+    rtab: 'overview',
+    runId: '',
+    console: { busy: false, running: false, at: '', code: null, dur: null, cmd: '', out: '', err: '', text: '' },
+    runs: [],
+    runsBusy: false,
   });
 
   var LOAD_TIMEOUT = 4000;    // 一次 list 最多等这么久（桥不回不能把页面挂死）
@@ -137,6 +145,11 @@
         store.docBusy = false;
         store.codeMax = '';
         this.loadDoc();
+        /* `V-301`：换技能 ⇒ 回到「数据概览」、把「命令行」清掉、把这只技能的「运行日志」读回来 */
+        store.rtab = 'overview';
+        store.runId = '';
+        store.console = { busy: false, running: false, at: '', code: null, dur: null, cmd: '', out: '', err: '', text: '' };
+        this.loadRuns(id);
       },
     },
 
@@ -145,6 +158,7 @@
 
       /* ------------------------------------------------------------ 提示条 */
       toast: function (text, kind) {
+        window.__skillToast = this.toast.bind(this);   // 给 `paths.js` 点到打不开的路径时用
         text = String(text == null ? '' : text).trim();
         if (!text) return;
         var id = ++this.toastSeq;
@@ -342,15 +356,86 @@
       },
       runOnce: function (it) {
         var self = this;
-        /* ★ 后端只许在"已经允许"的技能上试跑（这条路本来就通），所以这颗按钮也只在允许后出现 */
-        this.toast('正在跑 ' + it.name + '…', 'info');
-        window.SKILL_API.runOnce(it.id).then(function (r) {
-          var out = String((r && r.msg) || '').trim();
-          if (!out) { self.toast('跑完了，它没输出', 'info'); return; }
-          var first = out.split('\n').filter(function (x) { return x.trim(); })[0] || '';
-          self.toast(first.length > 72 ? first.slice(0, 72) + '…' : first, 'ok');
+        /* ★ `V-302`：交互式运行 —— 起一个进程，**自动切到「命令行」**，输出实时流、能输入、能停。
+           （后端只许在"已经允许"的技能上试跑；这颗按钮也只在允许后出现。） */
+        store.rtab = 'console';
+        store.runId = '';
+        store.console = { busy: true, running: true, at: '', code: null, dur: null, cmd: '',
+                          out: '', err: '', text: '' };
+        window.SKILL_API.runStart(it.id).then(function (r) {
+          if (!r || r.ok === false) {
+            store.console = { busy: false, running: false, at: '', code: null, dur: null,
+                              cmd: '', out: '', err: '', text: '起不来：' + ((r && r.msg) || '') };
+            self.toast('起不来：' + ((r && r.msg) || ''), 'bad');
+            return;
+          }
+          store.runId = r.rid;
+          store.console.cmd = (r.cmd || []).join(' ');
+          self.toast('正在跑 ' + it.name + '…', 'info');
+          setTimeout(function () { self.load(); }, 300);   // 立刻刷新数据概览（最近调用时间）
+          self.pollRun(it.id);
         }).catch(function (e) {
-          self.toast('跑不起来：' + ((e && e.message) || e), 'bad');
+          store.console = { busy: false, running: false, at: '', code: null, dur: null,
+                            cmd: '', out: '', err: '', text: '起不来：' + ((e && e.message) || e) };
+          self.toast('起不来：' + ((e && e.message) || e), 'bad');
+        });
+      },
+      pollRun: function (sid) {
+        var self = this;
+        if (!store.runId) return;
+        var rid = store.runId;
+        window.SKILL_API.runPoll(rid).then(function (r) {
+          if (!r || r.ok === false || store.runId !== rid) return;
+          store.console.out = r.out || '';
+          store.console.at = r.at || '';
+          store.console.running = !!r.running;
+          store.console.busy = !!r.running;
+          store.console.code = (r.code === undefined ? null : r.code);
+          if (r.running) { setTimeout(function () { self.pollRun(sid); }, 250); return; }
+          self.loadRuns(sid);                            // 跑完刷新「运行日志」
+          self.toast('跑完了（退出码 ' + (r.code === null || r.code === undefined ? '—' : r.code) + '）',
+                     r.code ? 'info' : 'ok');
+          setTimeout(function () { self.load(); }, 200);  // 顺带把「调用次数 / 最近调用时间」刷新一下
+        }).catch(function () { /* 轮询出错就停 */ });
+      },
+      sendInput: function (line) {
+        var self = this;
+        if (!store.runId || !store.console.running) { self.toast('没在跑', 'info'); return; }
+        window.SKILL_API.runInput(store.runId, String(line == null ? '' : line)).then(function (r) {
+          if (r && r.ok === false) self.toast(r.msg || '写不进去', 'bad');
+        }).catch(function (e) { self.toast('写不进去：' + ((e && e.message) || e), 'bad'); });
+      },
+      stopRun: function () {
+        if (!store.runId) return;
+        window.SKILL_API.runStop(store.runId).then(function () { /* 轮询会看到 running=false */ });
+      },
+      /* `V-301`：读这只技能的运行日志（新的在前） */
+      loadRuns: function (id) {
+        store.runsBusy = true;
+        return window.SKILL_API.runs(id).then(function (r) {
+          store.runsBusy = false;
+          store.runs = (r && r.runs) || [];
+        }).catch(function () {
+          store.runsBusy = false;
+          store.runs = [];
+        });
+      },
+      /* 「清空日志」：先问一句，只清这只技能的 */
+      clearRuns: function () {
+        var it = this.current;
+        if (!it) return;
+        this.showSheet({
+          title: '清掉「' + it.name + '」的运行日志？',
+          body: '只清这只技能的历次运行记录（日志文件本身留着）。这一下收不回来。',
+          ok: '清掉', danger: true,
+          run: function (s, val, done) {
+            window.SKILL_API.clearRuns(it.id).then(function (r) {
+              if (r && r.ok === false) s.toast(r.msg || '没清掉', 'bad');
+              else s.toast((r && r.msg) || '已清空', 'ok');
+              s.loadRuns(it.id);
+            }).catch(function (e) { s.toast('没清掉：' + ((e && e.message) || e), 'bad'); });
+            done();
+          },
         });
       },
       /* 删除：先把最要紧的两件事说清楚（整个目录、几个文件），再让人点头 */
