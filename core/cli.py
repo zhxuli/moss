@@ -1561,6 +1561,22 @@ def main(argv):
     if first == "--alias":
         from . import shortcut as _sc                                  # noqa: PLC0415
         return _sc.cmd_alias(rest)
+    if first == "--cd-status":
+        # 给界面「命令接入」页用：cd 包装函数（写进 PowerShell $PROFILE 的那个）装没装。
+        # 纯 JSON、只读 —— 界面不 import core，只能回头问宿主（和 `--settings` 同一条路）。
+        import json as _json                                           # noqa: PLC0415
+        try:
+            st = shell.installed_state()
+        except Exception:                                             # noqa: BLE001
+            st = []
+        sys.stdout.write(_json.dumps({
+            "ok": True,
+            "any": any(bool(v) for (_l, _p, v) in st),
+            "profiles": [{"label": l, "path": str(p), "installed": bool(v)}
+                         for (l, p, v) in st],
+        }, ensure_ascii=False))
+        sys.stdout.flush()
+        return 0
 
     # 认不出来的选项给句人话，别掉进"找以 --xxx 开头的可运行目标"那种错误里
     # （`--list` / `--rerun` 已经去掉：前者 `moss` 本来就会列包，后者改由

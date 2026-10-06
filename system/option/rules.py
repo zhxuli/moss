@@ -22,11 +22,39 @@
    （由 `tools/导出设置清单.py` 从 `core/config.py` 的 `SETTINGS_GROUPS` 生成）。
 """
 import json
+import os
 import re
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent                 # system/option
 SPEC_FILE = HERE / "settings.json"
+
+
+def _moss_on_path():
+    """moss 的安装目录在不在 PATH 里（用户 / 系统 / 当前环境任一）。
+
+    ★ `V-299`：和 `core/shortcut.py::moss_on_path()` **同一口径**（两处都要对得上，
+      `tools/设置规则探针.py` 的 C 段拿它俩比面板数据）。
+    """
+    home = str(HERE.parent.parent)                     # system/option 的上两级 = 安装根
+    cands = []
+    try:
+        import winreg                                   # noqa: PLC0415
+        hives = [(winreg.HKEY_CURRENT_USER, "Environment"),
+                 (winreg.HKEY_LOCAL_MACHINE,
+                  r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")]
+        for hive, sub in hives:
+            try:
+                with winreg.OpenKey(hive, sub) as k:
+                    v, _ = winreg.QueryValueEx(k, "Path")
+                cands += [p.strip() for p in str(v).split(";") if p.strip()]
+            except Exception:                                             # noqa: BLE001
+                pass
+    except Exception:                                                     # noqa: BLE001
+        pass
+    # ★ 只认注册表里的 PATH（用户/系统）—— 不算当前进程环境 PATH（`V-299`：会持久生效的才算）
+    want = os.path.normpath(home).lower()
+    return any(os.path.normpath(p).lower() == want for p in cands)
 
 #: 读一次就够（面板是静态资产）
 _CACHE = {}
@@ -271,10 +299,17 @@ def panel(current=None):
     for g in groups():
         its = []
         for it in (g.get("items") or []):
+            value = cur.get(it["key"], it.get("default"))
+            # ★ `V-299`：`path.moss` 显示真实状态（moss 现在在不在 PATH 里），和 core 同口径。
+            if it["key"] == "path.moss":
+                try:
+                    value = _moss_on_path()
+                except Exception:                                         # noqa: BLE001
+                    pass
             its.append({"key": it["key"], "label": it["label"],
                         "type": it.get("type") or "text", "hint": it.get("hint") or "",
                         "placeholder": it.get("placeholder") or "",
-                        "value": cur.get(it["key"], it.get("default")),
+                        "value": value,
                         "default": it.get("default")})
         out.append({"name": g["name"], "icon": g.get("icon") or "",
                     "blurb": g.get("blurb") or "", "live": bool(g.get("live")),

@@ -3573,6 +3573,39 @@ class Api:
                 # ★ `V-298`：短命令那颗开关存完之后，宿主会说"生成了/删了哪些" —— 带回去让界面弹一句。
                 "shortcut": data.get("shortcut") or [], "msg": ""}
 
+    # ------------------------------------------------------------ 命令接入：cd 增强（`V-299`）
+    #   「命令接入」那一页除了 PATH 开关，还管 `moss cd` 的"无回显"包装函数。
+    #   状态和安装都回来叫宿主（`--cd-status` / `cd --install` / `cd --uninstall`），
+    #   界面不 import core。
+    def cd_state(self):
+        """cd 包装函数装没装（只读，给那页显示）。"""
+        empty = {"ok": False, "any": False, "profiles": [], "msg": "没拿到宿主命令"}
+        if not HOST:
+            return empty
+        r = _run_capture_split(HOST + ["--cd-status"])
+        data = _json_from_host(r.get("out"))
+        if not isinstance(data, dict):
+            return empty
+        return {"ok": True, "any": bool(data.get("any")),
+                "profiles": data.get("profiles") or []}
+
+    def cd_install(self):
+        """装 cd 包装函数（= `moss cd --install`）：`moss cd <目标>` 屏幕上不留回显。"""
+        return self._cd_run("--install")
+
+    def cd_uninstall(self):
+        """卸掉 cd 包装函数（回到"注入按键"那条路）。"""
+        return self._cd_run("--uninstall")
+
+    def _cd_run(self, flag):
+        if not HOST:
+            return {"ok": False, "msg": "没拿到宿主命令"}
+        r = _run_capture_split(HOST + ["cd", flag])
+        ok = (r.get("code") == 0)
+        text = ((r.get("out") or "") + (r.get("err") or "")).strip()
+        last = (text.splitlines() or [""])[-1].strip() if text else ""
+        return {"ok": ok, "msg": last or ("完成" if ok else "没成功")}
+
     # ------------------------------------------------------------ AI 那几组参数（`V-138`）
     #   ★ 为什么这几条**不走**上面那套「设置项」：`[ai.profiles.<组名>]` 是**表套表**，
     #     组名是用户自己起的 —— 面板那种"一个键一行"的渲染摆不下

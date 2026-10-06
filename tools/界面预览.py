@@ -2154,27 +2154,34 @@ MOCK_JS = r"""
         await sleep(700);
         const navs = document.querySelectorAll("#set-nav .set-navitem").length;
         const panes = document.querySelectorAll("#set-body .set-pane").length;
-        const activePane = (document.querySelector("#set-body .set-pane.on") || {}).dataset || {};
+        // ★ `V-299`：默认打开的就是「命令接入」（把 moss 加进 PATH）那一页
+        const first = (document.querySelector("#set-body .set-pane.on") || {}).dataset || {};
+        // ★ V-299：命令接入那一页现在是一张卡片（PATH 开关 + CD 增强开关 + 子环境面板）
+        const accSw = !!document.querySelector('#set-body .set-pane.on #set-acc .sw[data-key="path.moss"]');
+        const cdSw = !!document.querySelector('#set-body .set-pane.on #acc-cd-sw');
+        const accCard = !!document.querySelector("#set-body .set-pane.on #set-acc");
+        const defaultIsAccess = first.group === "命令接入" && accSw && cdSw && accCard;
+        const navByName = n => Array.prototype.filter.call(
+          document.querySelectorAll("#set-nav .set-navitem"), b => (b.dataset.group || "") === n)[0];
+        // 切到「快捷命令」看输入格子（标签在上、控件在下）
+        const navQuick = navByName("快捷命令");
+        if (navQuick) navQuick.click();
+        await sleep(250);
+        const pane1 = (document.querySelector("#set-body .set-pane.on") || {}).dataset || {};
         const inputs = document.querySelectorAll("#set-body .set-pane.on .inp").length;
         const labels = document.querySelectorAll("#set-body .set-pane.on .set-lbl").length;
         const infos = document.querySelectorAll("#set-body .set-pane.on .set-info").length;
         const liveBox = !!document.querySelector("#set-live");
         const hasX = !!document.querySelector("#set-close svg");
-        const save0 = document.querySelector("#set-save");
-        const disabledAtStart = save0.disabled;
-        // 切到"执行提示"看一眼开关（顺便验分类能切）
-        const nav2 = Array.prototype.filter.call(
-          document.querySelectorAll("#set-nav .set-navitem"),
-          b => (b.dataset.group || "") === "执行提示")[0];
+        const disabledAtStart = document.querySelector("#set-save").disabled;
+        // 切到"执行提示"看开关（顺便验分类能切）
+        const nav2 = navByName("执行提示");
         if (nav2) nav2.click();
         await sleep(250);
         const pane2 = (document.querySelector("#set-body .set-pane.on") || {}).dataset || {};
         const switches = document.querySelectorAll("#set-body .set-pane.on .sw").length;
-        // ★ `V-298`：新增的「短命令」那一组 —— 两**总开关**（mo / mo<包名>），一个键一行
         // ★ V-298：短名设置那一组 = 前缀 + 三段选择 + 一直显示的对比预览（照那份稿子）
-        const navShort = Array.prototype.filter.call(
-          document.querySelectorAll("#set-nav .set-navitem"),
-          b => (b.dataset.group || "") === "短名设置")[0];
+        const navShort = navByName("短名设置");
         if (navShort) navShort.click();
         await sleep(250);
         const segs = document.querySelectorAll("#set-body .set-pane.on .sc-seg button");
@@ -2186,10 +2193,9 @@ MOCK_JS = r"""
         if (segs[1]){ segs[1].click(); await sleep(150); nowPrefix = nowText(); }   // 仅替换前缀
         if (segs[2]){ segs[2].click(); await sleep(150); nowFused = nowText(); }    // 前缀+包名融合
         if (segs[0]){ segs[0].click(); await sleep(150); segBack = /moss :img/.test(nowText()); }
-        const back = document.querySelectorAll("#set-nav .set-navitem")[0];
-        if (back) back.click();
+        // 回「快捷命令」改一项：符号框
+        if (navQuick) navQuick.click();
         await sleep(200);
-        // 改一项：符号框（这一格是"标签在上、控件在下"的两列网格）
         const sym = document.querySelector(
           '#set-body .set-pane.on .set-field[data-key="symbols.no_chdir_mode"] .inp');
         if (sym){ sym.value = "@"; sym.dispatchEvent(new Event("input", {bubbles: true})); }
@@ -2219,8 +2225,8 @@ MOCK_JS = r"""
         const gotMid = (M.opened || [])[(M.opened || []).length - 1] || "";
         const segOk = segEls.length >= 3 && joined === rawPath && eachHasPath &&
                       !!wantMid && gotMid === wantMid;
-        const ok = navs === 6 && panes === 6 && activePane.group === "快捷命令" &&
-                   pane2.group === "执行提示" && switches === 7 &&
+        const ok = navs === 7 && panes === 7 && defaultIsAccess &&
+                   pane1.group === "快捷命令" && pane2.group === "执行提示" && switches === 7 &&
                    segN === 3 && segDefault && preBox &&
                    nowPrefix.indexOf("mo :img") >= 0 && nowFused.indexOf("moimg") >= 0 && segBack &&
                    inputs === 4 &&
@@ -2231,7 +2237,7 @@ MOCK_JS = r"""
                    segOk;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 分类=" + navs + " 面板=" + panes +
-           " 首屏=" + activePane.group + " 次屏=" + pane2.group + " 开关=" + switches +
+           " 首屏=" + first.group + "(" + (defaultIsAccess ? 1 : 0) + ") 次屏=" + pane2.group + " 开关=" + switches +
            " 段=" + segN + "默认0=" + (segDefault ? 1 : 0) + "框=" + (preBox ? 1 : 0) +
            " 仅前缀=[" + nowPrefix.replace(/\n/g, "|") + "] 融合=[" + nowFused.replace(/\n/g, "|") + "]" +
            " 输入=" + inputs + " 标签=" + labels + " ?=" + infos + " 预览行=" + (liveBox ? 1 : 0) +
@@ -2239,7 +2245,7 @@ MOCK_JS = r"""
           " 存后仍在面板=" + stayedOpen + " 存后按钮灰=" + greyAfterSave +
           " 路径段=" + segEls.length + " 拼回原样=" + (joined === rawPath);
         document.title = ok ? "READY" : ("SETTINGS-FAIL 分类=" + navs + " 面板=" + panes +
-          " 首屏=" + activePane.group + " 次屏=" + pane2.group + " 开关=" + switches +
+          " 首屏=" + first.group + " 次屏=" + pane2.group + " 开关=" + switches +
           " 输入=" + inputs + " 标签=" + labels + " ?=" + infos + " 预览=" + liveBox +
           " ×=" + hasX + " 起灰=" + disabledAtStart + " 改亮=" + enabledAfter +
           " 挪=" + /改了 1 项/.test(stateMoved) + " 留守=" + stayedOpen +

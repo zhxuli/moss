@@ -4,6 +4,22 @@
  "symbol_bad": "!\"#$%&'()*,;<=>?@[]^`{|}",
  "groups": [
   {
+   "name": "命令接入",
+   "icon": "globe",
+   "blurb": "让 moss 在命令行里好用：把 moss 加进 PATH（任何终端都能直接敲 moss），再顺手装一下 cd 增强（moss cd 屏幕上不留回显）。",
+   "live": false,
+   "items": [
+    {
+     "key": "path.moss",
+     "label": "把 moss 加进系统 PATH",
+     "type": "bool",
+     "hint": "打开后 moss 会把它自己所在的目录加进**当前用户**的 PATH —— 之后任何终端里直接敲 moss 就行，不用写全路径。只改当前用户、不用管理员。改完**新开一个终端**才生效（**不用重启电脑**）；本来就在 PATH 里的不会重复加。",
+     "placeholder": "",
+     "default": false
+    }
+   ]
+  },
+  {
    "name": "快捷命令",
    "icon": "hash",
    "blurb": "行首那个符号决定命令的种类。留空 = 裸名就用这一类。",

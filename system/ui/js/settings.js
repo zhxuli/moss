@@ -194,8 +194,8 @@ const MossSettings = {
             </div>
           </div>
 
-          <!-- 通用那套（一个键一行）：AI 和短名设置这两组自己有界面，所以用 v-if 让开 -->
-          <template v-if="!isAi(g) && !isShortcut(g)">
+          <!-- 通用那套（一个键一行）：AI / 短名设置 / 命令接入这三组自己有界面，所以用 v-if 让开 -->
+          <template v-if="!isAi(g) && !isShortcut(g) && !isAccess(g)">
           <!-- 输入类：标签在上、控件在下（两列网格） -->
           <div class="set-fields" v-if="fieldsOf(g).length">
             <div v-for="it in fieldsOf(g)" :key="it.key" class="set-field" :data-key="it.key"
@@ -249,6 +249,54 @@ const MossSettings = {
           </div>
 
           </template>
+
+          <!-- ★ V-299：命令接入那一组（照你给的那份清爽稿子）—— 一张卡片两行设置（PATH / CD 增强），
+               CD 下面挂一个"受控子环境列表"的子面板；关掉 CD 时子面板整块置灰。 -->
+          <div class="acc-card" id="set-acc" v-if="isAccess(g)">
+            <div class="acc-row">
+              <div class="acc-info">
+                <h4 class="acc-title">加入系统 PATH</h4>
+                <p class="acc-desc">开启后，可在任何终端直接通过 <code>moss</code> 命令唤起本程序。</p>
+              </div>
+              <div class="acc-ctrl">
+                <span class="acc-state" :class="{on: !!values['path.moss']}">{{ values['path.moss'] ? "已开启" : "未开启" }}</span>
+                <button type="button" class="sw" data-key="path.moss" role="switch"
+                        :aria-checked="values['path.moss'] ? 'true' : 'false'"
+                        @click="setVal('path.moss', !values['path.moss'])"></button>
+              </div>
+            </div>
+
+            <div class="acc-row">
+              <div class="acc-info">
+                <h4 class="acc-title">终端 CD 增强
+                  <span class="set-info" title="子进程不能改父 shell 的目录（系统限制）。不装：moss 用注入按键，屏幕上会显示那条 cd 命令、还会进历史；装了（推荐）：往 PowerShell 配置写个小函数，moss 只把路径交给 shell 自己切，屏幕无回显、不进历史。"
+                        v-html="icon('info')"></span>
+                </h4>
+                <p class="acc-desc">实现原生级别的无痕目录切换，终端屏幕不留多余回显。</p>
+              </div>
+              <div class="acc-ctrl">
+                <span class="acc-state" :class="{on: cd.any}">{{ cd.busy ? "处理中…" : (cd.any ? "已开启" : "未开启") }}</span>
+                <button type="button" class="sw" id="acc-cd-sw" role="switch"
+                        :aria-checked="cd.any ? 'true' : 'false'" :disabled="cd.busy"
+                        @click="cdToggle()"></button>
+              </div>
+            </div>
+
+            <div class="acc-sub" id="acc-cd-sub" :class="{off: !cd.any}">
+              <div class="acc-warn">
+                <span class="acc-wico" v-html="icon('circle-alert')"></span>
+                <span><b>卸载必读：</b>若准备彻底删除本软件，请务必先在这里<b>关掉这个开关（执行卸载）</b>，清掉终端里留下的配置。</span>
+              </div>
+              <div class="acc-subtitle">受控子环境列表</div>
+              <div class="acc-env" v-for="p in cd.profiles" :key="p.path">
+                <span>{{ p.label }}</span>
+                <span class="acc-envstat" :class="{on: p.installed}">{{ p.installed ? "已注入" : "未注入" }}</span>
+              </div>
+              <div class="acc-env" v-if="!cd.profiles.length">
+                <span class="dim">（还没读到环境状态）</span>
+              </div>
+            </div>
+          </div>
 
           <!-- ★ V-298：短名设置那一组（照那份稿子）—— 前缀 + 三段选择（不启用 / 仅前缀 / 前缀+包名）
                + **一直显示**的左右对比预览（左=原来、右=现在；改前缀、切模式它立刻跟着变）。
@@ -360,6 +408,8 @@ const MossSettings = {
            //   不然「名字框和当前那组不一样」就一律当成**改名** —— 点个预制参数再保存会把
            //   原来那组改掉（第一版就这么错的，场景里"假库少了一组"才发现）。
            creating: false},
+      // ★ `V-299`：「命令接入」页里的 cd 增强状态（走宿主 `--cd-status` / `cd --install`）
+      cd: {loaded: false, busy: false, any: false, profiles: []},
       _timer: null,
       _seq: 0,
     };
@@ -453,6 +503,38 @@ const MossSettings = {
     isAi(g){ return this.isAiName(g && g.name); },
     // 短名设置那一组（`V-298`）—— 模板里要给它单画一块（前缀 + 三段模式 + 对比预览）
     isShortcut(g){ return !!(g && (g.items || []).some(it => it.key === "shortcut.prefix")); },
+    // 命令接入那一组（`V-299`）—— 除通用开关外，再画一块 cd 增强
+    isAccess(g){ return this.isAccessName(g && g.name); },
+    isAccessName(name){
+      const g = (this.groups || []).find(x => x.name === name);
+      return !!(g && (g.items || []).some(it => it.key === "path.moss"));
+    },
+    async cdLoad(){
+      try {
+        const r = await pywebview.api.cd_state();
+        this.cd.any = !!(r && r.any);
+        this.cd.profiles = (r && r.profiles) || [];
+      } catch(e){ /* 拿不到就当未装 */ }
+      this.cd.loaded = true;
+    },
+    async cdToggle(){
+      if (this.cd.busy) return;
+      if (this.cd.any) await this.cdUninstall(); else await this.cdInstall();
+    },
+    async cdInstall(){
+      this.cd.busy = true;
+      const r = await pywebview.api.cd_install();
+      this.cd.busy = false;
+      await this.cdLoad();
+      toast(r && r.ok ? "已装上 cd 增强 —— 新开一个 PowerShell 窗口才生效" : "没装上", !(r && r.ok));
+    },
+    async cdUninstall(){
+      this.cd.busy = true;
+      const r = await pywebview.api.cd_uninstall();
+      this.cd.busy = false;
+      await this.cdLoad();
+      toast(r && r.ok ? "已卸掉 cd 增强（cd 回到「注入按键」那条路）" : "没卸掉", !(r && r.ok));
+    },
     setScMode(m){
       // 三种程度互斥：1 = 仅前缀（生成 `<前缀>`，= moss）；2 = 前缀+包名（生成 `<前缀><包名>`）；0 = 都关
       this.setVal("shortcut.mo", m === 1);
@@ -786,6 +868,8 @@ const MossSettings = {
       this.hideTip();
       // 切到 AI 那一页时才去问宿主（省得每次开设置都多跑两条命令）
       if (this.isAiName(gid)){ this.aiLoadPresets(); if (!this.ai.loaded) this.aiLoad(""); }
+      // 切到「命令接入」时才问一次 cd 增强的状态
+      if (this.isAccessName(gid)) this.cdLoad();
     },
     setVal(key, v){
       this.values[key] = v;
@@ -845,12 +929,12 @@ const MossSettings = {
       // ★ `V-275`：成功也可能带着 warn（"提醒，不拦保存"）—— **留着**，不然那条提醒白算了。
       this.problems = list;
       Object.keys(pairs).forEach(k => { this.orig[k] = this.values[k]; });
-      toast(list.length ? ("已保存（有 " + list.length + " 条提醒）")
-                        : "已保存到 config.toml（下一次启动 moss 生效）");
-      // ★ `V-298`：短命令那两颗开关 —— 宿主存完会回"生成了 / 删了哪些短命令"，逐条说一句
-      //   （不然"打开开关"看不出到底做了什么）。
-      if (r && r.shortcut && r.shortcut.length)
-        r.shortcut.slice(0, 4).forEach(m => toast(m));
+      // ★ `V-298`：宿主存完会回"具体做了什么"（加/删 PATH、生成/删哪些短命令）。
+      //   **有具体的就别再弹那句泛泛的「已保存」** —— 否则一次保存冒两个弹窗（你报的）。
+      const scMsgs = (r && r.shortcut) || [];
+      if (list.length) toast("已保存（有 " + list.length + " 条提醒）");
+      else if (!scMsgs.length) toast("已保存到 config.toml（下一次启动 moss 生效）");
+      scMsgs.slice(0, 4).forEach(m => toast(m));
       // ★ `V-275`：**不关面板** —— 按钮自己变灰（没有改动了）、提醒 / 预览留在眼前，
       //   这就是你描述的那个状态："点保存 → 灰一下 → 干完回到没编辑过的样子"。
     },

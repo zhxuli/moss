@@ -143,6 +143,33 @@ def _path_has(d):
     return any(_same_path(p, d) for p in _user_path_list())
 
 
+def _system_path_list():
+    """系统 PATH（HKLM）—— **只读**，只用来判断"moss 是不是已经能被找到"。"""
+    try:
+        import winreg
+        with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment") as key:
+            value, _ = winreg.QueryValueEx(key, "Path")
+        return [p.strip() for p in str(value).split(";") if p.strip()]
+    except Exception:                                                     # noqa: BLE001
+        return []
+
+
+def moss_on_path():
+    """moss **现在（持久地）能不能被找到**：用户 PATH 或系统 PATH 里有它的安装目录。
+
+    ★ 只认**注册表里的 PATH**（会持久生效的那两个），**不算当前进程的环境 PATH**
+      （`V-299` 实测教训）：用户以前加过、后来删了，但**没重启**，当前环境里还留着
+      旧 PATH —— 只看环境会显示"在"，可一重启就没了。开关要说的是"**重启也在**"，
+      否则用户以为"能用"就不再管它，重启后又没了（这就是那次误删的现场）。
+    """
+    home = str(paths.HOME)
+    if _path_has(home):                                   # 当前用户 PATH（我们唯一会改的那处）
+        return True
+    return any(_same_path(p, home) for p in _system_path_list())   # 系统 PATH（只读）
+
+
 def _write_user_path(items):
     try:
         import winreg
@@ -234,8 +261,28 @@ def sync():
         if _write_user_path(left):
             msgs.append("已把 %s 从 PATH 移除" % d_str)
 
-    # ④ 账本：永远反映"现在生成了哪些"
-    new_ledger = {"dir": d_str, "launcher": launcher_argv(), "files": new_files}
+    # ③.5 moss 自己的目录（`V-299`，`[path].moss`）：让 `moss` 命令在任何终端能用。
+    #      ★ 只删**我们自己加进去的那条**（账本记着 `moss_dir`）—— 用户自己早就加过的，
+    #        关开关时不去动它。
+    home = str(paths.HOME)
+    want_moss = bool((config.CONFIG.get("path") or {}).get("moss"))
+    we_added = (str(ledger.get("moss_dir") or "") == home)
+    if want_moss and not moss_on_path():          # 已经在（系统/环境）PATH 里就不重复加
+        if _write_user_path(_user_path_list() + [home]):
+            msgs.append("已把 %s 加进 PATH（新开一个终端才生效，不用重启电脑）" % home)
+            we_added = True
+        else:
+            msgs.append("改注册表失败，没能把 %s 加进 PATH" % home)
+    elif not want_moss:
+        if we_added and _path_has(home):
+            left = [p for p in _user_path_list() if not _same_path(p, home)]
+            if _write_user_path(left):
+                msgs.append("已把 %s 从 PATH 移除（新开一个终端才生效）" % home)
+        we_added = False                     # 关了就不再是我们管的了
+
+    # ④ 账本：永远反映"现在生成了哪些" + "moss 目录是不是我们加的"
+    new_ledger = {"dir": d_str, "launcher": launcher_argv(), "files": new_files,
+                  "moss_dir": (home if we_added else None)}
     if new_ledger != ledger:
         _write_ledger(new_ledger)
     return msgs
@@ -248,7 +295,9 @@ def status():
     ledger = _read_ledger()
     files = sorted((ledger.get("files") or {}).keys())
     return {"prefix": prefix(), "mo": bool(sc.get("mo")), "pkg": bool(sc.get("pkg")),
-            "dir": str(d), "on_path": _path_has(d), "files": files}
+            "dir": str(d), "on_path": _path_has(d), "files": files,
+            "moss": bool((config.CONFIG.get("path") or {}).get("moss")),
+            "moss_dir": str(paths.HOME), "moss_on_path": moss_on_path()}
 
 
 # ---------------------------------------------------------------- CLI
@@ -271,6 +320,8 @@ def cmd_alias(argv):
         s = status()
         p = s["prefix"]
         out.print_cyan("短命令现状")
+        print("  moss 在 PATH 里        : %s   （%s）"
+              % ("是" if s["moss_on_path"] else "否", s["moss_dir"]))
         print("  前缀                  : %s" % p)
         print("  %s = moss              : %s" % (p, "开" if s["mo"] else "关"))
         print("  %s<包名> = moss :包名  : %s" % (p, "开" if s["pkg"] else "关"))

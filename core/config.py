@@ -114,6 +114,10 @@ DEFAULT_CONFIG = {
         "mo": False,               # 生成 `<前缀>`（就是 moss）
         "pkg": False,              # 生成 `<前缀><包名>`（= moss :包名）
     },
+    # ★ `V-299`：命令接入 —— 把 moss 自己的目录加进用户 PATH（`core/shortcut.py` 读它）。
+    "path": {
+        "moss": False,             # true = 把 moss.exe 所在目录加进当前用户 PATH
+    },
 }
 
 #: 当前生效的配置（`load()` 会用用户文件覆盖它）。
@@ -166,6 +170,12 @@ max_parent_depth = 0
 # Ctrl+C 怎么停：true = 第一次就强杀整棵树；false = 先温和 terminate，再按一次才强杀。
 force_kill = true
 
+[path]
+# 命令接入（`V-299`）：把 moss 自己所在的目录加进 PATH，让 `moss` 命令在任何终端都能直接敲。
+# 只改**当前用户**的 PATH（不用管理员、不动系统 PATH）。改完**新开一个终端**才生效（不用重启电脑）。
+# 界面「设置 → 命令接入」里那颗开关，改的就是这里。
+moss = false
+
 [shortcut]
 # 短命令（`V-298`）：把 `moss :img` 缩成一条直接能敲的命令。
 # 打开后 moss 会在 PATH 上加一个目录（user_data/shortcuts），往里放一批小启动器（.cmd）：
@@ -216,6 +226,15 @@ active = ""
 # ★ `settings_problems()` 会核对这份清单和 `DEFAULT_CONFIG` 对不对得上（键、类型、
 #   以及每条该有的说明有没有写），挂在 `moss --selfcheck` 上。
 SETTINGS_GROUPS = [
+    {"name": "命令接入", "icon": "globe",
+     "blurb": "让 moss 在命令行里好用：把 moss 加进 PATH（任何终端都能直接敲 moss），"
+              "再顺手装一下 cd 增强（moss cd 屏幕上不留回显）。",
+     "items": [
+         {"key": "path.moss", "label": "把 moss 加进系统 PATH", "type": "bool",
+          "hint": "打开后 moss 会把它自己所在的目录加进**当前用户**的 PATH —— 之后任何终端里"
+                  "直接敲 moss 就行，不用写全路径。只改当前用户、不用管理员。"
+                  "改完**新开一个终端**才生效（**不用重启电脑**）；本来就在 PATH 里的不会重复加。"},
+     ]},
     {"name": "快捷命令", "icon": "hash", "live": True,
      "blurb": "行首那个符号决定命令的种类。留空 = 裸名就用这一类。",
      "items": [
@@ -578,6 +597,15 @@ def settings_groups():
         items = []
         for it in g["items"]:
             section, name = _split_key(it["key"])
+            value = CONFIG.get(section, {}).get(name, DEFAULT_CONFIG[section][name])
+            # ★ `V-299`：`path.moss` 显示的是**真实状态**（moss 现在在不在 PATH 里），
+            #   不是 config 里那个初始值 —— 已经在 PATH 里就别显示成"关"（否则"能用、开关却关着"）。
+            if it["key"] == "path.moss":
+                try:
+                    from . import shortcut as _sc                         # noqa: PLC0415
+                    value = _sc.moss_on_path()
+                except Exception:                                         # noqa: BLE001
+                    pass
             items.append({
                 "key": it["key"],
                 "label": it["label"],
@@ -585,7 +613,7 @@ def settings_groups():
                 "hint": it.get("hint") or "",
                 # ★ `V-298`：少数项自带占位提示（如短命令前缀），没有就交回模板那个默认口径。
                 "placeholder": it.get("placeholder") or "",
-                "value": CONFIG.get(section, {}).get(name, DEFAULT_CONFIG[section][name]),
+                "value": value,
                 "default": DEFAULT_CONFIG[section][name],
             })
         out.append({"name": g["name"], "icon": g.get("icon") or "",
