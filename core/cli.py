@@ -61,6 +61,8 @@ USAGE = """moss —— 多语言启动器
   moss --new <id>              生成一个能跑的插件骨架到 user_data/pkgs/<id>/
   moss --rename <旧> <新id>    给一个包改名：包目录 / 数据目录 / 清单里的 id 一起改
                                （新 id 写成它现在的 id，就是"把目录名对齐成 id"）
+  moss --alias [sync|status]   短命令：把 `moss :包名` 缩成 `mo<包名>`（`moimg` = `moss :img`）。
+                               总开关在界面「设置 → 短命令」；sync = 手动对账，status = 看现状
   moss --resolve <名字>        只看解析结果，不执行（排障用：为什么选中它 / 为什么没找到）
   moss --selfcheck             自检：安装根 / runner 表 / 包 / 自带运行时 / cd 注入
 
@@ -658,6 +660,22 @@ moss :__ID__ text=你好 times=3
 '''
 
 
+def _shortcut_sync(verbose=True):
+    """让"短命令"追上现在的开关 + 包列表（`V-298`）。
+
+    改包的三条命令（建 / 改名 / 卸）之后各调一次 —— 免得 `moimg.cmd` 指向一个已经
+    不存在的包、或新建的包没有短命令。任何异常都不该打断主命令，所以整段吞掉。
+    """
+    try:
+        from . import shortcut as _sc                                  # noqa: PLC0415
+        msgs = _sc.sync()
+        if verbose:
+            for m in msgs:
+                out.print_cyan("[短命令] " + m)
+    except Exception:                                                     # noqa: BLE001
+        pass
+
+
 def cmd_new(pid, kind="task"):
     """生成一个能跑的插件骨架（`user_data/pkgs/<id>/`）。"""
     pid = str(pid or "").strip().lower()
@@ -695,6 +713,7 @@ def cmd_new(pid, kind="task"):
     print("        \"ui\": {\"embed\": \"ui/index.html\"}：既能在 moss 的「界面」选项卡里"
           "内嵌跑，也能 moss :%s 自己开窗口" % pid)
     out.print_cyan("契约（字段、环境变量、数据放哪、界面怎么写）：moss --spec")
+    _shortcut_sync()
     return 0
 
 
@@ -796,11 +815,13 @@ def cmd_rename(name, new_id, table):
     if same_id:
         out.print_cyan("已对齐：目录名 %s → %s（id 一直是 '%s'）"
                        % (pkg_dir.name, new_id, old_id))
+        _shortcut_sync()
         return 0
     out.print_cyan("已改名：%s → %s（改了 %s）" % (old_id, new_id, "、".join(done)))
     if layer == "user":
         out.print_cyan("       包调用现在要用 `moss :%s`（旧名字不再认识，除非你把它写进 aliases）。"
                        % new_id)
+    _shortcut_sync()
     return 0
 
 
@@ -1050,6 +1071,7 @@ def cmd_remove(name, table, assume_yes=False):
             print("  × %s" % e)
         return 1
     out.print_cyan("已卸载 %s。" % pid)
+    _shortcut_sync()
     return 0
 
 
@@ -1468,6 +1490,16 @@ def main(argv):
             out.print_cyan("[错误] --settings-set 要的是一个 JSON 对象（键 = 段.键）。")
             return 1
         r = config.set_values(pairs)
+        # ★ `V-298`：`[shortcut]` 那两颗开关改完要**立刻落到磁盘**（生成 / 删除短命令、
+        #   动 PATH），并把做了什么的清单带给界面（`shortcut` 字段，界面弹一句 toast）。
+        if r.get("ok"):
+            try:
+                from . import shortcut as _sc                              # noqa: PLC0415
+                msgs = _sc.sync()
+                if msgs:
+                    r["shortcut"] = msgs
+            except Exception:                                             # noqa: BLE001
+                pass
         sys.stdout.write(_json.dumps(r, ensure_ascii=False))
         sys.stdout.flush()
         return 0 if r.get("ok") else 1
@@ -1516,6 +1548,19 @@ def main(argv):
             out.print_cyan("[错误] --resolve 需要一个名字。")
             return 1
         return cmd_resolve(rest[0], table)
+
+    # ---- 短命令（`V-298`）：启动器（.cmd）走这条路 ----
+    # `--pkg img a b` 等价于 `moss :img a b`。为什么另开一条而不是复用 `:` 前缀：
+    # 启动器文件是**写死的**，而"包前缀符号"是可以在设置里改的 —— 走 `--pkg`
+    # 就和那个符号彻底解耦，用户改了符号也不会让生成的短命令失效。
+    if first == "--pkg":
+        if not rest:
+            out.print_cyan("[错误] --pkg 需要一个包名。")
+            return 1
+        return _run_package(rest[0], rest[1:], table, detach=False)
+    if first == "--alias":
+        from . import shortcut as _sc                                  # noqa: PLC0415
+        return _sc.cmd_alias(rest)
 
     # 认不出来的选项给句人话，别掉进"找以 --xxx 开头的可运行目标"那种错误里
     # （`--list` / `--rerun` 已经去掉：前者 `moss` 本来就会列包，后者改由

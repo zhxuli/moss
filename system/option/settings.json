@@ -14,6 +14,7 @@
      "label": "路径调用",
      "type": "symbol",
      "hint": "留空 = 裸名就是它：moss m 直接在当前目录（及上层）找 main.py 之类的入口跑。",
+     "placeholder": "",
      "default": ""
     },
     {
@@ -21,6 +22,7 @@
      "label": "不切目录",
      "type": "symbol",
      "hint": "moss /m：在**当前目录**跑那个文件，不切到它所在的目录 —— 脚本里要用当前目录的相对路径时用这个。",
+     "placeholder": "",
      "default": "/"
     },
     {
@@ -28,6 +30,7 @@
      "label": "跑包",
      "type": "symbol",
      "hint": "moss :img：冒号后面是包名，id 和别名都能用。",
+     "placeholder": "",
      "default": ":"
     },
     {
@@ -35,7 +38,40 @@
      "label": "后台脱离",
      "type": "symbol",
      "hint": "moss ~m：脱离控制台跑，Ctrl+C 也管不到它 —— 跑服务、跑长任务用。",
+     "placeholder": "",
      "default": "~"
+    }
+   ]
+  },
+  {
+   "name": "短名设置",
+   "icon": "moss-shortcut",
+   "blurb": "把 moss :包名 缩成一条直接能敲的命令：往 PATH 上加一个目录，往里放一批小启动器。新建 / 改名 / 删除包会自动跟着变。",
+   "live": false,
+   "items": [
+    {
+     "key": "shortcut.prefix",
+     "label": "前缀",
+     "type": "text",
+     "hint": "短命令的前缀（默认 mo）。moimg = mo + img，所以换前缀会一起换。要字母开头、只含字母/数字/-/_、1~8 个字符 —— 它既是命令名也是文件名。",
+     "placeholder": "如 mo",
+     "default": "mo"
+    },
+    {
+     "key": "shortcut.mo",
+     "label": "「前缀」= moss（一条 alias 式的短命令）",
+     "type": "bool",
+     "hint": "打开后生成一条 `<前缀>` —— 它就是 moss：<前缀> :img、<前缀> --help、「前缀 ~m」都能用，和直接敲 moss 一模一样。",
+     "placeholder": "",
+     "default": false
+    },
+    {
+     "key": "shortcut.pkg",
+     "label": "「前缀+包名」= moss :包名（融合短命令）",
+     "type": "bool",
+     "hint": "给每个已安装的包生成一条「前缀+包名」：moimg 就等于 moss :img。前缀的作用是不撞上系统里的同名命令。",
+     "placeholder": "",
+     "default": false
     }
    ]
   },
@@ -50,6 +86,7 @@
      "label": "运行前清屏",
      "type": "bool",
      "hint": "先清掉上一次的输出再跑；想留着它就别开。",
+     "placeholder": "",
      "default": true
     },
     {
@@ -57,6 +94,7 @@
      "label": "打印将要执行的命令",
      "type": "bool",
      "hint": "把最终敲的那条命令原样打出来 —— 排查参数问题时最有用的一行。",
+     "placeholder": "",
      "default": true
     },
     {
@@ -64,6 +102,7 @@
      "label": "打印工作目录",
      "type": "bool",
      "hint": "这个包（或脚本）是在哪个目录里跑的。",
+     "placeholder": "",
      "default": true
     },
     {
@@ -71,6 +110,7 @@
      "label": "打印子进程 PID",
      "type": "bool",
      "hint": "子进程的进程号 —— 和任务管理器里对上号用。",
+     "placeholder": "",
      "default": true
     },
     {
@@ -78,6 +118,7 @@
      "label": "打印开始时间",
      "type": "bool",
      "hint": "哪一刻开始跑的。",
+     "placeholder": "",
      "default": true
     },
     {
@@ -85,6 +126,7 @@
      "label": "打印结束时间",
      "type": "bool",
      "hint": "哪一刻跑完的。",
+     "placeholder": "",
      "default": true
     },
     {
@@ -92,6 +134,7 @@
      "label": "打印运行总长",
      "type": "bool",
      "hint": "跑完打印这次用了多久（秒）。",
+     "placeholder": "",
      "default": true
     }
    ]
@@ -107,6 +150,7 @@
      "label": "起始横幅文本",
      "type": "text",
      "hint": "运行前打印的一整行自定义文字；留空 = 不打印。",
+     "placeholder": "",
      "default": ""
     },
     {
@@ -114,6 +158,7 @@
      "label": "结束横幅文本",
      "type": "text",
      "hint": "运行后打印的一整行自定义文字；留空 = 不打印。",
+     "placeholder": "",
      "default": ""
     },
     {
@@ -121,6 +166,7 @@
      "label": "行首符号",
      "type": "text",
      "hint": "上面那几行开头的符号（例如 >）；留空 = 用内置的 [执行] 这种。",
+     "placeholder": "",
      "default": ""
     }
    ]
@@ -136,6 +182,7 @@
      "label": "向上查找层数",
      "type": "int",
      "hint": "跑 moss m 这类路径调用时，从当前目录往上找几级。0 = 只看当前目录（默认）；填 3 就是当前目录 + 往上 3 级，一共 4 个目录。往上找得越远越慢，也越容易撞上上层项目里的同名文件（撞上就会停下来问你选哪个）。",
+     "placeholder": "",
      "default": 0
     },
     {
@@ -143,6 +190,7 @@
      "label": "第一次按 Ctrl+C 就强杀整棵树",
      "type": "bool",
      "hint": "在终端里按 Ctrl+C 时，第一次就强杀整棵进程树。关掉之后：第一次只温和地请它退出，再按一次才强杀 —— 有收尾工作的包适合关掉。",
+     "placeholder": "",
      "default": true
     }
    ]
@@ -158,6 +206,7 @@
      "label": "当前组",
      "type": "text",
      "hint": "跑包时用哪一组。",
+     "placeholder": "",
      "default": ""
     },
     {
@@ -165,6 +214,7 @@
      "label": "各组",
      "type": "raw",
      "hint": "每组：接口地址 / 密钥 / 模型；在面板上点「新建」或某行的「编辑」改。",
+     "placeholder": "",
      "default": {}
     }
    ]

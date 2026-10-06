@@ -136,6 +136,28 @@
 .set-live b{color:var(--fg);font-weight:600}
 .set-live.bad{background:rgba(214,69,69,.08);color:#d64545}
 
+/* 短名设置那一组（`V-298`）：前缀 + 三段模式 + **一直显示**的左右对比预览（左=原来、右=现在）。
+   ★ 为什么单独画一块：短命令这概念有点抽象，做成"一条线上的三种程度 + 例子对比"才一眼懂。 */
+.set-sc .sc-field{max-width:380px}
+.set-sc .sc-mode{margin-top:18px}
+.set-sc .sc-seg{display:inline-flex;background:var(--tile);border-radius:8px;padding:3px;gap:2px}
+.set-sc .sc-seg button{border:0;background:transparent;color:var(--fg2);font:inherit;font-size:13px;
+  padding:6px 16px;border-radius:6px;cursor:pointer;transition:background .12s,color .12s}
+.set-sc .sc-seg button:hover{color:var(--fg)}
+.set-sc .sc-seg button.on{background:var(--panel2);color:var(--accent);font-weight:600;
+  box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.set-sc .sc-preview{margin-top:22px;border:1px solid var(--hair);border-radius:10px;overflow:hidden}
+.set-sc .sc-ph{background:var(--tile);padding:10px 14px;font-size:12px;color:var(--fg2);
+  border-bottom:1px solid var(--hair)}
+.set-sc .sc-cols{display:grid;grid-template-columns:1fr 1fr;background:var(--panel2)}
+.set-sc .sc-col{padding:14px 16px;min-width:0}
+.set-sc .sc-col:first-child{border-right:1px solid var(--hair)}
+.set-sc .sc-coltitle{font-size:11px;font-weight:600;color:var(--dim);margin-bottom:8px}
+.set-sc .sc-col pre{margin:0;font-family:var(--mono);font-size:12.5px;color:var(--fg);
+  line-height:1.95;white-space:pre-wrap;overflow-x:auto;tab-size:4}
+/* ★ V-298：右列把**前缀**高亮（`mo` 亮、`img` 正常）—— 照那份稿子的视觉引导 */
+.set-sc .sc-hl{color:var(--accent);font-weight:600}
+
 /* 脚：状态 + 按钮 */
 /* ★ V-167：定高 **36px**（跟主窗口那条状态栏一模一样高）—— 以前是 padding 撑出来的，跟着内容变。 */
 .set-foot{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px 0 18px;

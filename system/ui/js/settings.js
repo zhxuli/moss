@@ -194,8 +194,8 @@ const MossSettings = {
             </div>
           </div>
 
-          <!-- 通用那套（一个键一行）：AI 那一组自己有界面（上面那块），所以用 v-if 让开 -->
-          <template v-if="!isAi(g)">
+          <!-- 通用那套（一个键一行）：AI 和短名设置这两组自己有界面，所以用 v-if 让开 -->
+          <template v-if="!isAi(g) && !isShortcut(g)">
           <!-- 输入类：标签在上、控件在下（两列网格） -->
           <div class="set-fields" v-if="fieldsOf(g).length">
             <div v-for="it in fieldsOf(g)" :key="it.key" class="set-field" :data-key="it.key"
@@ -215,7 +215,7 @@ const MossSettings = {
                         @click="bump(it.key, 1)">+</button>
               </div>
               <input v-else class="inp" :data-key="it.key" spellcheck="false" autocomplete="off"
-                     :placeholder="it.type === 'symbol' ? '空' : '留空 = 不打印'"
+                     :placeholder="it.placeholder || (it.type === 'symbol' ? '空' : '留空 = 不打印')"
                      :value="values[it.key]"
                      @input="setVal(it.key, $event.target.value)">
               <div class="set-prob" data-role="prob">{{ probText(it.key) }}</div>
@@ -247,7 +247,56 @@ const MossSettings = {
                  老实说一句，别让它看着像"实时反映你刚才的改动"。 -->
             <span v-if="changed.length" style="opacity:.65">（改动还没保存 —— 这段预览是按已保存的值算的）</span>
           </div>
+
           </template>
+
+          <!-- ★ V-298：短名设置那一组（照那份稿子）—— 前缀 + 三段选择（不启用 / 仅前缀 / 前缀+包名）
+               + **一直显示**的左右对比预览（左=原来、右=现在；改前缀、切模式它立刻跟着变）。
+               ★ 为什么用三段而不是两个独立开关：这是一件事的三种程度，做成一条线才一眼看懂。 -->
+          <div class="set-sc" v-if="isShortcut(g)">
+            <div class="set-field sc-field" :class="rowClass('shortcut.prefix')">
+              <div class="set-lbl">
+                <span>前缀</span>
+                <span class="set-info" data-tip-key="shortcut.prefix"
+                      @mouseover="showTip('shortcut.prefix', $event)" @mouseleave="hideTip"
+                      v-html="icon('info')"></span>
+              </div>
+              <input class="inp" data-key="shortcut.prefix" spellcheck="false" autocomplete="off"
+                     placeholder="如 mo" :value="values['shortcut.prefix']"
+                     @input="setVal('shortcut.prefix', $event.target.value)">
+              <div class="set-prob" data-role="prob">{{ probText("shortcut.prefix") }}</div>
+            </div>
+
+            <div class="sc-mode">
+              <div class="set-lbl">
+                <span>短命令模式</span>
+                <span class="set-info" @mouseover="showTip('shortcut.pkg', $event)" @mouseleave="hideTip"
+                      v-html="icon('info')"></span>
+              </div>
+              <div class="sc-seg" id="set-sc-seg">
+                <button type="button" data-mode="off" :class="{on: scMode === 0}"
+                        @click="setScMode(0)">不启用</button>
+                <button type="button" data-mode="prefix" :class="{on: scMode === 1}"
+                        @click="setScMode(1)">仅替换前缀</button>
+                <button type="button" data-mode="fused" :class="{on: scMode === 2}"
+                        @click="setScMode(2)">前缀 + 包名融合</button>
+              </div>
+            </div>
+
+            <div class="sc-preview" id="set-sc-preview">
+              <div class="sc-ph">开启后长这样（参数原样传、退出码也原样传；新开一个终端才生效）</div>
+              <div class="sc-cols">
+                <div class="sc-col">
+                  <div class="sc-coltitle">原来</div>
+                  <pre>{{ scBeforeText }}</pre>
+                </div>
+                <div class="sc-col">
+                  <div class="sc-coltitle">现在</div>
+                  <pre id="set-sc-now" v-html="scNowHtml"></pre>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -384,11 +433,31 @@ const MossSettings = {
     },
     // 现在这一页是不是 AI 那一组（是的话底部那颗全局「保存」就不摆 —— 见模板里的注释）
     aiPane(){ return this.isAiName(this.active); },
+    // ★ `V-298`：短名设置那一组 —— 前缀 / 三段模式 / 对比预览（都跟着当前编辑值即时变）
+    scPrefix(){ return (String(this.values["shortcut.prefix"] || "").replace(/[^A-Za-z0-9_-]/g, "")) || "mo"; },
+    scMode(){ return this.values["shortcut.pkg"] ? 2 : (this.values["shortcut.mo"] ? 1 : 0); },
+    scBeforeText(){ return "moss :img\nmoss :img webp 60% *.png"; },
+    // ★ V-298：右列要**把前缀高亮**（`mo` 亮、`img` 正常）—— 照那份稿子的视觉引导。
+    //   `scPrefix` 已经洗过（只剩字母/数字/-/_），拼进 HTML 安全。
+    scNowHtml(){
+      const p = this.scPrefix, m = this.scMode;
+      const hl = s => '<span class="sc-hl">' + s + '</span>';
+      if (m === 1) return hl(p) + " :img\n" + hl(p) + " :img webp 60% *.png";
+      if (m === 2) return hl(p) + "img\n" + hl(p) + "img webp 60% *.png";
+      return hl("moss") + " :img\n" + hl("moss") + " :img webp 60% *.png";
+    },
 
   },
   methods: {
     icon(name){ return ico(name, "i"); },
     isAi(g){ return this.isAiName(g && g.name); },
+    // 短名设置那一组（`V-298`）—— 模板里要给它单画一块（前缀 + 三段模式 + 对比预览）
+    isShortcut(g){ return !!(g && (g.items || []).some(it => it.key === "shortcut.prefix")); },
+    setScMode(m){
+      // 三种程度互斥：1 = 仅前缀（生成 `<前缀>`，= moss）；2 = 前缀+包名（生成 `<前缀><包名>`）；0 = 都关
+      this.setVal("shortcut.mo", m === 1);
+      this.setVal("shortcut.pkg", m === 2);
+    },
     isAiName(name){
       const g = (this.groups || []).find(x => x.name === name);
       return !!(g && (g.items || []).some(it => it.key === "ai.active"));
@@ -778,6 +847,10 @@ const MossSettings = {
       Object.keys(pairs).forEach(k => { this.orig[k] = this.values[k]; });
       toast(list.length ? ("已保存（有 " + list.length + " 条提醒）")
                         : "已保存到 config.toml（下一次启动 moss 生效）");
+      // ★ `V-298`：短命令那两颗开关 —— 宿主存完会回"生成了 / 删了哪些短命令"，逐条说一句
+      //   （不然"打开开关"看不出到底做了什么）。
+      if (r && r.shortcut && r.shortcut.length)
+        r.shortcut.slice(0, 4).forEach(m => toast(m));
       // ★ `V-275`：**不关面板** —— 按钮自己变灰（没有改动了）、提醒 / 预览留在眼前，
       //   这就是你描述的那个状态："点保存 → 灰一下 → 干完回到没编辑过的样子"。
     },

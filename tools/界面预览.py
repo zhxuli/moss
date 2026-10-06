@@ -2163,11 +2163,29 @@ MOCK_JS = r"""
         const save0 = document.querySelector("#set-save");
         const disabledAtStart = save0.disabled;
         // 切到"执行提示"看一眼开关（顺便验分类能切）
-        const nav2 = document.querySelectorAll("#set-nav .set-navitem")[1];
+        const nav2 = Array.prototype.filter.call(
+          document.querySelectorAll("#set-nav .set-navitem"),
+          b => (b.dataset.group || "") === "执行提示")[0];
         if (nav2) nav2.click();
         await sleep(250);
         const pane2 = (document.querySelector("#set-body .set-pane.on") || {}).dataset || {};
         const switches = document.querySelectorAll("#set-body .set-pane.on .sw").length;
+        // ★ `V-298`：新增的「短命令」那一组 —— 两**总开关**（mo / mo<包名>），一个键一行
+        // ★ V-298：短名设置那一组 = 前缀 + 三段选择 + 一直显示的对比预览（照那份稿子）
+        const navShort = Array.prototype.filter.call(
+          document.querySelectorAll("#set-nav .set-navitem"),
+          b => (b.dataset.group || "") === "短名设置")[0];
+        if (navShort) navShort.click();
+        await sleep(250);
+        const segs = document.querySelectorAll("#set-body .set-pane.on .sc-seg button");
+        const segN = segs.length;
+        const segDefault = segs[0] ? segs[0].classList.contains("on") : false;   // 默认「不启用」
+        const preBox = !!document.querySelector("#set-body .set-pane.on #set-sc-preview");
+        const nowText = () => ((document.querySelector("#set-sc-now") || {}).textContent || "");
+        let nowPrefix = "", nowFused = "", segBack = false;
+        if (segs[1]){ segs[1].click(); await sleep(150); nowPrefix = nowText(); }   // 仅替换前缀
+        if (segs[2]){ segs[2].click(); await sleep(150); nowFused = nowText(); }    // 前缀+包名融合
+        if (segs[0]){ segs[0].click(); await sleep(150); segBack = /moss :img/.test(nowText()); }
         const back = document.querySelectorAll("#set-nav .set-navitem")[0];
         if (back) back.click();
         await sleep(200);
@@ -2201,8 +2219,11 @@ MOCK_JS = r"""
         const gotMid = (M.opened || [])[(M.opened || []).length - 1] || "";
         const segOk = segEls.length >= 3 && joined === rawPath && eachHasPath &&
                       !!wantMid && gotMid === wantMid;
-        const ok = navs === 5 && panes === 5 && activePane.group === "快捷命令" &&
-                   pane2.group === "执行提示" && switches === 7 && inputs === 4 &&
+        const ok = navs === 6 && panes === 6 && activePane.group === "快捷命令" &&
+                   pane2.group === "执行提示" && switches === 7 &&
+                   segN === 3 && segDefault && preBox &&
+                   nowPrefix.indexOf("mo :img") >= 0 && nowFused.indexOf("moimg") >= 0 && segBack &&
+                   inputs === 4 &&
                    labels === 4 && infos === 4 && liveBox && hasX && disabledAtStart &&
                    enabledAfter && /改了 1 项/.test(stateMoved) && stayedOpen && greyAfterSave &&
                    opened &&
@@ -2210,8 +2231,10 @@ MOCK_JS = r"""
                    segOk;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 分类=" + navs + " 面板=" + panes +
-          " 首屏=" + activePane.group + " 次屏=" + pane2.group + " 开关=" + switches +
-          " 输入=" + inputs + " 标签=" + labels + " ?=" + infos + " 预览行=" + (liveBox ? 1 : 0) +
+           " 首屏=" + activePane.group + " 次屏=" + pane2.group + " 开关=" + switches +
+           " 段=" + segN + "默认0=" + (segDefault ? 1 : 0) + "框=" + (preBox ? 1 : 0) +
+           " 仅前缀=[" + nowPrefix.replace(/\n/g, "|") + "] 融合=[" + nowFused.replace(/\n/g, "|") + "]" +
+           " 输入=" + inputs + " 标签=" + labels + " ?=" + infos + " 预览行=" + (liveBox ? 1 : 0) +
           " ×=" + (hasX ? 1 : 0) + " 存了=" + JSON.stringify(saved) +
           " 存后仍在面板=" + stayedOpen + " 存后按钮灰=" + greyAfterSave +
           " 路径段=" + segEls.length + " 拼回原样=" + (joined === rawPath);

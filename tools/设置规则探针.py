@@ -84,6 +84,8 @@ def main():
     cases = [dict(base)]
     for key, vals in (("symbols.path_mode", ["#", "", ":", "@", "abcde", "a b"]),
                       ("symbols.plugin_mode", ["", ":", "~"]),
+                      # ★ `V-298`：短命令前缀两头都要一样地判（合法 / 非法各来几个）
+                      ("shortcut.prefix", ["m", "MOSS", "a-b_1", "", "a b", "a.b", ":x", "img2"]),
                       ("search.max_parent_depth", [0, 3, 6, 8, 99, "x", True]),
                       ("output.start_banner", ["跑起来了", "两\n行"]),
                       ("output.command", [True, False, "yes"])):

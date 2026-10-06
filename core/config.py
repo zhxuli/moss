@@ -108,6 +108,12 @@ DEFAULT_CONFIG = {
     "ctrl_c": {
         "force_kill": True,
     },
+    # ★ `V-298`：短命令（`core/shortcut.py` 读它）。前缀可改，别写死。
+    "shortcut": {
+        "prefix": "mo",            # 短命令前缀：`<前缀>` = moss，`<前缀><包名>` = moss :包名
+        "mo": False,               # 生成 `<前缀>`（就是 moss）
+        "pkg": False,              # 生成 `<前缀><包名>`（= moss :包名）
+    },
 }
 
 #: 当前生效的配置（`load()` 会用用户文件覆盖它）。
@@ -160,6 +166,18 @@ max_parent_depth = 0
 # Ctrl+C 怎么停：true = 第一次就强杀整棵树；false = 先温和 terminate，再按一次才强杀。
 force_kill = true
 
+[shortcut]
+# 短命令（`V-298`）：把 `moss :img` 缩成一条直接能敲的命令。
+# 打开后 moss 会在 PATH 上加一个目录（user_data/shortcuts），往里放一批小启动器（.cmd）：
+#   prefix = "mo"  → 前缀（随便改，只要字母开头、只含字母/数字/-/_、1~8 个字符）
+#   mo  = true     → 生成 `<前缀>`：它就是 moss（可以敲 mo :img、mo --help、mo ~m …）
+#   pkg = true     → 生成 `<前缀><包名>`：moimg 就等于 moss :img；新建 / 改名 / 删除包会自动跟着变
+# 前缀的作用是降低撞上系统命令的概率。改完存盘即生效（新开一个终端才看得到新命令）。
+# 界面「设置 → 短命令」里那几项，改的就是这里。
+prefix = "mo"
+mo  = false
+pkg = false
+
 
 # ---------------------------------------------------------------- AI（`V-137` / `V-139`）
 # 一组 = `[ai.profiles.<组名>]`；`active` 指当前用哪一组。参数**明文**存在这个文件里
@@ -211,7 +229,22 @@ SETTINGS_GROUPS = [
          {"key": "symbols.no_force_kill_mode", "label": "后台脱离", "type": "symbol",
           "hint": "moss ~m：脱离控制台跑，Ctrl+C 也管不到它 —— 跑服务、跑长任务用。"},
      ]},
-    {"name": "执行提示", "icon": "terminal",
+     {"name": "短名设置", "icon": "moss-shortcut",
+      "blurb": "把 moss :包名 缩成一条直接能敲的命令：往 PATH 上加一个目录，"
+               "往里放一批小启动器。新建 / 改名 / 删除包会自动跟着变。",
+      "items": [
+          {"key": "shortcut.prefix", "label": "前缀", "type": "text",
+           "placeholder": "如 mo",
+           "hint": "短命令的前缀（默认 mo）。moimg = mo + img，所以换前缀会一起换。"
+                   "要字母开头、只含字母/数字/-/_、1~8 个字符 —— 它既是命令名也是文件名。"},
+          {"key": "shortcut.mo", "label": "「前缀」= moss（一条 alias 式的短命令）", "type": "bool",
+           "hint": "打开后生成一条 `<前缀>` —— 它就是 moss：<前缀> :img、<前缀> --help、"
+                   "「前缀 ~m」都能用，和直接敲 moss 一模一样。"},
+          {"key": "shortcut.pkg", "label": "「前缀+包名」= moss :包名（融合短命令）", "type": "bool",
+           "hint": "给每个已安装的包生成一条「前缀+包名」：moimg 就等于 moss :img。"
+                   "前缀的作用是不撞上系统里的同名命令。"},
+     ]},
+     {"name": "执行提示", "icon": "terminal",
      "blurb": "每次跑东西时，宿主在运行前 / 运行后打印的那几行。嫌吵就关掉对应的开关"
               "（关掉之后，界面「命令行」那一页里也会少这几行）。",
      "items": [
@@ -421,6 +454,11 @@ def _check_values(values):
                 if "\n" in val or "\r" in val:
                     err(key, "里不能有换行（现在 %r）" % (val,))
 
+    # ★ `V-298`：短命令前缀要**同时能当命令名和文件名** —— 字母开头、只含字母/数字/-/_。
+    pv = after.get("shortcut.prefix")
+    if pv is not None and not re.match(r"^[A-Za-z][A-Za-z0-9_-]{0,7}$", str(pv)):
+        err("shortcut.prefix", "前缀要字母开头、只含字母/数字/-/_，1~8 个字符（现在 %r）" % (pv,))
+
     # ② 跨项：裸名归谁（这是这两种前缀符号互相干扰的地方）
     if not after.get("symbols.path_mode") and not after.get("symbols.plugin_mode"):
         pair = ["symbols.path_mode", "symbols.plugin_mode"]
@@ -545,6 +583,8 @@ def settings_groups():
                 "label": it["label"],
                 "type": it.get("type") or "text",
                 "hint": it.get("hint") or "",
+                # ★ `V-298`：少数项自带占位提示（如短命令前缀），没有就交回模板那个默认口径。
+                "placeholder": it.get("placeholder") or "",
                 "value": CONFIG.get(section, {}).get(name, DEFAULT_CONFIG[section][name]),
                 "default": DEFAULT_CONFIG[section][name],
             })
@@ -598,6 +638,34 @@ def _split_comment(rest):
     return rest, ""
 
 
+def _ensure_sections(raw, sections):
+    """把用户文件里缺的段按默认值补到末尾（**只增不改**，原有的字一个不动）。
+
+    为什么要它（`V-298`）：`config.toml` 是"首次运行按模板建的"，而模板后来会长出新段
+    （这次是 `[shortcut]`）—— 老用户的文件里没有它，可 `set_values` 是**按行找键**改值的，
+    找不到那一行就直接报错。补上之后，新设置项对老用户也存得进去。
+    """
+    have = set()
+    for line in raw.splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            have.add(s[1:-1].strip())
+    add = [s for s in sections if s and s not in have]
+    if not add:
+        return raw
+    nl = "\r\n" if "\r\n" in raw else "\n"
+    block = ["", "# ---- 下面是程序新增的段（保留你原来的内容，只补缺的） ----"]
+    for section in add:
+        block.append("[%s]" % section)
+        for name, val in (DEFAULT_CONFIG.get(section) or {}).items():
+            kind = "bool" if isinstance(val, bool) else ("int" if isinstance(val, int) else "text")
+            block.append("%s = %s" % (name, _toml_literal(val, kind)))
+    text = raw
+    if text and not text.endswith(("\n", "\r")):
+        text += nl
+    return text + nl.join(block) + nl
+
+
 def set_values(values, path=None):
     # ★ `V-137`：`ai.*` 单独处理 —— `ai.profiles` 是**表**，通用那条"逐键写 TOML"的路子会把它写成
     #   一个字符串，下次读就崩（`ai_profiles()` 拿到的不是 dict）。所以：
@@ -635,6 +703,12 @@ def set_values(values, path=None):
     except OSError as e:
         return {"ok": False,
                 "problems": [{"key": "", "why": "读不了配置文件：%s" % e, "level": "error"}]}
+
+    # ★ `V-298`：老配置缺段时先补上（只增不改），否则新设置项永远"找不到那一行"存不进去。
+    try:
+        raw = _ensure_sections(raw, [_split_key(k)[0] for k in values])
+    except Exception:                                                     # noqa: BLE001
+        pass
 
     nl = "\r\n" if "\r\n" in raw else "\n"
     section = ""

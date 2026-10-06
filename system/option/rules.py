@@ -22,6 +22,7 @@
    （由 `tools/导出设置清单.py` 从 `core/config.py` 的 `SETTINGS_GROUPS` 生成）。
 """
 import json
+import re
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent                 # system/option
@@ -198,6 +199,11 @@ def problems(values, current=None):
                 if "\n" in val or "\r" in val:
                     err(key, "里不能有换行（现在 %r）" % (val,))
 
+    # ★ `V-298`：短命令前缀要**同时能当命令名和文件名** —— 字母开头、只含字母/数字/-/_。
+    pv = after.get("shortcut.prefix")
+    if pv is not None and not re.match(r"^[A-Za-z][A-Za-z0-9_-]{0,7}$", str(pv)):
+        err("shortcut.prefix", "前缀要字母开头、只含字母/数字/-/_，1~8 个字符（现在 %r）" % (pv,))
+
     # ② 跨项：裸名归谁（这是这两种前缀符号互相干扰的地方）
     if not after.get("symbols.path_mode") and not after.get("symbols.plugin_mode"):
         pair = ["symbols.path_mode", "symbols.plugin_mode"]
@@ -267,6 +273,7 @@ def panel(current=None):
         for it in (g.get("items") or []):
             its.append({"key": it["key"], "label": it["label"],
                         "type": it.get("type") or "text", "hint": it.get("hint") or "",
+                        "placeholder": it.get("placeholder") or "",
                         "value": cur.get(it["key"], it.get("default")),
                         "default": it.get("default")})
         out.append({"name": g["name"], "icon": g.get("icon") or "",

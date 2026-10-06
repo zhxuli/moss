@@ -3570,7 +3570,8 @@ class Api:
                               (" —— " + tail) if tail else "")}
         return {"ok": bool(data.get("ok")), "problems": data.get("problems") or [],
                 "notes": data.get("notes") or {}, "live": data.get("live") or "",
-                "msg": ""}
+                # ★ `V-298`：短命令那颗开关存完之后，宿主会说"生成了/删了哪些" —— 带回去让界面弹一句。
+                "shortcut": data.get("shortcut") or [], "msg": ""}
 
     # ------------------------------------------------------------ AI 那几组参数（`V-138`）
     #   ★ 为什么这几条**不走**上面那套「设置项」：`[ai.profiles.<组名>]` 是**表套表**，

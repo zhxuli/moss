@@ -31,6 +31,8 @@ def build():
                 "label": it["label"],
                 "type": it.get("type") or "text",
                 "hint": it.get("hint") or "",
+                # `V-298`：少数项自带占位提示（如短命令前缀），没有就空串
+                "placeholder": it.get("placeholder") or "",
                 # 默认值取 `DEFAULT_CONFIG`（面板上"没动过"时该是多少）
                 "default": C.DEFAULT_CONFIG[section][name],
             })
