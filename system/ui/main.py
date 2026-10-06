@@ -3606,6 +3606,38 @@ class Api:
         last = (text.splitlines() or [""])[-1].strip() if text else ""
         return {"ok": ok, "msg": last or ("完成" if ok else "没成功")}
 
+    # ------------------------------------------------------------ 插件列表的排序（`V-300`）
+    #   用户把包拖成自己的顺序 → 存 `user_data/state/_ui_order.json`。
+    #   ★ 为什么走宿主存、不用 localStorage：页面地址带随机端口/token（`_page_url`），
+    #     每次启动源都变 ⇒ localStorage 读不回来（`core.js` 里记过这个坑）。
+    def list_state(self):
+        """读插件列表的「自定义顺序 + 排序档」。读坏了就当没存（返回空）。"""
+        f = USER_DATA / "state" / "_ui_order.json"
+        try:
+            data = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+        except Exception:                                                 # noqa: BLE001
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        ids = data.get("ids")
+        return {"ok": True, "ids": ids if isinstance(ids, list) else [],
+                "sort": data.get("sort") if isinstance(data.get("sort"), str) else ""}
+
+    def list_state_set(self, ids, sort):
+        """存「自定义顺序 + 排序档」。原子写（先 .tmp 再 replace），跟窗口几何一个路子。"""
+        try:
+            d = USER_DATA / "state"
+            d.mkdir(parents=True, exist_ok=True)
+            f = d / "_ui_order.json"
+            tmp = f.with_name(f.name + ".tmp")
+            tmp.write_text(json.dumps({"ids": [str(x) for x in (ids or [])],
+                                       "sort": str(sort or "")}, ensure_ascii=False),
+                           encoding="utf-8")
+            os.replace(str(tmp), str(f))
+            return {"ok": True}
+        except Exception as e:                                            # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
     # ------------------------------------------------------------ AI 那几组参数（`V-138`）
     #   ★ 为什么这几条**不走**上面那套「设置项」：`[ai.profiles.<组名>]` 是**表套表**，
     #     组名是用户自己起的 —— 面板那种"一个键一行"的渲染摆不下

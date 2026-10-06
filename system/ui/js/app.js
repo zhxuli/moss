@@ -68,6 +68,8 @@ async function init(){
   document.querySelector("header .brand").title =
     "moss · " + DATA.home + " · 启动方式：" + DATA.launch_kind;
   renderList(); paintStates();
+  // ★ `V-300`：这里桥一定就绪了，读回插件的"自定义顺序 + 排序档"（在 initListBars 里读太早会失败）
+  loadListView();
   await loadHist();        // 先把历史读回来（loadHist 会顺手按 key 找回选中的那条）
   setSide(side);           // 切换条的高亮 / 隐藏状态跟 JS 变量对齐；顺带画一遍列表
   // ★ 启动诊断写一行到日志（`V-76`）：界面要是空白，我读这行就知道是哪种情况

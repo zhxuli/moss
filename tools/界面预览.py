@@ -94,6 +94,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "btn-detail", "err-path", "args-clear", "backup", "backup-restore", "backup-sync", "backup-export", "backup-groups",
           "drop-hot", "drop-dir", "drop-file", "drop-ext", "console-input", "embed", "pane-resize",
+          "list-order", "list-drag", "list-drag-filter", "list-drag-top",
           "flat-buttons", "backup-diff", "refresh-keep-ctx", "compare", "hist-snap", "modal-kinds", "snap-modal",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
@@ -257,6 +258,8 @@ def mock_data():
 
     return {"payload": payload, "hist": hist, "fs": fs, "settings": settings, "ai": ai,
             "aiPresets": ai_presets, "bigJs": _big,
+            # `V-300`：插件列表拖动排序场景 —— 种一个"倒过来的自定义顺序"，看界面认不认
+            "listOrder": [str(p.get("id")) for p in (payload.get("packages") or [])][::-1],
             # 工具自己的场景清单：页面拿它对一下"这个场景名到底有没有实现"。
             "scenes": SCENES,
             # `--early-ready`：让 mock 在 js/*.js 之前就发 ready（`V-68` 的竞态场景）
@@ -402,6 +405,9 @@ MOCK_JS = r"""
 
   window.pywebview = { api: {
     state: async () => state,
+    // `V-300`：插件列表的"自定义顺序 + 排序档"（真宿主存 user_data/state/_ui_order.json）
+    list_state: async () => ({ok: true, ids: M.listOrder || [], sort: (M.listOrder || []).length ? "custom" : ""}),
+    list_state_set: async (ids, sort) => { M.savedOrder = {ids: ids, sort: sort}; return {ok: true}; },
     hist_list: async () => ({ok: true, items: HIST}),
     hist_forget: async () => ({ok: true, msg: "(预览) 已删掉这条记录"}),
     pkg_states: async (ids) => {                       // 造两个"在跑"的，好看绿色停止图标
@@ -2145,6 +2151,103 @@ MOCK_JS = r"""
           " 收尾=" + JSON.stringify(after.slice(0, 30)) +
           " 齿轮边框=" + gearBorder + " 底色=" + gearBg;
         document.title = ok ? "READY" : "STATUS-FAIL";
+      }
+      // ★ `V-300`：插件列表拖动排序 —— 假后端种一个"倒过来的自定义顺序"，
+      //   界面应认出（落在「自定义顺序」档）并按它排；每行行首有拖动把手。
+      if (h === "list-order"){
+        for (let i = 0; i < 100 && !document.querySelector("#list .item"); i++) await sleep(60);
+        await sleep(300);
+        const customBtn = document.querySelector('#bar-list .lb[data-g="sort"][data-v="custom"]');
+        const grips = document.querySelectorAll("#list .item .drag-grip").length;
+        const firstItem = document.querySelector("#list .item");
+        const firstId = firstItem ? firstItem.dataset.id : "";
+        const wantFirst = (M.listOrder || [])[0] || "";
+        if (customBtn) customBtn.click();
+        await sleep(150);
+        const onCustom = customBtn ? customBtn.classList.contains("on") : false;
+        const ok = !!customBtn && grips >= 2 && !!wantFirst && firstId === wantFirst && onCustom;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          " 自定义按钮=" + (customBtn ? 1 : 0) + " 把手=" + grips +
+          " 首行=" + firstId + " 期望=" + wantFirst + " 档亮=" + onCustom;
+        document.title = ok ? "READY" : ("ORD-FAIL 首行=" + firstId + " 期望=" + wantFirst);
+      }
+      // ★ `V-300`：真模拟一次拖动（用指针事件）—— 把第 1 行拖到第 2 行后面，
+      //   看顺序是不是真的变了、并且落盘（`M.savedOrder`）。
+      if (h === "list-drag"){
+        for (let i = 0; i < 100 && document.querySelectorAll("#list .item").length < 3; i++) await sleep(60);
+        await sleep(200);
+        const rows = [].slice.call(document.querySelectorAll("#list .item"));
+        const id0 = rows[0].dataset.id, id1 = rows[1].dataset.id;
+        const r0 = rows[0].getBoundingClientRect(), r1 = rows[1].getBoundingClientRect();
+        const grip = rows[0].querySelector(".drag-grip");
+        const ev = (type, tgt, y) => tgt.dispatchEvent(new PointerEvent(type,
+          {bubbles: true, cancelable: true, pointerId: 7, button: 0,
+           clientX: r0.left + 8, clientY: y}));
+        ev("pointerdown", grip, r0.top + r0.height / 2);
+        ev("pointermove", document.querySelector("#list"), r1.top + r1.height - 2);
+        ev("pointerup", document.querySelector("#list"), r1.top + r1.height - 2);
+        await sleep(250);
+        const now = [].slice.call(document.querySelectorAll("#list .item")).map(e => e.dataset.id);
+        const saved = ((M.savedOrder || {}).ids || []);
+        // ★ 实时拖动：拖动中就已经换好位置了，落盘也在松手时完成
+        const ok = id0 !== id1 &&
+                   now[0] === id1 && now[1] === id0 &&
+                   saved[0] === id1 && saved[1] === id0;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          " 拖动前=" + [id0, id1].join(",") + " 之后=" + now.slice(0, 3).join(",") +
+          " 落盘=" + saved.slice(0, 3).join(",");
+        document.title = ok ? "READY" : ("DRAG-FAIL id0=" + id0 + " id1=" + id1 +
+          " 之后=" + now.slice(0, 4).join(",") + " 落盘=" + saved.slice(0, 4).join(","));
+      }
+      // ★ `V-300`：**筛选下**拖动 —— 这正是"拖得乱"那个 bug 的现场：基准得跟可见行一致。
+      if (h === "list-drag-filter"){
+        for (let i = 0; i < 100 && document.querySelectorAll("#list .item").length < 3; i++) await sleep(60);
+        const sysBtn = document.querySelector('#bar-list .lb[data-g="filt"][data-v="system"]');
+        if (sysBtn) sysBtn.click();
+        await sleep(250);
+        const rows = [].slice.call(document.querySelectorAll("#list .item"));
+        const id0 = rows[0].dataset.id, id1 = rows[1].dataset.id;
+        const r0 = rows[0].getBoundingClientRect(), r1 = rows[1].getBoundingClientRect();
+        const grip = rows[0].querySelector(".drag-grip");
+        const ev = (type, tgt, y) => tgt.dispatchEvent(new PointerEvent(type,
+          {bubbles: true, cancelable: true, pointerId: 9, button: 0,
+           clientX: r0.left + 8, clientY: y}));
+        ev("pointerdown", grip, r0.top + r0.height / 2);
+        ev("pointermove", document.querySelector("#list"), r1.top + r1.height - 2);
+        ev("pointerup", document.querySelector("#list"), r1.top + r1.height - 2);
+        await sleep(250);
+        const now = [].slice.call(document.querySelectorAll("#list .item")).map(e => e.dataset.id);
+        const saved = ((M.savedOrder || {}).ids || []);
+        const ok = id0 !== id1 && now[0] === id1 && now[1] === id0 &&
+                   saved.indexOf(id1) >= 0 && saved.indexOf(id0) > saved.indexOf(id1);
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          " 筛选中=" + document.querySelectorAll("#list .item").length +
+          " 拖动前=" + [id0, id1].join(",") + " 之后=" + now.slice(0, 3).join(",");
+        document.title = ok ? "READY" : ("DFILT-FAIL 之后=" + now.slice(0, 3).join(","));
+      }
+      // ★ `V-300`：把**第 3 行拖到最顶** —— 复现"拖 md5 到第一"那个现场。
+      if (h === "list-drag-top"){
+        for (let i = 0; i < 100 && document.querySelectorAll("#list .item").length < 4; i++) await sleep(60);
+        await sleep(200);
+        const rows = [].slice.call(document.querySelectorAll("#list .item"));
+        const ids = rows.map(e => e.dataset.id);
+        const fromId = ids[2];
+        const r2 = rows[2].getBoundingClientRect(), r0 = rows[0].getBoundingClientRect();
+        const grip = rows[2].querySelector(".drag-grip");
+        const ev = (type, tgt, y) => tgt.dispatchEvent(new PointerEvent(type,
+          {bubbles: true, cancelable: true, pointerId: 11, button: 0,
+           clientX: r0.left + 8, clientY: y}));
+        ev("pointerdown", grip, r2.top + r2.height / 2);
+        ev("pointermove", document.querySelector("#list"), r0.top + 2);
+        ev("pointerup", document.querySelector("#list"), r0.top + 2);
+        await sleep(250);
+        const now = [].slice.call(document.querySelectorAll("#list .item")).map(e => e.dataset.id);
+        const want = [fromId, ids[0], ids[1]].join(",");
+        const ok = now[0] === fromId && now.slice(0, 3).join(",") === want;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          " 原=" + ids.slice(0, 4).join(",") + " 后=" + now.slice(0, 4).join(",") +
+          " 期望首=" + fromId;
+        document.title = ok ? "READY" : ("DTOP-FAIL 后=" + now.slice(0, 4).join(","));
       }
       // ★ 「设置」面板（`V-60` / `V-63` / `V-66`）：左边分类、右边只显示当前那一组。
       //   打开 → 看结构（分类 4 个、输入是两列带标签的格子）→ 切到"执行提示"看开关 →

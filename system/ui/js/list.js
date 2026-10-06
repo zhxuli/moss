@@ -178,7 +178,7 @@ function rerunLast(){
    `born` = 包目录的 mtime（用现成的 `fs_list` 拿，两次调用就够：system/pkgs 与 user/pkgs）；
    `run`  = 最后一次看到它在跑（本界面自己记的 —— host 没有这个字段，所以只从这次开始算）。 */
 const LISTR = Vue.reactive({rev: 0, ready: false, filt: "all", sort: "name",
-                            hfilt: "all", hsort: "time", born: {}});
+                            hfilt: "all", hsort: "time", born: {}, custom: []});
 
 function _ls(k, d){ try{ return localStorage.getItem(k) || d; }catch(e){ return d; } }
 function _lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
@@ -208,8 +208,8 @@ async function loadBornTimes(){
 }
 /* 图标表（`V-179`）：分组 → 取值 → 图标名（都在我们那 86 个图标里，不会回退成默认） */
 const LB_ICONS = {
-  filt:  {all: "layers", system: "package", user: "home"},
-  sort:  {name: "list-tree", born: "history", run: "activity"},
+  filt:  {all: "layers", system: "package", user: "moss-user"},
+  sort:  {name: "list-tree", born: "history", run: "activity", custom: "grip-vertical"},
   hfilt: {all: "layers", path: "file-code", pkg: "package"},
   hsort: {time: "history", name: "list-tree", kind: "file-type"},
 };
@@ -269,6 +269,7 @@ function initListBars(){
         _lsSet(LB_LS[b.dataset.g] || "moss.lb", b.dataset.v);
         paintListBars();
         bumpLists();
+        if (b.dataset.g === "sort") saveListView();          // `V-300`：排序档也存下来（跨重启）
         if (b.dataset.g === "sort" && b.dataset.v === "born") loadBornTimes();
       };
     });
@@ -276,8 +277,225 @@ function initListBars(){
   paintListBars();
   paintBarActs();
   loadBornTimes();
+  // ★ 注意：**不在这里**读"自定义顺序" —— 此刻（页面刚加载）pywebview 的桥还没就绪，
+  //   `pywebview.api.list_state()` 会抛错被吞掉、顺序就"读不回来"。挪到 `init()` 里、
+  //   `await state()` 之后调（那时桥一定就绪）。见 app.js。
+}
+
+/* ★ `V-300`：插件列表的"自定义顺序 + 排序档" —— 存 `user_data/state/_ui_order.json`
+   （走宿主，不用 localStorage：页面地址每次启动都变，那个读不回来）。
+   ★ 容错：存下来的顺序里**多出来的 id（已卸载的包）直接丢掉**；**没记过顺序的包**按名字
+     排在后面（见 `rows`/`_allIdsInView` 的 custom 分支）—— 对不上不报错。 */
+async function loadListView(){
+  try{
+    const r = await pywebview.api.list_state();
+    if (!r || !r.ok) return;
+    const known = new Set((DATA && DATA.packages ? DATA.packages : []).map(p => p.id));
+    LISTR.custom = Array.isArray(r.ids) ? r.ids.filter(id => known.has(id)) : [];
+    if (r.sort) LISTR.sort = r.sort;
+    paintListBars(); bumpLists();
+  }catch(e){}
+}
+function saveListView(){
+  try{ pywebview.api.list_state_set((LISTR.custom || []).slice(), LISTR.sort); }catch(e){}
 }
 function bumpLists(){ LISTR.rev++; }
+
+/* ★ `V-300`：插件列表**拖动排序**（用指针事件自己实现 —— HTML5 原生 drag 在 WebView2 里
+   一直不听话、实测拖不动）。整行都能拖（行尾按钮除外）；移动超过小阈值才算"拖"；
+   **拖动过程中就实时跟手重排**（不再画插入线、松手才动）；拖一下自动切到「自定义顺序」档并落盘。
+   ★ 认"哪一行"一律用**坐标**（`clientY` + 行的 rect），**不用 `e.target`** ——
+     WebView2 的命中测试会错位（实测点在 y=442、`e.target` 却是 y=1294 那一行）。 */
+let _pdrag = null;               // {id, y0, moved, pid, item}
+let _listDragging = false;
+// `LISTDR.dragId` = 正在拖的那一行（绑到行的 `:class`，Vue 实时重排也保得住半透明标记）
+const LISTDR = Vue.reactive({dragId: null});
+
+/* `V-300` 排障：拖动这条线的日志。写两处 —— 浏览器控制台 + 宿主日志文件
+   （`user_data/state/_ui_drop.log`，普通运行也能看，不用开 devtools）。 */
+function _nm(id){
+  const p = (DATA.packages || []).find(x => x.id === id);
+  return (p && (p.name || p.id)) || id;
+}
+function _dragLog(msg){
+  try{ console.log("[排序] " + msg); }catch(e){}
+  try{ pywebview.api.ui_log("[排序] " + msg); }catch(e){}
+}
+
+function _allIdsInView(){
+  // 当前排序下"全部包"的顺序（不带搜索/分类过滤）—— 拖动时的基准序列
+  const dirName = p => String(p.name || p.id || "").toLowerCase();
+  const bornOf = p => LISTR.born[(p.dir || "").split(/[\\/]/).pop()] || 0;
+  return (DATA.packages || []).slice().sort((a, b) => {
+    if (LISTR.sort === "custom"){
+      const ia = LISTR.custom.indexOf(a.id), ib = LISTR.custom.indexOf(b.id);
+      const ka = ia < 0 ? 1e9 : ia, kb = ib < 0 ? 1e9 : ib;
+      if (ka !== kb) return ka - kb;
+    } else if (LISTR.sort === "born"){
+      const d = bornOf(b) - bornOf(a); if (d) return d;
+    } else if (LISTR.sort === "run"){
+      const d = lastRunOf(b.id) - lastRunOf(a.id); if (d) return d;
+    }
+    return dirName(a) < dirName(b) ? -1 : (dirName(a) > dirName(b) ? 1 : 0);
+  }).map(p => p.id);
+}
+function _rowAtY(clientY){
+  // 按坐标找"哪一行"（用 clientY 和行的 rect）—— 别信命中测试（WebView2 会错位）
+  const rows = [].slice.call(document.querySelectorAll("#list .item"));
+  for (const el of rows){
+    const r = el.getBoundingClientRect();
+    if (clientY >= r.top && clientY <= r.bottom) return el;
+  }
+  return null;
+}
+function _reorderLive(clientY){
+  // 实时跟手：把"正在拖的那一行"挪到指针当前位置（改 `LISTR.custom`，Vue 立即重排）。
+  //   返回 true = 顺序真的变了（调用方据此给"其它行"做 FLIP 动画）。
+  const from = _pdrag && _pdrag.id;
+  if (!from) return false;
+  const vis = [].slice.call(document.querySelectorAll("#list .item")).map(el => el.dataset.id);
+  const others = [].slice.call(document.querySelectorAll("#list .item"))
+    .filter(el => el.dataset.id !== from);
+  let ti = others.length;                            // 落点：第一个"中线在指针下方"的行之前
+  for (let i = 0; i < others.length; i++){
+    const r = others[i].getBoundingClientRect();
+    if (clientY < r.top + r.height / 2){ ti = i; break; }
+  }
+  const v = vis.filter(id => id !== from);
+  v.splice(ti, 0, from);
+  if (v.join(",") === vis.join(",")) return false;   // 顺序没变：别白重画
+  const full = _allIdsInView();
+  const visset = new Set(vis);
+  const slots = [];
+  full.forEach((id, i) => { if (visset.has(id)) slots.push(i); });
+  const out = full.slice();
+  slots.forEach((slot, k) => { out[slot] = v[k]; });
+  LISTR.custom = out;
+  LISTR.sort = "custom";
+  paintListBars();
+  bumpLists();
+  return true;
+}
+/* ★ `V-300`：手动 FLIP —— 量一遍各行的"布局位置"（先把 transform 清掉，免得量到动画中途的
+   位置），Vue 重排之后按差量给**没在拖的那些行**补一段 transform 过渡 ⇒ 它们平滑滑到新位置。 */
+function _measureTops(){
+  const out = {};
+  document.querySelectorAll("#list .item").forEach(el => {
+    if (_pdrag && el.dataset.id === _pdrag.id) return;   // 被拖的那行不动它
+    el.style.transition = ""; el.style.transform = "";
+    out[el.dataset.id] = el.getBoundingClientRect().top;
+  });
+  return out;
+}
+function _flipAnimate(before){
+  document.querySelectorAll("#list .item").forEach(el => {
+    const id = el.dataset.id;
+    if (_pdrag && id === _pdrag.id) return;            // 被拖的那行单独跟手，不参与
+    const oldTop = before[id];
+    if (oldTop == null) return;
+    const dy = oldTop - el.getBoundingClientRect().top;
+    if (Math.abs(dy) < 0.5) return;
+    el.style.transition = "none";
+    el.style.transform = "translateY(" + dy + "px)";
+    requestAnimationFrame(() => {
+      el.style.transition = "transform .22s cubic-bezier(.16,1,.3,1)";
+      el.style.transform = "";
+    });
+  });
+}
+/* 被拖那行：**严格**贴到指针的 y（中心对齐）并放大一点。 */
+function _followDrag(clientY){
+  if (!_pdrag) return;
+  const el = document.querySelector('#list .item[data-id="' + _pdrag.id + '"]');
+  if (!el) return;
+  el.style.transform = "none";                         // 先复位，量它自己的布局位置（不含 transform）
+  const r = el.getBoundingClientRect();
+  const dy = clientY - (r.top + r.height / 2);
+  el.style.transform = "translateY(" + dy + "px) scale(1.04)";
+  el.style.zIndex = 6;
+}
+function _finalizeDrag(){
+  document.removeEventListener("pointermove", _onDragMove);
+  document.removeEventListener("pointerup", _onDragEnd);
+  document.removeEventListener("pointercancel", _onDragEnd);
+  LISTDR.dragId = null;
+  document.querySelectorAll("#list .item").forEach(el => {
+    el.style.transition = ""; el.style.transform = ""; el.style.zIndex = "";
+  });
+  try{ document.body.style.userSelect = ""; }catch(_){}
+  _pdrag = null;
+  setTimeout(() => { _listDragging = false; }, 0);     // 让紧随其后的那次 click 被忽略
+}
+function _onDragMove(e){
+  if (!_pdrag || e.pointerId !== _pdrag.pid) return;
+  if (!_pdrag.moved){
+    if (Math.abs(e.clientY - _pdrag.y0) < 4) return;   // 阈值：小于它算"点"，不算"拖"
+    _pdrag.moved = true; _listDragging = true;
+    LISTDR.dragId = _pdrag.id;
+    try{ document.body.style.userSelect = "none"; }catch(_){}
+    _dragLog("开始拖 " + _pdrag.id + "(" + _nm(_pdrag.id) + ")");
+  }
+  e.preventDefault();
+  const before = _measureTops();                       // 量位置（顺带清掉上一次的过渡）
+  const changed = _reorderLive(e.clientY);
+  if (changed) Vue.nextTick(() => { if (_pdrag){ _flipAnimate(before); _followDrag(e.clientY); } });
+  else _followDrag(e.clientY);
+}
+function _onDragEnd(e){
+  if (!_pdrag || (e.pointerId != null && e.pointerId !== _pdrag.pid)) return;
+  const moved = _pdrag.moved;
+  _finalizeDrag();
+  if (moved){ saveListView(); _dragLog("松手 -> " + (LISTR.custom || []).join(",")); }
+}
+function initListDrag(){
+  const list = $("#list");
+  if (!list || list.__dragBound) return;
+  list.__dragBound = true;
+  list.addEventListener("pointerdown", (e) => {
+    if (e.button != null && e.button !== 0) return;
+    // ★ 整行都能拖（不只那个小把手 —— 把手太小容易抓错行）；行尾「运行 / 停止」按钮除外。
+    if (e.target.closest && e.target.closest("button")) return;
+    // ★ 认"按的是哪一行"用**坐标**（`clientY` 落在哪一行的 rect 里），**不用 `e.target`** ——
+    //   实测 WebView2 的命中测试会错位（点在 y=442，`e.target` 却是第 21 行 y=1294 那个），
+    //   而落点/重排本来就是按坐标算的（见 `_reorderLive`）。两者统一。
+    const item = _rowAtY(e.clientY) || (e.target.closest && e.target.closest(".item"));
+    if (!item) return;
+    // ★ 这里**不** `preventDefault()`：整行可拖以后，那样会把"点一下 = 选中"也一起挡掉。
+    //   文本选择改到"真正开始拖"那一刻再禁（见 `_onDragMove`）。
+    // ★ **不用 `setPointerCapture`**：move/up 已经挂在 `document` 上了，够用；而捕获一旦
+    //   泄漏（某次没释放），后续你在任何地方按下，事件都会被重定向给上一次那个元素
+    //   —— 那正是"按下 y=445、目标行却在 1294"的怪现象。
+    _finalizeDrag();                                 // 万一上次没收干净，先收
+    _pdrag = {id: item.dataset.id, y0: e.clientY, moved: false, pid: e.pointerId, item: item};
+    (function(){
+      const r = item.getBoundingClientRect();
+      const listEl = document.querySelector("#list");
+      const lr = listEl ? listEl.getBoundingClientRect() : {top: -1, bottom: -1};
+      const idx = Array.prototype.indexOf.call(document.querySelectorAll("#list .item"), item);
+      const txt = (item.textContent || "").replace(/\s+/g, " ").trim().slice(0, 22);
+      _dragLog("按下 " + item.dataset.id + " 序号=" + idx
+               + " e.y=" + Math.round(e.clientY) + " e.offsetY=" + Math.round(e.offsetY || 0)
+               + " 行rect=" + Math.round(r.top) + "~" + Math.round(r.bottom)
+               + " #list=" + Math.round(lr.top) + "~" + Math.round(lr.bottom)
+               + " scrollTop=" + (listEl ? listEl.scrollTop : "?")
+               + " win=" + window.innerHeight + " scrollY=" + Math.round(window.scrollY)
+               + " target=" + (e.target ? (e.target.tagName + "." + (e.target.className || "")) : "?")
+               + " 指针下=" + (function(){
+                   const efp = document.elementFromPoint(e.clientX, e.clientY);
+                   if (!efp) return "?";
+                   const it = efp.closest && efp.closest(".item");
+                   return it ? ("item:" + it.dataset.id) : (efp.tagName + "." + (efp.className || ""));
+                 })()
+               + " 行文[" + txt + "]");
+    })();
+    // ★ move / up 挂在 **document** 上：拖到列表外面（比如拖到最顶上）松手也接得住 ——
+    //   挂在 `#list` 上时，"在列表外松手"会让拖动状态永远清不掉，下一次就"拖 A 结果 B 动"。
+    document.addEventListener("pointermove", _onDragMove);
+    document.addEventListener("pointerup", _onDragEnd);
+    document.addEventListener("pointercancel", _onDragEnd);
+  });
+}
+try{ initListDrag(); }catch(e){}
 
 function renderList(){
   // 门面：原来的调用点（drop.js / files.js / app.js / select …）照旧调它
@@ -668,7 +886,7 @@ async function cmdForgetHist(it){
      都照旧работа。①*/
 const MossList = {
   name: "moss-list",
-  data(){ return { R: LISTR }; },
+  data(){ return { R: LISTR, L: LISTDR }; },
   computed: {
     rows(){
       this.R.rev;                                  // 登记依赖：谁举牌就重算
@@ -690,7 +908,11 @@ const MossList = {
       const bornOf = p => this.R.born[(p.dir || "").split(/[\\/]/).pop()] || 0;
       const sortKey = this.R.sort;
       const sorted = byLayer.slice().sort((a, b) => {
-        if (sortKey === "born"){
+        if (sortKey === "custom"){                    // `V-300`：用户拖出来的顺序
+          const ia = this.R.custom.indexOf(a.id), ib = this.R.custom.indexOf(b.id);
+          const ka = ia < 0 ? 1e9 : ia, kb = ib < 0 ? 1e9 : ib;   // 没记过的新包排最后
+          if (ka !== kb) return ka - kb;
+        } else if (sortKey === "born"){
           const d = bornOf(b) - bornOf(a);
           if (d) return d;
         } else if (sortKey === "run"){
@@ -719,20 +941,25 @@ const MossList = {
     selId(){ return cur ? cur.id : null; },
     stateOf(id){ return rowStateOf(id); },          // 宿主口径：在跑 / 没在跑
     rowHTML(p){
-      return iconHTML(p, "ico") +
+      // ★ `V-300`：行首一个把手（`.drag-grip`）—— 视觉提示；其实整行都能拖（见 initListDrag）。
+      //   ⚠️ 类名别用 `.grip`（那是"拖我调宽"竖条的全局类，撞名会变一条贯穿竖线）。
+      return '<span class="drag-grip" title="拖动排序">' + ico("grip-vertical", "i") + '</span>' +
+        iconHTML(p, "ico") +
         '<div style="min-width:0;flex:1">' +
           '<div class="nm">' + esc(p.name) + ' <span class="sub">:' + esc(p.id) + '</span></div>' +
           '<div class="ds">' + esc(p.desc) + '</div></div>' +
         '<span class="rowstat"></span>';
     },
-    pick(id){ select(id); },
+    pick(id){ if (_listDragging) return; select(id); },   // 刚拖完那一下别误选中
   },
   template: `
     <template v-if="R.ready">
       <div v-if="!rows.length" class="empty">{{ emptyHTML }}</div>
       <template v-else>
-        <div v-for="p in rows" :key="p.id" class="item" :class="{sel: p.id === selId()}"
-             :data-id="p.id" :data-state="stateOf(p.id)" @click="pick(p.id)" v-html="rowHTML(p)"></div>
+        <div v-for="p in rows" :key="p.id" class="item"
+             :class="{sel: p.id === selId(), dragging: L.dragId === p.id}"
+             :data-id="p.id" :data-state="stateOf(p.id)"
+             @click="pick(p.id)" v-html="rowHTML(p)"></div>
       </template>
     </template>`,
 };
