@@ -338,7 +338,10 @@ body.float #embed-bar{padding:7px 14px}
      退出码本身还是照记（在「命令行」那行文字里），只是**不拿出来当状态报警**了。 */
 .ic-run{color:#1f9d55}
 /* 左侧列表行尾那颗"没在跑"的播放图标：平时很淡，鼠标移上去才亮 —— 不抢视线 */
-.hstat .idle,.rowstat .idle{color:var(--dim);opacity:.45}
+/* ★ `V-303`：**插件列表和历史列表**里那颗「运行」图标**平时不显示**，鼠标划过那一行才浮出来
+   （运行中的"停止"一直显示；这里只藏"没在跑"时那颗播放图标 —— `opacity` 不影响布局）。 */
+.hstat .idle,.rowstat .idle{color:var(--dim);opacity:0;transition:opacity .12s ease-out}
+.hitem:hover .hstat .idle,.item:hover .rowstat .idle{opacity:.45}
 .hstat .idle:hover,.rowstat .idle:hover{opacity:1;color:var(--fg)}
 /* 左侧列表行尾的状态图标。★ 历史行（`.hstat`）和包行（`.rowstat`）**共用同一套**：
    以前只写了 `.rowstat button`，历史那边就退化成浏览器默认按钮（灰框），

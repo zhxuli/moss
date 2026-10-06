@@ -122,15 +122,20 @@ function paintHistStats(){
 
 function rerunHistByKey(key, args){
   const it = HIST.find(x => histKey(x) === key);
-  if (it) rerunHist(it, args);
+  if (!it) return;
+  // ★ 从列表里跑：先把它选上（不切选项卡）—— 右上角那颗「运行/停止」认的是"当前选中项"
+  //   （`V-216` 那句"不动左边的选中"在这里反了：不选上，右上角就永远显示「运行」）。
+  if (curH !== it) selectHist(it, /*keepTab*/ true);
+  rerunHist(it, args);
 }
 
-/* 选中一条历史：右边三个选项卡跟着换成"这一条"的。 */
-function selectHist(it){
+/* 选中一条历史：右边三个选项卡跟着换成"这一条"的。
+   `keepTab` = 只选上、不切到「详情」（列表里点「运行」时用，见 `select`）。 */
+function selectHist(it, keepTab){
   curH = it; cur = null;
   consoleKey = histKey(it);
   renderList(); renderHist(); renderDetail(); paintConsole();
-  setTab("detail");
+  if (!keepTab) setTab("detail");
   fmSelect(histKey(it), /*keepTab*/ true);     // 文件管理换成"这条调用所在的目录"
 }
 
@@ -536,11 +541,14 @@ function pkgRel(p){
   if (d === sysroot || d.startsWith(sysroot + "/")) return "system" + d.slice(sysroot.length);
   return null;
 }
-function select(id){
+/* `keepTab`：只把它选上（右边那颗「运行/停止」跟着它），但**不把人拽去「详情」**——
+   列表里直接点「运行」时用（不然"我就点一下跑，结果跳走了"）。 */
+function select(id, keepTab){
   cur = DATA.packages.find(p => p.id === id) || null;
   curH = null;                                // 选了包就把"历史那条"放下（两者互斥）
   consoleKey = cur ? cur.id : "__host__";     // 命令行跟着换成"这个包自己的那份"
-  renderList(); renderHist(); renderDetail(); paintConsole(); setTab("detail");
+  renderList(); renderHist(); renderDetail(); paintConsole();
+  if (!keepTab) setTab("detail");
   // 换了包 → 文件管理跟着换到"这个包的那一套"（每个包一份上下文，互不干扰）
   if (cur) fmSelect(cur.id, /*keepTab*/ true);
   paintEmbedTab();                            // 第四个选项卡：这个包有没有界面

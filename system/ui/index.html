@@ -83,9 +83,11 @@
       <button class="tab" data-tab="embed" hidden>界面</button>
       <!-- ★ 运行/停止 + 显示/隐藏，钉在选项卡这一行的最右边：不用先点开「详情」。
            状态**只有两种**：运行中 = 绿色停止图标，没在跑 = 普通播放图标（不再有红/黄）。 -->
+      <!-- ★ `V-303`：「显示」放「运行」**左边**、运行在最右；而且**不需要时不显示**
+            （没有开着的窗口就藏起来 —— 由 `paintActions` 置 `hidden`）。 -->
       <div id="tabactions">
+        <button class="iconbtn" id="btn-vis" disabled hidden></button>
         <button class="iconbtn" id="btn-run" disabled></button>
-        <button class="iconbtn" id="btn-vis" disabled></button>
       </div>
     </div>
 

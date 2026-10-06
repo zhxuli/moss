@@ -94,12 +94,12 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "btn-detail", "err-path", "args-clear", "backup", "backup-restore", "backup-sync", "backup-export", "backup-groups",
           "drop-hot", "drop-dir", "drop-file", "drop-ext", "console-input", "embed", "pane-resize",
-          "list-order", "list-drag", "list-drag-filter", "list-drag-top",
+          "list-order", "list-drag", "list-drag-filter", "list-drag-top", "vis-clean",
           "flat-buttons", "backup-diff", "refresh-keep-ctx", "compare", "hist-snap", "modal-kinds", "snap-modal",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
           "settings-ai", "settings-ai-tpl", "settings-ai-new", "settings-ai-empty",
-          "hist", "hist-console", "hist-file",
+          "hist", "hist-console", "hist-file", "sync-run",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "fanyi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
@@ -412,7 +412,9 @@ MOCK_JS = r"""
     hist_forget: async () => ({ok: true, msg: "(预览) 已删掉这条记录"}),
     pkg_states: async (ids) => {                       // 造两个"在跑"的，好看绿色停止图标
       const out = {};
-      (ids || []).forEach((id, i) => { out[id] = {running: i === 1 || i === 4,
+      // 这轮用 `run_start` 真起过的（`M.runs`）也算"在跑" —— 不然列表行不会变「停止」
+      const started = (M.runs || []).map(r => r.pid);
+      (ids || []).forEach((id, i) => { out[id] = {running: i === 1 || i === 4 || started.indexOf(id) >= 0,
         windows: i === 1 ? 1 : 0, visible: false}; });
       // `V-216` 那个场景要一个"别的路径留下的进程"（孤儿），按需覆盖
       if (M.stateOverride) Object.assign(out, M.stateOverride);
@@ -669,8 +671,10 @@ MOCK_JS = r"""
     },
     // 拖放那条线的日志（真后端写 user_data/state/_ui_drop.log）；预览里攒着看
     ui_log: async (text) => { (M.uiLogs = M.uiLogs || []).push(String(text || "")); return {ok: true}; },
-    run_poll: async () => ({ok: true, running: false, code: 0,
-      out: "[执行] md5\n[目录] " + state.home + "\n\n900150983cd24fb0d6963f7d28e17f72\n"}),
+    run_poll: async () => (M.keepRun
+      ? {ok: true, running: true, code: 0, out: "[执行] md5\n[目录] " + state.home + "\n\n(预览) 还在跑\n"}
+      : {ok: true, running: false, code: 0,
+         out: "[执行] md5\n[目录] " + state.home + "\n\n900150983cd24fb0d6963f7d28e17f72\n"}),
     run_stop: async () => ({ok: true, msg: "(预览) 已停止"}),
     // ---- 内嵌界面（`V-48`）那四个接口。预览里"包的后端"是假的：就地回几条，
     //      协议跟真的一模一样（真后端是那个包的进程，在 stdio 上说 JSON 行）----
@@ -2151,6 +2155,84 @@ MOCK_JS = r"""
           " 收尾=" + JSON.stringify(after.slice(0, 30)) +
           " 齿轮边框=" + gearBorder + " 底色=" + gearBg;
         document.title = ok ? "READY" : "STATUS-FAIL";
+      }
+      // ★ `V-303`：列表里那颗「运行」图标平时不显示（划过才出）；「显示」按钮**不需要时隐藏**、
+      //   且排在「运行」**左边**（运行在最右）。
+      if (h === "vis-clean"){
+        for (let i = 0; i < 100 && !document.querySelector("#list .item"); i++) await sleep(60);
+        await sleep(400);
+        const actions = document.querySelector("#tabactions");
+        const kids = actions ? Array.prototype.map.call(actions.children, e => e.id) : [];
+        const vis = document.querySelector("#btn-vis");
+        const idle = document.querySelector("#list .item .rowstat .idle");
+        const op = idle ? getComputedStyle(idle).opacity : "?";
+        // ★ 切到历史那边，历史行那颗「运行」图标也该平时透明（`V-303` 你补的）
+        const swHist = document.querySelector("#sw-hist");
+        if (swHist) swHist.click();
+        await sleep(500);
+        const hidle = document.querySelector("#hist .hitem .hstat .idle");
+        const hop = hidle ? getComputedStyle(hidle).opacity : "?";
+        const ok = kids.join(",") === "btn-vis,btn-run" && !!vis && vis.hidden === true &&
+                   !!idle && parseFloat(op) === 0 &&
+                   !!hidle && parseFloat(hop) === 0;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          " 顺序=" + kids.join(",") + " vis隐藏=" + (vis ? vis.hidden : "?") +
+          " 插件运行图标=" + op + " 历史运行图标=" + hop;
+        document.title = ok ? "READY"
+          : ("VIS-FAIL 顺序=" + kids.join(",") + " 插件=" + op + " 历史=" + hop +
+             " vis=" + (vis ? vis.hidden : "?"));
+      }
+      // ★ 列表里点「运行」→ 右上角那颗「运行/停止」也要跟着变（不能只变列表行）。
+      //   两条路都要：① 历史那条（`rerunHistByKey`）② 插件那条（`runFromList`）。
+      //   都是"**不选中**直接点行里的运行图标"，然后立刻看右上角是不是变成「停止」。
+      if (h === "sync-run"){
+        M.keepRun = true;                    // 让这次 run 一直"在跑"（不然 200ms 就收尾了）
+        const top = () => {
+          const b = document.querySelector("#btn-run");
+          return { el: b, txt: b ? b.textContent.replace(/\s+/g, "") : "?" };
+        };
+        // ① 历史
+        setSide("hist");
+        for (let i = 0; i < 100 && !document.querySelector("#hist .hitem"); i++) await sleep(60);
+        await sleep(300);
+        let hBefore = "?", hRow = "?";
+        {
+          const btn = document.querySelector("#hist .hitem .hstat button");
+          hBefore = btn ? btn.className : "?";
+          if (btn) btn.click();
+          await sleep(150);                  // < 首次 poll(200ms)：RUNS 还在
+          const rb = document.querySelector("#hist .hitem .hstat button");
+          hRow = rb ? rb.className : "?";
+        }
+        const hTop = top().txt;
+        const okH = hTop.indexOf("停止") >= 0 && /ic-run/.test(hRow);
+        // ② 插件（挑一个**没在跑**的那行点它的运行图标）
+        setSide("pkg");
+        for (let i = 0; i < 100 && !document.querySelector("#list .item .rowstat .idle"); i++) await sleep(60);
+        await sleep(200);
+        let pId = "", pBefore = "?", pRow = "?";
+        {
+          const ib = document.querySelector("#list .item .rowstat .idle");
+          if (ib){ pId = (ib.closest(".item") || {}).dataset ? ib.closest(".item").dataset.id : "";
+                   pBefore = ib.className; ib.click(); }
+          await sleep(200);
+          const it = pId ? document.querySelector('#list .item[data-id="' + pId + '"] .rowstat button') : null;
+          pRow = it ? it.className : "?";
+        }
+        const pTop = top().txt;
+        // ① 右上角变成「停止」；② 列表行也变「停止」；③ **跑的这个变成"当前选中"**
+        //    （右上角那颗点了才会作用在它身上，不是原来那个）
+        const dm = document.querySelector("#pane-detail .dmeta");
+        const selMeta = dm ? dm.textContent : "";
+        const okSel = !!pId && selMeta.indexOf(":" + pId) >= 0;
+        const okP = pTop.indexOf("停止") >= 0 && /ic-run/.test(pRow) && okSel;
+        const ok = okH && okP;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          " 历史[行前=" + hBefore + " 行后=" + hRow + " 右上=" + hTop + "]" +
+          " 插件[=" + pId + " 前=" + pBefore + " 后=" + pRow + " 右上=" + pTop +
+          " 选中=" + (okSel ? pId : "×") + "]";
+        document.title = ok ? "READY"
+          : ("SYNC-FAIL 历史[行=" + hRow + " 右上=" + hTop + "] 插件[行=" + pRow + " 右上=" + pTop + "]");
       }
       // ★ `V-300`：插件列表拖动排序 —— 假后端种一个"倒过来的自定义顺序"，
       //   界面应认出（落在「自定义顺序」档）并按它排；每行行首有拖动把手。

@@ -226,13 +226,16 @@ function paintRowStats(){
   });
 }
 
-/* 列表里直接跑：参数留空（就是"平常那样跑它"），不动左边的选中 */
+/* 列表里直接跑：参数留空（就是"平常那样跑它"）。
+   ★ 跑之前把它**选上**（不切到详情）—— 右上角那颗「运行/停止」认的是"当前选中项"，
+     不选的话列表行都变成「停止」了，右上角还停在原来那个（甚至没选）的状态。 */
 async function runFromList(id){
   const p = DATA.packages.find(x => x.id === id);
   if (!p) return;
   if (RUNS[id]) return;
   const st = PST[id] || {};
   if (st.running){ toast(":" + id + " 已经在跑了"); return; }
+  if (!cur || cur.id !== id) select(id, /*keepTab*/ true);
   startRun(p, "");
 }
 
@@ -287,6 +290,7 @@ function paintActions(p){
                    : (running ? "停掉这次调用（连同它的子进程）"
                               : "在它当初的目录里再跑一次（输出进「命令行」）");
     b.classList.toggle("warn", running);
+    v.hidden = true;                         // `V-303`：路径调用没有"包自己的窗口" ⇒ 整颗藏起来
     v.disabled = true;
     v.innerHTML = ico("eye", "i") + '<span>显示</span>';
     v.title = "这是一次路径调用，没有「包自己的窗口」";
@@ -304,6 +308,8 @@ function paintActions(p){
                : (running ? ("停掉它（连同它拉起的子进程）" + runningHint(p.id))
                           : "运行这个包，输出进「命令行」");
   b.classList.toggle("warn", running);
+  // ★ `V-303`：**没有开着的窗口就不显示这颗「显示」**（原来只是变灰，还是占着地方）
+  v.hidden = !p || !st.windows;
   v.disabled = !p || !st.windows;
   v.innerHTML = ico(st.visible ? "eye-off" : "eye", "i") +
                 '<span>' + (st.visible ? "隐藏" : "显示") + '</span>';
