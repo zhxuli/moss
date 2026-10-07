@@ -144,6 +144,22 @@ main.mini.hover-aside > aside #sideswitch,
 main.mini.hover-aside > aside .item > div,
 main.mini.hover-aside > aside .hitem .hmain,
 main.mini.hover-aside > aside .rowstat{opacity:1;transition:opacity .12s ease .1s}
+/* ★ `V-306`：折叠成 56px 图标栏时有两个毛病（你截的图）——
+   ① 每行行首那个"拖动把手"（`.drag-grip`，平时 `opacity:0`）**盒子还占着 16px + gap**，
+      文字那格又是 `flex:1`、行尾状态也占宽 ⇒ 24px 的包图标被往右挤出 56px 之外、**被裁掉半个**。
+   ② 顶上那排工具条 `.listbar` 是 `flex-wrap:wrap`，在 56px 里会**折成好几行** ——
+      `opacity:0` 把它藏起来了、盒子还杵在那儿 ⇒ 左上角一大片空白，把整个列表往下推。
+   修：折叠态下**把手 / 文字 / 行尾状态都不占横向地方**、图标居中；顶上两排**不换行**（各占一行）。 */
+main.mini:not(.hover-aside) > aside #sideswitch,
+main.mini:not(.hover-aside) > aside .listbar{flex-wrap:nowrap;overflow:hidden}
+main.mini:not(.hover-aside) > aside .hitem,
+main.mini:not(.hover-aside) > aside .item{padding-left:0;padding-right:0;gap:0;justify-content:center}
+main.mini:not(.hover-aside) > aside .item .drag-grip{display:none}
+main.mini:not(.hover-aside) > aside .item .rowstat,
+main.mini:not(.hover-aside) > aside .hitem .hstat{display:none}
+/* 文字那格在包行是**行内** `flex:1`（`rowHTML` 里写的）⇒ 得用 `!important` 才压得住 */
+main.mini:not(.hover-aside) > aside .item > div{flex:0 0 0 !important;overflow:hidden}
+main.mini:not(.hover-aside) > aside .hitem .hmain{flex:0 0 0;overflow:hidden}
 /* 悬停：展开到你拖出来的宽度，盖在内容上面 */
 main.mini.hover-aside > aside{width:var(--aside-w,300px) !important;
   box-shadow:0 12px 34px rgba(0,0,0,.18)}

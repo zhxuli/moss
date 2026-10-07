@@ -99,7 +99,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
           "settings-ai", "settings-ai-tpl", "settings-ai-new", "settings-ai-empty",
-          "hist", "hist-console", "hist-file", "sync-run", "sym-list", "bars-dd",
+          "hist", "hist-console", "hist-file", "sync-run", "sym-list", "bars-dd", "mini-rail",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "fanyi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
@@ -2258,6 +2258,45 @@ MOCK_JS = r"""
           " 换@后=" + ds2.trim();
         document.title = ok ? "READY"
           : ("SYM-FAIL payload=" + hasSym + " nm=" + nm + " ds=" + ds + " 换=" + ds2);
+      }
+      // ★ `V-306`：左侧折叠成 56px 图标栏 —— 图标要**在栏内**（别被把手/文字挤出边外裁掉），
+      //   顶上那排工具条要**只占一行**（别折成好几行、还 `opacity:0` 留一大片空白）。
+      if (h === "mini-rail"){
+        for (let i = 0; i < 100 && !document.querySelector("#list .item"); i++) await sleep(60);
+        await sleep(200);
+        const aside = document.querySelector("aside");
+        if (aside) aside.style.transition = "none";   // 干掉宽度动画 —— 不然量到的是动画中途的值
+        setAsideMini(true);
+        await sleep(120);
+        const ar = aside.getBoundingClientRect();
+        const item = document.querySelector("#list .item");
+        const ico = item.querySelector(".ico");
+        const r = ico.getBoundingClientRect();
+        const bar = document.querySelector("#bar-list");
+        const bh = bar.getBoundingClientRect().height;
+        const blank = item.getBoundingClientRect().top - ar.top;
+        const grip = item.querySelector(".drag-grip");
+        const gripW = grip ? grip.getBoundingClientRect().width : 0;
+        const icoInside = r.left >= ar.left - 1 && r.right <= ar.right + 1 && r.width > 12;
+        const okBar = bh <= 42;
+        const okBlank = blank <= 100;
+        const okGrip = gripW <= 0.5;
+        // 悬停展开后：文字那格要**恢复**（别被折叠态的规则压住、变成永远看不见）
+        document.querySelector("main").classList.add("hover-aside");
+        await sleep(80);
+        const div2 = item.querySelector("div");
+        const w2 = div2 ? div2.getBoundingClientRect().width : 0;
+        const okHover = w2 > 20;
+        const ok = icoInside && okBar && okBlank && okGrip && okHover;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          " 栏宽=" + ar.width.toFixed(0) + " 图标=" + r.left.toFixed(0) + "~" + r.right.toFixed(0) +
+          " 栏内=" + icoInside + " 工具条高=" + bh.toFixed(0) +
+          " 顶部空白=" + blank.toFixed(0) + " 把手宽=" + gripW.toFixed(0) +
+          " 悬停文字宽=" + w2.toFixed(0);
+        document.title = ok ? "READY"
+          : ("MINI-FAIL 图标=" + r.left.toFixed(0) + "~" + r.right.toFixed(0) +
+             "/栏" + ar.width.toFixed(0) + " 工具条=" + bh.toFixed(0) +
+             " 空白=" + blank.toFixed(0) + " 把手=" + gripW.toFixed(0) + " 悬停文字=" + w2.toFixed(0));
       }
       // ★ `V-305`：筛选 / 排序改成 **hover 下拉** —— 平时不展开、触发器显示当前值、点一项就切换
       if (h === "bars-dd"){
