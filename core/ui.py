@@ -32,7 +32,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import engine, out, paths, pkg as pkg_mod, registry, runners as runners_mod
+from . import config, engine, out, paths, pkg as pkg_mod, registry, runners as runners_mod
 from . import shell as shell_mod
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -210,6 +210,14 @@ def build_payload():
         # 图标后缀顺序由宿主带过去：界面那侧要按同一套顺序去"历史目标目录"里
         # 找 `icon.xxx`，两边共用一份顺序，免得以后 `F-29` 改了漏改
         "icon_exts": list(pkg_mod.ICON_EXTS),
+        # ★ `V-305`：界面**不再硬编码 `:`** —— 「跑包 / 路径 / 不切目录 / 后台」这几个符号
+        #   都是 `symbols` 段里可改的（设置→符号），界面照搬显示、并照它拼命令行。
+        "symbols": {
+            "plugin": config.plugin_symbol(),
+            "path": config.path_symbol(),
+            "no_chdir": config.no_chdir_symbol(),
+            "detach": config.detach_symbol(),
+        },
         "packages": pkgs,
     }
 

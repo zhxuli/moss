@@ -26,7 +26,7 @@ function consoleTitle(key){
   // 历史键 = "hist:" + 目标 + (" " + 参数)，标题只取目标那段文件名
   if (key.startsWith("hist:")) return "历史 · " + key.slice(5).split(" ")[0].split(/[\\/]/).pop();
   const p = DATA && DATA.packages.find(x => x.id === key);
-  return p ? (p.name + "（:" + key + "）") : key;
+  return p ? (p.name + "（" + PSYM + key + "）") : key;
 }
 /* ---------------------------------------------------------------- 命令行这一页（`Vue` 组件，`V-83`）
    薄组件：结构 / 类名 / id 一个**都不动**，只是把"按 id 找元素改属性"换成"状态一变、模板
@@ -217,7 +217,7 @@ function paintRowStats(){
     box.innerHTML = running
       ? '<button class="ic-run" title="正在运行 —— 点这里停掉它' + esc(runningHint(id)) + '">' +
         ico("square", "i") + '</button>'
-      : '<button class="idle" title="运行这个包（:﻿' + esc(id) + '）">' + ico("play", "i") + '</button>';
+      : '<button class="idle" title="运行这个包（﻿' + esc(PSYM + id) + '）">' + ico("play", "i") + '</button>';
     const b = box.querySelector("button");
     if (b) b.onclick = (ev) => {
       ev.stopPropagation();                       // 点图标不要连带选中那一行
@@ -234,7 +234,7 @@ async function runFromList(id){
   if (!p) return;
   if (RUNS[id]) return;
   const st = PST[id] || {};
-  if (st.running){ toast(":" + id + " 已经在跑了"); return; }
+  if (st.running){ toast(PSYM + id + " 已经在跑了"); return; }
   if (!cur || cur.id !== id) select(id, /*keepTab*/ true);
   startRun(p, "");
 }

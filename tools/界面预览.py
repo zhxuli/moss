@@ -99,7 +99,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
           "settings-ai", "settings-ai-tpl", "settings-ai-new", "settings-ai-empty",
-          "hist", "hist-console", "hist-file", "sync-run",
+          "hist", "hist-console", "hist-file", "sync-run", "sym-list", "bars-dd",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "fanyi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
@@ -2234,12 +2234,69 @@ MOCK_JS = r"""
         document.title = ok ? "READY"
           : ("SYNC-FAIL 历史[行=" + hRow + " 右上=" + hTop + "] 插件[行=" + pRow + " 右上=" + pTop + "]");
       }
+      // ★ `V-305`：插件列表行**不显示简介**了，第二行是「符号 + id」（符号来自设置，别硬编码 `:`）
+      if (h === "sym-list"){
+        for (let i = 0; i < 100 && !document.querySelector("#list .item"); i++) await sleep(60);
+        await sleep(200);
+        const row = document.querySelector("#list .item");
+        const id = row ? row.dataset.id : "";
+        const nm = row ? (row.querySelector(".nm") || {}).textContent || "" : "";
+        const ds = row ? (row.querySelector(".ds") || {}).textContent || "" : "";
+        const p0 = (DATA.packages || []).find(p => p.id === id) || {};
+        const hasSym = !!(DATA.symbols && DATA.symbols.plugin !== undefined);
+        const ok1 = !!id && nm.trim() === String(p0.name || "").trim() &&
+                    ds.trim() === PSYM + id && !!p0.desc;
+        // 换个符号，行里也要跟着变（证明不是写死的 `:`）
+        const saved = PSYM; PSYM = "@"; renderList(); await sleep(140);
+        const ds2 = (document.querySelector("#list .item .ds") || {}).textContent || "";
+        PSYM = saved; renderList(); await sleep(90);
+        const ds3 = (document.querySelector("#list .item .ds") || {}).textContent || "";
+        const ok2 = ds2.trim() === "@" + id && ds3.trim() === ":" + id;
+        const ok = hasSym && ok1 && ok2;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          " payload符号=" + hasSym + " nm=" + nm.trim() + " ds=" + ds.trim() +
+          " 换@后=" + ds2.trim();
+        document.title = ok ? "READY"
+          : ("SYM-FAIL payload=" + hasSym + " nm=" + nm + " ds=" + ds + " 换=" + ds2);
+      }
+      // ★ `V-305`：筛选 / 排序改成 **hover 下拉** —— 平时不展开、触发器显示当前值、点一项就切换
+      if (h === "bars-dd"){
+        for (let i = 0; i < 100 && !document.querySelector("#list .item"); i++) await sleep(60);
+        await sleep(200);
+        const trig = document.querySelectorAll("#bar-list .dd-t");
+        const menus = document.querySelectorAll("#bar-list .dd-menu");
+        const closed = menus.length === 2 &&
+          Array.prototype.every.call(menus, m => getComputedStyle(m).display === "none");
+        const trigOk = trig.length === 2 &&
+          Array.prototype.every.call(trig, t => t.querySelector("svg") && (t.textContent || "").trim());
+        const before = trig[1] ? trig[1].textContent.trim() : "";
+        const sys = document.querySelector('#bar-list .dd-i[data-g="filt"][data-v="system"]');
+        if (sys) sys.click();
+        await sleep(160);
+        const trigTxt = trig[0] ? trig[0].textContent.trim() : "";
+        const items = document.querySelectorAll("#list .item");
+        const allSys = items.length > 0 && Array.prototype.every.call(items, el => {
+          const p = (DATA.packages || []).find(x => x.id === el.dataset.id) || {};
+          return p.layer === "system";
+        });
+        // 排序下拉也点一下：触发器要跟着变
+        const bbtn = document.querySelector('#bar-list .dd-i[data-g="sort"][data-v="born"]');
+        if (bbtn) bbtn.click();
+        await sleep(120);
+        const trigSort = trig[1] ? trig[1].textContent.trim() : "";
+        const ok = closed && trigOk && trigTxt === "系统" && allSys && trigSort === "加入时间";
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          " 收起=" + closed + " 触发器=" + trigOk + " 筛选=" + trigTxt +
+          " 全系统=" + allSys + " 排序=" + trigSort + "（原排序=" + before + "）";
+        document.title = ok ? "READY"
+          : ("DD-FAIL 收起=" + closed + " 筛选=" + trigTxt + " 排序=" + trigSort);
+      }
       // ★ `V-300`：插件列表拖动排序 —— 假后端种一个"倒过来的自定义顺序"，
       //   界面应认出（落在「自定义顺序」档）并按它排；每行行首有拖动把手。
       if (h === "list-order"){
         for (let i = 0; i < 100 && !document.querySelector("#list .item"); i++) await sleep(60);
         await sleep(300);
-        const customBtn = document.querySelector('#bar-list .lb[data-g="sort"][data-v="custom"]');
+        const customBtn = document.querySelector('#bar-list .dd-i[data-g="sort"][data-v="custom"]');
         const grips = document.querySelectorAll("#list .item .drag-grip").length;
         const firstItem = document.querySelector("#list .item");
         const firstId = firstItem ? firstItem.dataset.id : "";
@@ -2284,7 +2341,7 @@ MOCK_JS = r"""
       // ★ `V-300`：**筛选下**拖动 —— 这正是"拖得乱"那个 bug 的现场：基准得跟可见行一致。
       if (h === "list-drag-filter"){
         for (let i = 0; i < 100 && document.querySelectorAll("#list .item").length < 3; i++) await sleep(60);
-        const sysBtn = document.querySelector('#bar-list .lb[data-g="filt"][data-v="system"]');
+        const sysBtn = document.querySelector('#bar-list .dd-i[data-g="filt"][data-v="system"]');
         if (sysBtn) sysBtn.click();
         await sleep(250);
         const rows = [].slice.call(document.querySelectorAll("#list .item"));

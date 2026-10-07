@@ -169,7 +169,7 @@ function rerunLast(){
   if (!lastRun) return;
   if (lastRun.key) return rerunHistByKey(lastRun.key, lastRun.args);
   const p = DATA.packages.find(x => x.id === lastRun.id);
-  if (!p){ toast("找不到 :" + lastRun.id + " 这个包了", true); return; }
+  if (!p){ toast("找不到 " + PSYM + lastRun.id + " 这个包了", true); return; }
   if (RUNS[p.id]) return;
   startRun(p, lastRun.args);
 }
@@ -218,19 +218,34 @@ const LB_ICONS = {
   hfilt: {all: "layers", path: "file-code", pkg: "package"},
   hsort: {time: "history", name: "list-tree", kind: "file-type"},
 };
+// ★ `V-305`：下拉每项要"图标 + 文字"两样（原来只有图标 + title 悬停才看得到名字）。
+const LB_LABELS = {
+  filt:  {all: "全部", system: "系统", user: "用户"},
+  sort:  {name: "名字", born: "加入时间", run: "最后运行", custom: "自定义"},
+  hfilt: {all: "全部", path: "路径", pkg: "包"},
+  hsort: {time: "时间", name: "名字", kind: "类型"},
+};
 const LB_LS = {filt: "moss.filt", sort: "moss.sort", hfilt: "moss.hfilt", hsort: "moss.hsort"};
 
 function paintListBars(){
   ["#bar-list", "#bar-hist"].forEach(sel => {
     const bar = $(sel);
     if (!bar) return;
-    bar.querySelectorAll(".lb").forEach(b => {
+    // ① 下拉菜单里的每一项：图标 + 标签 + 当前这项打个勾
+    bar.querySelectorAll(".dd-i").forEach(b => {
       const g = b.dataset.g, v = b.dataset.v;
-      // ★ 第三组那几颗（刷新 / 新建 / 打开文件）没有 data-g，别给它们打"选中"标记（V-180）
       if (!g || !v) return;
       const ic = (LB_ICONS[g] || {})[v];
-      if (ic && !b.querySelector("svg")) b.innerHTML = ico(ic, "i");
+      const lb = (LB_LABELS[g] || {})[v] || v;
+      b.innerHTML = ico(ic, "i") + '<span>' + esc(lb) + '</span>' + ico("check", "i dd-chk");
       b.classList.toggle("on", LISTR[g] === v);
+    });
+    // ② 触发器：显示"现在选的是哪个"（图标 + 标签 + 小箭头）
+    bar.querySelectorAll(".dd-t").forEach(t => {
+      const g = t.dataset.dd, v = LISTR[g];
+      const ic = (LB_ICONS[g] || {})[v];
+      const lb = (LB_LABELS[g] || {})[v] || v;
+      t.innerHTML = ico(ic, "i") + '<span>' + esc(lb) + '</span>' + ico("chevron-down", "i caret");
     });
   });
 }
@@ -265,19 +280,16 @@ async function openFileAndRun(){
 function initListBars(){
   LISTR.filt = _ls("moss.filt", "all");    LISTR.sort = _ls("moss.sort", "name");
   LISTR.hfilt = _ls("moss.hfilt", "all");  LISTR.hsort = _ls("moss.hsort", "time");
-  ["#bar-list", "#bar-hist"].forEach(sel => {
-    const bar = $(sel);
-    if (!bar) return;
-    bar.querySelectorAll(".lb").forEach(b => {
-      b.onclick = () => {
-        LISTR[b.dataset.g] = b.dataset.v;         // 一下点到位（以前下拉要两下）
-        _lsSet(LB_LS[b.dataset.g] || "moss.lb", b.dataset.v);
-        paintListBars();
-        bumpLists();
-        if (b.dataset.g === "sort") saveListView();          // `V-300`：排序档也存下来（跨重启）
-        if (b.dataset.g === "sort" && b.dataset.v === "born") loadBornTimes();
-      };
-    });
+  // ★ `V-305`：选项在下拉菜单里（`.dd-i`）—— 点一下选中、存下来、重画（hover 展开由 CSS 管）
+  document.querySelectorAll(".listbar .dd-i").forEach(b => {
+    b.onclick = () => {
+      LISTR[b.dataset.g] = b.dataset.v;           // 一下点到位
+      _lsSet(LB_LS[b.dataset.g] || "moss.lb", b.dataset.v);
+      paintListBars();
+      bumpLists();
+      if (b.dataset.g === "sort") saveListView();          // `V-300`：排序档也存下来（跨重启）
+      if (b.dataset.g === "sort" && b.dataset.v === "born") loadBornTimes();
+    };
   });
   paintListBars();
   paintBarActs();
@@ -565,7 +577,7 @@ function renderDetailHTML(){
       '<div class="dicon">' + iconHTML(p, "") + '</div>' +
       '<h1 class="dtitle" title="' + esc(p.name) + '">' + esc(p.name) + '</h1>' +
       (p.desc ? '<p class="ddesc">' + esc(p.desc) + '</p>' : '') +
-      '<div class="dmeta">:' + esc(p.id) + ' · v' + esc(p.version || "?") + ' · ' +
+      '<div class="dmeta">' + esc(PSYM + p.id) + ' · v' + esc(p.version || "?") + ' · ' +
         esc(p.kind) + ' · ' + esc(p.layer) + ' 层' +
         (p.shadowed ? ' · 遮住了 ' + esc(p.shadowed) + ' 层的同名包' : '') + '</div>' +
     '</div>';
@@ -665,7 +677,7 @@ function wireDetail(){
   if (host) host.dataset.wiredRev = String(DETAILR.rev);
   const aclr = $("#btn-args-clear");            // 参数框右边那颗"一键清空"（`V-86`）
   const upd = () => {
-    $("#preview").textContent = "moss :" + p.id +
+    $("#preview").textContent = "moss " + PSYM + p.id +
       ($("#args").value.trim() ? " " + $("#args").value.trim() : "");
     ARGS[p.id] = $("#args").value;              // 记住它，重画之后要放回去
     if (aclr) aclr.hidden = !$("#args").value;  // 有内容才浮出来
@@ -719,7 +731,7 @@ async function cmdAlignPkgDir(p){
     setTab("console");
     return;
   }
-  toast("包目录名已对齐成 :" + p.id);
+  toast("包目录名已对齐成 " + PSYM + p.id);
   // ★ 目录名换了（id 没换）—— 文件管理缓存里那条路径**还是旧目录**，
   //   不搬的话双击一个文件去编辑，宿主会说「不是文件」。这条正是这个 bug 的现场。
   await refreshPkgs(p.id);
@@ -748,7 +760,7 @@ async function cmdRenamePkg(p){
       setTab("console");
       return;
     }
-    toast("已改名为 :" + newId);
+    toast("已改名为 " + PSYM + newId);
     // ★ `V-89`：备份库里那个**分组文件夹**跟着改名（不然"改个 id 就一起改"这件事
     //   在备份那侧就断了）。改名失败不影响主流程，只在状态栏/日志里说一声。
     try{
@@ -951,11 +963,13 @@ const MossList = {
     rowHTML(p){
       // ★ `V-300`：行首一个把手（`.drag-grip`）—— 视觉提示；其实整行都能拖（见 initListDrag）。
       //   ⚠️ 类名别用 `.grip`（那是"拖我调宽"竖条的全局类，撞名会变一条贯穿竖线）。
+      // ★ `V-305`：**不显示简介**了 —— 第二行放"怎么敲它"（`<符号><id>`，符号来自设置、
+      //   不是写死的 `:`）。原来那个 id 从第一行的 `.sub` 挪到这儿。
       return '<span class="drag-grip" title="拖动排序">' + ico("grip-vertical", "i") + '</span>' +
         iconHTML(p, "ico") +
         '<div style="min-width:0;flex:1">' +
-          '<div class="nm">' + esc(p.name) + ' <span class="sub">:' + esc(p.id) + '</span></div>' +
-          '<div class="ds">' + esc(p.desc) + '</div></div>' +
+          '<div class="nm">' + esc(p.name) + '</div>' +
+          '<div class="ds">' + esc(PSYM + p.id) + '</div></div>' +
         '<span class="rowstat"></span>';
     },
     pick(id){ if (_listDragging) return; select(id); },   // 刚拖完那一下别误选中

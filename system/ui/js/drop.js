@@ -233,13 +233,13 @@ function frameDrag(pid, phase){
       paintDragBar();        // 条上改说"松手就交给 :pid 的界面"
       paintDropZone(false);  // 我们那颗"松手 = 运行 …"的框：这一拖不归它，收起来
     }
-    uiLog("frame drag: :" + pid + " 上有人在拖 —— 铺罩子接住（真实路径只有我们这侧拿得到）");
+    uiLog("frame drag: " + PSYM + pid + " 上有人在拖 —— 铺罩子接住（真实路径只有我们这侧拿得到）");
   } else {
     el.classList.remove("on");
     if (DRAG.framePid === pid) DRAG.framePid = null;
     // 离开那一帧了：回到"按声明筛"的正常行为，投放框也按当前选中的包重新算
     if (DRAG.on){ renderList(); paintDragBar(); paintDropZone(false); }
-    uiLog("frame drag: :" + pid + " 上没东西了 —— 收罩子");
+    uiLog("frame drag: " + PSYM + pid + " 上没东西了 —— 收罩子");
   }
 }
 /* 一个包都没收的时候，说人话解释"差在哪"（`V-183`）—— 最典型的就是"只差扩展名"：
@@ -252,7 +252,7 @@ function dropWhyNone(items){
   for (const p of ((DATA && DATA.packages) || [])){
     const c = ((p && p.drop) || []).find(x => x.file && x.file.ext && x.file.ext.length);
     if (!c) continue;
-    said.push(":" + p.id + " 只收 " + c.file.ext.join(" / "));
+    said.push(PSYM + p.id + " 只收 " + c.file.ext.join(" / "));
     if (said.length >= 2) break;
   }
   return said.length ? "（" + said.join("；") + "）" : "";
@@ -304,7 +304,7 @@ function dragEnd(){
     const el = CATCHER;
     if (el) el.classList.remove("on");
     pushEmbedEvent(DRAG.framePid, "dragend", {});
-    uiLog("frame drag: 收掉罩子（:" + DRAG.framePid + "）");
+    uiLog("frame drag: 收掉罩子（" + PSYM + DRAG.framePid + "）");
     DRAG.framePid = null;
   }
   document.body.classList.remove("dragging");
@@ -353,7 +353,7 @@ function dropZoneWhy(p, rule, kind){
   const which = kind === "dir" ? "这个文件夹" : (kind === "file" ? "这个文件" : "它");
   // `V-183`：框上顺便说清"它只收哪几种"——松手前就知道，别等跑起来才发现格式不对
   const only = (rule.ext && rule.ext.length) ? "（只收 " + rule.ext.join(" / ") + "）" : "";
-  return ":" + p.id + " —— 把" + which + what +
+  return PSYM + p.id + " —— 把" + which + what +
          (rule.base ? "（只给文件名）" : "") + (rule.quote ? "（加引号）" : "") + only;
 }
 
@@ -375,7 +375,7 @@ const MossDragBar = {
         return ico("copy", "i") +
           (takes
             ? '<span>拖到 <b>' + (fp.name || DRAG.framePid) + '</b> 的界面上了：松手就交给它' +
-              '（<b>:</b>' + DRAG.framePid + '）—— 这一次不跑命令行</span>'
+              '（<b>' + esc(PSYM) + '</b>' + DRAG.framePid + '）—— 这一次不跑命令行</span>'
             : '<span><b>' + (fp.name || DRAG.framePid) + '</b> 的界面不收这个（它没声明收拖入）' +
               ' —— 松手不会有反应</span>');
       }
@@ -516,7 +516,7 @@ window.__mossDrop = function(items){
   const asItems = items.map(x => ({name: x.name || x.path || "", isDir: !!x.isDir}));
   if (p && p.drop && p.drop.length && !dropAccepts(p, asItems)){
     const c = (p.drop || []).find(x => x.file && x.file.ext && x.file.ext.length);
-    toast("✗ :" + p.id + " 不收 " + asItems.map(x => x.name).join("、").slice(0, 48) +
+    toast("✗ " + PSYM + p.id + " 不收 " + asItems.map(x => x.name).join("、").slice(0, 48) +
           (c ? " —— 它只收 " + c.file.ext.join(" / ") : ""), true);
     DROP_ARGS.id = null;
     return;
@@ -531,13 +531,13 @@ window.__mossDrop = function(items){
   if (target && embedRunning(target.id) && dropAccepts(target, asItems)){
     const send = items.map(x => String(x.path || "")).filter(Boolean);
     pushEmbedEvent(target.id, "drop", {items: send});
-    uiLog("host drop → 内嵌界面 :" + target.id + " " + JSON.stringify(send));
-    toast("把 " + send.length + " 个路径交给了 :" + target.id + " 的界面");
+    uiLog("host drop → 内嵌界面 " + PSYM + target.id + " " + JSON.stringify(send));
+    toast("把 " + send.length + " 个路径交给了 " + PSYM + target.id + " 的界面");
     return;
   }
   const cmds = dropCommandsFor(p, it.isDir);
   if (!p || !cmds.length){
-    toast("✗ " + (p ? (":" + p.id + " 不收" + (it.isDir ? "文件夹" : "文件"))
+    toast("✗ " + (p ? (PSYM + p.id + " 不收" + (it.isDir ? "文件夹" : "文件"))
                     : "先选一个包") + " —— 拖动时只列收得下它的包", true);
     return;
   }
@@ -565,7 +565,7 @@ window.__mossDrop = function(items){
   else DROP_ARGS.id = null;
   if (box){ box.value = args; box.dispatchEvent(new Event("input")); }
   toast((cwd ? "以 " + cwd + " 为当前目录" : "按当前参数") +
-        (piece ? (cmd.base ? "、只把文件名交给它" : "") : "") + "运行 :" + p.id);
+        (piece ? (cmd.base ? "、只把文件名交给它" : "") : "") + "运行 " + PSYM + p.id);
   startRun(p, args, cwd);
 };
 

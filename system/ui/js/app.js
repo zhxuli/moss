@@ -17,14 +17,14 @@ async function initFloatMode(){
   const p = (DATA.packages || []).find(x => String(x.id) === FLOAT_PID);
   if (!p){
     document.body.innerHTML = '<div style="padding:24px;font:14px system-ui">' +
-      '这个窗口是给包 :' + FLOAT_PID + ' 开的，但没找到它。</div>';
+      '这个窗口是给包 ' + PSYM + FLOAT_PID + ' 开的，但没找到它。</div>';
     return;
   }
   document.title = (p.name || p.id) + " · moss";
   select(p.id);                 // 让详情/界面这些面板有上下文（`select` 会顺手切到详情，下面再切回界面）
   await embedOpen(p);           // 起后端（已经起着就复用）+ 建那一帧
   await pushWindowIcon(p);      // `V-195`：窗口左上角换成本包自己的图标
-  uiLog("[浮动窗口] :" + p.id + " 帧=" + (embedRunning(p.id) ? "ok" : "没起来") +
+  uiLog("[浮动窗口] " + PSYM + p.id + " 帧=" + (embedRunning(p.id) ? "ok" : "没起来") +
         " 图标=" + ((p.icon_svg || p.icon) ? "有" : "没有") + " 地址=" + location.href);
 }
 
@@ -60,6 +60,8 @@ function paintSwitchCounts(){
 async function init(){
   setStatus("就绪");        // 状态栏（`V-61`）：还没干任何事时它是空的，给一句起点
   DATA = await pywebview.api.state();
+  // ★ `V-305`：跑包符号从 payload 拿（`symbols.plugin`，默认 `:`）—— 全界面都用它、别硬编码。
+  if (DATA && DATA.symbols && DATA.symbols.plugin !== undefined) PSYM = DATA.symbols.plugin;
   // ★ 浮动窗口（`V-192`）：只要那一帧，别跑主界面那一整套（列表 / 历史 / 文件管理都不用）。
   if (FLOAT_PID){ await initFloatMode(); return; }
   // ★ `V-199`：那一行"19 个包 · 启动方式：… · D:\…"不再显示 —— 数字挪到左边
@@ -193,7 +195,7 @@ async function cmdNewPkg(){
     const r = await pywebview.api.run_host("--new " + id);
     setConsole("__host__", "$ moss --new " + id + "\n\n" + (r.out || "(没有输出)") +
                "\n" + runTail(r.code, r.out, false), "退出码 " + r.code);
-    toast(r.code === 0 ? ("已新建 :" + id + "（user_data/pkgs/）") : "✗ 新建失败，看「命令行」",
+    toast(r.code === 0 ? ("已新建 " + PSYM + id + "（user_data/pkgs/）") : "✗ 新建失败，看「命令行」",
           r.code !== 0);
     if (r.code === 0){
       await init();                       // 重新扫包列表，新包就出现了
@@ -226,7 +228,7 @@ async function cmdRemovePkg(p){
       const r = await pywebview.api.run_host("--remove " + p.id + " -y");
       setConsole("__host__", "$ moss --remove " + p.id + " -y\n\n" + (r.out || "(没有输出)") +
                  "\n" + runTail(r.code, r.out, false), "退出码 " + r.code);
-      toast(r.code === 0 ? ("已卸载 :" + p.id) : "✗ 卸载失败，看「命令行」", r.code !== 0);
+      toast(r.code === 0 ? ("已卸载 " + PSYM + p.id) : "✗ 卸载失败，看「命令行」", r.code !== 0);
       setTab("console");                  // 让用户看到到底删了什么
       if (r.code === 0){ cur = null; await init(); renderDetail(); }
     });

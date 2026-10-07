@@ -225,7 +225,7 @@ const MossEmbed = {
       if (EMB.floated[p.id]) return "已经弹到窗口里去了（那边最小化就回来）";
       if (!embedRunning(p.id)) return "还没跑 —— 点右上角「运行」就起";
       const n = this.aliveN;
-      return "后端 :" + p.id + " 在内嵌运行 · 切走也不会停" +
+      return "后端 " + PSYM + p.id + " 在内嵌运行 · 切走也不会停" +
              (n > 1 ? ("（另外还有 " + (n - 1) + " 个也在跑）") : "");
     },
   },
@@ -388,7 +388,7 @@ function argsInput(){ return $("#args") || $("#hargs"); }
 
 async function startRun(p, args, cwd){
   if (RUNS[p.id]) return;                // ★ 只拦"同一个包重复起"，不再拦别的包
-  const cmd = "moss :" + p.id + ((args || "").trim() ? " " + args.trim() : "");
+  const cmd = "moss " + PSYM + p.id + ((args || "").trim() ? " " + args.trim() : "");
   lastRun = {id: p.id, args: args, label: cmd};
   consoleKey = p.id;                     // 输出落进"这个包自己的"那份
   setConsole(p.id, "$ " + cmd, "运行中");

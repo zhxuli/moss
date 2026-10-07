@@ -1454,7 +1454,10 @@ class Api:
 
     def run(self, pid, args_text=""):
         """带参数跑一个包并等它跑完（老的阻塞式；界面现在走 run_start 那一套）。"""
-        return _run_capture(HOST + [":" + str(pid)] + _split(args_text))
+        # ★ `V-305`：界面这边起包一律走 **`--pkg <id>` 稳定入口** —— 它跟"跑包符号"
+        #   （`symbols.plugin_mode`，用户可以在设置里改）解耦。千万别再写回 `":" + pid`：
+        #   用户把符号改成别的之后，那条命令宿主就认不出来了。
+        return _run_capture(HOST + ["--pkg", str(pid)] + _split(args_text))
 
     def run_start(self, pid, args_text="", cwd=None):
         """起一个后台运行，立刻返回 run_id（输出靠 `run_poll` 拿）。
@@ -1467,7 +1470,7 @@ class Api:
         ★ 目录不存在就**当没传**：路径可能是刚被删掉的、或者拖的是个断了的网络盘，
           那种情况下宁可退回默认目录，也不要让进程根本起不来。
         """
-        argv = HOST + [":" + str(pid)] + _split(args_text)
+        argv = HOST + ["--pkg", str(pid)] + _split(args_text)
         workdir = None
         if cwd:
             try:
@@ -1572,7 +1575,7 @@ class Api:
 
     def open_ui(self, pid, args_text=""):
         """把包的界面开起来：**脱离**当前进程、不抓输出，所以不会卡住界面。"""
-        argv = HOST + [":" + str(pid)] + _split(args_text)
+        argv = HOST + ["--pkg", str(pid)] + _split(args_text)
         try:
             proc = subprocess.Popen(argv, stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL,
                                     creationflags=NO_WINDOW | DETACHED, close_fds=True)
@@ -3416,7 +3419,7 @@ class Api:
                     workdir = str(cwd)
             except OSError:
                 workdir = None
-        argv = HOST + [":" + pid]
+        argv = HOST + ["--pkg", str(pid)]
         try:
             proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     stdin=subprocess.PIPE, env=env, cwd=workdir,

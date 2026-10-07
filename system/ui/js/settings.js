@@ -486,15 +486,17 @@ const MossSettings = {
     // ★ `V-298`：短名设置那一组 —— 前缀 / 三段模式 / 对比预览（都跟着当前编辑值即时变）
     scPrefix(){ return (String(this.values["shortcut.prefix"] || "").replace(/[^A-Za-z0-9_-]/g, "")) || "mo"; },
     scMode(){ return this.values["shortcut.pkg"] ? 2 : (this.values["shortcut.mo"] ? 1 : 0); },
-    scBeforeText(){ return "moss :img\nmoss :img webp 60% *.png"; },
+    // ★ `V-305`：这一页"现在的写法"要用**真的跑包符号**（设置→符号 里那个），别写死 `:`
+    scSym(){ const s = this.values["symbols.plugin_mode"]; return s === undefined ? ":" : String(s); },
+    scBeforeText(){ return "moss " + this.scSym + "img\nmoss " + this.scSym + "img webp 60% *.png"; },
     // ★ V-298：右列要**把前缀高亮**（`mo` 亮、`img` 正常）—— 照那份稿子的视觉引导。
     //   `scPrefix` 已经洗过（只剩字母/数字/-/_），拼进 HTML 安全。
     scNowHtml(){
       const p = this.scPrefix, m = this.scMode;
       const hl = s => '<span class="sc-hl">' + s + '</span>';
-      if (m === 1) return hl(p) + " :img\n" + hl(p) + " :img webp 60% *.png";
+      if (m === 1) return hl(p) + " " + esc(this.scSym) + "img\n" + hl(p) + " " + esc(this.scSym) + "img webp 60% *.png";
       if (m === 2) return hl(p) + "img\n" + hl(p) + "img webp 60% *.png";
-      return hl("moss") + " :img\n" + hl("moss") + " :img webp 60% *.png";
+      return hl("moss") + " " + esc(this.scSym) + "img\n" + hl("moss") + " " + esc(this.scSym) + "img webp 60% *.png";
     },
 
   },
@@ -929,6 +931,12 @@ const MossSettings = {
       // ★ `V-275`：成功也可能带着 warn（"提醒，不拦保存"）—— **留着**，不然那条提醒白算了。
       this.problems = list;
       Object.keys(pairs).forEach(k => { this.orig[k] = this.values[k]; });
+      // ★ `V-305`：**符号改了** ⇒ 界面立刻跟着变（列表行 / 详情 / 标题…都照它拼），
+      //   不用重启（重启也行 —— payload 里也带着）。空串就照空串显示（那是"裸名跑包"档）。
+      if (this.values["symbols.plugin_mode"] !== undefined){
+        PSYM = this.values["symbols.plugin_mode"];
+        renderList(); renderHist(); renderDetail();
+      }
       // ★ `V-298`：宿主存完会回"具体做了什么"（加/删 PATH、生成/删哪些短命令）。
       //   **有具体的就别再弹那句泛泛的「已保存」** —— 否则一次保存冒两个弹窗（你报的）。
       const scMsgs = (r && r.shortcut) || [];

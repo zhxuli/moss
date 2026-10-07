@@ -163,6 +163,30 @@ main.mini #btn-aside-mini svg{transform:rotate(180deg)}
 .listbar .lb svg{width:14px;height:14px}
 /* 分类 | 排序 之间那条分隔 */
 .listbar .lb-sep{width:1px;height:14px;flex:none;background:var(--line2);margin:0 3px}
+/* ★ `V-305`：筛选 / 排序改成 **hover 下拉** —— 触发器平时只占一小块（图标 + 当前值 + 小箭头），
+   鼠标停上去自动展开、移开就收起。菜单贴着触发器下沿（中间没有缝），所以从触发器移到菜单上
+   **不会"路过就收"**，操作依旧连贯（不用多点几下）。 */
+.listbar .dd{position:relative;flex:none}
+.listbar .dd-t{height:22px;display:inline-flex;align-items:center;gap:4px;padding:0 7px;
+  border:0;border-radius:6px;background:transparent;color:var(--dim);cursor:pointer;
+  font-size:12px;white-space:nowrap;transition:background .12s,color .12s}
+.listbar .dd-t:hover,.listbar .dd:hover .dd-t{background:var(--hover);color:var(--fg)}
+.listbar .dd-t svg{width:14px;height:14px;flex:none}
+.listbar .dd-t .caret{width:11px;height:11px;opacity:.55;transition:transform .15s ease}
+.listbar .dd:hover .dd-t .caret{transform:rotate(180deg)}
+.listbar .dd-menu{position:absolute;left:0;top:100%;z-index:45;min-width:130px;
+  display:none;flex-direction:column;gap:1px;padding:4px;
+  background:var(--panel);border:1px solid var(--line2);border-radius:9px;
+  box-shadow:0 10px 30px rgba(0,0,0,.16)}
+.listbar .dd:hover .dd-menu{display:flex}
+.listbar .dd-i{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border:0;
+  border-radius:6px;background:transparent;color:var(--fg);cursor:pointer;font-size:12.5px;
+  text-align:left;white-space:nowrap;transition:background .1s}
+.listbar .dd-i:hover{background:var(--hover)}
+.listbar .dd-i.on{background:var(--fill);color:var(--accent);font-weight:500}
+.listbar .dd-i svg{width:15px;height:15px;flex:none}
+.listbar .dd-i .dd-chk{margin-left:auto;opacity:0;width:13px;height:13px}
+.listbar .dd-i.on .dd-chk{opacity:1}
 /* ★ 折叠态（`V-178`）：列表能上下滚，但**不许出现滚动条**（横的竖的都不要） */
 main.mini #list,main.mini #hist{overflow-x:hidden;scrollbar-width:none}
 main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;height:0;display:none}

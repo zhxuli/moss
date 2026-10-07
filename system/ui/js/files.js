@@ -104,7 +104,7 @@ function fmLabel(key){
     return "历史 · " + ((it && (it.name || it.target)) || key.slice(HIST_PREFIX.length));
   }
   const p = DATA.packages.find(x => x.id === key);
-  return p ? (p.name + "（:" + p.id + "）") : key;
+  return p ? (p.name + "（" + PSYM + p.id + "）") : key;
 }
 function isDirty(t){ return t && !t.binary && t.text !== t.original; }
 

@@ -1190,7 +1190,7 @@ const MossAi = {
              @click="openSel($event)">
           <span v-html='ico("folder-tree", "i")'></span>
           <select v-model="A.where" :disabled="A.running" @change="refresh()">
-            <option value="pkg" :disabled="!pkg">{{ pkg ? ("当前包 :" + pkg.id) : "（左边还没选包）" }}</option>
+            <option value="pkg" :disabled="!pkg">{{ pkg ? ("当前包 " + pSym() + pkg.id) : "（左边还没选包）" }}</option>
             <option value="new">整个项目区</option>
           </select>
         </div>
@@ -1411,7 +1411,7 @@ const MossAi = {
    `vendor/lucide.js` 里是个全局函数（`window.ico` 查得到），模板里照样报
    `ico is not a function` —— 实测踩到，查了半天。别的页要这么干：
    `js/console.js` 也是 `mountVue(MossConsole, "#pane-console", {ico: ico})`。 */
-mountVue(MossAi, "#pane-ai", {ico: ico});
+mountVue(MossAi, "#pane-ai", {ico: ico, pSym: () => PSYM});   // `pSym()`：跑包符号（`V-305`，别硬编码 `:`）
 
 
 
