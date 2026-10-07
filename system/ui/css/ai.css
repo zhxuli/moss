@@ -1069,6 +1069,8 @@
   opacity:0;transform:scale(.9);transition:all .2s;
 }
 .aiwrap .history-item:hover .btn-delete{opacity:1;transform:scale(1)}
+.aiwrap .ai-perm-i:hover .btn-delete{opacity:1;transform:scale(1)}
+.aiwrap .btn-delete:focus-visible{opacity:1;transform:scale(1)}
 .aiwrap .btn-delete:hover{color:var(--aib-danger);background:#FEE2E2}
 .aiwrap .btn-delete svg.i{width:15px;height:15px}
 .aiwrap .history-item.new{color:var(--aib-primary);font-weight:500;justify-content:flex-start}
