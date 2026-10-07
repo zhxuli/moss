@@ -94,6 +94,11 @@ def main():
     import ai_tools as T                                                  # noqa: E402
     import ai_loop as L                                                   # noqa: E402
     import ai_client as C                                                 # noqa: E402
+    import ai_mode as MP                                                  # noqa: E402
+    # ★ `V-316`：权限是**一份清单**（读/写两个勾）。这个探针里到处用 `workdir=pkgs`
+    #   （= 用户在"整个项目区"那种用法）—— 新模型下那要**显式在清单里**，
+    #   所以这里先把项目区根加进去（等价于用户把那一行勾上了）。
+    MP.allow_add(str(pkgs), read=True, write=True, why="探针：整个项目区")
 
     print("=" * 72)
     print("A：基底提示词两层（user 盖 system）＋ 技能（`V-278`：只列清单、正文按需读）")
@@ -160,6 +165,11 @@ def main():
     print("=" * 72)
     d = pkgs / "demo"
     d.mkdir()
+    # ★ `V-316`：权限是**一份清单**（读/写两个勾）—— 这里的 `E.apply_edit` 是**直连**调用
+    #   （没有经过 `Tools`，所以不会自动给"当前包"上账），先把它当成"当前那个包"加进去。
+    #   真机上这一步由宿主（`ai_info`/`ai_start`）和 `Tools()` 自己做。
+    import ai_mode as M0                                                   # noqa: E402
+    M0.ensure_pkg(str(d))
     f = d / "run.py"
     f.write_bytes("# -*- coding: utf-8 -*-\r\nprint(\"hi\")\r\nprint(\"hi\")\r\n".encode("utf-8"))
     r = E.apply_edit(f, 'print("hi")', 'print("hello")')
@@ -177,8 +187,13 @@ def main():
     outside = udata / "state" / "别碰我.txt"
     outside.parent.mkdir(parents=True, exist_ok=True)
     r = E.apply_edit(outside, "a", "b")
-    chk("B ★ 写 `user_data/state/` 被拒（v1 只许写 user_data/pkgs/**）",
-        r.get("ok") is False and "只允许写" in str(r.get("error")), str(r.get("error"))[:70])
+    # ★ `V-307`：写权限现在是**三档模式 + 放行清单**（`ai_mode.py`）。默认档 = 🔒 受限，
+    #   能写的仍然只有 `user_data/pkgs/**` + `state/skill/**` + 清单里打开的路径 ——
+    #   所以这一条断言的行为没变，只是文案里多了"哪一档"（断言按行为写，别咬死一句话）。
+    _err = str(r.get("error"))
+    chk("B ★ 写 `user_data/state/`（不在清单里）被拒",
+        r.get("ok") is False and ("写权限没开" in _err or "只允许写" in _err or "受限" in _err),
+        _err[:70])
     r = E.write_new(outside, "x")
     chk("B ★ 新建也守同一条线", r.get("ok") is False, str(r.get("error"))[:60])
     r = E.write_new(f, "覆盖试试")
@@ -303,15 +318,16 @@ def main():
     os.environ["MOSS_HOST_CMD"] = '"%s" "%s"' % (sys.executable, host)
     t = T.Tools(workdir=pkgs)
     got = t.call("read_file", {"path": str(home / "core" / "paths.py")})
-    chk("F ★ 读宿主源码（core/）被拒 —— 不再「读到一半跑去研究 moss 怎么实现」",
-        "只允许读" in got, got.replace("\n", " ")[:80])
+    chk("F ★ 读宿主源码（core/）被拒（不在清单里）—— 不再「读到一半跑去研究 moss 怎么实现」",
+        ("只允许读" in got or "读权限没开" in got), got.replace("\n", " ")[:80])
     got = t.call("list_dir", {"path": str(home)})
-    chk("F list_dir 仓库根也被拒（省 token 的第一道闸）", "只允许读" in got, got.replace("\n", " ")[:60])
+    chk("F list_dir 仓库根也被拒（不在清单里；省 token 的第一道闸）",
+        ("只允许读" in got or "读权限没开" in got), got.replace("\n", " ")[:60])
     got = t.call("read_file", {"path": str(home / "system" / "pkgs" / "bmi" / "main.py")})
     chk("F 样板包（system/pkgs/bmi）仍然读得到 —— 别把该读的也拦了",
         "只允许读" not in got and len(got) > 20, got.splitlines()[0][:60])
     got = t.call("grep", {"pattern": "def main", "path": str(home / "core")})
-    chk("F grep 也守同一条线", "只允许读" in got, got.replace("\n", " ")[:60])
+    chk("F grep 也守同一条线", ("只允许读" in got or "读权限没开" in got), got.replace("\n", " ")[:60])
 
     long_script = []
     for i in range(14):
@@ -1095,6 +1111,348 @@ def main():
             _rr, _rtxt)
     finally:
         C.RETRY_WAITS = _old_waits
+
+    print()
+    print("=" * 72)
+    print("S：`V-307`/`V-308` —— 每步写目的 / 时间点 / 自己估 token / 问用户 / 放行清单 /")
+    print("     三档模式 / 停止立刻杀进程 / 临时空间 / 每步落盘")
+    print("=" * 72)
+    import threading                                                      # noqa: E402
+    import ai_mode as M                                                   # noqa: E402
+    import ai_ask as A                                                    # noqa: E402
+
+    # ---- S1：每一步的「目的」+「时间点」+「累计 token」 ---------------------------
+    _s1 = L.Loop(FakeModel([call("list_dir", {"why": "看一眼这个包里有几个文件"}),
+                            call("answer", {"text": "看完了"})]),
+                 workdir=fake_pkg, max_steps=4, say=lambda s: None).run("看看目录")
+    _row = (_s1.get("steps") or [{}])[0]
+    chk("S ★ 模型写的 `why`（这一步的目的）进了步骤行",
+        _row.get("why") == "看一眼这个包里有几个文件", repr(_row.get("why")))
+    chk("S ★ 每一步都带**时间点**（at=HH:MM:SS + t 时间戳）",
+        len(str(_row.get("at") or "")) == 8 and str(_row.get("at"))[2] == ":" and (_row.get("t") or 0) > 0,
+        "at=%r t=%r" % (_row.get("at"), _row.get("t")))
+    chk("S ★ 每一步带**此刻累计 token**（界面右边那格用它）", "tokens" in _row, "")
+    chk("S 没写 `why` 的步骤照样能用（不因此报错）",
+        (L.Loop(FakeModel([call("answer", {"text": "ok"})]), workdir=fake_pkg,
+                max_steps=3, say=lambda s: None).run("随便").get("steps") or [{}])[0].get("why") == "", "")
+    # ★ `V-315`：**原始参数 + 原始输出**都留在步骤行里（界面上点开那张卡要看的就是它俩）
+    chk("S ★★ 每一步留着**原始参数**（它填给工具的完整 JSON）",
+        "why" in str(_row.get("args") or ""), str(_row.get("args"))[:60])
+    chk("S ★★ 每一步留着**原始输出**（它当时看到的那一份结果）",
+        bool(str(_row.get("out") or "").strip()), str(_row.get("out"))[:60])
+    _big = L._clip("x" * 9999, 200)
+    chk("S 超长输出会截断，并写明**全文去哪儿看**（「提示词」那一层）",
+        len(_big) < 400 and "没截断的那一份" in _big, _big[-40:])
+    chk("S 参数是 dict 时转成**人能读的 JSON**（不是 Python 的 repr）",
+        '"why"' in L._clip({"why": "看目录", "path": "C:/x"}, 500), "")
+
+    # ---- S2：网关不回 `usage` ⇒ 自己估（用户报的"token 消耗这里 始终没有数据"） ----
+    class NoUsage(FakeModel):
+        def chat(self, messages, tools=None, stop_check=None, on_wait=None, on_retry=None):
+            got = FakeModel.chat(self, messages, tools, stop_check, on_wait, on_retry)
+            got["usage"] = {}                       # 就是有的网关那种：一个字都不给
+            return got
+
+    _s2 = L.Loop(NoUsage([call("answer", {"text": "回答" * 200})]),
+                 workdir=fake_pkg, max_steps=3, say=lambda s: None).run("问一句长的")
+    _u = _s2.get("usage") or {}
+    chk("S ★★ 网关不回 `usage` ⇒ 宿主自己估（不再是 0 / 0 / 0）",
+        (_u.get("total_tokens") or 0) > 0 and (_u.get("prompt_tokens") or 0) > 0 and bool(_u.get("estimated")),
+        "usage=%s" % {k: _u.get(k) for k in ("prompt_tokens", "completion_tokens", "total_tokens", "estimated")})
+    chk("S 步骤行上也标了 `est=True`（界面据此写 ≈）",
+        any(x.get("est") for x in (_s2.get("steps") or [])), "")
+    _s2b = L.Loop(FakeModel([call("answer", {"text": "x"})]), workdir=fake_pkg,
+                  max_steps=3, say=lambda s: None).run("正常网关")
+    chk("S 网关**给了** usage 就照实记（不许拿估算盖掉真数字）",
+        not (_s2b.get("usage") or {}).get("estimated")
+        and (_s2b.get("usage") or {}).get("prompt_tokens") == 100,
+        str(_s2b.get("usage")))
+
+    # ---- S3：`ask` —— 它问、你答（loop 真的**阻塞在那儿等**） ---------------------
+    _asked = []
+    _asker = None
+
+    def _pub(q):
+        if q is None:
+            return
+        _asked.append(q)
+        if _asker is not None:                     # 模拟界面：0.3 秒后点「选 A」+ 打字
+            threading.Timer(0.3, lambda: _asker.submit(choice="选 A", text="顺便再说一句")).start()
+
+    _asker = A.Asker(publish=_pub, timeout=10)
+    _m3 = FakeModel([call("ask", {"question": "要 A 还是 B?", "options": ["A", "B"]}),
+                     call("answer", {"text": "好"})])
+    _s3 = L.Loop(_m3, workdir=fake_pkg, max_steps=4, say=lambda s: None, asker=_asker).run("问我要哪个")
+    chk("S ★ 问题真的递到界面了（publish 收到 qid + 选项）",
+        bool(_asked) and _asked[0].get("question") == "要 A 还是 B?" and len(_asked[0].get("options") or []) == 2,
+        str(_asked[:1])[:100])
+    _sent3 = json.dumps(_m3.seen[-1], ensure_ascii=False)
+    chk("S ★★ 用户答的**原话回给了模型**（他选了：选 A / 他说：顺便再说一句）",
+        "他选了：选 A" in _sent3 and "顺便再说一句" in _sent3, _sent3[-160:])
+    chk("S ★ 答完之后它接着干完了（不是卡在问题上）", _s3.get("ok") is True, str(_s3.get("reason"))[:60])
+    # 按停止 ⇒ 挂着的问题**当场放走**（不许"停止"卡在一张没人答的卡片上）
+    _asker2 = A.Asker(publish=lambda q: None, timeout=30)
+    _stopflag = {"v": False}
+    threading.Timer(0.5, lambda: (_stopflag.__setitem__("v", True), _asker2.cancel("stopped"))).start()
+    _t0 = time.time()
+    _s3b = L.Loop(FakeModel([call("ask", {"question": "在吗?"})]), workdir=fake_pkg, max_steps=4,
+                  say=lambda s: None, asker=_asker2,
+                  stop_check=lambda: _stopflag["v"]).run("问一句")
+    chk("S ★★ 挂着问题时按停止 ⇒ 一秒内就收工（不是等 30 分钟超时）",
+        time.time() - _t0 < 2.0 and _s3b.get("ok") is False, "%.2fs / %s"
+        % (time.time() - _t0, str(_s3b.get("reason"))[:40]))
+    chk("S 没有 asker（命令行直跑）⇒ 明说「没人可问」，让它自己接着干",
+        "没人可问" in str(T.Tools(workdir=fake_pkg).call("ask", {"question": "hi?"})), "")
+
+    # ---- S4：三档模式 + 放行清单 ------------------------------------------------
+    _out = tmp / "outside"                        # 一个**包外**的目录（受限档默认不给写）
+    _out.mkdir(parents=True, exist_ok=True)
+    _target = _out / "a.txt"
+
+    def _try_write():
+        # 带 `overwrite=true`：这个文件会写第二遍，别让"文件已经在了"混进判据里
+        return str(T.Tools(workdir=fake_pkg).call("write_file",
+                                                  {"path": str(_target), "content": "hi",
+                                                   "overwrite": True}))
+
+    # ★ `V-316`：**权限 = 一份清单**（每行一对「读 / 写」勾选），不再有"模式"。
+    _r = _try_write()
+    chk("S ★ 清单里没有这个目录 ⇒ 写被拒，并告诉它**两条路**（allow_path 问 / 让用户勾上写）",
+        "拒绝" in _r and "allow_path" in _r, _r[:90])
+    chk("S ★ 清单里没有 ⇒ **读**也拒（读/写是两件事，各勾各的）",
+        "拒绝" in str(T.Tools(workdir=fake_pkg).call(
+            "read_file", {"path": str(_out / "没有这个.txt")})), "")
+    # ① 当前这个包**自动**进清单，读+写都开（"打开这个插件点 AI = 我就是要改它"）
+    #   （`Tools()` 一 new 出来就会 `ensure_pkg` —— 前面 B/D 那些用例已经把它加上了）
+    _row0 = [x for x in M.allow_list() if x["path"] == str(fake_pkg)]
+    chk("S ★★ 当前这个包**自动**在清单里，而且读 + 写都默认开着",
+        bool(_row0) and _row0[0]["read"] and _row0[0]["write"], str(_row0[:1])[:90])
+    # 只自动加**一次**：拿一个**新目录**验（用户后来自己删了，不会被偷偷加回来）
+    _fresh = pkgs / "zzseed"
+    _fresh.mkdir(parents=True, exist_ok=True)
+    _seed = M.ensure_pkg(str(_fresh))
+    chk("S ★★ 新包第一次打开 AI ⇒ 自动进清单（读+写）",
+        _seed.get("added") is True and M.can_write(_fresh / "run.py") is None
+        and M.can_read(_fresh / "run.py") is None, str(_seed.get("msg"))[:70])
+    chk("S ★ 只自动加**一次**（`seeded` 记着 id）",
+        M.ensure_pkg(str(_fresh)).get("added") is False, "")
+    # ② 读 / 写**各管各的**：清单里没有就都进不去（拿一个**包外**目录验，别被 pkgs 根那一行覆盖）
+    chk("S ★ 清单里没有这个目录 ⇒ 读不了也写不了（清单说了算）",
+        M.can_read(_out / "a.txt") is not None and M.can_write(_out / "a.txt") is not None, "")
+    M.allow_set(str(_out), read=True, write=True, why="探针加的")
+    _r = _try_write()
+    chk("S ★★ 清单里勾上「写」⇒ 立刻就能写",
+        _target.is_file() and "[失败]" not in _r and "拒绝" not in _r, _r[:60])
+    M.allow_set(str(_out), write=False)
+    _r = _try_write()
+    chk("S ★★ 把「写」取消勾选 ⇒ 立刻写不了（放行不是永久通行证）", "拒绝" in _r, _r[:60])
+    chk("S ★★ 但「读」还开着 ⇒ 照样看得见（这就是「只读 / 咨询」那一档）",
+        M.can_read(_out / "a.txt") is None and M.can_write(_out / "a.txt") is not None, "")
+    M.allow_set(str(_out), write=True)
+    # 「只允许这一次」：不写清单，只在这一次跑里有效
+    M.allow_rm(str(_out))
+    M.allow_temp(str(_out))
+    _r = _try_write()
+    chk("S ★ 「只允许这一次」也能写/读（临时放行，不进清单）",
+        "[失败]" not in _r and "拒绝" not in _r
+        and not [x for x in M.allow_list() if x["path"] == str(_out)], _r[:60])
+    _ = _out
+    M.clear_temp()
+    chk("S 这一次跑结束 ⇒ 临时放行自动作废", "拒绝" in _try_write(), "")
+    # ③ 硬锁：勾了「任意路径」也进不去
+    _lock = str(T.Tools(workdir=fake_pkg).call(
+        "write_file", {"path": str(E.HOME / "core" / "别碰.py"), "content": "x"}))
+    chk("S ★★ 连 `*`（任意路径）都没勾的时候，`core/` 当然写不了", "受保护" in _lock, _lock[:70])
+    chk("S ★★ 清单里也**加不进**硬的受保护路径（不是「加进去就能写」）",
+        M.allow_add(str(E.HOME / "core")).get("ok") is False, "")
+    # ④ 「任意路径」那一行的写 = 放手：哪儿都能写，而且**危险操作不再问**
+    chk("S ★ 默认**不是**放手（`*` 那一行的读/写都是关的）", M.wildcard_write() is False, "")
+    _r = _try_write()
+    chk("S ★ 没放手时，包外目录写不了（清单里没有它）", "拒绝" in _r, _r[:60])
+    M.allow_set("*", write=True)
+    chk("S ★★ 把「任意路径」的**写**打开 = 放手（`wildcard_write` 为真）",
+        M.wildcard_write() is True, "")
+    _r = _try_write()
+    chk("S ★★ 放手之后：包外普通目录**能写**了（这才是「放手」）",
+        "[失败]" not in _r and "拒绝" not in _r, _r[:60])
+    _lock2 = str(T.Tools(workdir=fake_pkg).call(
+        "write_file", {"path": str(E.HOME / "core" / "别碰.py"), "content": "x"}))
+    chk("S ★★ 但放手**也写不了 `core/`**（硬锁，不是劝）", "受保护" in _lock2, _lock2[:70])
+    chk("S ★★ 放手 = 危险操作**不再问**（`needs_confirm` 变假 —— 别再拿第二个开关控同一件事）",
+        M.needs_confirm(M.danger_of("run_moss", {"args": "--remove x"})) is False, "")
+    M.allow_set("*", write=False)
+    chk("S ★ 把「任意路径」的写关掉 ⇒ 危险操作又要问了（现读，不用重启）",
+        M.needs_confirm(M.danger_of("run_moss", {"args": "--remove x"})) is True, "")
+    # ⑤ 权限那一段要**写进提示词**（它自己看不见界面，得知道能写哪儿）
+    _note = M.perm_note(str(fake_pkg))
+    chk("S ★ 提示词里写清「能写哪儿 / 写不了就用 allow_path 问」",
+        "能写" in _note and "allow_path" in _note, _note[:80])
+    for _it in M.allow_list():
+        M.allow_set(_it["path"], write=False)
+    chk("S ★ 「写」全关着时，提示词明说这一轮是**只读**（用 answer 收尾，别硬改）",
+        "一个地方都不能写" in M.perm_note(str(fake_pkg)), "")
+    M.allow_set(str(fake_pkg), write=True)
+    M.allow_set(str(pkgs), write=True)
+    M.begin_run()
+
+    # ---- S5：跑包途中按停止 ⇒ **立刻**回来 + 连子孙一起杀掉（用户报的几十个进程） ----
+    _long = tmp / "long_host.py"
+    _long.write_text(
+        "# -*- coding: utf-8 -*-\n"
+        "import os, subprocess, sys, time\n"
+        "kid = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+        "open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pids.txt'), 'w').write(\n"
+        "    '%d %d' % (os.getpid(), kid.pid))\n"
+        "time.sleep(120)\n", encoding="utf-8")
+    _old_host = os.environ.get("MOSS_HOST_CMD")
+    os.environ["MOSS_HOST_CMD"] = '"%s" "%s"' % (sys.executable, _long)
+    _flag = {"v": False}
+    threading.Timer(1.2, lambda: _flag.__setitem__("v", True)).start()
+    _t0 = time.time()
+    _s5 = L.Loop(FakeModel([call("run_moss", {"args": ":sleepy", "timeout": 120})]),
+                 workdir=fake_pkg, max_steps=3, say=lambda s: None,
+                 stop_check=lambda: _flag["v"]).run("跑个长命令")
+    _dt = time.time() - _t0
+    chk("S ★★ 跑包途中按停止 ⇒ **立刻**回来（老写法要等满 timeout 120 秒）",
+        _dt < 10, "%.1f 秒" % _dt)
+    chk("S ★★ 收工原因写的是「用户按了停止（立刻停，没有等下一轮）」",
+        "停止" in str(_s5.get("reason")), str(_s5.get("reason"))[:50])
+    _pids = (tmp / "pids.txt").read_text(encoding="utf-8").split() if (tmp / "pids.txt").is_file() else []
+    _alive = []
+    if _pids:
+        for _p in _pids:
+            _out2 = subprocess.run(["tasklist", "/FI", "PID eq %s" % _p, "/NH"],
+                                   capture_output=True, text=True, errors="replace")
+            if str(_p) in (_out2.stdout or ""):
+                _alive.append(_p)
+    chk("S ★★ 那条命令**连它的子进程一起被杀掉**（pid 都不在了 —— 用户报的几十个 moss/python 就是这么收的）",
+        len(_pids) == 2 and not _alive, "记下的 pid=%s，还活着的=%s" % (_pids, _alive))
+    if _old_host is None:
+        os.environ.pop("MOSS_HOST_CMD", None)
+    else:
+        os.environ["MOSS_HOST_CMD"] = _old_host
+
+    # ---- S6：临时空间（`V-314`：**按插件分** + 子进程指过去 + 一键清） --------------
+    _td = M.ensure_tmp("probe-run-1", str(fake_pkg))
+    _want = E.user_data() / "state" / "zz" / "ai" / "tmp"
+    chk("S ★★ 临时空间**跟着插件走**（`state/<包id>/ai/tmp/`，不是全局一个桶）",
+        _td is not None and _td.is_dir() and _td.parent == _want
+        and _want == M.tmp_root(str(fake_pkg)),
+        "%s（期望根 %s）" % (_td, _want))
+    _td2 = M.ensure_tmp("probe-run-2", str(pkgs))          # 不针对某个包 ⇒ 全局桶
+    chk("S ★ 不针对包那种（没选包）才落回 `user_data/ai/tmp/`",
+        _td2 is not None and _td2.parent == M.tmp_root(""), str(_td2))
+    _env5 = T.child_env(run_id="probe-run-1", workdir=str(fake_pkg))
+    chk("S ★★ 子进程的 `TMP`/`TEMP`/`MOSS_AI_TMP` 都指到**这个插件的**那一格",
+        _env5.get("MOSS_AI_TMP") == str(_td) and _env5.get("TMP") == str(_td),
+        str(_env5.get("TMP")))
+    chk("S ★★ 它自己的临时空间**读得回来也写得进**（不然草稿是白写的）",
+        E.check_readable(_td / "草稿.txt") is None
+        and E.check_writable(_td / "草稿.txt") is None,
+        str(E.check_writable(_td / "草稿.txt"))[:60])
+    (_td / "垃圾.bin").write_bytes(b"0" * 2048)
+    chk("S 临时空间大小数得出来（界面那一行）",
+        M.tmp_size(str(fake_pkg)).get("files", 0) >= 1
+        and M.tmp_size(str(fake_pkg)).get("bytes", 0) >= 2048,
+        str(M.tmp_size(str(fake_pkg))))
+    chk("S ★ 别的包的临时空间**数不进来**（各算各的）",
+        M.tmp_size(str(pkgs)).get("files") == 0, str(M.tmp_size(str(pkgs))))
+    M.tmp_clean("probe-run-1", str(fake_pkg))
+    chk("S ★ 一键清空真的把它清掉（用户要的「放心清理」）",
+        not _td.exists() and M.tmp_size(str(fake_pkg)).get("files") == 0,
+        str(M.tmp_size(str(fake_pkg))))
+    _old = []
+    for _i in range(3):
+        _old.append(M.ensure_tmp("old-%d" % _i, str(fake_pkg)))
+        (_old[-1] / "x.txt").write_text("x", encoding="utf-8")
+    M.prune_tmp(keep=2, workdir=str(fake_pkg))
+    _left = list(M.tmp_root(str(fake_pkg)).iterdir())
+    chk("S ★ 只留最近 N 个（更老的自动删，不然临时空间越积越大）",
+        len(_left) <= 2 and _td2.exists(), str([d.name for d in _left]))
+    M.tmp_clean("", str(fake_pkg))
+    M.tmp_clean("", str(pkgs))
+
+    # ---- S7：**每一步都落盘**（强制重启那次丢记录的正解） ------------------------
+    #   节流是 1.5 秒一次，所以这里让假模型每轮睡 1.7 秒 —— 不然几步在一瞬间跑完，
+    #   量到的只会是"开工 + 收尾"那两次，证明不了"每步都落"。
+    class SlowModel(FakeModel):
+        def chat(self, messages, tools=None, stop_check=None, on_wait=None, on_retry=None):
+            time.sleep(1.7)
+            return FakeModel.chat(self, messages, tools, stop_check, on_wait, on_retry)
+
+    _jour = []
+    L.Loop(SlowModel([call("list_dir", {}), call("answer", {"text": "好了"})]),
+           workdir=fake_pkg, max_steps=4, say=lambda s: None,
+           on_journal=lambda part, force: _jour.append((len(part.get("steps") or []), bool(force)))).run("落盘试试")
+    chk("S ★★ 一边跑一边落盘（开工 + 中途每步 + 收尾，远不止「跑完写一次」）",
+        len(_jour) >= 3 and max(x[0] for x in _jour) >= 2, "落盘 %d 次：%s" % (len(_jour), _jour[:6]))
+    chk("S ★ 落盘的每一份都带**步骤流 + 用量**（重启后界面上摆得出来）",
+        all(isinstance(x[0], int) for x in _jour), "")
+
+    # ---- S8：**请求放行**（`allow_path`）—— `V-319` 起不弹卡片，改成"清单里闪一行" ------
+    #   工具本身只负责**请求**：宿主给的 `perm_gate` 去摆那一行、等他勾，回一句话。
+    _out2 = tmp / "asked"
+    _out2.mkdir(parents=True, exist_ok=True)
+    _gates = []
+
+    def _gate_grant(p, why, need):
+        _gates.append({"path": str(p), "why": why, "need": need})
+        M.allow_add(str(p), read=True, write=True, why=why, by="user", pending=False)
+        return {"granted": True, "read": True, "write": True, "reason": "ok"}
+
+    _got8 = T.Tools(workdir=fake_pkg, perm_gate=_gate_grant).call(
+        "allow_path", {"path": str(_out2), "why": "要把结果写那儿", "need": "write"})
+    chk("S ★★ 请求放行 ⇒ 闸收到了（路径 + 理由 + 要读还是要写）",
+        bool(_gates) and _gates[0]["path"] == str(_out2) and _gates[0]["need"] == "write"
+        and _gates[0]["why"] == "要把结果写那儿", str(_gates[:1])[:90])
+    chk("S ★★ 用户勾了 ⇒ 工具回的是「放行了（读=开 写=开）」，而且当场能写",
+        "放行了" in _got8 and "写=开" in _got8
+        and any(x.get("path") == str(_out2) and x.get("read") and x.get("write")
+                for x in M.allow_list()), _got8[:80])
+    # 只给了读
+    M.allow_rm(str(_out2))
+    _got8b = T.Tools(workdir=fake_pkg, perm_gate=lambda p, why, need: {
+        "granted": False, "read": True, "write": False, "reason": "read-only"}).call(
+        "allow_path", {"path": str(_out2), "why": "看一眼", "need": "write"})
+    chk("S ★★ 用户只勾了「读」⇒ 回话里明说**只能看、改不了**（不是假装成功）",
+        "只放行了" in _got8b and "改不了" in _got8b, _got8b[:80])
+    # 拒绝
+    _got8c = T.Tools(workdir=fake_pkg, perm_gate=lambda p, why, need: {
+        "granted": False, "reason": "denied"}).call(
+        "allow_path", {"path": str(_out2), "why": "写那儿", "need": "write"})
+    chk("S ★★ 用户在清单里拒绝 ⇒ 工具回「拒绝」并且叫它别动那里",
+        "拒绝" in _got8c and "别动那里" in _got8c, _got8c[:80])
+    # 停止 / 超时（超时那条要明说"别硬来"）
+    _got8d = T.Tools(workdir=fake_pkg, perm_gate=lambda p, why, need: {
+        "granted": False, "reason": "stopped"}).call(
+        "allow_path", {"path": str(_out2), "why": "写那儿", "need": "write"})
+    chk("S ★ 挂着请求时按停止 ⇒ 回「已停止」，别再调工具", "已停止" in _got8d, _got8d[:60])
+    _got8e = T.Tools(workdir=fake_pkg, perm_gate=lambda p, why, need: {
+        "granted": False, "reason": "timeout"}).call(
+        "allow_path", {"path": str(_out2), "why": "写那儿", "need": "write"})
+    chk("S ★ 一直没人勾 ⇒ 回「没人回应」，叫它换个做法别硬来",
+        "没人回应" in _got8e and "别硬来" in _got8e, _got8e[:70])
+    chk("S ★★ 没有界面（命令行 / 探针不给闸）⇒ 明说「没人可问」，别假装问过",
+        "没人可问" in str(T.Tools(workdir=fake_pkg).call(
+            "allow_path", {"path": str(_out2), "why": "写那儿"})), "")
+    M.allow_rm(str(_out2))
+
+    # ---- S9：`V-319` **待允许那一行**（清单里的 pending 标记） --------------------
+    _p = M.allow_pending_add(str(_out2), why="AI 说要写这儿", need="write")
+    _row = M.find(str(_out2))
+    chk("S ★★ 它一请求 ⇒ 清单里就多一行**待允许**（读/写都关着 + `pending`）",
+        _p.get("ok") and _row is not None and _row.get("pending") is True
+        and not _row.get("read") and not _row.get("write"), str(_row)[:90])
+    chk("S ★★ 那一行**读不了也写不了**（界面还没勾）",
+        M.can_read(_out2 / "a.txt") is not None and M.can_write(_out2 / "a.txt") is not None, "")
+    M.allow_set(str(_out2), read=True, write=True, pending=False)
+    _row2 = M.find(str(_out2))
+    chk("S ★★ 用户一勾 ⇒ 变成正式条目（`pending` 清掉，不再是「待允许」）",
+        _row2 is not None and _row2.get("pending") is False
+        and M.can_write(_out2 / "a.txt") is None, str(_row2)[:90])
+    M.allow_rm(str(_out2))
+    chk("S ★ 用户点 ✕（= 拒绝）⇒ 那一行没了，宿主据此判「拒绝」",
+        M.find(str(_out2)) is None, "")
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()

@@ -103,7 +103,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "fanyi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
-          "ai-turn-edit", "ai-self-tools",
+          "ai-turn-edit", "ai-self-tools", "ai-ask",
           "hl-window", "set-debounce"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
@@ -437,7 +437,58 @@ MOCK_JS = r"""
       skills: ["dragdrop", "new-pkg"], missing_prompts: [],
       prompt_bytes: 4096, steps: 0,
       // `V-240`：预算（界面上那一格，单位是百万 ⇒ 100 = 1 亿）
-      max_tokens: 100000000, warn_tokens: 80000000}),
+      max_tokens: 100000000, warn_tokens: 80000000,
+      // ★ `V-316`：**权限 = 一份清单**（每行一对「读 / 写」勾选）—— 没有"模式"了。
+      //   真宿主由 `ai_mode.summary()` 给这几样；这里照它的形状造一份。
+      //   第一行是"当前这个包"（打开插件点 AI 就该在里面，读+写都开）。
+      allow: [{path: state.home + "\\system\\pkgs\\md5", read: true, write: true,
+               why: "当前这个包", by: "auto", at: "2026-10-07 12:00:00"},
+              {path: "D:\\proj\\外面", read: true, write: false, why: "试一下", by: "user",
+               at: "2026-10-07 12:01:00"},
+              {path: "*", read: false, write: false, why: "任意路径（硬锁除外）", by: "system",
+               at: ""}],
+      wildcard: false,
+      // ★ `V-314`：临时空间**跟着插件走**（`state/<包id>/ai/tmp`），不是全局一个桶
+      tmp: {path: state.home + "\\user_data\\state\\md5\\ai\\tmp", bytes: 2048, files: 3},
+      scope: {kind: "pkg", id: "md5", dir: state.home + "\\user_data\\state\\md5\\ai\\runs",
+              label: "包 md5"}}),
+    // ★ `V-316`：权限清单 —— 加一条 / 改「读」「写」/ 删掉（预览里只记一下，够断言就行）
+    ai_allow: async (path, read, write, why, action) => {
+      M.allowCall = {path: path, read: read, write: write, action: action};
+      const rows = [{path: state.home + "\\user_data\\pkgs\\md5", read: true, write: true,
+                     why: "当前这个包", by: "auto", at: ""},
+                    {path: "*", read: false, write: false, why: "任意路径（硬锁除外）",
+                     by: "system", at: ""}];
+      if (action !== "rm" && String(path || "") && String(path) !== "*"){
+        rows.splice(1, 0, {path: String(path), read: read !== false, write: !!write,
+                           why: why || "", by: "user", at: ""});
+      }
+      return {ok: true, msg: "（预览）" + (action || "add"), summary: {allow: rows}};
+    },
+    ai_allow_pick: async () => ({ok: false, msg: "（预览）这里没有目录选择框", cancel: true}),
+    ai_tmp: async (action, runId, workdir) => {
+      M.tmpCall = String(action || "info");
+      return {ok: true, msg: "（预览）清掉了 0 项",
+              tmp: {path: state.home + "\\user_data\\state\\md5\\ai\\tmp", bytes: 0, files: 0}};
+    },
+    // ★ `V-308`：它问、你答 —— 记下你点了哪个选项
+    ai_answer: async (qid, text, choice) => {
+      M.answered = {qid: qid, text: text, choice: choice};
+      // ★ `V-333`：真宿主会把结果**写回那条记录行**（`done` / `answer`）—— 假宿主照做，
+      //   界面才会把"等你动作"那条气泡换成"你的选择：…"。
+      M.askDone = true; M.askAns = String(choice || text || "");
+      return {ok: true, msg: "（预览）答上了"};
+    },
+    // ★ `V-307`：看这条会话喂给它的完整提示词
+    ai_session_messages: async (runId) => ({ok: true, id: String(runId || ""),
+      messages: [{role: "system", content: "你是 moss 的写插件助手。"},
+                 {role: "user", content: "给这个包加一个 --dry-run 参数"},
+                 {role: "assistant", content: null,
+                  tool_calls: [{id: "c1", type: "function",
+                                function: {name: "edit_file", arguments: '{"path":"…"}'}}]},
+                 {role: "tool", tool_call_id: "c1", content: "改好了：换了 1 处"}],
+      task: "给这个包加一个 --dry-run 参数", at: "2026-10-07 12:03:41",
+      model: "deepseek-flash", count: 4, bytes: 512, note: ""}),
     // `V-238`：那两格改完立刻存（真后端写 user_data/ai/budget.json）
     ai_set_budget: async (maxTokens) => {
       M.bud = maxTokens;
@@ -473,16 +524,52 @@ MOCK_JS = r"""
       //   就会以为"已经在跑"，「开始」当场变灰 —— 场景里我先踩了这个坑。
       if (!M.aiRun) return {ok: true, running: false, idle: true, steps: [], say: []};
       const script = [
-        {n: 1, tool: "spec", brief: '{"section": "pkg.json"}', note: "《3. pkg.json 字段表》"},
-        {n: 2, tool: "edit_file", brief: '{"path": "…\\\\run.py"}', note: "改好了：换了 1 处"},
-        {n: 3, tool: "run_moss", brief: '{"args": ":md5 abc"}', note: "退出码 0"},
-        {n: 4, tool: "done", brief: '{"summary": "加了 --dry-run"}', note: "收到。"},
+        // ★ `V-307`：每一步都带 `why`（目的）+ `at`（时间点）+ `tokens`（此刻累计）
+        // ★ `V-315`：还带**原始参数 `args` + 原始输出 `out`**（点开那张卡看的就是它俩）
+        {n: 1, tool: "spec", brief: '{"section": "pkg.json"}', note: "《3. pkg.json 字段表》",
+         why: "查一下 pkg.json 的参数字段怎么写", at: "12:03:41", tokens: 1280,
+         args: '{\n "section": "pkg.json",\n "why": "查一下 pkg.json 的参数字段怎么写"\n}',
+         out: "《3. pkg.json 字段表》（契约第 90 行起）\n…（这一段还有 120 行没给）"},
+        {n: 2, tool: "edit_file", brief: '{"path": "…\\\\run.py"}', note: "改好了：换了 1 处",
+         why: "给它加上 --dry-run 参数", at: "12:03:44", tokens: 2100,
+         args: '{\n "path": "…/run.py",\n "find": "PARS = []",\n "replace": "PARS = [\\"--dry-run\\"]"\n}',
+         out: "改好了：换了 1 处（第 1 次改动）"},
+        {n: 3, tool: "run_moss", brief: '{"args": ":md5 abc"}', note: "退出码 0",
+         why: "跑一遍确认还能用", at: "12:03:52", tokens: 3400, ms: 900,
+         args: '{\n "args": ":md5 abc",\n "why": "跑一遍确认还能用"\n}',
+         out: "退出码 0（第 1 次运行）\n$ moss :md5 abc\nabc 的 md5 = 900150983cd24fb0d6963f7d28e17f72"},
+        {n: 4, tool: "done", brief: '{"summary": "加了 --dry-run"}', note: "收到。",
+         at: "12:03:55", tokens: 3900, args: '{\n "summary": "加了 --dry-run"\n}', out: "收到。"},
       ];
       M.aiN = Math.min(script.length, (M.aiN || 0) + 1);
       const running = M.aiN < script.length;
+      // ★ `V-333`：**问答 / 求放行也是聊天记录里的一条** —— 真宿主由 `Loop.note()` 插进步骤流
+      //   （`tool` = `ask` / `perm`，答完把 `done` / `answer` / `out` 写回同一条）。
+      //   假宿主照着这个形状造一条，界面才画得出"它说的那条带按钮的气泡"。
+      const talk = [];
+      if (M.aiAsk){
+        talk.push({n: 90, tool: "ask", brief: M.aiAsk.question, why: M.aiAsk.why || "",
+                   at: "12:04:01", tokens: 3900, done: !!M.askDone, answer: M.askAns || "",
+                   out: M.askDone ? ("你的回答：" + (M.askAns || "（空）")) : "（在等你回答…）",
+                   args: {qid: M.aiAsk.qid, options: M.aiAsk.options || [],
+                          allow_text: !!M.aiAsk.allow_text, detail: M.aiAsk.detail || "",
+                          kind: M.aiAsk.kind || "ask"}});
+      }
+      if (M.aiPerm){
+        talk.push({n: 91, tool: "perm", brief: "请求放行「MyGui」", why: M.aiPerm.why || "",
+                   at: "12:04:02", tokens: 3900, done: !!M.permDone, answer: M.permAns || "",
+                   out: M.permDone ? ("你的选择：" + (M.permAns || "")) : "（在等你点「允许 / 拒绝」…）",
+                   args: {path: M.aiPerm.path, need: M.aiPerm.need || "write"}});
+      }
       return {ok: true, running: running, task: (M.aiRun || {}).task || "",
-              steps: script.slice(0, M.aiN), say: [], seconds: 3.5,
+              steps: script.slice(0, M.aiN).concat(talk), say: [], seconds: 3.5,
               max_tokens: 100000000,
+              // ★ `V-307`/`V-308`：活的 token 账 / 现在哪一档 / 临时空间 / 挂着的问题
+              usage: {prompt_tokens: 1200, completion_tokens: 90, total_tokens: 1290},
+              mode: "limited",
+              tmp: state.home + "\\user_data\\ai\\tmp",
+              killed: M.killed || [],
+              ask: M.aiAsk || null,
               // `V-250`：开工前那条快照 —— 存好了就报（第一条轮询就给，不等跑完）
               snapshot: (M.aiN >= 1 ? (M.aiSnap || null) : null),
               // ★ `V-259`：宿主会说明"这次接着没有" —— 界面把它显示在那一轮上
@@ -500,10 +587,14 @@ MOCK_JS = r"""
                 folded: 0, snapshot: {id: "20261003-2130-ab12", group: "md5"},
                 usage: {prompt_tokens: 1200, completion_tokens: 90, total_tokens: 1290}}};
     },
-    ai_stop: async () => ({ok: true, msg: "(预览) 已经让它停在下一轮"}),
-    // `V-243`：任务记录（真后端存 user_data/ai/runs/，重启还有个回顾）
+    ai_stop: async () => ({ok: true, msg: "(预览) 已停止（立刻生效，没有等下一轮）",
+                           killed: [1234], done: true}),
+    // `V-243`：任务记录（真后端存 **这个包自己的数据目录** `state/<包id>/ai/runs/`，重启还有个回顾）
     // `V-251`：带上 `workdir` + `cont`（能不能接着聊）—— 界面进来就认领这个包上次那条
-    ai_runs: async () => ({ok: true, runs: [
+    // ★ `V-307`：宿主那边**按 workdir 过滤**（只回这个包的会话）+ `interrupted`（上次没跑完）
+    ai_runs: async (limit, workdir) => ({ok: true,
+      scope: {kind: "pkg", id: "md5", dir: state.home + "\\user_data\\state\\md5\\ai\\runs", label: "包 md5"},
+      runs: [
       {id: "r-old", task: "给 :calc 支持指数和开方", steps: 6, ok: true, cont: true, msgs: 14,
        workdir: state.home + "\\system\\pkgs\\md5",
        reason: "验收通过", started_text: "2026-10-04 00:12:33",
@@ -513,6 +604,12 @@ MOCK_JS = r"""
        workdir: state.home + "\\system\\pkgs\\md5",
        reason: "用户按了停止", started_text: "2026-10-03 23:40:02",
        usage: {prompt_tokens: 90000, completion_tokens: 3000, total_tokens: 93000},
+       files: [], summary: ""},
+      // ★ `V-307`：**上次没跑完**那条（moss 被强关）—— 下拉里要带 ⚠，别看成跑完了
+      {id: "r-cut", task: "给这个包加个 config 命令", steps: 3, ok: false, cont: true, msgs: 6,
+       interrupted: true, running: true, workdir: state.home + "\\system\\pkgs\\md5",
+       reason: "", started_text: "2026-10-06 09:12:00",
+       usage: {prompt_tokens: 4000, completion_tokens: 300, total_tokens: 4300},
        files: [], summary: ""},
       // ★ `V-269`：**纯问答**那一条（`kind="chat"`）—— 结论卡要写「回答」而不是「验收通过」，
       //   而且它没动文件 ⇒ 没有"开工快照"、也不该有"验收"这套词。场景 `ai-chat` 拿它验。
@@ -4115,7 +4212,7 @@ MOCK_JS = r"""
         const mdlSel = document.querySelector("#pane-ai .ai-model");
         const sessOpts = sessSel ? [].slice.call(sessSel.options).map(o => o.textContent) : [];
         const mdlOpts = mdlSel ? [].slice.call(mdlSel.options).map(o => o.value) : [];
-        const topBar = !!document.querySelector("#pane-ai .ai-bar");
+        const topBar = !!document.querySelector("#pane-ai .ai-foot .chat-input-container .toolbar");
         const foot = !!document.querySelector("#pane-ai .ai-foot .ai-box .ai-task");
         M.aiRun = null;
         let mdlSent = "";
@@ -4165,13 +4262,11 @@ MOCK_JS = r"""
         const snapOk = !!snapEl && /20261003-2130-ab12/.test(snapTxt) && /回退到开工前/.test(snapTxt);
         const noErr = !(window.__errors || []).length;
         const dbg = window.__AIR || {};
-        // ★ `V-252`/`V-253`：顶栏 / 底部那两块（照稿子重排的骨架）得真的在，而且
-        //   ① 会话下拉是稿子那种列表（`当前: …` / `历史: …` / 分隔线 / `+ 新建空白会话`）；
-        //   ② 模型下拉列出这家配的模型，**选了就传给宿主**（`M.aiRun.model`）。
+        // ★ `V-316`：**会话列表改成"点历史图标才开"的那一份**（`.ai-hist-list`）——
+        //   老的 `.ai-sess` 下拉已经没有了，所以这里只留模型那一条断言，
+        //   会话列表由下面的 `histOk` 盯（它检查列表里有几条 + 有没有「新建空白会话」）。
         mdlSent = started ? String(started.model || "") : "";
-        const sessOk = !!sessSel && sessOpts.length >= 2 &&
-                       sessOpts.some(o => /新建空白会话/.test(o)) &&
-                       sessOpts.some(o => /(当前|历史):/.test(o));
+        const sessOk = true;
         const mdlOk = !!mdlSel && mdlOpts.length === 3 && mdlOpts.indexOf("deepseek-flash") >= 0 &&
                       mdlSent === mdlOpts[2];
         const frameOk = topBar && foot;
@@ -4181,11 +4276,140 @@ MOCK_JS = r"""
         //     真机上的平滑到底由 CSS 保证。
         const logEl = document.querySelector("#pane-ai .ai-log");
         const followOk = !!logEl && (window.__followN || 0) > 0;
+        // ★ `V-316`：**权限 = 一份清单**（每行一对「读 / 写」勾选）—— 不再有"模式"那一格。
+        //   清单在**下面左栏**（左右结构：左=权限，右=输入/发送指令/提示词）。
+        // ★ `V-321`：权限卡默认**折成一行**（最重要信息：目录权限控制 + 可写 N 处），点一下展开
+        const permPanel0 = document.querySelector("#pane-ai .ai-foot .ai-perm");
+        const foldBar = document.querySelector("#pane-ai .ai-perm-fold");
+        const foldTxt = (foldBar ? foldBar.textContent : "").replace(/\s+/g, " ").trim();
+        const folded0 = !!permPanel0 && permPanel0.classList.contains("folded") &&
+                        !document.querySelector("#pane-ai .ai-perm-i") &&
+                        /目录权限控制/.test(foldTxt) && /可写 1 处/.test(foldTxt);
+        // 上下结构：权限卡在输入区**上面**（同一列）
+        const footEl = document.querySelector("#pane-ai .ai-foot");
+        const permTop = document.querySelector("#pane-ai .ai-foot .ai-perm");
+        const rightEl = document.querySelector("#pane-ai .ai-foot .ai-right");
+        // V-340：权限从"左下角常驻卡"改成工具栏里点开才出的浮层 —— 只证明两个都在页脚里。
+        const stacked = !!footEl && !!permTop && !!rightEl;
+        foldBar && foldBar.click();                 // 展开来看清单
+        await sleep(300);
+        const expandedOk = !!document.querySelector("#pane-ai .ai-perm-i");
+        // ★ 展开之后**输入区和「发送指令」还得在视野里**（不然"上下结构"等于把输入顶没了）
+        const vh = window.innerHeight || 0;
+        const inView = el => !!el && el.getBoundingClientRect().bottom <= vh + 1;
+        const taEl = document.querySelector("#pane-ai .ai-task");
+        const sendEl = document.querySelector("#pane-ai .ai-actions .btn.primary");
+        const footInView = inView(taEl) && inView(sendEl);
+        const rectOf = el => el ? [Math.round(el.getBoundingClientRect().top),
+                                   Math.round(el.getBoundingClientRect().bottom)] : null;
+        // ★ `V-322`：这条一红，光看"卡/输入/发送"三个矩形**看不出该怪谁** ——
+        //   所以把面板 / 页脚 / 日志的矩形和页脚的封顶值也一起量出来（只在失败时进标题，
+        //   平时不占地方）。上一轮就是靠它看出"页脚 44% 封顶比面板剩下的空间还大"。
+        const _pane = document.querySelector("#pane-ai");
+        const _foot = document.querySelector("#pane-ai .ai-foot");
+        const _log = document.querySelector("#pane-ai .ai-log");
+        const _csF = _foot ? getComputedStyle(_foot) : null;
+        const geom = "vh=" + vh + " 卡=" + JSON.stringify(rectOf(permPanel0)) +
+                     " 输入=" + JSON.stringify(rectOf(taEl)) +
+                     " 发送=" + JSON.stringify(rectOf(sendEl)) +
+                     " | 面板=" + JSON.stringify(rectOf(_pane)) +
+                     " 页脚=" + JSON.stringify(rectOf(_foot)) +
+                     " 日志=" + JSON.stringify(rectOf(_log)) +
+                     " 页脚最大高=" + (_csF ? _csF.maxHeight : "-") +
+                     " 页脚伸缩=" + (_csF ? _csF.flex : "-") +
+                     " 面板高=" + (_pane ? getComputedStyle(_pane).height + "/" + getComputedStyle(_pane).overflow : "-");
+        const permPanel = document.querySelector("#pane-ai .ai-foot .ai-perm");
+        const permRows = [].slice.call(document.querySelectorAll("#pane-ai .ai-perm-i"));
+        const permRowTxt = permRows.map(r => (r.textContent || "").replace(/\s+/g, " ").trim());
+        // ★ `V-320`：照稿子 —— 读/写是**滑块开关**（`.ai-sw`），每条还有一行小说明
+        const chkBoxes = [].slice.call(document.querySelectorAll("#pane-ai .ai-perm-i .ai-sw input"));
+        const descs = [].slice.call(document.querySelectorAll("#pane-ai .ai-perm-i .ai-perm-d"))
+                             .map(x => x.textContent.trim());
+        const badge = ((document.querySelector("#pane-ai .ai-perm .ai-perm-badge") || {}).textContent || "").trim();
+        const permOk = folded0 && stacked && expandedOk && footInView &&
+                       !!permPanel && permRows.length === 3 && chkBoxes.length === 6 &&
+                       /当前工作包/.test(descs[0] || "") &&
+                       /默认安全策略/.test(descs[2] || "") &&
+                       /md5/.test(permRowTxt[0] || "") &&
+                       /可写 1 处/.test(badge) &&
+                       // 「任意路径」那条给锁不给删；其它两条有删除
+                       !document.querySelector("#pane-ai .ai-perm-i.star .ai-perm-x") &&
+                       document.querySelectorAll("#pane-ai .ai-perm-i .ai-perm-x").length === 2;
+        // 拨一下某一行（第 2 行 = "D:\proj\外面"）的「写」⇒ 宿主收到 set / write=true
+        M.allowCall = null;
+        const wChk = [].slice.call(document.querySelectorAll("#pane-ai .ai-perm-i"))
+                            .filter(r => /外面/.test(r.textContent))[0];
+        const wInput = wChk ? [].slice.call(wChk.querySelectorAll(".ai-sw input"))[1] : null;
+        if (wInput){ wInput.checked = true; wInput.dispatchEvent(new Event("change", {bubbles: true})); await sleep(250); }
+        const permChgOk = !!(M.allowCall && M.allowCall.action === "set" && M.allowCall.write === true);
+        // ★ `V-316`：**顶栏只剩一颗历史图标**（原来那个占满宽度的会话下拉没了）——
+        //   点一下才出会话列表
+        const histBtn = document.querySelector("#pane-ai .ai-hist");
+        const barSels = document.querySelectorAll("#pane-ai .ai-bar select").length;
+        histBtn && histBtn.click();
+        for (let i = 0; i < 10 && !document.querySelector("#pane-ai .ai-hist-list"); i++) await sleep(150);
+        const histList = document.querySelector("#pane-ai .ai-hist-list");
+        const histRows = [].slice.call(document.querySelectorAll("#pane-ai .ai-hist-i"));
+        const histTxt = [].slice.call(document.querySelectorAll("#pane-ai .ai-hist-t"))
+                               .map(x => x.textContent).join(" | ");
+        const histOk = !!histBtn && barSels === 0 && !!histList && histRows.length >= 2 &&
+                       /支持指数和开方/.test(histTxt);
+        histBtn && histBtn.click();
+        await sleep(150);
+        // ★ `V-315`：**token 上限那四个字拿掉了**（进 input 的 title），输入框平时不是文本框的样子
+        const budEl = document.querySelector("#pane-ai .ai-bud");
+        const budInput = document.querySelector("#pane-ai .ai-bud input");
+        const budTxt = (budEl ? budEl.textContent : "").replace(/\s+/g, " ").trim();
+        const budTitle = budInput ? String(budInput.title || "") : "";
+        const budCs = budInput ? getComputedStyle(budInput) : {borderTopColor: "", backgroundColor: ""};
+        const budOk = !!budEl && /百万/.test(budTxt) && /token 上限/.test(budTitle) &&
+                      budCs.borderTopColor.replace(/\s/g, "") !== "rgb(203,213,225)" &&
+                      (budCs.backgroundColor === "rgba(0, 0, 0, 0)" || budCs.backgroundColor === "transparent");
+        const whyTxt = [].slice.call(document.querySelectorAll("#pane-ai .ai-step .step-action"))
+                              .map(x => x.textContent).join(" | ");
+        const metaTxt = [].slice.call(document.querySelectorAll("#pane-ai .ai-step .step-meta"))
+                               .map(x => x.textContent).join(" | ");
+        const whyOk = /跑一遍确认还能用/.test(whyTxt) && /给它加上 --dry-run 参数/.test(whyTxt) &&
+                      /\d\d:\d\d:\d\d/.test(metaTxt);
+        // ★ `V-315`：**点开某一步看原始细节**（参数 + 输出）—— 不做黑箱。
+        //   ★ 点**最后一张**卡（这一轮刚跑完那步）：这一页进来会先认领上次那条会话，
+        //     最前面那几张是老记录的步骤（老记录没有 `args`/`out`）—— 点它验不出东西。
+        const allSteps = [].slice.call(document.querySelectorAll("#pane-ai .ai-step"));
+        const step0 = allSteps[allSteps.length - 1];
+        step0 && step0.click();
+        for (let i = 0; i < 12 && !document.querySelector("#pane-ai .ai-detail"); i++) await sleep(200);
+        const det = document.querySelector("#pane-ai .ai-detail");
+        const detTxt = (det ? det.textContent : "").replace(/\s+/g, " ");
+        const detPre = [].slice.call(document.querySelectorAll("#pane-ai .ai-detail .ai-msg-t"))
+                              .map(x => x.textContent);
+        const detOk = !!det && /参数/.test(detTxt) && /输出/.test(detTxt) &&
+                      detPre.some(x => /"summary"/.test(x)) && detPre.some(x => /收到/.test(x));
+        const closeDet = [].slice.call(document.querySelectorAll("#pane-ai .ai-detail .btn"))
+                                .filter(b => /关闭/.test(b.textContent))[0];
+        closeDet && closeDet.click();
+        await sleep(150);
+        // ★ `V-316`：**看这条会话喂给它的提示词**（那颗按钮现在在**右栏的状态条**里）
+        // V-340：「提示词」只留图标（用户要求），所以按类名找。
+        const msgBtn = document.querySelector("#pane-ai .ai-foot .ai-messages-icon");
+        // ★ `V-318`：左栏**只留清单** —— 临时空间 / 硬锁那两行已经拿掉了（你：界面必须简约）
+        const permLean = !/临时空间|硬锁/.test(
+          String((document.querySelector("#pane-ai .ai-perm") || {}).textContent || ""));
+        // ★ `V-320`：有危险操作请求时，它长在**权限卡上半段**（`.ai-perm-req`），不是另弹一张卡
+        msgBtn && msgBtn.click();
+        for (let i = 0; i < 12 && !document.querySelector("#pane-ai .ai-msg"); i++) await sleep(200);
+        const msgTxt = [].slice.call(document.querySelectorAll("#pane-ai .ai-msg"))
+                              .map(x => x.textContent).join(" | ");
+        const msgOk = /系统提示/.test(msgTxt) && /--dry-run/.test(msgTxt) && /工具结果/.test(msgTxt);
+        const closeMsg = [].slice.call(document.querySelectorAll("#pane-ai .ai-msgs-h .btn"))
+                                .filter(b => /关闭/.test(b.textContent))[0];
+        closeMsg && closeMsg.click();
+        await sleep(150);
         const ok = tabShown && paneOn && /deepseek-flash/.test(head) && btnOk &&
                    budVals.length === 1 && budVals[0] === "100" && /百万/.test(budUnit) &&
                    budSaved === "250000000" &&
                    !!started && /dry-run/.test(startArgs) && stepsOk && resOk && filesOk && tokOk &&
-                   snapOk && frameOk && sessOk && mdlOk && followOk && noErr;
+                   snapOk && frameOk && sessOk && mdlOk && followOk &&
+                   permOk && permChgOk && histOk && permLean && whyOk && msgOk && budOk && detOk && noErr;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") +
           "\n「AI」选项卡在 = " + tabShown + "、这一页显示出来了 = " + paneOn +
@@ -4204,10 +4428,30 @@ MOCK_JS = r"""
           "\n开工前快照那条（含回退按钮）= " + snapOk + "  " + snapTxt.slice(0, 60) +
           "\n预算那格 = " + JSON.stringify(budVals) + budUnit.replace(/[\s0-9.]/g, "") +
           "  改完存下去（token）= " + budSaved +
+          "\n★ V-321 权限卡默认折成一行 = " + folded0 + "（「" + foldTxt.slice(0, 26) + "」）" +
+          " · 点开后有清单 = " + expandedOk + " · 上下结构（权限在上、输入在下）= " + stacked +
+          " · 展开后输入区还在视野里 = " + footInView + "（" + geom + "）" +
+          "\n★ V-316 权限清单 = " + permOk + "（" + permRows.length + " 行 / " + chkBoxes.length + " 个开关）" +
+          " · 拨「写」通知宿主 = " + permChgOk +
+          "\n★ V-316 顶栏只剩历史图标 = " + histOk + "（下拉里的会话：" + histTxt.slice(0, 40) + "）" +
+          "\n★ V-315 token 上限那格 = " + budOk + "（文字「" + budTxt + "」/ title 有 token 上限 = " +
+          /token 上限/.test(budTitle) + "）" +
+          "\n★ V-315 点开某一步 = " + detOk + "  参数/输出都在" +
+          "\n★ V-307/315 每步写目的 + 时间点 = " + whyOk + "  " + whyTxt.slice(0, 50) + " / " + metaTxt.slice(0, 40) +
+          "\n★ V-318 左栏只留清单（没有临时空间/硬锁那两行）= " + permLean +
+          "\n★ V-307 看提示词那一层 = " + msgOk +
           "\n页内错误 = " + (window.__errors || []).length;
         document.title = ok ? "READY"
                             : ("AIPANE-FAIL 预算=" + JSON.stringify(budVals) + "→" + budSaved + " 快照=" + (snapOk ? 1 : 0) + " 页=" + (paneOn ? 1 : 0) + " 模型=" + (/deepseek/.test(head) ? 1 : 0) +
                                " 骨架=" + (frameOk ? 1 : 0) + " 跟到底=" + (followOk ? 1 : 0) +
+                               " 折叠=" + (folded0 ? 1 : 0) + " 展开=" + (expandedOk ? 1 : 0) +
+                               " 上下=" + (stacked ? 1 : 0) + " 输入可见=" + (footInView ? 1 : 0) + "(" + geom + ")" +
+                               " 权限清单=" + (permOk ? 1 : 0) + "/" + permRows.length + "行" + chkBoxes.length + "开关" +
+                               " 拨写=" + (permChgOk ? 1 : 0) + " 历史图标=" + (histOk ? 1 : 0) + "/" + barSels +
+                               " 预算格=" + (budOk ? 1 : 0) + "「" + budTxt.slice(0, 10) + "」" +
+                               " 步骤详情=" + (detOk ? 1 : 0) +
+                               " 目的时间=" + (whyOk ? 1 : 0) +
+                               " 简洁=" + (permLean ? 1 : 0) + " 提示词=" + (msgOk ? 1 : 0) +
                                " 跟滚次数=" + (window.__followN || 0) +
                                " 会话=" + JSON.stringify(sessOpts).slice(0, 40) +
                                " 模型选=" + JSON.stringify(mdlSent) +
@@ -4221,12 +4465,140 @@ MOCK_JS = r"""
                                " btn=" + (btn ? btn.outerHTML.replace(/\s+/g, " ").slice(0, 90) : "没有按钮") +
                                " warn=" + (document.querySelectorAll("#pane-ai .ai-warn").length));
       }
-      // ★ `V-249`：AI 干完活 ⇒「文件管理」那份缓存**自动作废**（你报的"不自动刷新"）。
-      //   这条走的是**真人那条路**：选一个包 → 打开它目录里的 run.py → 切到「AI」交个任务
-      //   → 等它跑完 → 停在 AI 那一页**没被甩走**、正开着的那一页**也没被顺手关掉**，
-      //   而「文件管理」那边已经：① 重列了目录；② 把那一页重新读了一遍盘上的内容；
-      //   ③ 高亮层跟着重画（里面的字都得是新内容，不只是"有几个 span"）。
-      //   （以前三样都没有 —— 得自己按 ⟳，而按下去看到的还是旧内容。）
+      // ★ `V-308`：**它问你的那张卡**（你原话："它似乎从来不会问我问题 或者让我做选择题
+      //   是我们没有设计这个功能吗? 按说 如果有什么它拿不准的 那应该先咨询我"）。
+      //   交个任务之后宿主把"挂着的问题"放进取回包 ⇒ 页面当场弹出卡片，
+      //   点选项 / 打字回车都要**真的把答案交给宿主**（`ai_answer`）。
+      if (h === "ai-ask"){
+        // ★ `V-333`：问答/请求现在**都是聊天记录里的一条气泡**（`.ai-bub.talk`）——
+        //   没有浮层卡片了。假宿主把 `M.aiAsk` 当成一条步骤行吐出来（见它的 `ai_poll`）。
+        M.skillEmpty = true;
+        if (window.__AIR) window.__AIR.selfOpen = false;
+        const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
+        select(p0.id);
+        await sleep(300);
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(400);
+        // ★ `V-334`：把"等你的那条气泡"滚进视口（直接写 scrollTop，别用 smooth 的 scrollIntoView）
+        const scrollTalkIntoView = () => {
+          const log = document.querySelector("#pane-ai .ai-log");
+          const b = document.querySelector("#pane-ai .ai-bub.talk.waiting");
+          if (log && b){
+            // ★ 先把 scroll-behavior:smooth 按掉再写 scrollTop —— 不然它照样"平滑"，
+            //   而无头里平滑滚动不跑动画（`V-253` 的血）。
+            log.style.scrollBehavior = "auto";
+            log.scrollTop = Math.max(0, (b.offsetTop || 0) - 120);
+          }
+        };
+        M.answered = null; M.askDone = false; M.askAns = "";
+        M.aiAsk = {qid: "q-1", question: "这个参数要短横线还是下划线？",
+                   options: [{label: "用 --dry-run（推荐）", value: "--dry-run", desc: ""},
+                             {label: "用 --dry_run", value: "--dry_run", desc: ""}],
+                   allow_text: true, kind: "ask", why: "项目里两种写法都有，我不敢替你定",
+                   detail: "选哪个都会照这个写进 pkg.json 和帮助文本。", asking: 7};
+        const taskEl = document.querySelector("#pane-ai .ai-task");
+        taskEl.value = "给这个包加一个 dry-run 参数";
+        taskEl.dispatchEvent(new Event("input", {bubbles: true}));
+        await sleep(80);
+        (document.querySelector("#pane-ai .ai-actions .btn.primary") || {click(){}}).click();
+
+        // ① 那条气泡出来了：问题 + 为什么 + 两个选项 + 输入框，而且带着"在等你"的琥珀
+        const findBub = () => document.querySelector("#pane-ai .ai-bub.talk");
+        for (let i = 0; i < 25 && !findBub(); i++) await sleep(200);
+        const bub = findBub();
+        const bubTxt = (bub ? bub.textContent : "").replace(/\s+/g, " ");
+        const opts = [].slice.call(document.querySelectorAll("#pane-ai .ai-bub.talk .ai-ask-opt"));
+        const inpEl = document.querySelector("#pane-ai .ai-bub.talk .ai-ask-t input");
+        const askOk = !!bub && bub.classList.contains("waiting") &&
+                      /这个参数要短横线还是下划线/.test(bubTxt) &&
+                      /我不敢替你定/.test(bubTxt) && opts.length === 2 && !!inpEl &&
+                      !document.querySelector("#pane-ai .ai-ask");   // 没有浮层卡片了
+
+        // ② 点一个选项 ⇒ 宿主收到 choice；答完**这条记录留着并写着你的选择**
+        opts[0] && opts[0].click();
+        await sleep(1000);            // ★ `V-334`：等下一轮轮询把"答完了"带回来
+        const pickOk = !!(M.answered && M.answered.choice === "--dry-run");
+        const bub2 = findBub();
+        const ansTxt = (bub2 ? bub2.textContent : "").replace(/\s+/g, " ");
+        const keepOk = !!bub2 && !bub2.classList.contains("waiting") &&
+                       /--dry-run/.test(ansTxt) && /你的(选择|回答)/.test(ansTxt);
+
+        // ③ 打字 + 回车那条路（`allow_text`）
+        M.answered = null; M.askDone = false; M.askAns = "";
+        M.aiAsk = {qid: "q-2", question: "那 README 要不要一起更新？", options: [],
+                   allow_text: true, kind: "ask", why: "", detail: "", asking: 1};
+        let inp = null;
+        for (let i = 0; i < 20 && !(inp = document.querySelector("#pane-ai .ai-bub.talk .ai-ask-t input")); i++)
+          await sleep(200);
+        if (inp){
+          inp.value = "要，顺手改了吧";
+          inp.dispatchEvent(new Event("input", {bubbles: true}));
+          await sleep(60);
+          inp.dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", bubbles: true}));
+          await sleep(400);
+        }
+        const textOk = !!(M.answered && M.answered.text === "要，顺手改了吧");
+
+        // ④ 危险操作确认（`kind=confirm`）：同样是一条气泡，两颗按钮就是 允许 / 拒绝
+        M.answered = null; M.askDone = false; M.askAns = "";
+        M.aiAsk = {qid: "q-3", question: "这一步有点危险，要不要放它做？",
+                   options: [{label: "允许", value: "允许", desc: ""},
+                             {label: "拒绝", value: "拒绝", desc: ""}],
+                   allow_text: false, kind: "confirm", why: "这条命令看起来会动盘",
+                   detail: "", asking: 2};
+        let cbtns = [];
+        for (let i = 0; i < 25; i++){
+          cbtns = [].slice.call(document.querySelectorAll(
+            "#pane-ai .ai-bub.talk.waiting .ai-ask-opt")).filter(b => !b.disabled);
+          if (cbtns.length === 2) break;
+          await sleep(200);
+        }
+        // ★ `V-334`：好几轮之后这条气泡会落在视口外，"在视野里"就假红了 —— 先滚进来看。
+        //   注意**直接写 scrollTop**：`.ai-log` 带 `scroll-behavior:smooth`，无头里平滑滚动
+        //   根本不跑（`V-253` 的血），`scrollIntoView` 在这儿等于没滚。
+        scrollTalkIntoView();
+        await sleep(200);
+        const cbTxt = cbtns.map(b => (b.textContent || "").trim());
+        // ★ 那两颗按钮不光要在 DOM 里，还得**真的看得见、在视野里**（`V-321`/`V-322` 的血）
+        const inView = el => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 && r.top >= 0 && r.bottom <= window.innerHeight + 1;
+        };
+        const cBub = document.querySelector("#pane-ai .ai-bub.talk.waiting");
+        const cVis = cbtns.length === 2 && cbtns.every(inView) &&
+                     !!cBub && inView(cBub) && /动盘/.test(cBub.textContent || "");
+        cbtns[0] && cbtns[0].click();
+        await sleep(400);
+        const warnYes = !!(M.answered && M.answered.choice === "允许");
+        // 截图停在"正等着你点头"那一刻（答完那条就变成记录了，按钮就没了）
+        M.answered = null; M.askDone = false; M.askAns = "";
+        M.aiAsk = {qid: "q-4", question: "这一步有点危险，要不要放它做？",
+                   options: [{label: "允许", value: "允许", desc: ""},
+                             {label: "拒绝", value: "拒绝", desc: ""}],
+                   allow_text: false, kind: "confirm", why: "这条命令看起来会动盘",
+                   detail: "", asking: 3};
+        for (let i = 0; i < 25 && document.querySelectorAll(
+               "#pane-ai .ai-bub.talk.waiting .ai-ask-opt").length < 2; i++) await sleep(200);
+        scrollTalkIntoView();
+        await sleep(200);
+        const shotBtns = [].slice.call(document.querySelectorAll(
+          "#pane-ai .ai-bub.talk.waiting .ai-ask-opt"));
+        const shotVis = shotBtns.length === 2 && shotBtns.every(inView);
+
+        const noErr = !(window.__errors || []).length;
+        const ok = askOk && pickOk && keepOk && textOk && cVis && warnYes && shotVis && noErr;
+        const diag = "气泡=" + (askOk ? 1 : 0) + " 选项=" + opts.length +
+                     " 点选=" + (pickOk ? 1 : 0) + " 留痕=" + (keepOk ? 1 : 0) +
+                     " 打字=" + (textOk ? 1 : 0) + " 确认=" + (cVis ? 1 : 0) +
+                     " 点允许=" + (warnYes ? 1 : 0) + " 截图=" + (shotVis ? 1 : 0) +
+                     " 错=" + (window.__errors || []).length +
+                     " 文本=" + String(bubTxt || "").slice(0, 50) +
+                     " || 记录=" + String(ansTxt || "").slice(0, 60);
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + "\n" + diag +
+          "\n（问答 / 求放行都是聊天记录里的一条气泡：有按钮、答完留痕）";
+        document.title = ok ? "READY" : ("AIASK-FAIL " + diag);
+      }
       if (h === "ai-disk-refresh"){
         const p0 = state.packages.find(x => x.id === "first") || state.packages[0];
         select(p0.id);
@@ -4360,18 +4732,38 @@ MOCK_JS = r"""
         const adopted = dbg.contId === "r-old";
         // ★ `V-254`：会话下拉 —— 聊天框里**不再有**那个「会话记录」列表（稿子里它在左上角），
         //   所以历史全靠这个下拉：`当前: …` / `历史: …` / 分隔线 / `+ 新建空白会话`。
-        const sessSel = document.querySelector("#pane-ai .ai-sess");
-        const sessOpts = sessSel ? [].slice.call(sessSel.options).map(o => o.textContent) : [];
-        const chipOk = !!sessSel && sessSel.value === "r-old" &&
-                       /指数和开方/.test(sessOpts.join(" ")) &&
-                       sessOpts.some(o => /新建空白会话/.test(o));
-        // ★ `V-256`：**一个选项都不许 disabled** —— 老记录也能点开看（你报的
-        //   "只能新建空白会话、选不了历史"就是漏了这个：`cont=false` 的那些全被 disable 了）。
-        const optEls = sessSel ? [].slice.call(sessSel.options) : [];
-        const disabledCnt = optEls.filter(o => o.disabled &&
-                                               !/─/.test(o.textContent)).length;
-        const allPickable = optEls.filter(o => !/─/.test(o.textContent))
-                                  .every(o => !o.disabled);
+        // ★ `V-316`：会话列表改成"点历史图标才开"的那一份 —— 老的下拉（`.ai-sess`）没了。
+        //   这里给三个小助手，后面按"点哪一行"来切会话。
+        const histBtn = document.querySelector("#pane-ai .ai-hist");
+        const histRows = () => [].slice.call(document.querySelectorAll("#pane-ai .ai-hist-i"));
+        const openHist = async () => { histBtn && histBtn.click(); await sleep(250); };
+        const pickRow = async (re) => {
+          await openHist();
+          const row = histRows().filter(r => re.test(r.textContent || ""))[0];
+          if (row) row.click();
+          await sleep(600);
+          return !!row;
+        };
+        // V-341：历史列表里那条「＋ 新建空白会话」撤了（新建按钮就在发送旁边）——
+        //   这里改成点工具栏那颗「＋」。
+        const pickNew = async () => {
+          const btn = document.querySelector("#pane-ai .btn-new-chat");
+          if (btn) btn.click();
+          await sleep(300);
+          return !!btn;
+        };
+        await openHist();
+        const sessOpts = histRows().map(r => (r.textContent || "").trim());
+        const chipOk = !!histBtn && dbg.pickId === "r-old" &&
+                       /指数和开方/.test(sessOpts.join(" "));
+        // ★ `V-256`：**一条都不许点不动** —— 老记录也能点开看（你报的
+        //   "只能新建空白会话、选不了历史"就是漏了这个）。
+        // `V-316`：新的列表是 `<div @click>`，压根没有 `disabled` 这回事 —— 断言"列表里
+        //   没有任何 disabled 元素"，等价于老断言。
+        const disabledCnt = document.querySelectorAll("#pane-ai .ai-hist-list [disabled]").length;
+        const allPickable = disabledCnt === 0;
+        histBtn && histBtn.click();
+        await sleep(150);
         const noList = !document.querySelector("#pane-ai .ai-runs") &&
                        !document.querySelector("#pane-ai .ai-run");
         // ③ 写下一句 → 点发送：宿主收到的 continue_id 必须是 r-old
@@ -4390,12 +4782,8 @@ MOCK_JS = r"""
         //   （用户原话"我每次都当新指令、在一个会话里没法一直聊"，根子是"接没接上根本看不出来"）
         const notesCont = [].slice.call(document.querySelectorAll("#pane-ai .ai-th-a"))
                                 .map(e => e.textContent.trim());
-        // ④ 下拉切回「＋ 新会话」→ 下一次不带老对话
-        if (sessSel){
-          sessSel.value = "";
-          sessSel.dispatchEvent(new Event("change", {bubbles: true}));
-        }
-        await sleep(200);
+        // ④ 在历史列表里点「＋ 新建空白会话」→ 下一次不带老对话
+        await pickNew();
         M.aiRun = null;
         taskEl.value = "换成新会话跑一句";
         taskEl.dispatchEvent(new Event("input", {bubbles: true}));
@@ -4411,14 +4799,10 @@ MOCK_JS = r"""
                                .map(e => e.textContent.trim());
         const noteOk = notesCont.some(x => /接着上次那条聊/.test(x)) &&
                        notesNew.some(x => /新会话/.test(x));
-        // ⑤ 在下拉里挑**另一条**（这里特意让它是一条"老记录：没存对话"）——
+        // ⑤ 在历史列表里挑**另一条**（这里特意挑那条"老记录：没存对话"）——
         //    以前所有选项都是 disabled ⇒ 整个下拉**点不动**（你报的 bug）；
-        //    现在要能打开看，并且明说"接不上"。
-        if (sessSel){
-          sessSel.value = "r-old2";
-          sessSel.dispatchEvent(new Event("change", {bubbles: true}));
-        }
-        await sleep(500);
+        //    现在要能点开看，并且明说"接不上"。
+        await pickRow(/agent\.md/);
         const picked = dbg.pickId;
         const oldShown = dbg.viewing === "r-old2" &&
                          /历史记录/.test(((document.querySelector("#pane-ai .ai-result") || {})
@@ -4436,7 +4820,7 @@ MOCK_JS = r"""
             JSON.stringify([notesCont.slice(0, 2), notesNew.slice(0, 2)]) +
           "\n会话下拉 = " + JSON.stringify(sessOpts.map(x => x.slice(0, 18))) +
           "\n默认接着聊 = " + adopted + "（contId=" + JSON.stringify(dbg.contId) + "）" +
-          " · 下拉选中 = " + JSON.stringify(sessSel ? sessSel.value : "") +
+          " · 列表里选中的那条 = " + JSON.stringify(dbg.pickId || "") +
           "\n接着聊那次发给宿主 = " + JSON.stringify([sentTask.slice(0, 20), sentCont]) +
           "\n下拉切「＋ 新建空白会话」之后 = " + JSON.stringify(freshCont) + "（要空）" +
           "\n挑那条老记录 = " + JSON.stringify([picked, dbg.contId]) +
@@ -4450,7 +4834,7 @@ MOCK_JS = r"""
              JSON.stringify([notesCont.slice(0, 2), notesNew.slice(0, 2)]).slice(0, 110) +
              " 传=" + JSON.stringify(sentCont) +
              " 新=" + JSON.stringify(freshCont) + " 挑=" + JSON.stringify(picked) +
-             " 下拉值=" + JSON.stringify(sessSel ? sessSel.value : "") +
+             " 选中=" + JSON.stringify(dbg.pickId || "") +
              " steps=" + JSON.stringify(stepsTxt.slice(0, 30)) +
              " 错=" + (window.__errors || []).length +
              " E=" + JSON.stringify((window.__errors || []).slice(0, 1)).slice(0, 120));
@@ -4617,12 +5001,27 @@ MOCK_JS = r"""
         await sleep(300);
         (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
         await sleep(1200);
-        const sessSel = document.querySelector("#pane-ai .ai-sess");
-        if (sessSel){
-          sessSel.value = "r-chat";
-          sessSel.dispatchEvent(new Event("change", {bubbles: true}));
-        }
-        await sleep(600);
+        // ★ `V-316`：会话列表改成"点历史图标才开"的那一份 —— 老的下拉（`.ai-sess`）没了。
+        //   这里给三个小助手，后面按"点哪一行"来切会话。
+        const histBtn = document.querySelector("#pane-ai .ai-hist");
+        const histRows = () => [].slice.call(document.querySelectorAll("#pane-ai .ai-hist-i"));
+        const openHist = async () => { histBtn && histBtn.click(); await sleep(250); };
+        const pickRow = async (re) => {
+          await openHist();
+          const row = histRows().filter(r => re.test(r.textContent || ""))[0];
+          if (row) row.click();
+          await sleep(600);
+          return !!row;
+        };
+        // V-341：历史列表里那条「＋ 新建空白会话」撤了（新建按钮就在发送旁边）——
+        //   这里改成点工具栏那颗「＋」。
+        const pickNew = async () => {
+          const btn = document.querySelector("#pane-ai .btn-new-chat");
+          if (btn) btn.click();
+          await sleep(300);
+          return !!btn;
+        };
+        await pickRow(/哪个大模型/);
         const head = ((document.querySelector("#pane-ai .ai-rhead") || {}).textContent || "").trim();
         const card = document.querySelector("#pane-ai .ai-result");
         const cardTxt = (card && card.textContent) || "";
@@ -4634,16 +5033,12 @@ MOCK_JS = r"""
         //   那么中间这个其它 answer 就不需要显示才对。"
         const steps = document.querySelectorAll("#pane-ai .ai-step").length;
         const noStep = steps === 0;
-        const foot = ((document.querySelector("#pane-ai .status-footer") || {}).textContent || "");
-        const footOk = /上次已回答/.test(foot) && /开工快照: —/.test(foot);
+        // V-340：底部状态条整条撤了（信息并进输入区工具栏）—— 这条检查换成"工具栏在"。
+        const footOk = !!document.querySelector("#pane-ai .ai-foot .chat-input-container .toolbar");
         // ② 切到"干活"那条：`done` 那步**不摆正文**（正文在 ✅ 卡里），而 `run_moss` 那步照旧摆命令
         //    （`disp === ""` = 宿主明确说"这一步没有正文"，界面不许再拿 brief 反解 —— 那会把
         //     同一段话又捞出来贴一遍，就是这次报的问题）
-        if (sessSel){
-          sessSel.value = "r-old";
-          sessSel.dispatchEvent(new Event("change", {bubbles: true}));
-        }
-        await sleep(600);
+        await pickRow(/指数和开方/);
         const cards2 = [].slice.call(document.querySelectorAll("#pane-ai .ai-step"));
         const bodyOf = el => {
           const b = el.querySelector(".code-path");
@@ -4659,13 +5054,10 @@ MOCK_JS = r"""
         // ③ `V-270`：「重新跑」那颗按钮 —— 网络断了/跑挂了之后，上一句原话一键填回输入框
         //    （这条任务挂过一次，你原来的痛点是"输入框已经清空了，还得重打一遍"）
         const taskEl = document.querySelector("#pane-ai .ai-task");
-        const rerunBtn = [].slice.call(document.querySelectorAll("#pane-ai .ai-actions .btn"))
-                            .filter(b => /重新跑/.test(b.textContent))[0];
-        if (taskEl) taskEl.value = "";
-        if (rerunBtn) rerunBtn.click();
-        await sleep(250);
-        const refilled = !!taskEl && taskEl.value.trim();
-        const rerunOk = !!rerunBtn && !!refilled && !(window.__AIR || {}).running;
+        // V-340：新稿子把「重新跑 / 清空」两颗按钮撤了（用户要求），这条检查作废。
+        const rerunBtn = null;
+        const refilled = false;
+        const rerunOk = true;
         const ok = headOk && noSnap && bodyOk && noStep && footOk && doneNoBody && runHasBody &&
                    talkHasBody && rerunOk && !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
@@ -4709,9 +5101,10 @@ MOCK_JS = r"""
         //   要的是**第一句**，不是最后一句（你报过的那条）。
         //   （"（N 轮）"那个尾巴要 `AIR.runs` 里真是一条链才显示；预览的假数据是两条独立
         //     单轮记录，所以这里只钉"是第一句、不是最后那句"，链条本身由宿主探针 `ai_thread` 验。）
-        const sessHead = document.querySelector("#pane-ai .ai-sess");
-        const title = (sessHead && sessHead.options[sessHead.selectedIndex])
-                        ? sessHead.options[sessHead.selectedIndex].textContent.replace(/\s+/g, " ") : "";
+        // ★ `V-316`：会话名现在显示在**历史图标旁边那行灰字**里（下拉没了）
+        // V-340：顶栏撤了，会话名现在挂在「历史会话」那颗按钮的 title 上。
+        const sessHead = document.querySelector("#pane-ai .ai-hist");
+        const title = String((sessHead && sessHead.title) || "").replace(/\s+/g, " ");
         const domTurns = document.querySelectorAll("#pane-ai .ai-turn").length;
         const titleOk = /给 :calc 支持指数和开方/.test(title) && !/加一句注释/.test(title) &&
                         domTurns === turns;
@@ -4812,7 +5205,8 @@ MOCK_JS = r"""
         }
         await sleep(600);
         M.sessCalls = [];
-        const head = document.querySelector("#pane-ai .ai-th");
+        // ★ `V-333`：一轮的抬头现在是我说的那条气泡（`.ai-bub.me`），"编辑 / 删除"在它里面
+        const head = document.querySelector("#pane-ai .ai-bub.me .ai-bub-h");
         const btns = head ? Array.from(head.querySelectorAll(".ai-th-x button")) : [];
         const labels = btns.map(b => (b.textContent || "").trim());
         const hasBoth = labels.length === 2 && /编辑/.test(labels[0]) && /删除/.test(labels[1]);
@@ -4832,7 +5226,7 @@ MOCK_JS = r"""
         const closedNoTruncate = !document.querySelector("#modal").classList.contains("on") &&
                                  (M.sessCalls || []).every(c => c[0] === "plan");
         // ② 点「编辑」→ 弹框 → 点确定 ⇒ 这一次才真带着 confirm=true 发出去
-        const btns2 = Array.from((document.querySelector("#pane-ai .ai-th") || {querySelectorAll(){return [];}})
+        const btns2 = Array.from((document.querySelector("#pane-ai .ai-bub.me .ai-bub-h") || {querySelectorAll(){return [];}})
                                   .querySelectorAll(".ai-th-x button"));
         if (btns2[0]) btns2[0].click();
         await sleep(400);

@@ -17,6 +17,8 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -32,6 +34,9 @@ if _SK not in sys.path:
 import skill_lib as ST                                                # noqa: E402
 
 NO_WINDOW = 0x08000000
+#: `V-307`：给跑包的子进程单独开一个进程组 —— 停止时 `taskkill /T` 才能把它**整个家族**
+#: （moss → python → 包自己的子进程）一次收干净。
+CREATE_NEW_PROCESS_GROUP = 0x00000200
 #: 回给模型的东西**一律截断**（全量留在「命令行」页给人看）—— 这是省 token 的第 5 条
 TAIL_LINES = 60
 TAIL_CHARS = 4000
@@ -124,6 +129,38 @@ TOOLS = [
             "name": {"type": "string", "description": "技能名，例如 new-pkg / dragdrop"}},
             "required": ["name"]}}},
     {"type": "function", "function": {
+        "name": "ask",
+        "description": ("**拿不准就问用户**（`V-308`）：给他一个问题，可以带几个选项（选择题）。"
+                        "★ 什么时候必须问：要动的东西**不止一种做法**、要改**你没把握**的地方、"
+                        "要删/覆盖东西、要做用户可能不想要的取舍、需求里有歧义。"
+                        "问完**等他答**（界面会弹出卡片），他答了你再继续。"
+                        "**别拿一句猜测硬干下去** —— 猜错要重来，比问一句贵得多。"),
+        "parameters": {"type": "object", "properties": {
+            "question": {"type": "string", "description": "要问的那句话（清楚、具体、一句话说清）"},
+            "options": {"type": "array", "items": {"type": "string"},
+                        "description": "选项（2~4 个最好，用户点一下就行；可以留空让他自己打字）"},
+            "allow_text": {"type": "boolean", "description": "除了选项，还许不许他自由输入（默认 true）"},
+            "detail": {"type": "string", "description": "需要背景的话写在这儿（可选）"},
+            "why": {"type": "string", "description": "你为什么问这一句（可选）"}},
+            "required": ["question"]}}},
+    {"type": "function", "function": {
+        "name": "allow_path",
+        "description": ("**请求放行一个目录**：这次任务要读/写的地方不在允许范围内时用它。"
+                        "它会让这个目录出现在**权限卡上半段那一条请求里**（琥珀底 + 允许/拒绝），"
+                        "用户点「允许」就进权限清单、点「拒绝」就是不行。"
+                        "★ 调用会**等你**（他点了你才继续）；他拒绝或一直不理就别硬来。"
+                        "★★ **一次申请够**：只要你可能还要改它，就直接 `need=\"write\"`"
+                        "（**写包含读**）—— 别先 `read` 再 `write`，那是多打断用户一次，"
+                        "他很容易当成重复请求给拒了。"),
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string", "description": "要放行的目录（**绝对路径**，而且必须真的存在"
+                                                      "—— 路径不对会被当场顶回来，别拿猜的路径问用户）"},
+            "why": {"type": "string", "description": "为什么必须动这里（一句话，用户看这句决定点不点允许）"},
+            "need": {"type": "string", "enum": ["read", "write"],
+                     "description": "要读还是要写（默认 write，**写包含读**）。只要以后可能还要改，"
+                                    "就直接 write，别分两次申请"}},
+            "required": ["path"]}}},
+    {"type": "function", "function": {
         "name": "done", "description": ("收工。前提：最后一次改动之后**跑过一次且退出码 0**，"
                                         "否则会被打回来。summary 里写清改了什么、怎么验的。"),
         "parameters": {"type": "object", "properties": {
@@ -132,9 +169,17 @@ TOOLS = [
             "required": ["summary"]}}},
 ]
 
+#: `V-307`：**每一步都要写清目的**。为什么不在上面 12 份 schema 里一份份抄：
+#: 那 12 份是"工具自己的参数"，`why` 是**所有**工具共同的一条约定 —— 抄 12 遍必然漂移。
+#: 所以在 `tools_for()` 里统一注进去（一处实现）。
+WHY_PROP = {"type": "string",
+            "description": ("★ 这一步**为什么**做它（给用户看的一句话目的，8~40 字，中文）。"
+                            "**每次调用都必须写** —— 用户只看 `run_moss` 这种工具名是看不懂你要干嘛的。"
+                            "例：why=\"跑一遍确认包还能启动\"")}
+
 
 def builtin_names():
-    """内置那 11 个的名字（**技能撞名的一律不进表** —— 否则会盖掉 read_file 那种）。"""
+    """内置那些的名字（**技能撞名的一律不进表** —— 否则会盖掉 read_file 那种）。"""
     return tuple(t["function"]["name"] for t in TOOLS)
 
 
@@ -143,8 +188,17 @@ def tools_for(self_tools=None):
 
     ★ 技能那几张是从"这一次跑开工时的那份表"建出来的（`Loop.__init__` 定死），
       所以**它这一刻新造的技能**不会混进来 —— 正好卡在"用户还没点允许"那一步。
+    ★ `V-307`：顺手给**每一张**表都补上 `why`（统一注入，见 `WHY_PROP`）。
     """
-    return list(TOOLS) + ST.specs_from(self_tools or {})
+    out = []
+    for t in list(TOOLS) + ST.specs_from(self_tools or {}):
+        try:
+            t = json.loads(json.dumps(t, ensure_ascii=False))       # 深拷一份，别改原表
+            t["function"]["parameters"].setdefault("properties", {})["why"] = dict(WHY_PROP)
+        except (KeyError, TypeError, ValueError):
+            pass
+        out.append(t)
+    return out
 
 
 def tail(text, lines=TAIL_LINES, chars=TAIL_CHARS):
@@ -188,18 +242,39 @@ def host_cmd():
     return [sys.executable, str(E.HOME / "moss.py")]
 
 
-def child_env():
+def child_env(run_id="", workdir=""):
     """给子进程一套**干净**的环境：清掉 `MOSS_*` 里的"我是谁的儿子"那一族。
 
     ★ `V-220` 的血教训：`MOSS_PKG_ID` / `MOSS_PKG_PARAMS` 会顺着子进程漏下去，
       漏出去的进程会被宿主当成"这个包还在跑"（严重时点「停止」把 explorer 关掉）。
       只保留 MOSS_HOME / MOSS_USER_DATA_DIR（不然子进程会去别的地方找包和数据）。
+    ★ `V-307`：**顺手把临时目录指到 AI 自己的 tmp 空间**（`TMP` / `TEMP` / `MOSS_AI_TMP`）
+      —— 用户原话"我们似乎没有给 ai 划分一个可以使用的 tmp 空间 让他可以执行某些程序
+      这样我们可以放心的清理"。这样它跑出来的中间产物不会洒进系统临时目录。
+    ★ `V-314`：那个 tmp **按插件分**（`state/<包id>/ai/tmp/`），所以要 `workdir` 才定位得到。
     """
     keep = {"MOSS_HOME", "MOSS_USER_DATA_DIR"}
     env = {k: v for k, v in os.environ.items()
            if not (k.startswith("MOSS_") and k not in keep)}
     env.setdefault("PYTHONIOENCODING", "utf-8")
-    return env
+    try:
+        import ai_mode as M                                        # noqa: PLC0415
+        return M.child_env(env, run_id=run_id, workdir=workdir)
+    except Exception:                                              # noqa: BLE001
+        return env
+
+
+def mode_now():
+    """**现在**能不能"放手写"（现读权限清单；读不到就当不能 —— 最保守）。
+
+    ★ `V-316`：以前这里是"三档模式"，现在只有一份清单：`*`（任意路径）那一行勾了**写**
+      才叫放手 —— 那时**危险操作也不再问**（`ai_mode.needs_confirm`）。
+    """
+    try:
+        import ai_mode as M                                        # noqa: PLC0415
+        return "free" if M.wildcard_write() else "limited"
+    except Exception:                                              # noqa: BLE001
+        return "limited"
 
 
 class Tools:
@@ -208,11 +283,21 @@ class Tools:
     `before_write`（`V-269`）：**第一次真要写文件之前**喊一声 —— 用来"动手前存快照"。
     ★ 为什么挂在这儿而不是开工就存：你问「你是哪个大模型」那种**纯问答**也开工就存，
       等于白写一条备份（还占列表一格）；而且快照点越贴近改动越准。
+
+    `V-307` 新加三样：
+      · `stop_check`：**每一步、每一小段时间**都要问的"要不要停"（用户按了停止 ⇒ 立刻收手，
+        正在跑的子进程**连子孙一起杀掉**）—— 这是"进程越堆越多"和"停不下来"的正解。
+      · `asker`：`ai_ask.Asker`。危险操作（`ai_mode.danger_of`）在执行前**问用户点头**；
+        `allow_path` 工具也用它。
+      · `procs`：这一次跑起过的子进程（按 pid）。跑完 / 停止时一律**杀干净**。
     """
 
-    def __init__(self, workdir=None, before_write=None, self_tools=None):
+    def __init__(self, workdir=None, before_write=None, self_tools=None,
+                 stop_check=None, asker=None, mode_fn=None, run_id="", perm_gate=None):
         self.workdir = Path(workdir) if workdir else E.write_root()
         self.before_write = before_write    # `V-269`：第一次写文件之前叫一次
+        #: ★ `V-307`：这一次跑的 id（临时空间按它分格；子进程的 TMP/TEMP 指到那一格）
+        self.run_id = str(run_id or "")
         #: ★ `V-280`：**这一次跑**已经允许它用的自制工具（开工那一刻定死的那份表）
         self.self_tools = dict(self_tools or {})
         self._wrote = False                 # 只叫一次（失败重试也不重复存）
@@ -224,6 +309,100 @@ class Tools:
         self.reads = {}            # 每个文件读了几次（`V-237`：读第三回就提醒别再磨）
         self.greps = {}            # 每组 (路径, 正则) 搜了几次（`V-241`：同一组搜三回就喊停）
         self.grep_files = {}       # 每个文件被搜了几次（换正则也算 —— 那是"一行行刨文件"）
+        # ---- `V-307`：停止 / 进程 / 提问 ----
+        self.stop_check = stop_check or (lambda: False)
+        self.asker = asker
+        self.mode_fn = mode_fn or mode_now
+        #: ★ `V-319`/`V-323`：**权限请求走的闸**（宿主给的）—— `perm_gate(path, why, need)` 会让
+        #:   权限卡**上半段**那一条请求显示出来（琥珀底 + 允许 / 拒绝）、**阻塞**到他点一下，
+        #:   回 `{granted, read, write, reason}`。没有它（命令行 / 探针）就当"没人可问"。
+        self.perm_gate = perm_gate
+        # ★ `V-316`：**当前这个包自动进权限清单**（读 + 写都开）—— "打开这个插件点 AI =
+        #   我就是要改它"。宿主在 `ai_info`/`ai_start` 里也会加，这里再兜一次：
+        #   命令行直跑 loop / 探针那条路不走宿主，不兜的话"当前包可写"就成了空话。
+        #   ★ 只加一次（`seeded` 记着 id）：用户后来自己删了那一行，不会被偷偷加回来。
+        try:
+            import ai_mode as _M                                   # noqa: PLC0415
+            _M.ensure_pkg(str(self.workdir))
+        except Exception:                                          # noqa: BLE001
+            pass
+        self.procs = {}            # {pid: Popen} 这一次跑起过的、可能还活着的
+        self.killed = []           # 杀掉的 pid（如实报给界面）
+        self.last_stop_ms = 0.0    # 上一次"停止"到子进程真死花了多久（证据）
+
+    # ------------------------------------------------------------------ 停止 / 收摊
+    def stopped(self):
+        try:
+            return bool(self.stop_check())
+        except Exception:                                          # noqa: BLE001
+            return False
+
+    def _kill_tree(self, pid):
+        """把一个进程**连子孙**杀掉（`taskkill /T /F`）。
+
+        ★ 为什么不用 `proc.kill()`：moss.exe 起包 = moss → python → 包自己的子进程，
+          只杀第一层，后面两层就成了孤儿 —— 用户看到的"几十个 moss 和 python 进程"
+          就是这么来的（真机现场）。`/T` 是"连子进程一起"。
+        """
+        p = str(int(pid))
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", p],
+                           capture_output=True, creationflags=NO_WINDOW, timeout=15)
+        except (OSError, subprocess.SubprocessError):
+            try:
+                proc = self.procs.get(int(pid))
+                if proc is not None:
+                    proc.kill()
+            except Exception:                                      # noqa: BLE001
+                pass
+        self.procs.pop(int(pid), None)
+        if int(pid) not in self.killed:
+            self.killed.append(int(pid))
+
+    def kill_children(self, why="收工"):
+        """把这一次跑起过的子进程**全部**杀掉（停止 / 跑完 / 出异常时都要调）。
+
+        用户原话："它会运行一些程序 但是 它似乎有可能不关闭 导致我的电脑 出现了
+        几十个 moss 和 python 进程"。所以**每次收摊都清一遍**，别指望它们自己退。
+        """
+        t0 = time.time()
+        pids = list(self.procs.keys())
+        for pid in pids:
+            try:
+                self._kill_tree(pid)
+            except Exception:                                      # noqa: BLE001
+                pass
+        self.last_stop_ms = round((time.time() - t0) * 1000, 1)
+        return {"killed": len(pids), "pids": pids, "why": why, "ms": self.last_stop_ms}
+
+    def alive_children(self):
+        return [pid for pid, p in list(self.procs.items())
+                if getattr(p, "poll", lambda: 0)() is None]
+
+    # ------------------------------------------------------------------ 问用户
+    def confirm(self, reason):
+        """危险操作点头（`V-307`）。回 `None` = 放行；回字符串 = **拒绝的理由**。
+
+        ★ `V-316`：**要不要问**已经在调用点定了（`ai_mode.needs_confirm`：清单里勾了
+          「任意路径」的写 = 放手 ⇒ 不问）。这里只管"问一次、按答案放行或拒绝"。
+        ★ 没有 asker（命令行直跑 loop / 探针）⇒ 不问，放行 —— 别把"没有人可问"变成"干不了活"。
+        """
+        if not self.asker:
+            return None
+        got = self.asker.ask(
+            "这一步有点危险，要不要放它做？",
+            options=["允许", "拒绝"],
+            allow_text=False, kind="confirm",
+            why=reason,
+            detail=("拒绝之后它会收到你的拒绝，自己另想办法。"
+                    "想让它以后都别问这类事：在清单里把「任意路径」那一行的**写**打开（= 放手）。"))
+        if got.get("answered") and str(got.get("choice") or "").startswith("允许"):
+            return None
+        if got.get("reason") == "stopped":
+            return ("[已停止] 用户按了停止 —— 这一步没做。别再调工具了，直接用 answer/done 收尾"
+                    "（或者就此停手）。")
+        return ("[拒绝] 用户**没允许**这一步：%s\n（换一条不需要它点头的路，或者先问他为什么。）"
+                % reason)
 
     # ------------------------------------------------------------------ 派发
     def call(self, name, args):
@@ -236,6 +415,21 @@ class Tools:
                 return out
             return "[错误] 没有这个工具：%s（可用：%s）" % (
                 name, "、".join(t["function"]["name"] for t in tools_for(self.self_tools)))
+        # ★ `V-307`：**危险操作先问用户**（写在 `fn(...)` 之前，问的就是"要不要做这一步"）。
+        #   被拒 / 停止 ⇒ 直接把理由当工具结果回给模型（它会另想办法）。
+        # ★ `V-316`：**"放手"= 用户在清单里勾了「任意路径」的写** —— 那种情况下不再问
+        #   （他都已经说随便写了，再拦一次就是"两个开关控同一件事"）。
+        try:
+            import ai_mode as M                                    # noqa: PLC0415
+            danger = M.danger_of(name, args or {})
+            _ask = M.needs_confirm(danger)
+        except Exception:                                          # noqa: BLE001
+            danger, _ask = None, False
+        if danger and _ask:
+            bad = self.confirm(danger)
+            if bad:
+                self.log.append((name, str(bad).replace("\n", " ")[:110]))
+                return bad
         # ★ `V-269`：写文件之前先让 loop 存快照（`before_write` 里做的事**必须**在
         #   `fn(...)` 之前跑完 —— 不然存下来的就是"已经改了一半"的样子）。
         #   只认第一次：同一轮里连改三个文件也只存一条。存不上不影响改（loop 那边自己会记）。
@@ -398,17 +592,22 @@ class Tools:
         cmd = host_cmd() + shlex.split(line)
         self.run_seq += 1
         cwd = str(E.HOME) if os.path.isdir(str(E.HOME)) else None
+        timeout = int(args.get("timeout") or 120)
         proc, err = None, ""
+        # ★ `V-307`：**不再用 `subprocess.run`** —— 它有两个要命的地方（真机上都出过）：
+        #   ① 用户按「停止」时它正阻塞着，只能等它自己跑完（"停在下一轮"就是这么来的）；
+        #   ② `timeout` 到点时它只杀**第一层**，moss 底下的 python 全成了孤儿
+        #      ⇒ 用户机器上堆了几十个 moss/python 进程。
+        #   现在：Popen + 一个读线程（防止管道写满互等死锁）+ 主线程小步轮询停止/超时，
+        #   停的时候 `taskkill /T` 连子孙一起收。
         for use_cwd in (cwd, None):                  # 先按安装根跑；不行再退回"继承当前目录"
             try:
-                proc = subprocess.run(cmd, cwd=use_cwd, env=child_env(),
-                                      capture_output=True, text=True, encoding="utf-8",
-                                      errors="replace", timeout=int(args.get("timeout") or 120),
-                                      creationflags=NO_WINDOW)
+                proc = subprocess.Popen(cmd, cwd=use_cwd,
+                                        env=child_env(self.run_id, str(self.workdir)),
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                        text=True, encoding="utf-8", errors="replace",
+                                        creationflags=NO_WINDOW | CREATE_NEW_PROCESS_GROUP)
                 break
-            except subprocess.TimeoutExpired:
-                return "[超时] 跑超过 %s 秒 —— 交互式包（等你敲键的那种）在这儿跑不了。" % (
-                    args.get("timeout") or 120)
             except OSError as e:
                 err = "%s（cwd=%r，存在=%s）" % (e, use_cwd, os.path.isdir(str(use_cwd)) if use_cwd else "继承")
         if proc is None:
@@ -418,11 +617,134 @@ class Tools:
                     "  （提醒：`MOSS_HOST_CMD` 是 JSON 数组，不是命令行字符串；"
                     "自己写探针时别用 shlex 拆它）"
                     % (err, cmd, cwd, os.environ.get("MOSS_HOST_CMD") or "（没设，按安装根推）"))
+        self.procs[int(proc.pid)] = proc
+        # 读线程：把输出攒起来（主线程要一边轮询"要不要停"，不能自己去阻塞读管道）
+        chunks = []
+
+        def _drain():
+            try:
+                for ln in proc.stdout or ():
+                    chunks.append(ln)
+            except Exception:                                        # noqa: BLE001
+                pass
+
+        reader = threading.Thread(target=_drain, daemon=True)
+        reader.start()
+        t0 = time.time()
+        killed = ""
+        while True:
+            if proc.poll() is not None:
+                break
+            if self.stopped():
+                killed = "用户按了停止"
+                break
+            if time.time() - t0 > timeout:
+                killed = "超时（%d 秒）" % timeout
+                break
+            time.sleep(0.15)
+        if killed:
+            self._kill_tree(proc.pid)                # 连子孙一起（`/T`）
+            reader.join(2.0)
+            self.run_seq -= 1                        # 被停/超时的这次不算"跑过一次"
+            body = tail("$ %s\n%s" % (" ".join(cmd[1:]), "".join(chunks)))
+            if "停止" in killed:
+                return "[已停止] 用户按了停止 —— 这条命令**连它的子进程一起被杀掉了**。\n%s" % body
+            return ("[超时] 跑超过 %s 秒 —— 交互式包（等你敲键的那种）在这儿跑不了。"
+                    "**进程已经连子孙一起清掉了。**\n%s" % (timeout, body))
+        reader.join(5.0)
+        self.procs.pop(int(proc.pid), None)
         code = proc.returncode
         if code == 0:
             self.last_ok_run_seq = self.edit_seq
-        out = tail("$ %s\n%s%s" % (" ".join(cmd[1:]), proc.stdout or "", proc.stderr or ""))
+        out = tail("$ %s\n%s" % (" ".join(cmd[1:]), "".join(chunks)))
         return "退出码 %d（第 %d 次运行）\n%s" % (code, self.run_seq, out)
+
+    def _t_ask(self, args):
+        """**问用户**（`V-308`）—— 工具本身只是把问题递过去，等人答完再返回。
+
+        回给模型的是"用户怎么答的"：选了哪个选项 / 打了什么字 / 拒绝 / 超时 / 停止。
+        ★ 没有 asker（命令行跑 loop）⇒ 如实说"现在没人可问"，别假装问过。
+        """
+        a = args or {}
+        q = str(a.get("question") or "").strip()
+        if not q:
+            return "question 不能空（你想问用户什么？）"
+        if not self.asker:
+            return ("[没人可问] 这次是在命令行里跑的（没有界面），用户看不到你的问题。"
+                    "**自己按最合理的做法继续**，并在 done/answer 里写清你替他做了什么假设。")
+        # Recover gateways that accidentally stringify the complete ask argument object.
+        if q.startswith("{"):
+            try:
+                parsed = json.loads(q)
+                if isinstance(parsed, dict) and parsed.get("question"):
+                    a = {**parsed, **a}
+                    q = str(a.get("question") or "").strip()
+            except (TypeError, ValueError):
+                pass
+        opts = a.get("options") or []
+        if isinstance(opts, str):
+            opts = [x.strip() for x in opts.split("|") if x.strip()]
+        got = self.asker.ask(q, options=opts, allow_text=bool(a.get("allow_text", True)),
+                             kind="ask", why=str(a.get("why") or ""),
+                             detail=str(a.get("detail") or ""))
+        if got.get("answered"):
+            parts = []
+            if got.get("choice"):
+                parts.append("他选了：%s" % got["choice"])
+            if got.get("text"):
+                parts.append("他说：%s" % got["text"])
+            return "用户答了 —— " + ("；".join(parts) or "（他直接确认了）") + \
+                   "\n（就按他的意思继续。别再问同一件事。）"
+        if got.get("reason") == "stopped":
+            return "[已停止] 用户按了停止（问题没答）—— 立刻停手，别再调工具。"
+        return ("[没人回答] 用户 %s 秒没回（他可能不在）。**别再等**：按你自己最合理的判断"
+                "继续做完，并在 done/answer 里写清你替他做的假设。" % int(got.get("seconds") or 0))
+
+    def _t_allow_path(self, args):
+        """**请求放行一个目录**：**不弹浮层卡片** —— 请求出现在权限卡**上半段那一条**里
+        （琥珀底 + 允许 / 拒绝），这边阻塞等他点一下。
+
+        ★ 界面这条流程是用户 2026-10-07 把设计稿重发一遍时定死的（`V-323`）：
+          点「允许」⇒ 那一条消失、目录进下面的清单；点「拒绝」⇒ 那一条消失，清单里什么都不加。
+          所以早期那套"在清单里闪一行、勾读/写"（`V-319`）已经**不存在**了。
+        """
+        a = args or {}
+        raw = str(a.get("path") or "").strip()
+        if not raw:
+            return "path 不能空（要放行哪个目录？）"
+        import ai_mode as M                                        # noqa: PLC0415
+        p = Path(raw)
+        bad = M.protected(p)
+        if bad:
+            return bad
+        # ★ `V-328`：**别拿猜的路径去麻烦用户** —— 绝对路径 / 存在 / 是目录，先自己过一遍
+        #   （打错一个字母、目录压根不存在，都会在界面上弹一条请求，用户点了允许也没用）。
+        problem = M.path_problem(p)
+        if problem:
+            return ("[拒绝] %s\n先自己确认路径：`list_dir` 看一眼父目录、或者用 `read_file` "
+                    "试一下；要新建目录的话，申请的应该是**它的父目录**（那个是存在的）。" % problem)
+        _need = "read" if str(a.get("need") or "").strip().lower().startswith("r") else "write"
+        if not self.perm_gate:
+            return ("[没人可问] 这次是命令行跑的（没有界面），用户看不到那条请求。**别动那里** —— "
+                    "改在允许的目录里做，或者在回答里说明你需要他放行 `%s`。" % p)
+        got = self.perm_gate(p, str(a.get("why") or ""), _need) or {}
+        if got.get("granted"):
+            return ("用户点了「允许」，`%s` 已经进清单（读=%s 写=%s）。现在可以动那里了。"
+                    % (p, "开" if got.get("read") else "关", "开" if got.get("write") else "关"))
+        if got.get("reason") == "read-only":
+            return ("用户只放行了 `%s` 的**读**（他在这趟里把「读」勾上了、写还关着）—— "
+                    "你能看，但改不了。要改就把理由说清楚再问一次（`need=\"write\"`），"
+                    "或者换个不用改那里的做法。" % p)
+        if got.get("reason") == "stopped":
+            return "[已停止] 用户按了停止 —— 停手，别再调工具。"
+        if got.get("reason") == "bad-path":
+            return ("[拒绝] 这个路径不能用：%s —— 先确认路径（`list_dir` 看一眼），"
+                    "别拿猜的路径来问用户。" % (got.get("msg") or raw))
+        if got.get("reason") == "timeout":
+            return ("[没人回应] 用户一直没理那条请求（等很久了）。**别硬来** —— "
+                    "换个地方做，或者把需要写进 answer/done 让他自己决定。")
+        return ("[拒绝] 用户点了「拒绝」`%s`（清单里不会加这条）。**别动那里** —— "
+                "换个地方做，或者把你的需要写进 answer/done 让他自己决定。" % p)
 
     def _t_skill(self, args):
         """读一份技能（`V-278`）。**名字必须在清单里**（不许拿它当任意文件读取的口子）。

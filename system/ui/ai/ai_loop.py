@@ -83,6 +83,31 @@ def missing_prompts(names):
 
 #: `V-260`：`disp` 最长给多少（`done` 的 summary 可能是一整段回答，别无限大）
 DISP_MAX = 4000
+#: `V-315`：**每一步的原始参数与原始输出**各留多少字（用户要"能点开看它到底干了什么"）
+#:   —— 为什么要有上限：一条记录要留 60 条（`ai_runs.KEEP`），`read_file` 一次能回 20000 字，
+#:   不截的话单条记录就能到几百 KB。**没截断的那一份在「提示词」那一层里**（`messages` 里
+#:   存的是原样发给模型的内容），所以这里截了也不会真的丢掉线索。
+ARG_MAX = 4000
+OUT_MAX = 6000
+
+
+def _clip(v, n):
+    """把"要给人点开看"的东西截到一个上限（超了就在末尾写明截了多少）。
+
+    `v` 可以是 str（原样）或 dict/list（转成 JSON 文本）。空值回 `""`。
+    """
+    if v is None or v == "":
+        return ""
+    if isinstance(v, (dict, list)):
+        try:
+            s = json.dumps(v, ensure_ascii=False, indent=1)
+        except (TypeError, ValueError):
+            s = str(v)
+    else:
+        s = str(v)
+    if len(s) <= n:
+        return s
+    return s[:n] + "\n……（已截到 %d 字；**没截断的那一份在「提示词」里**）" % n
 
 
 def _step_disp(name, args):
@@ -99,6 +124,11 @@ def _step_disp(name, args):
     #   在屏幕上出现两遍（你截图里那段回答就是这么重复的）。步骤卡只留"干了什么"。
     if name in ("done", "answer"):
         return ""
+    # ★ `V-308`：问用户那一步要把它**问的什么 / 答的什么**摆出来（这是最有信息量的一步）
+    if name == "ask":
+        return str(a.get("question") or "")
+    if name == "allow_path":
+        return str(a.get("path") or "")
     if a.get("path"):
         return str(a["path"])
     if a.get("args"):
@@ -154,19 +184,34 @@ def compose_system(task, extra=(), self_tools=None):
     return "\n\n---\n\n".join(parts), used, missing
 
 
-def env_note(workdir=None):
-    """给模型几句"它现在在哪"的事实（进程内拿得到，别让它去猜）。
+def env_note(workdir=None, perm="", tmp="", allow=()):
+    """给模型几句"它现在在哪 / 能读能写哪儿"的事实（进程内拿得到，别让它去猜）。
 
     ★ `V-248`：真机上它把同级的别的包（`ask`/`dazi`/`unwx`）全翻了一遍，用户的原话是
       "我选的干活的地方是 calc，它怎么疯狂的读取一堆其他的内容" —— 所以这里**把目标写进句子里**，
-      并明说"样板看 `system/pkgs/bmi`，别翻别的包"（读守卫也会拦，见 `check_readable(scope=…)`）。
+      并明说"样板看 `system/pkgs/bmi`，别翻别的包"（读守卫也会拦）。
+    ★ `V-316`：权限那一段现在是**用户勾出来的清单**（`ai_mode.perm_note`）—— 直接贴进来，
+      它才知道哪几处能写、写不了该用 `allow_path` 问谁。
     """
     tgt = str(workdir or E.write_root())
-    return ("【环境】moss 安装根 = %s；**这次干活的地方 = %s**。"
-            "只看这个目录（加上契约和 `system/pkgs/bmi` 那个样板）—— **别去翻别的包**。"
-            "要写只能写 `%s` 下面；跑包用 run_moss（等价于用户在终端敲 moss）；"
-            "契约按需读**相关那一节**就够（`spec(\"关键词\")`），别通读。契约文件 = %s"
-            % (E.HOME, tgt, E.write_root(), T.spec_path()))
+    out = ("【环境】moss 安装根 = %s；**这次干活的地方 = %s**。"
+           "只看这个目录（加上契约和 `system/pkgs/bmi` 那个样板）—— **别去翻别的包**。"
+           "跑包用 run_moss（等价于用户在终端敲 moss）；"
+           "契约按需读**相关那一节**就够（`spec(\"关键词\")`），别通读。契约文件 = %s"
+           % (E.HOME, tgt, T.spec_path()))
+    if perm:
+        out += "\n【权限】" + str(perm)
+    if allow:
+        out += "\n【清单里另外勾了读/写的】%s" % "；".join(str(x) for x in allow[:8])
+    if tmp:
+        out += ("\n【临时空间】你自己的临时目录 = `%s`（你跑的子进程 `TMP`/`TEMP` 也指到它）。"
+                "要落中间文件、解压、生成草稿就写这儿 —— 用户会定期清理它，"
+                "**别往系统临时目录或包目录里丢垃圾**。" % tmp)
+    out += ("\n【每一步都要写 why】调任何工具都带上 `why=\"…\"`（一句话说清这一步的目的）—— "
+            "用户看 `run_moss` 这种工具名看不懂你要干嘛。\n"
+            "【拿不准就问】要动的东西有歧义、有不止一种做法、要删/覆盖东西 —— "
+            "**先用 `ask` 工具问用户**（可以给选择题），别自己猜着往下冲。")
+    return out
 
 
 class Loop:
@@ -175,22 +220,37 @@ class Loop:
     def __init__(self, client, workdir=None, max_steps=200, on_step=None, say=print,
                  compact_after=6, keep_recent=12, compact_min=3,
                  compact_at=102400, retain_tokens=20480, stop_check=None,
-                 soft_steps=0, max_tokens=100000000, on_phase=None, on_snapshot=None):
+                 soft_steps=0, max_tokens=100000000, on_phase=None, on_snapshot=None,
+                 asker=None, mode_fn=None, on_journal=None, run_id="", tmp_dir=None,
+                 perm_gate=None):
         self.client = client
         # ★ `V-269`：快照**不再开工就存**，改成"第一次真要写文件之前"存（`_before_first_write`）。
         #   原话那次的教训：你问一句「你是哪个大模型」，它也给你存了一条备份。
         self.snapshot = None
         self.want_snapshot = True
         self.task = ""
-        # ★ `V-280`/`V-281`：**这一次跑**的工具表在开工这一刻定死 —— 内置那些 + 已经允许它用的技能。
-        #   它这一次新造的技能**下一次**才进表（也正好卡在"用户还没点允许"那一步）。
+        #: ★ `V-307`：这次跑的 id / 临时目录 / 权限模式的**现读**入口
+        #:   （模式要能跑到一半改，所以是个 callable，不是常量）
+        self.run_id = str(run_id or "")
+        self.tmp_dir = str(tmp_dir or "")
+        #: 权限模式**现读**（不给就交给 `Tools` 自己读 `ai_mode` —— 探针/命令行那条路）
+        self.mode_fn = mode_fn or T.mode_now
+        #: 每一步/每一小段落盘（`V-307`：强制重启那次丢记录，就是因为只在收尾写一次）
+        self.on_journal = on_journal
+        self._journal_t = 0.0
+        #: ★ `V-280`/`V-281`：**这一次跑**的工具表在开工这一刻定死 —— 内置那些 + 已经允许它用的技能。
+        #:   它这一次新造的技能**下一次**才进表（也正好卡在"用户还没点允许"那一步）。
         try:
             self.self_tools = ST.usable()
         except Exception:                                              # noqa: BLE001
             self.self_tools = {}
         self.tool_table = T.tools_for(self.self_tools)
+        #: `V-307`：工具表本身占多少 token（估算用量时要算上它）
+        self.tools_tokens = self._est(json.dumps(self.tool_table, ensure_ascii=False))
         self.tools = T.Tools(workdir=workdir, before_write=self._before_first_write,
-                             self_tools=self.self_tools)
+                             self_tools=self.self_tools,
+                             stop_check=stop_check, asker=asker, mode_fn=self.mode_fn,
+                             run_id=self.run_id, perm_gate=perm_gate)
         #: 现在在干什么（`V-242`：界面上显示"等模型回话 12s / 执行工具"，
         #  免得"模型在想"看起来像"卡死了"）
         self.on_phase = on_phase
@@ -289,17 +349,50 @@ class Loop:
                 m["content"] = "【工具结果】[早先的已折叠] " + head
         return len(targets)
 
-    def _add_usage(self, u):
-        """累加 token 用量，并记住"这一轮实际发出去多少输入 token"（压缩的触发条件）。"""
-        for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
-            try:
-                self.usage[k] += int((u or {}).get(k) or 0)
-            except (TypeError, ValueError):
-                pass
+    @staticmethod
+    def _est(text):
+        """估一段文本多少 token（`ai_budget.est_tokens` 的薄包装，import 失败也不炸）。"""
         try:
-            self.usage["last_prompt"] = int((u or {}).get("prompt_tokens") or 0)
-        except (TypeError, ValueError):
-            pass
+            import ai_budget as B                                        # noqa: PLC0415
+            return B.est_tokens(text)
+        except Exception:                                                # noqa: BLE001
+            return max(1, int(len(str(text or "")) / 3))
+
+    def _add_usage(self, u, messages=None, resp=None):
+        """累加 token 用量，并记住"这一轮实际发出去多少输入 token"（压缩的触发条件）。
+
+        ★ `V-307`：**API 不给数字就自己估**。用户报的"token 消耗这里 始终没有数据"就是这个 ——
+          有些网关（尤其自建的 OpenAI 兼容层）回包里根本不带 `usage`，于是界面上永远是
+          `— / — / —`，那条"token 上限"也就形同虚设。所以退一步：**真实数字优先**，
+          没有就按字符数估（和压缩那条线同一个口径），并在 `usage["estimated"]` 里如实标出来
+          （界面写成 `≈`）。宁可给个"约等于"，也不给一排横杠。
+        """
+        u = u or {}
+        est = False
+
+        def _i(v):
+            try:
+                return int(v or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        pt, ct, tt = _i(u.get("prompt_tokens")), _i(u.get("completion_tokens")), _i(u.get("total_tokens"))
+        if not pt and messages:
+            pt = self.tools_tokens + sum(self._est(m.get("content") or "") + 12 for m in messages)
+            est = True
+        if not ct and resp:
+            ct = (self._est(resp.get("text") or "")
+                  + self._est(json.dumps(resp.get("tool_calls") or [], ensure_ascii=False)))
+            est = True
+        if not tt:
+            tt = pt + ct
+        self.usage["prompt_tokens"] += pt
+        self.usage["completion_tokens"] += ct
+        self.usage["total_tokens"] += tt
+        self.usage["last_prompt"] = pt
+        if est:
+            self.usage["estimated"] = True
+        return {"prompt": pt, "completion": ct, "total": tt, "estimated": est}
 
     def _on_wait(self, seconds):
         """请求等了一会儿还没数据（`V-242`）：把"等了多久"报给界面，别让它看起来像死机。
@@ -322,10 +415,35 @@ class Loop:
                    "没连上：%s" % str(err)[:70],
                    "%s后重发（第 %d 次，共 %d 次）"
                    % (("%.1f 秒" % C.RETRY_WAITS[min(attempt - 1, len(C.RETRY_WAITS) - 1)]),
-                      attempt, times))
+                      attempt, times),
+                   out=str(err))
         self.say("  网络抖了一下（%s）—— 正在重发（第 %d/%d 次）" % (err, attempt, times))
 
-    def _step(self, n, tool, brief, note="", ms=0, disp="", nodisp=False):
+    def _journal(self, force=False, **extra):
+        """**每一步都落盘**（`V-307`）。用户那次强制重启丢的正是这条记录。
+
+        节流：最快 1.5 秒写一次（`force=True` 时立刻写 —— 开工 / 收尾 / 提问 / 停止）。
+        存不下不影响干活（宿主那边自己会记一句）。
+        """
+        if not self.on_journal:
+            return
+        now = time.time()
+        if not force and now - self._journal_t < 1.5:
+            return
+        self._journal_t = now
+        try:
+            self.on_journal({"steps": list(self.steps), "usage": dict(self.usage),
+                             "messages": self.messages, "phase": "…",
+                             "files": list(self.tools.changed),
+                             "tools_log": list(self.tools.log),
+                             "procs": list(self.tools.procs.keys()),
+                             "killed": list(self.tools.killed),
+                             "snapshot": getattr(self, "snapshot", None)}, bool(force))
+        except Exception:                                                # noqa: BLE001
+            pass
+
+    def _step(self, n, tool, brief, note="", ms=0, disp="", nodisp=False, why="",
+              args=None, out=""):
         row = {"n": n, "tool": tool, "brief": brief, "note": note, "ms": int(ms or 0),
                # ★ `V-260`：给人看的那一份（完整的路径 / 完整的 summary）—— 界面优先用它
                "disp": disp,
@@ -334,16 +452,43 @@ class Loop:
                #   `(说话)` / `(打回)` / `(重试)` 这几张本来就没有 `disp`、正文是从 `brief`
                #   反解出来的（老记录也这样）—— 混用会把它们的正文一起弄没。
                "nodisp": bool(nodisp),
+               # ★ `V-307`：**每一步的目的**（模型自己写的 `why`）+ **这一步的时间点**。
+               #   用户原话："它没有显示每个步骤的时间点"、"跑一遍 run_moss 我仅凭这个
+               #   无法判断它的目的" —— 这两样都记在步骤行里（老记录没有这两个键，界面兜底）。
+               "why": str(why or ""),
+               "t": time.time(),
+               "at": time.strftime("%H:%M:%S"),
+               # ★ `V-315`：**原始参数 + 原始输出**（用户原话："它的动作 产出的日志 或者文本
+               #   我希望我能点击查看 … 它不应该是黑箱操作"）。界面上点一下那张步骤卡就摊开这两样。
+               "args": _clip(args, ARG_MAX),
+               "out": _clip(out, OUT_MAX),
                "tokens": self.usage["total_tokens"], "folded": self.folded,
                # `V-244`：这一轮真实发出去的输入 token（= 现在上下文多长）—— 界面据此显示
-               "ptok": int(self.usage.get("last_prompt") or 0)}
+               "ptok": int(self.usage.get("last_prompt") or 0),
+               # `V-307`：这个数字是 API 给的还是我们自己估的（界面写 `≈`）
+               "est": bool(self.usage.get("estimated"))}
         self.steps.append(row)
         self.say("  [%d] %-10s %s%s" % (n, tool, brief, ("  " + note) if note else ""))
         if self.on_step:
             try:
                 self.on_step(row)
-            except Exception:                                        # noqa: BLE001
+            except Exception:                                            # noqa: BLE001
                 pass
+        self._journal()
+        return row
+
+    def note(self, tool, brief, why="", args=None, out=""):
+        """插一条**不是工具调用**的记录行（`V-333`：权限请求 / 问答**也是会话的一部分**）。
+
+        用户原话："申请权限 和复选框和用户交互的部分 直接在聊天记录上进行渲染交互 …
+        我选择以后 后续我翻看聊天记录 也能看我之前的选择"。
+        ★ 所以请求/问答不再只挂在 `AI["state"]` 里（那玩意儿答完就没了、也不落盘），
+          而是**走进步骤流**：界面把它画成一条"它说的"气泡，答完把结果写在同一条上，
+          轮询带得走、`_journal` 也落得盘 —— 翻旧会话照样看得见你当时选了什么。
+        ★ 回那一行本身：宿主拿到它，等用户答完**原地更新**（`answer` / `out` / `done`）。
+        """
+        n = len(self.steps) + 1
+        return self._step(n, tool, brief, disp=brief, nodisp=True, why=why, args=args, out=out)
 
     # ------------------------------------------------------------------ 主循环
     def _before_first_write(self):
@@ -369,7 +514,41 @@ class Loop:
         else:
             self.say("（没存动手前的快照：%s）" % got.get("msg"))
 
+    def _stopped(self):
+        """用户按了停止没有（`stop_check` 可能没有 / 可能抛 —— 都当"没停"）。"""
+        try:
+            return bool(self.stop_check and self.stop_check())
+        except Exception:                                                # noqa: BLE001
+            return False
+
+    def cleanup(self, why="收工"):
+        """收摊：**把它起过的子进程全部杀掉**（`V-307`）。
+
+        ★ 为什么要在这一层兜：用户原话"它似乎有可能不关闭 导致我的电脑 出现了几十个
+          moss 和 python 进程"。`_finish` 之前任一条返回路径（停止 / 出错 / 步数用完 /
+          验收通过）都可能留下一个还在跑的子进程，所以在 `run()` 的 `finally` 里统一收。
+        """
+        got = {"killed": 0, "pids": [], "ms": 0.0}
+        try:
+            got = self.tools.kill_children(why)
+        except Exception:                                                # noqa: BLE001
+            pass
+        if got.get("killed"):
+            self.say("（收摊：杀掉了 %d 个还在跑的子进程）" % got["killed"])
+        return got
+
     def run(self, task, extra_fragments=(), snapshot=True, history=None, from_id=""):
+        """跑一次任务（**外面这层只管收摊** —— 真正的活在同名的 `_run` 里）。
+
+        `V-307`：不管它是正常收工、被停止、还是自己炸了，出来的时候**子进程一个不留**。
+        """
+        try:
+            return self._run(task, extra_fragments=extra_fragments, snapshot=snapshot,
+                             history=history, from_id=from_id)
+        finally:
+            self.cleanup("跑完了 / 停了 / 出错了")
+
+    def _run(self, task, extra_fragments=(), snapshot=True, history=None, from_id=""):
         """跑一次任务。
 
         `history`（`V-251`）：**接着上次那条会话聊** —— 上一次跑完时留下的对话
@@ -383,12 +562,22 @@ class Loop:
         self.task = str(task or "")
         self.want_snapshot = bool(snapshot)
         old = [m for m in (history or []) if str(m.get("role")) != "system"]
+        try:
+            import ai_mode as M                                          # noqa: PLC0415
+            _perm = M.perm_note(str(self.tools.workdir))
+            _allow = [it.get("path") for it in M.allow_list()
+                      if (it.get("read") or it.get("write")) and it.get("path") != "*"]
+        except Exception:                                                # noqa: BLE001
+            _perm, _allow = "", []
         messages = [{"role": "system", "content": sys_text}] + old + \
-                   [{"role": "user", "content": "%s\n\n%s" % (task, env_note(self.tools.workdir))}]
+                   [{"role": "user", "content": "%s\n\n%s" % (
+                       task, env_note(self.tools.workdir, perm=_perm,
+                                      tmp=self.tmp_dir, allow=_allow))}]
         # ★ `V-251`：这个列表就是"这条会话" —— 全程只 append/就地改（底下没有重新赋值），
         #   所以收尾时（`_finish`）把它原样交出去，界面存盘、下次接着聊。
         self.messages = messages
         self.continued_from = str(from_id or "")
+        self._journal(force=True)                 # `V-307`：开工先落一条（这时还没有步骤）
         if old:
             self.say("接着上次那条聊：它还记得之前 %d 条对话" % len(old))
         self.say("提示词：%s%s" % ("；".join(used),
@@ -448,14 +637,15 @@ class Loop:
                 return self._finish(False, "用户按了停止", used, missing)
             except C.AiError as e:
                 return self._finish(False, "模型那边出错：%s" % e, used, missing)
-            self._add_usage(resp.get("usage"))
+            self._add_usage(resp.get("usage"), messages, resp)
             native = bool(resp.get("native"))
             calls = resp.get("tool_calls") or []
+            print("[AI-DIAG] step=%s calls=%s" % (n, ",".join(str(c.get("name")) for c in calls)), file=sys.stderr, flush=True)
             text = (resp.get("text") or "").strip()
             if not calls:
                 # 它只是在说话（或说完了但没调工具）—— 催一次，最多两回
                 nudges += 1
-                self._step(n, "(说话)", text[:80] or "（空的）", "没调工具")
+                self._step(n, "(说话)", text[:80] or "（空的）", "没调工具", out=text)
                 if nudges > 2:
                     return self._finish(False, "模型连着 %d 次不调工具，停手：%s" % (nudges - 1, text[:200]),
                                         used, missing)
@@ -492,6 +682,9 @@ class Loop:
                 if self.on_phase:
                     self.on_phase("tools")
                 name = call.get("name")
+                if name == "ask":
+                    _qa = call.get("args") or {}
+                    print("[AI-DIAG] ask question=%r options=%r" % (str(_qa.get("question") or "")[:200], _qa.get("options")), file=sys.stderr, flush=True)
                 brief = json.dumps(call.get("args") or {}, ensure_ascii=False)
                 _t0 = time.time()
                 out = self.tools.call(name, call.get("args") or {})
@@ -501,10 +694,27 @@ class Loop:
                 #   界面 `JSON.parse` 失败、只能把 `{"summary": "……` 这种原始串摆给你看
                 #   （你报的"像是一个字典，而不是显示里面的文本"，还有"回复长了看不全"）。
                 #   这里另给一份 `disp`：**给人看的、完整的**（`done` 的 summary 一个字不截）。
-                self._step(n, name, brief[:70], note, ms=_ms,
-                           disp=_step_disp(name, call.get("args") or {}),
-                           # `V-269` 补：这两个工具的正文归下面的结论卡，步骤卡不重复贴
-                           nodisp=name in ("done", "answer"))
+                # ask already adds its interactive step through on_ask(); adding a generic
+                # tool step here duplicated the prompt (the generic row has no qid).
+                if name != "ask":
+                    self._step(n, name, brief[:70], note, ms=_ms,
+                               disp=_step_disp(name, call.get("args") or {}),
+                               # `V-269` 补：这两个工具的正文归下面的结论卡，步骤卡不重复贴
+                               nodisp=name in ("done", "answer"),
+                               # ★ `V-307`：模型自己写的**这一步的目的**（界面拿它当标题）
+                               why=str((call.get("args") or {}).get("why") or ""),
+                               # ★ `V-315`：原始参数 + 原始输出（点开那张卡看的东西）
+                               args=call.get("args") or {}, out=str(out))
+                if self.tools.stopped():
+                    # ★ `V-307`：**停止立刻生效** —— 不再"等下一轮"。正在跑的子进程已经
+                    #   被 `run_moss` 自己杀干净了，这里直接收工（`run()` 的 finally 再兜一遍）。
+                    if native:
+                        messages.append({"role": "tool", "tool_call_id": call.get("id") or name,
+                                         "content": str(out)})
+                    else:
+                        messages.append({"role": "user",
+                                         "content": "【工具结果】%s\n%s" % (name, out)})
+                    return self._finish(False, "用户按了停止（立刻停，没有等下一轮）", used, missing)
                 if native:
                     messages.append({"role": "tool", "tool_call_id": call.get("id") or name,
                                      "content": str(out)})
@@ -517,7 +727,8 @@ class Loop:
                                             summary=str((call.get("args") or {}).get("summary") or ""),
                                             caveats=str((call.get("args") or {}).get("caveats") or ""))
                     nudges += 1
-                    self._step(n, "(打回)", "done 但没验收", self.tools.gate_reason()[:70])
+                    self._step(n, "(打回)", "done 但没验收", self.tools.gate_reason()[:70],
+                               out=self.tools.gate_reason())
                     if nudges >= 3:
                         return self._finish(False, "说了几次都不去验收：" + self.tools.gate_reason(),
                                             used, missing)
@@ -525,6 +736,12 @@ class Loop:
                            "（硬规矩：**要么改完之后跑通一次，要么确认不用改但真跑成功过**。）")
                     # ★ `V-247`：先攒着 —— 等这一轮所有 tool 结果发完再追加（见下面 pending_notes）
                     pending_notes.append(msg)
+                elif name == "ask" and len(calls) > 1:
+                    # This batch contains multiple blocking questions. Only the first
+                    # question can be surfaced reliably by the single-question UI.
+                    pending_notes.append(
+                        "同一批工具调用里包含多个 ask。一次只能处理一个问题；"
+                        "请先等待并使用第一个问题的回答，再决定是否追问。")
                 elif name == "answer":
                     # ★ `V-269`：**纯问答的合法收工**（你问「你是哪个大模型」那次，它答完了却被
                     #   "别只说话"打回去、只好去翻目录跑命令 —— 白烧 3 万 token）。
@@ -576,19 +793,26 @@ class Loop:
 
     # ------------------------------------------------------------------ 收尾
     def _finish(self, ok, reason, used, missing, summary="", caveats="", kind="work"):
-        return {"ok": bool(ok), "reason": reason, "summary": summary, "caveats": caveats,
-                # ★ `V-269`：`kind="chat"` = 这次只是**回答**（没动文件、不用验收）——
-                #   界面拿它把结论卡写成「💬 回答」而不是「✅ 验收通过」。
-                "kind": str(kind or "work"),
-                "steps": self.steps, "usage": dict(self.usage),
-                "prompts": used, "missing_prompts": missing, "tools_log": self.tools.log,
-                "files": list(self.tools.changed), "folded": self.folded,
-                "snapshot": getattr(self, "snapshot", None),
-                # ★ `V-251`：**把这一整条对话留下来** —— 界面存进任务记录，
-                #   下次点「接着聊」就把它接上去（不然重启 moss 只能从头再来）。
-                #   存的是**收尾时**的消息表（`_compact` 已经折过的那些，所以不算大）。
-                "messages": self.messages,
-                "continued_from": getattr(self, "continued_from", "")}
+        got = {"ok": bool(ok), "reason": reason, "summary": summary, "caveats": caveats,
+               # ★ `V-269`：`kind="chat"` = 这次只是**回答**（没动文件、不用验收）——
+               #   界面拿它把结论卡写成「💬 回答」而不是「✅ 验收通过」。
+               "kind": str(kind or "work"),
+               "steps": self.steps, "usage": dict(self.usage),
+               "prompts": used, "missing_prompts": missing, "tools_log": self.tools.log,
+               "files": list(self.tools.changed), "folded": self.folded,
+               "snapshot": getattr(self, "snapshot", None),
+               # ★ `V-251`：**把这一整条对话留下来** —— 界面存进任务记录，
+               #   下次点「接着聊」就把它接上去（不然重启 moss 只能从头再来）。
+               #   存的是**收尾时**的消息表（`_compact` 已经折过的那些，所以不算大）。
+               "messages": self.messages,
+               "continued_from": getattr(self, "continued_from", ""),
+               # ★ `V-307`：这次跑的"账" —— 临时目录 / 权限模式 / 杀掉了哪些进程。
+               #   `procs_killed` 是给用户看的证据：不再有孤儿进程堆在任务管理器里。
+               "run_id": self.run_id, "tmp_dir": self.tmp_dir,
+               "mode": str(self.mode_fn()), "procs_killed": list(self.tools.killed),
+               "edited": self.tools.edit_seq}
+        self._journal(force=True)
+        return got
 
 
 # ---------------------------------------------------------------------- 命令行
@@ -597,14 +821,17 @@ def run_cli(argv=None):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         print("用法：ai_loop.py \"<任务>\" [--workdir 目录] [--max-steps N] [--soft-steps N] "
-              "[--max-tokens N] [--model 模型]")
+              "[--max-tokens N] [--model 模型] [--mode consult|limited|free]")
         return 0 if argv else 2
     task, workdir, max_steps, soft_steps, max_tokens, model = argv[0], None, 200, 50, 0, None
+    mode = ""
     i = 1
     while i < len(argv):
         a = argv[i]
         if a == "--workdir" and i + 1 < len(argv):
             workdir = argv[i + 1]; i += 2
+        elif a == "--mode" and i + 1 < len(argv):        # `V-307`：consult/limited/free
+            mode = argv[i + 1]; i += 2
         elif a == "--max-steps" and i + 1 < len(argv):
             max_steps = int(argv[i + 1]); i += 2
         elif a == "--soft-steps" and i + 1 < len(argv):
@@ -626,8 +853,11 @@ def run_cli(argv=None):
     print("预算：硬顶 %d 步、每 %d 步提醒一次%s"
           % (max_steps, soft_steps, ("、token 闸 %d" % max_tokens) if max_tokens else ""))
     t0 = time.time()
+    if mode:
+        print("权限模式：%s（临时：`ai_mode.set_mode` 覆盖）" % mode)
+    _fn = (lambda: mode) if mode else None
     got = Loop(client, workdir=workdir, max_steps=max_steps, soft_steps=soft_steps,
-               max_tokens=max_tokens).run(task)
+               max_tokens=max_tokens, mode_fn=_fn).run(task)
     print()
     print("=" * 68)
     print("%s —— %s" % ("💬 回答" if got.get("kind") == "chat"
@@ -637,9 +867,14 @@ def run_cli(argv=None):
     if got.get("caveats"):
         print("它自己标的不确定：%s" % got["caveats"])
     u = got["usage"]
-    print("步数 %d（%d 次工具调用）· 用时 %.1f 秒 · token：输入 %d / 输出 %d / 合计 %d"
+    print("步数 %d（%d 次工具调用）· 用时 %.1f 秒 · token%s：输入 %d / 输出 %d / 合计 %d"
           % (len(got["steps"]), len(got["tools_log"]), time.time() - t0,
+             "（估算）" if u.get("estimated") else "",
              u["prompt_tokens"], u["completion_tokens"], u["total_tokens"]))
+    if got.get("procs_killed"):
+        print("杀掉还在跑的子进程：%s" % "、".join(str(p) for p in got["procs_killed"]))
+    if got.get("tmp_dir"):
+        print("临时空间：%s" % got["tmp_dir"])
     if got.get("missing_prompts"):
         print("⚠ 提示词缺失（两层都没有）：%s" % "、".join(got["missing_prompts"]))
     return 0 if got["ok"] else 1

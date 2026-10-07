@@ -507,6 +507,17 @@ window.__mossDrop = function(items){
       return;
     }
   }catch(e){ uiLog("host drop: 钩子抛了 " + e); }
+  // ★ `V-307`：AI 工作台那一页的「放行清单」也是一个落地口 —— 拖一个文件夹到 AI 页上 =
+  //   把它加进放行清单（用户原话："允许通过添加或者拖动的方式 增加放行的路径"）。
+  //   ★ 为什么另起一个名字（不再共用一个 `__mossDropHook`）：那个是**全局唯一**的槽，
+  //     已经被「版本快照 → 导出到」占着；两边都往上挂就是"看谁后挂"（`V-88` 的坑）。
+  //     AI 那一页自己被卸载时会把钩子摘掉，所以它只会收下"当时确实在 AI 页且面板开着"的拖入。
+  try{
+    if (typeof window.__mossAiDrop === "function" && window.__mossAiDrop(items)){
+      uiLog("host drop: 被 AI 的放行清单收下了");
+      return;
+    }
+  }catch(e){ uiLog("host drop: AI 钩子抛了 " + e); }
   const p = cur;
   const it = items[0];
   uiLog("host drop: " + JSON.stringify(items));

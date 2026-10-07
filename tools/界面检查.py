@@ -67,6 +67,47 @@ chk("模板里的 HTML 注释没有反引号", not _tpl_backtick,
     ("反引号会提前结束 template 字符串 —— 改掉：%s" % _tpl_backtick) if _tpl_backtick
     else "（反引号会提前结束模板字符串）")
 
+# ---------------- 1c. 模板里"不带括号"用到的名字，不许只定义在 methods 里（`V-330` 加）------
+# ★ `V-329` 的坑（用户截图里那句 `function () { [native code] }`）：`addPathBad` / `canAddPath`
+#   / `addPathHint` 一时顺手写进了 `methods`，而模板里是**不带括号**用的（`v-if="addPathBad"`、
+#   `{{ addPathHint }}`）⇒ 取到的是**函数本身**：永远真值 ⇒ 那行提示**永远显示**，
+#   内容就是函数的源码。规矩一句话：**computed 在模板里裸用，methods 必须带括号**。
+#   这条闸扫的就是这个：模板里裸出现的名字，如果只在 methods 里有定义 ⇒ 拦下。
+_bare_meth = []
+
+
+def _def_in(block, name):
+    # ★ 必须长得像**对象字面量里的方法定义**：`name(...) {`。
+    #   只写 `name(` 会把方法体里的**调用语句**也算进来（`V-334` 踩到：局部变量 `ask(...)`
+    #   被当成"有个叫 ask 的方法"⇒ 假红）。
+    return re.search(r"^\s+(?:async\s+)?" + re.escape(name) + r"\s*\([^)]*\)\s*\{", block,
+                     re.M) is not None
+
+
+for _name, _src in js_by_file.items():
+    _i_tpl = _src.find("template:")
+    _i_comp = _src.find("computed: {")
+    _i_meth = _src.find("methods: {")
+    _i_watch = _src.find("watch: {")
+    if min(_i_tpl, _i_comp, _i_meth) < 0:
+        continue
+    _tpl_src = _src[_i_tpl:]
+    _comp_src = _src[_i_comp:_i_watch if _i_watch > _i_comp else len(_src)]
+    _meth_src = _src[_i_meth:_i_tpl if _i_tpl > _i_meth else len(_src)]
+    _called = set(re.findall(r"([A-Za-z_$][A-Za-z0-9_$]*)\s*\(", _tpl_src))
+    _exprs = re.findall(r"\{\{([^}]*)\}\}", _tpl_src)
+    _exprs += re.findall(
+        r'(?:v-if|v-else-if|v-show|:class|:disabled|:title|:style)="([^"]*)"', _tpl_src)
+    _bare = {t for _e in _exprs for t in re.findall(r"[A-Za-z_$][A-Za-z0-9_$]*", _e)}
+    for _n in sorted(_bare):
+        if _n in _called:                       # 模板里是 `f(...)` ⇒ 方法调用，正常
+            continue
+        if _def_in(_meth_src, _n) and not _def_in(_comp_src, _n):
+            _bare_meth.append("%s: %s" % (_name, _n))
+chk("模板里不带括号用的名字都是 computed（不是 methods）", not _bare_meth,
+    ("这些只写在 methods 里 —— 模板裸用会渲染成函数本体：%s" % _bare_meth) if _bare_meth
+    else "（computed 裸用 / methods 带括号）")
+
 # ---------------- 2. id 唯一 ----------------
 ids = re.findall(r'\bid="([^"]+)"', html)
 dup = [k for k, v in Counter(ids).items() if v > 1]

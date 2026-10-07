@@ -8,10 +8,11 @@
 代价是"找不到那段"会失败 —— 所以这里把失败**写清楚**（给候选行号、给最像的几行），
 让模型下一轮能自己修好，而不是瞎改别处。
 
-★ 写权限（v1，`C①`）：**只允许写 `user_data/pkgs/**`**，`V-280`/`V-281` 起多开一处
-  `user_data/state/skill/**`（它自己造的技能 —— 用户看不见，见 `system/ai/skill_lib.py`）。
-  读不设这个限制（要读 `system/pkgs/bmi` 当样板、要读契约），但**写只有那两处** ——
-  改坏了删包重来，碰不到出厂件，这也是"v1 不碰 system/ / 不碰 core/"的落地。
+★ 写权限（`V-307` 起是**三档模式**，见 `ai_mode.py`）：
+    💬 咨询 = 一个文件都不许改；🔒 受限（默认）= 只写 `user_data/pkgs/**` +
+    `user_data/state/skill/**` + **放行清单里打开的路径**；🔓 放手 = 除受保护路径
+    （`core/`、`moss.exe`、`venv/`、`.git/`、`backups/`）外哪儿都能写。
+  读不设这个限制（要读 `system/pkgs/bmi` 当样板、要读契约），但读也框了范围。
 """
 import os
 import sys
@@ -70,41 +71,51 @@ def inside(path, root):
 
 
 def check_writable(path):
-    """能写就回 None，不能写就回一句**给人看的原因**（会被原样回给模型）。"""
-    for root in write_roots():
-        if inside(path, root):
-            return None
-    return ("[拒绝] v1 只允许写两处：`%s`（你自己的包）和 `%s`（**你自己造的技能**）；"
-            "`%s` 不在里面。（要改出厂件/宿主：那是第二阶段的事，现在必须由人来做。）"
-            % (write_root(), tool_root(), path))
+    """能写就回 None，不能写就回一句**给人看的原因**（会被原样回给模型）。
+
+    ★ `V-316`：判据在 `ai_mode.can_write()` —— 现在是**一份清单**（每条一对「读/写」勾选），
+      当前那个包默认就在清单里、读写都开着。这里只留一个转调，规矩只有一份。
+    """
+    import ai_mode as M                                          # noqa: PLC0415（防环）
+    return M.can_write(path)
 
 
 def read_roots():
-    """允许**读**的范围：干活的那棵树 + 契约 + 样板包。
+    """允许**读**的范围（`V-316` 起：**清单说了算**，这里只列"基础设施"那几处 + 清单里勾了读的）。
 
     ★ 为什么要管读（`V-232` 实测）：第一次真跑，模型为了搞清"包到底写到哪了"，
       跑去读 `core/paths.py` / `moss.py` / `config.toml` / 甚至我自己的 `ai_tools.py`
       —— 12 轮里大半花在这上面，**输入 token 137k**，活还没干完。
       把"能读哪儿"框住，比在提示词里写"别乱读"硬得多（提示词是劝，这个是拦）。
     """
-    return [write_root(),                                    # user_data/pkgs/**
-            tool_root(),                                     # user_data/state/skill/**（V-281）
+    import ai_mode as M                                          # noqa: PLC0415（防环）
+    return [write_root(),                                    # user_data/pkgs/**（清单外的会被 can_read 拦）
+            tool_root(),                                     # user_data/state/skill/**（它自己造的手）
+            M.tmp_root(),                                    # user_data/ai/tmp/**（全局桶）
             HOME / "system" / "spec",                        # 契约（唯一真相）
-            HOME / "system" / "pkgs"]                        # 样板包（照 bmi 抄）
+            HOME / "system" / "pkgs"] + M.readable_extra()   # 样板包（照 bmi 抄）+ 清单里勾了读的
 
 
 def check_readable(path, scope=None):
     """能读就回 None，不能读就回原因。
 
-    `scope`：**这次干活的目录**（`Tools` 会把 workdir 传进来）。
-    传了它，`user_data/pkgs` 下面**别的包**就不给看了 —— 真机上它把同级的
-    `ask` / `dazi` / `unwx` 挨个翻了一遍，用户的原话是"我选的干活的地方是 calc，
-    它怎么疯狂地读取一堆其他的内容"。样板请去 `system/pkgs/`（那是故意留的样板）。
+    `scope`：**这次干活的目录**（`Tools` 会把 workdir 传进来）—— 现在它只用来兜底：
+    权限本身是**清单**说了算（当前那个包在清单里，同级的别的包不在 ⇒ 自动读不到，
+    真机上"它把 ask/dazi/unwx 挨个翻了一遍"那个毛病从结构上就没了）。
 
-    ★ `V-235` 补的一条：**契约只能通过 `spec` 工具读**，不许 `read_file` 整篇读。
+    ★ `V-235` 的一条：**契约只能通过 `spec` 工具读**，不许 `read_file` 整篇读。
       真机那次模型拿 `read_file` 一段段啃契约（645 行、来回好几趟），14 步烧掉
       **26.5 万输入 token** —— `spec` 工具本来就是"按小节切、切完还有上限"的那条路。
     """
+    import ai_mode as M                                          # noqa: PLC0415（防环）
+    # ★ 契约那一处**先判**：`system/spec` 属于"基础设施"（`readable_builtin` 会放过它），
+    #   但它的铁律是"只能用 `spec` 工具按小节读" —— 顺序反了这条闸就形同虚设（探针 G 段抓到过）。
+    if inside(path, HOME / "system" / "spec"):
+        return ("[拒绝] 契约不要用 read_file 整篇读 —— 用 `spec` 工具按小节取："
+                "`spec(\"\")` 看目录、`spec(\"拖放\")` / `spec(\"pkg.json\")` / `spec(\"避坑\")` 取某一节。"
+                "（整篇读会把上下文撑爆、把轮次烧光。）")
+    if M.readable_builtin(path):
+        return None
     if scope:
         sc = Path(scope)
         root = write_root()
@@ -113,17 +124,8 @@ def check_readable(path, scope=None):
             return ("[拒绝] 这次干活的地方是 `%s` —— **只在这个包下面看**。"
                     "`%s` 是**别的包**，不归这次任务管（样板请看 `system/pkgs/bmi`，那是留给你抄的）。"
                     % (sc, path))
-    if inside(path, HOME / "system" / "spec"):
-        return ("[拒绝] 契约不要用 read_file 整篇读 —— 用 `spec` 工具按小节取："
-                "`spec(\"\")` 看目录、`spec(\"拖放\")` / `spec(\"pkg.json\")` / `spec(\"避坑\")` 取某一节。"
-                "（整篇读会把上下文撑爆、把轮次烧光。）")
-    for root in read_roots():
-        if inside(path, root):
-            return None
-    return ("[拒绝] 只允许读这几处：`%s`（自己写的包）、`%s`（**你自己造的工具**）、"
-            "`system/spec/`（契约，**用 spec 工具**）、`system/pkgs/`（样板包）。"
-            "`%s` 不在里面 —— 要了解宿主实现请**问人**，别读源码（那是浪费轮次和 token）。"
-            % (write_root(), tool_root(), path))
+    # ★ `V-316`：**清单说了算**（勾了「读」的目录才给看）
+    return M.can_read(path)
 
 
 def read_text(path, offset=1, limit=400):

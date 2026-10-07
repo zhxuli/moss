@@ -16,7 +16,7 @@
  */
 const AIR = Vue.reactive({
   rev: 0, curId: "", curDir: "", info: null, err: "",
-  task: "", where: "pkg", running: false, steps: [], say: [], result: null,
+  task: "", running: false, steps: [], say: [], result: null,
   seconds: 0, busy: false, tick: null,
   maxTokens: 100000000, warnTokens: 80000000,   // `V-240`：token 上限（存 user_data/ai/budget.json）
   phase: "",                   // `V-242`：thinking / waiting / tools —— "模型在想"别看着像卡死
@@ -36,7 +36,6 @@ const AIR = Vue.reactive({
        · `lastId`   这个包最近跑的那条（进来就认领，摆出它的步骤/结论）
      为什么默认就"接着"：每个包一条会话，跟 agent 客户端一个心思 —— 想重开点「新开」。 */
   contId: "", contTask: "", lastId: "", lastAdopted: "",
-  curWhere: "",                // `V-251`：干活的"地方"也跟着包切换 —— 换地方就换会话
   /* ★ `V-253`（照稿子重排）：`sentTask` = 这次会话的那句指令（日志第一张「用户指令」卡用它）；
      `muted` = "清空"按下去时的步数（那之前的步骤不再显示，新的照常冒出来）。
      ★ `V-254`：`pickId` = 左上角那个会话下拉**现在选中的**那条（看得是哪条）。
@@ -61,6 +60,40 @@ const AIR = Vue.reactive({
       · `selfWho` / `selfText`  「看一眼」展开的是哪只、内容是什么 */
   selfSkills: {skills: [], from_pkgs: [], broken: []},
   selfOpen: false, selfWho: "", selfText: "",
+  /* ★ `V-316`：**权限 = 一份清单**（每行一对「读 / 写」勾选）—— 不再有"模式"那种第二个开关。
+      · `allow`    —— 清单（后端保证含 `*` 那一行 = 任意路径）
+      · `wild`     —— `*` 那一行勾了写没有（= 放手）
+      · `tmp`      —— 它的临时空间（按插件分）+ 一键清空 */
+  allow: [], wild: false, dropHot: false, newPath: "",
+  /* ★ `V-319`：**待允许的目录**（它提出、还没被勾的那一条）—— 清单里那一行据此闪烁 */
+  perm: null,
+  /* ★ `V-321`：权限卡**默认折起来**（只留一行摘要，日志区更大）。
+     ★ `V-331`（你原话："正常情况下 hover它就显示 不hover它自动折叠 除非AI需要权限申请 才一直显示
+     一旦我点了动作 又回到这个状态"）：所以折/展不是"开关"，是**三种状态的或**（见 `permOpen`）——
+       · `permHover`  鼠标在卡上（放上来就展开，移开自动折）
+       · `permPinned` 你点过那一条（钉住；再点一下取消）
+       · 有请求（`A.perm` / 危险确认）⇒ **一直显示**，你点完动作就回到"放上来才展开" */
+  permHover: false, permPinned: false,
+  /* ★ `V-316`：左上角那颗**历史图标**点开才出的会话列表（原来是一个占满宽度的下拉） */
+  histOpen: false,
+  /* ★ `V-340`：**权限浮层**开不开（新稿子把权限从"左下角常驻卡"改成"工具栏里点开才出的浮层"） */
+  permPop: false,
+  /* ★ `V-308`：它现在挂着的问题（`ask` 卡片）。`askText` = 你在那张卡上打的字 */
+  ask: null, askText: "", askBusy: false, answeredQids: [],
+  /* ★ `V-307`：**这一步/这一轮现在烧了多少**（以前只有跑完才看得到数字） */
+  liveUsage: null, killed: [], stopping: false,
+  /* ★ `V-307`：**看这一条会话喂给它的完整提示词**（点「看提示词」开的那块） */
+  msgOpen: false, msgWho: "", msgData: null, msgBusy: false,
+  /* ★ `V-315`：**点开某一步看原始细节**（参数 + 输出）—— 不做黑箱 */
+  stepOpen: null,
+  /* ★ `V-307`：聊天区**跟不跟着滚**。你往上翻的时候它不许把你拽回底部
+     （你的原话："当我向上滑动聊天记录的时候 它总是自动弹回到最下面去"）。 */
+  stick: true,
+  /* ★ `V-328`：加目录那一格的**行内报错**（填错时贴在输入框下面那一句）。
+     ★ `V-329`（你报的："怎么我瞎写一个 点添加 会出来两个错误提醒呢"）：原来这里走 `toast()`，
+       而 `toast()` 是**两处一起报**（浮出来的深色胶囊 + 底部状态栏留一行）—— 一个错看两遍。
+       现在这一格的错**贴在它自己下面**（行内一句红的），一次都不喊 `toast()`。 */
+  newPathErr: "",
 });
 
 function aiPackage(){ return cur && cur.id ? cur : null; }
@@ -72,6 +105,7 @@ function humanTokens(n){
   if (v >= 1000) return (v / 1000).toFixed(1) + "k";
   return String(v);
 }
+
 
 /* ★ `V-257`：**中文单位**的 token 数（你原话："当数值比较大的时候应该变更单位为万 百万 亿这样"）——
    底栏那三个数用它；小数字照原样给。`title` 里另给精确值。 */
@@ -92,7 +126,8 @@ function cntok(n){
 window.__AIR = AIR;
 
 function aiWhereDir(){
-  if (AIR.where === "new") return (AIR.info && AIR.info.write_root) || "";
+  // ★ `V-315`：干活的地方**就是这个包**（"在哪干活"那个下拉已经去掉了）。
+  //   没有选包时回空串 —— 调用方（`aiStart`）会弹一句"先在左边选一个包"。
   const p = aiPackage();
   return (p && p.dir) || "";
 }
@@ -106,6 +141,10 @@ async function aiRefreshInfo(force){
       AIR.maxMillions = Math.round((AIR.maxTokens / 1000000) * 1000) / 1000;
       if (AIR.info.context) AIR.context = AIR.info.context;
       if (AIR.info.compact_at) AIR.compactAt = AIR.info.compact_at;
+      // ★ `V-316`：权限那几样（清单 / 临时空间）—— 每次问宿主都刷一遍，
+      //   因为"它在跑的时候问你要不要放行"会当场改清单，界面得跟着变。
+      if (AIR.info.allow) AIR.allow = AIR.info.allow;
+      if (AIR.info.wildcard !== undefined) AIR.wild = !!AIR.info.wildcard;
       // ★ `V-252`：模型那一格的初值 —— 只在"没选过 / 选的那个这家没有了"时才跟着配置走，
       //   不然你每次刷新都被拨回第一个。
       const ms = AIR.info.models || [];
@@ -116,6 +155,114 @@ async function aiRefreshInfo(force){
   } catch (e) {
     AIR.err = "读不到 AI 状态：" + (e && e.message ? e.message : e);
   }
+  AIR.rev++;
+}
+
+/* ★ `V-316`：**没有"模式"了** —— 权限就是那份清单（读/写两个勾）。
+   这一函数留着只是为了让老调用点不炸（不该再有人调它）。 */
+async function aiSetMode(){
+  toast("现在没有「模式」了：权限就在下面左边那份清单里 —— 勾「读」/「写」，或者把"
+        + "「任意路径」那一行的写打开（= 放手）", true);
+}
+
+/* ★ `V-316`：**权限清单** —— 加一条 / 拨「读」「写」/ 删掉 / 用系统对话框选目录。
+   ★ 为什么要"拖动"也能加：你原话"允许通过添加或者拖动的方式 增加放行的路径"。
+   ★ 没有"模式"了：**读/写两个勾就是全部**（当前这个包默认就在清单里、两个都开着）。 */
+/* ★ `V-328`：这一格填的东西像不像一个**目录绝对路径**（用户报的："我可以随便打字 哪怕不是
+   一个路径 就可以点添加"）。这里只管"形状"（盘符 / UNC / `*`）—— 到底存不存在、是不是目录，
+   由宿主 `ai_mode.path_problem()` 判（它回一句人话，弹出来给你看）。
+   ★ 为什么前端也要判一道：不用等一个来回就知道自己打错了，按钮当场变灰、框当场变红。 */
+function addPathOk(p){
+  const s = String(p || "").trim();
+  if (!s) return false;
+  if (s === "*") return true;                       // 任意路径那一行
+  // 盘符（`D:\x` / `D:/x`）或 UNC（`\\主机\共享`）—— 跟宿主 `Path.is_absolute()` 一个口径，
+  // 别一个说行一个说不行（前端只筛形状；存不存在由宿主判）。
+  return /^[a-zA-Z]:[\\/]/.test(s) || /^\\\\[^\\]/.test(s);
+}
+async function aiAllowAdd(pth){
+  const p = String(pth || AIR.newPath || "").trim();
+  AIR.newPathErr = "";
+  if (!p){ AIR.newPathErr = "先填一个目录（或者把文件夹拖到这一页）"; AIR.rev++; return; }
+  if (!addPathOk(p)){
+    AIR.newPathErr = "要填完整的绝对路径（像 D:\\项目\\我的包 那样）——「" + p + "」不是一个路径";
+    AIR.rev++;
+    return;
+  }
+  try{
+    const got = await window.pywebview.api.ai_allow(p, true, true, "", "add");
+    if (got && got.ok){
+      toast(got.msg || "加好了");
+      AIR.newPath = "";
+    } else {
+      // ★ `V-329`：这一格的错**行内报**（不再 toast ⇒ 也就不会"一个错看两遍"）
+      AIR.newPathErr = (got && got.msg) || "加不了";
+    }
+    AIR.rev++;
+    await aiRefreshInfo(true);
+  }catch(e){
+    AIR.newPathErr = "加不了：" + (e && e.message ? e.message : e);
+    AIR.rev++;
+  }
+}
+/* 拨某一行的读 / 写（`field` = "read" / "write"）—— **一个勾管一件事**，拨完立刻生效 */
+async function aiAllowSet(it, field, on){
+  try{
+    const args = {read: null, write: null};
+    args[field] = !!on;
+    const got = await window.pywebview.api.ai_allow(it.path, args.read, args.write, "", "set");
+    toast((got && got.msg) || "好了", !(got && got.ok));
+    await aiRefreshInfo(true);
+  }catch(e){ toast("改不了：" + (e && e.message ? e.message : e), true); }
+}
+async function aiAllowRm(it){
+  try{
+    const got = await window.pywebview.api.ai_allow(it.path, null, null, "", "rm");
+    toast((got && got.msg) || "删了", !(got && got.ok));
+    await aiRefreshInfo(true);
+  }catch(e){ toast("删不掉：" + (e && e.message ? e.message : e), true); }
+}
+async function aiAllowPick(){
+  try{
+    const got = await window.pywebview.api.ai_allow_pick();
+    if (got && got.cancel) return;
+    toast((got && got.msg) || "好了", !(got && got.ok));
+    await aiRefreshInfo(true);
+  }catch(e){ toast("选不了目录：" + (e && e.message ? e.message : e), true); }
+}
+/* ★ `V-308`：回答它的问题。答完 loop 那边立刻继续跑。 */
+async function aiAnswer(choice, text, qid){
+  const q = AIR.ask || {};
+  const id = String(qid || q.qid || "");
+  if (!id || AIR.askBusy || !q.qid || id !== String(q.qid)) return;
+  AIR.askBusy = true;
+  try{
+    const got = await window.pywebview.api.ai_answer(id, String(text || ""), String(choice || ""));
+    if (!got || !got.ok) {
+      toast((got && got.msg) || "没答上", true);
+    } else {
+      // Keep the submitted question hidden from the active controls immediately.
+      if (!AIR.answeredQids.includes(id)) AIR.answeredQids.push(id);
+      AIR.ask = null;
+      AIR.askText = "";
+      toast("答了 —— 它继续跑了");
+      await aiPollOnce();
+    }
+  }catch(e){ toast("没答上：" + (e && e.message ? e.message : e), true); }
+  finally { AIR.askBusy = false; AIR.rev++; }
+  await aiRefreshInfo(true);
+}
+/* ★ `V-307`：**看这条会话喂给它的完整提示词**（你原话："我可以通过点击某个会话 来查看
+   这个会话喂给他的历史记录 或者叫提示词(包括我问的和它回答的 所有历史)"）。 */
+async function aiOpenMessages(id){
+  const rid = String(id || AIR.pickId || AIR.lastId || "");
+  if (!rid){ toast("先选一条会话（左边那个下拉）", true); return; }
+  AIR.msgBusy = true; AIR.msgOpen = true; AIR.msgWho = rid; AIR.msgData = null; AIR.rev++;
+  try{
+    const got = await window.pywebview.api.ai_session_messages(rid);
+    AIR.msgData = got || {ok: false, messages: [], msg: "读不到"};
+  }catch(e){ AIR.msgData = {ok: false, messages: [], msg: String(e && e.message ? e.message : e)}; }
+  AIR.msgBusy = false;
   AIR.rev++;
 }
 
@@ -138,6 +285,18 @@ async function aiSaveBudget(){
    因为其他的两个不是独立会话，不应该显示才对"。
    所以：列表**只留链头**，但选项的**值取链尾**（最新那条）—— 这样"接着聊"带的是整条会话。
    返回 `[{head, tail, turns}]`（按链尾时间倒序）。 */
+/* ★ `V-334`：从链头一路 `continued_from` 串下去，把这条会话的全部记录 id 收出来。 */
+function _chainIds(all, head){
+  const out = [head.id];
+  let cur = head, guard = 0;
+  while (guard++ < 500){
+    const next = all.filter(r => r.continued_from === cur.id)[0];
+    if (!next) break;
+    out.push(next.id);
+    cur = next;
+  }
+  return out;
+}
 function aiChains(runs){
   const all = runs || [];
   const out = [];
@@ -152,7 +311,8 @@ function aiChains(runs){
       if (!next) break;
       cur = next; turns++;
     }
-    out.push({head: head, tail: cur, turns: turns});
+    // ★ `V-334`：这条链上**每一条记录的 id** 都带上 —— 列表里那颗 ✕ 要按它删整条会话
+    out.push({head: head, tail: cur, turns: turns, ids: _chainIds(all, head)});
   });
   // 列表按"最新那条"倒序（链头顺序不一定等于链尾顺序）
   return out.sort((a, b) => String(b.tail.id).localeCompare(String(a.tail.id)));
@@ -165,9 +325,12 @@ function aiChains(runs){
        ② 默认**接着它聊**（`AIR.cont`）—— 想开新的点那一行右边的「新开」。 */
 async function aiLoadRuns(){
   try{
-    const got = await window.pywebview.api.ai_runs(30);
+    // ★ `V-307`：**带上"这次在哪儿干活"** —— 历史按包分桶了，你原话"我在 github 可视化助手
+    //   这里使用了 ai 那么在历史这里 按说 它应该只要显示这个模块下的历史就可以了"。
+    const got = await window.pywebview.api.ai_runs(30, aiWhereDir());
     if (!got || !got.ok) return;
     AIR.runs = got.runs || [];
+    AIR.scope = got.scope || null;
     if (!AIR.running) aiAdoptLast();
   }catch(e){ /* 读不到就空着，不吵人 */ }
 }
@@ -203,6 +366,7 @@ async function aiOpenThread(id, quiet){
     }));
     AIR.cur = -1;
     AIR.muted = 0;
+    AIR.stick = true;                 // `V-307`：换会话 = 回到"跟着看"的状态
     const tail = got.tail || id;
     AIR.lastId = tail; AIR.lastAdopted = tail;
     AIR.pickId = tail;
@@ -224,12 +388,20 @@ async function aiOpenThread(id, quiet){
    （跟 agent 客户端一个心思：一个包一条会话，你说下一句就是接着说；
      想重开点那一行右边的「新开一条」）。`AIR.contId` 已经有了就别抢。 */
 async function aiAdoptLast(){
-  const last = aiLastRunFor(aiWhereDir());
+  // ★ `V-334`：兜底 —— 这个桶里**最新那条**也算"上次那条"（桶本来就是按包分的）。
+  //   以前只认 `workdir` 字符串完全一致的那条；一旦录进去的 workdir 写法差一点
+  //   （盘符大小写 / 尾部分隔符 / 换过包目录），重启后同一句就变成"新会话"了
+  //   （用户报的："明明前面很多聊天记录 它变成了这个是一个新的聊天"）。
+  const mine = aiLastRunFor(aiWhereDir());
+  const last = mine || (AIR.runs || [])[0] || null;
   AIR.lastId = (last && last.id) || "";
-  if (last && last.cont && !AIR.contId && !AIR.pickId){
-    AIR.contId = last.id;
-    AIR.contTask = last.task || "";
-    AIR.pickId = last.id;
+  if (!last || AIR.contId || AIR.pickId) return;
+  AIR.contId = last.id;
+  AIR.contTask = last.task || "";
+  AIR.pickId = last.id;
+  // ★ 只有"确实是这个包的那条"才把前文摆出来；兜底认领**不摆** ——
+  //   不然一进页面就把别人的结果卡摆上来（预览里那两场"跑完自动刷新"就是这么被搅黄的）。
+  if (last.cont && mine){
     // ★ `V-262`：认领的是**整条会话**（重启后也把前几轮摆出来），不是只有最后那一条
     await aiOpenThread(last.id, true);
   }
@@ -263,7 +435,8 @@ async function aiOpenRun(id, quiet){
 
 async function aiForgetRun(id){
   try{
-    const got = await window.pywebview.api.ai_run_forget(id || "", !id);
+    // ★ `V-307`：全清**只清这个桶**（这个包的会话），不会顺手把别的包的记录删掉
+    const got = await window.pywebview.api.ai_run_forget(id || "", !id, aiWhereDir());
     if (got && got.ok){ toast(id ? "删掉那条记录了" : "历史清空了"); AIR.viewing = ""; await aiLoadRuns(); }
     else toast((got && got.msg) || "删不掉", true);
   }catch(e){ toast("删不掉：" + (e && e.message ? e.message : e), true); }
@@ -415,7 +588,7 @@ async function aiAfterTruncate(p, task, fill){
     else { toast("前面那条是更早的记录（没存对话）—— 只能看，接不上了", true); }
   }else{
     // 删的就是链头 ⇒ 这条会话没了：日志清空，输入框回到"新会话"
-    AIR.turns = []; AIR.cur = -1; AIR.steps = []; AIR.result = null;
+    AIR.turns = []; AIR.cur = -1; AIR.steps = []; AIR.result = null; AIR.answeredQid = "";
     AIR.sentTask = ""; AIR.lastId = ""; AIR.pickId = "";
     AIR.contId = ""; AIR.contTask = ""; AIR.muted = 0;
   }
@@ -431,11 +604,36 @@ async function aiPollOnce(){
     //   刚给自己造了一只，那条「等你允许」得立刻冒出来（不然你要等下次进这一页才看见）。
     const _wasRunning = AIR.running;
     AIR.running = !!got.running;
-    if (_wasRunning && !AIR.running) aiLoadSkills();
+    if (_wasRunning && !AIR.running){
+      aiLoadSkills();
+      aiRefreshInfo(true);      // `V-319`：这一跑里它可能问过权限，跑完把清单重读一次
+    }
     AIR.steps = got.steps || [];
+    // Poll payload is authoritative for the live turn: refresh the matching turn snapshot
+    // so answered ask cards stop showing controls and remain readable in history.
+    const liveTurn = (AIR.turns || [])[AIR.cur];
+    if (liveTurn) liveTurn.steps = AIR.steps;
     AIR.say = got.say || [];
     AIR.seconds = got.seconds || 0;
     AIR.phase = got.phase || "";
+    // ★ `V-307`：**活的账**（不用等跑完才看得到 token 数字）+ 停止状态 + 杀掉过哪些进程
+    AIR.liveUsage = got.usage || null;
+    AIR.stopping = !!got.stopping;
+    // ★ `V-319`：**待允许的目录**（左下角清单里那一行要闪烁）。状态一变（出现 / 消失）
+    //   就重读一次权限 —— 勾完那一刻那一行要立刻变成正式条目。
+    const permNow = got.perm || null;
+    const permKey = permNow ? String(permNow.path || "") : "";
+    const permKeyOld = AIR.perm ? String(AIR.perm.path || "") : "";
+    AIR.perm = permNow;
+    if (permKey !== permKeyOld) aiRefreshInfo(true);
+    if ((got.killed || []).length) AIR.killed = got.killed;
+    if (got.mode && got.mode !== AIR.mode) AIR.mode = got.mode;
+    // ★ `V-308`：它问你的话（那张卡片）。★ 你正在那张卡上打字时**别把你的字冲掉**。
+    const ask = got.ask || null;
+    const sameAsk = ask && AIR.ask && ask.qid === AIR.ask.qid;
+    AIR.ask = (ask && AIR.answeredQids.includes(ask.qid)) ? null : ask;
+    if (!sameAsk) AIR.askText = "";
+    if (!ask && !got.running) AIR.askText = "";
     // 只在**正在跑**的时候才用「这次任务的」上限覆盖那一格 —— 否则你刚改完预算，
     // 下一次轮询就把它改回旧值了（预览里我先踩到）。
     if (got.running && got.max_tokens) AIR.maxTokens = got.max_tokens;
@@ -497,7 +695,9 @@ async function aiStart(){
   const dir = aiWhereDir();
   if (!dir) { toast("先在左边选一个包（或者选「新建包」）。", true); return; }
   AIR.busy = true;
-  AIR.result = null; AIR.steps = []; AIR.say = [];
+  AIR.result = null; AIR.steps = []; AIR.say = []; AIR.answeredQid = "";
+  AIR.killed = []; AIR.liveUsage = null; AIR.ask = null; AIR.askText = "";   // `V-307`/`V-308`
+  AIR.stick = true;                                                          // `V-307`：新指令跟着滚
   AIR.viewing = "";              // `V-251`：这次是新跑的，结果卡不该再挂"历史记录"那块牌子
   // ★ `V-253`：日志里第一张卡是**用户指令**（照稿子：`用户指令 message-circle`），
   //   而且"清空"过的那一段不再显示。
@@ -548,9 +748,15 @@ async function aiStart(){
 
 async function aiStop(){
   try {
+    AIR.stopping = true;
+    AIR.rev++;
     const got = await window.pywebview.api.ai_stop();
-    toast((got && got.msg) || "已请求停止。");
+    toast((got && got.msg) || "已停止。", !(got && got.ok));
+    // ★ `V-307`：立刻把"执行中"那颗按钮摘掉（宿主那边被杀的子进程 + 掐断的请求都会让
+    //   loop 尽快收工；下次轮询拿到 running=false 就彻底一致了）。
+    if (got && got.done) { AIR.running = false; AIR.stopping = false; }
   } catch (e) { /* 无妨 */ }
+  AIR.rev++;
 }
 
 const MossAi = {
@@ -693,46 +899,98 @@ const MossAi = {
       });
       return out;
     },
-    /* 底部状态条左半边（照稿子：`✗ 上次未通过` + `开工快照: <tag>`）
-       ★ `V-258`：看的是"**最近一次有结果的那轮**"（`lastRes`），不是"正在跑这轮"
-       ★ `V-269`：纯问答那轮（`kind="chat"`）措辞跟着换 —— 它没"验收"这回事。 */
-    lastText(){
+    /* ★ 底部状态条（`lastText` / `lastIcon` / `lastColor` / `tokLine`）整段删了 ——
+       那条状态条已并进输入区工具行（token 进度条 + 快照在聊天记录里回退），界面上不再有它。 */
+    tokenUsedMillions(){
       this.A.rev;
-      if (!this.lastRes) return "还没跑过";
-      if (this.lastRes.kind === "chat") return this.resultOk ? "上次已回答" : "上次没通过";
-      return this.resultOk ? "上次通过" : "上次未通过";
+      const u = this.A.running ? (this.A.liveUsage || this.usage) : (this.usage || this.A.liveUsage);
+      const n = Number((u && u.total_tokens) || 0) / 1000000;
+      return (u && u.estimated ? "≈" : "") + (n < 10 ? n.toFixed(2) : n.toFixed(1));
     },
-    lastIcon(){
+    tokenLimitMillions(){
       this.A.rev;
-      if (!this.lastRes) return "circle-slash";
-      return this.resultOk ? "check" : "x-circle";
+      const n = Number(this.A.maxTokens || 0) / 1000000;
+      return n < 10 ? n.toFixed(2) : n.toFixed(1);
     },
-    lastColor(){
+    tokenPct(){
       this.A.rev;
-      if (!this.lastRes) return "var(--aib-text-light)";
-      return this.resultOk ? "var(--aib-success)" : "var(--aib-danger)";
-    },
-    snapId(){
-      this.A.rev;
-      const s = this.lastRes && this.lastRes.snapshot;
-      return (s && s.id) || "";
-    },
-    /* 底部状态条右半边：`Token 消耗: 输入 / 输出 / 合计`（照稿子那三个数）
-       ★ `V-257`：数字大了换中文单位（万/亿），精确值放 `title`。 */
-    tokLine(){
-      this.A.rev;
-      const u = this.usage;
-      if (!u) return "— / — / —";
-      return cntok(u.prompt_tokens) + " / " + cntok(u.completion_tokens) + " / " +
-             cntok(u.total_tokens);
+      const u = this.A.running ? (this.A.liveUsage || this.usage) : (this.usage || this.A.liveUsage);
+      const limit = Number(this.A.maxTokens || 0);
+      return limit > 0 ? Math.max(0, Math.min(100, Math.round(Number((u && u.total_tokens) || 0) * 100 / limit))) : 0;
     },
     tokTip(){
       this.A.rev;
-      const u = this.usage;
-      if (!u) return "";
-      return "输入 " + (u.prompt_tokens || 0) + " · 输出 " + (u.completion_tokens || 0) +
-             " · 合计 " + (u.total_tokens || 0) + " token";
+      const u = (this.A.running ? (this.A.liveUsage || this.usage) : (this.usage || this.A.liveUsage));
+      if (!u) return "这一轮还没烧 token（或者还没跑）";
+      return (u.estimated ? "≈ " : "") + "输入 " + (u.prompt_tokens || 0) + " · 输出 " +
+             (u.completion_tokens || 0) + " · 合计 " + (u.total_tokens || 0) + " token" +
+             (u.estimated ? "（网关没回 usage，这是按字数估的）" : "");
     },
+    /* ★ `V-319`：**待允许那一行**显示什么（目录尾巴 + 它要读还是要写） */
+    permPendingLabel(){
+      this.A.rev;
+      const p = this.A.perm;
+      if (!p) return "";
+      const bits = String(p.path || "").split(/[\\/]/).filter(Boolean);
+      const tail = bits.length ? bits[bits.length - 1] : String(p.path || "");
+      return tail + (p.need === "read" ? "（读）" : "");
+    },
+    /* ★ `V-316`/`V-320`：权限那一块的显示（照稿子）。
+       · `permBadge` = 标题旁边那颗小胶囊（「可写 N 处」；放手时写「已放手」）
+       · `wild`      = 「任意路径」那一行勾了写（放手：危险操作也不再问）
+       · `confirmAsk`= `kind=confirm` 的那张卡 —— 它渲染在**权限卡上半段**（不另弹卡片） */
+    allowOn(){ this.A.rev; return (this.A.allow || []).filter(x => x.write).length; },
+    permBadge(){
+      this.A.rev;
+      if (this.A.wild) return "已放手";
+      const n = (this.A.allow || []).filter(x => x.write).length;
+      return n ? ("可写 " + n + " 处") : "只读";
+    },
+    confirmAsk(){
+      this.A.rev;
+      const a = this.A.ask;
+      return (a && a.kind === "confirm") ? a : null;
+    },
+    /* ★ `V-333`：那三个"请求条上显示什么"的 computed（`reqWait` / `reqWhy` / `reqText`）
+       跟着那条请求段一起删了 —— 请求现在长在聊天记录的气泡里，文字直接用步骤行自己的
+       `brief` / `why`（宿主插的那条记录行）。 */
+    /* ★ `V-323`：清单里**只画已经批过的**那一份（`pending` 是宿主给闸用的登记，
+       不往界面上摆 —— 请求在聊天记录那条气泡里问）。 */
+    allowRows(){
+      this.A.rev;
+      return (this.A.allow || []).filter(x => !x.pending);
+    },
+    /* ★ `V-307`：历史下拉里那几条 —— 正在跑的 / 上次没跑完的要能一眼看出来。 */
+    runLabel(){
+      return r => {
+        const mark = r.interrupted ? "⚠ 上次没跑完 · " : (r.ok ? "✅ " : "✗ ");
+        return mark + String(r.task || "（没写任务）").slice(0, 60) +
+               (r.interrupted ? "（记录还在，能接着聊）" : "");
+      };
+    },
+    /* ★ `V-328`：加目录那一格 —— 填的不是路径就**当场标红、按钮变灰**（别等点了才报错）。
+       ★★ `V-329` 的血：这三个**必须放 computed**。`V-328` 我一时顺手写进了 `methods`，
+       而模板里是**不带括号**用的（`addPathBad` / `canAddPath` / `addPathHint`）——
+       取到的是**函数本身**（永远真值）⇒ 那行红字永远显示，而它渲染出来就是
+       `function () { [native code] }`（你截图里看到的那一句）。
+       规矩：**computed 在模板里不带括号；methods 必须带括号**（写错就是今天这样）。 */
+    addPathBad(){
+      this.A.rev;
+      const s = String(this.A.newPath || "").trim();
+      return !!s && !addPathOk(s);
+    },
+    canAddPath(){ this.A.rev; return addPathOk(this.A.newPath); },
+    /* 这句提示**写在脚本里**（不塞进模板）—— 模板是模板字符串，
+       里面写 `\\` 要数好几层转义，很容易渲染成少一个反斜杠的样子。 */
+    addPathHint(){ return "要填完整的绝对路径（像 D:\\项目\\我的包 那样）"; },
+    /* ★ `V-331`：权限卡开不开 = **有请求 或 你钉住了 或 鼠标在它上面**（三种状态的或）。
+       `permFolded` 保留这个名字（预览/探针都在读它），但它现在是**算出来的**
+       —— 所以 `window.__AIR.permFolded` 读不到了，改读 DOM 的 `.folded` 类（预览那边已经改）。 */
+    permAsk(){ this.A.rev; return !!(this.A.perm || this.confirmAsk); },
+    /* ★ `V-334`：`permOpen` **不再看有没有请求** —— `V-333` 起请求长在聊天记录里，
+       卡片只认"鼠标放上来 / 你点过钉住"（用户要的就是这个：请求别再把这张卡顶开）。 */
+    permOpen(){ this.A.rev; return !!this.A.permPinned || !!this.A.permHover; },
+    permFolded(){ this.A.rev; return !this.permOpen; },
   },
   watch: {
     /* ★ `V-252`：步骤/结论来了就**跟着往下滚**（agent 控制台该有的样子）。
@@ -742,13 +1000,206 @@ const MossAi = {
     "A.result"(){ this.followLog(); },
     /* ★ `V-258`：新起一轮、翻历史、清空 —— 日志内容变了就跟着滚到底 */
     "A.turns"(){ this.followLog(); },
+    /* ★ `V-321`：**它一要权限就自动展开**（你原话：折叠以后显示一行最重要的信息，
+       要跟我们要权限就自动展开提示）。
+       ★ `V-331`：现在"展开"不是靠改一个开关，而是 `permOpen` 把"有请求"算进去 ——
+       所以这里只要**把钉子拔掉**：请求处理完（`A.perm` 变空）它就自然回到"放上来才展开"。 */
+    "A.perm"(v){ if (v && AIR.permPinned){ AIR.permPinned = false; AIR.rev++; } },
+    /* ★ `V-331`：**出现别的问答**（那张带选项的卡）时，权限卡**折起来**（你说："这个也要给他折叠起来"） */
+    "A.ask"(v){
+      if (v && (AIR.permPinned || AIR.permHover)){ AIR.permPinned = false; AIR.permHover = false; AIR.rev++; }
+    },
     /* ★ `V-253`：需求被别处改过（「重跑」填回输入框 / 「清空」清掉）⇒ 文本域重新量一次高度 */
     "A.task"(){ this.$nextTick(() => this.autoGrow()); },
   },
   methods: {
-    stop: aiStop,
+      stop: aiStop,
+      async openDir(path){
+        if (!path) return;
+        const rel = "abs/" + path.replace(/\\/g, "/");
+        const r = await window.pywebview.api.fs_open_default(rel);
+        if (r && !r.ok) toast(r.msg, true);
+      },
     saveBudget: aiSaveBudget,
     refresh(){ aiRefreshInfo(true); },          // 那颗「刷新」= 重新问一次宿主（不吃缓存）
+    /* ---- ★ V-316：权限清单（读 / 写 两个勾，没有"模式"了） ---- */
+    toggleAllow(){ /* `V-316`：清单现在**常驻**在左边那一栏，没有"展开/收起"了 */ },
+    /* ★ `V-321`/`V-331`：折 / 展那一行 —— 现在平时是"鼠标放上来就展开"，
+       点一下 = **钉住**（再点一下取消）；它在等你点头的时候不给折（那就没法点允许了）。 */
+    togglePerm(){
+      if (this.permAsk) return;
+      AIR.permPinned = !AIR.permPinned;
+      AIR.rev++;
+    },
+    permHoverIn(){ if (!AIR.permHover){ AIR.permHover = true; AIR.rev++; } },
+    permHoverOut(){ if (AIR.permHover){ AIR.permHover = false; AIR.rev++; } },
+    allowAdd(){ aiAllowAdd(); },
+    allowSet(it, field, on){ aiAllowSet(it, field, on); },
+    /* ★ `V-323`：上面那一条请求的「允许 / 拒绝」：
+       · 危险确认（kind=confirm）⇒ 把选择交回宿主（它那边阻塞等着）
+       · 要目录权限（`A.perm`）⇒ 允许 = 当场把这条加进清单（要写就读写一起给）；
+         拒绝 = 把宿主登记的 `pending` 那条删掉（闸那边就判"拒绝"）
+       ★ 顺序照用户说的：**允许 ⇒ 这条请求消失、目录出现在下面的清单里；
+         拒绝 ⇒ 这条请求消失，清单里什么都不加**（闸会如实体回它"不许"）。 */
+    async reqAllow(){
+      if (this.confirmAsk){ return this.answer("允许", ""); }
+      const p = this.A.perm;
+      if (!p) return;
+      return this.grantPerm(p.need === "read" ? "read" : "write", true);
+    },
+    async reqDeny(){
+      if (this.confirmAsk){ return this.answer("拒绝", ""); }
+      if (this.A.perm){ return this.denyPerm(); }
+      return undefined;
+    },
+    /* ★ `V-319`：**允许**它用这个目录（请求条上那颗「允许」走这里） */
+    async grantPerm(field, on){
+      const p = this.A.perm;
+      if (!p || !on) return;                       // 取消勾选在这条上没意义（那条还没批）
+      try{
+        const got = await window.pywebview.api.ai_allow(p.path, true, field === "write", "", "add");
+        toast((got && got.msg) || "放行了", !(got && got.ok));
+      }catch(e){ toast("没成：" + (e && e.message ? e.message : e), true); }
+      await aiRefreshInfo(true);
+    },
+    /* ★ `V-319`/`V-325`：**拒绝那一条请求** —— `action="deny"` 只在宿主那边记一笔
+       （清单**一个字都不动**：用户之前批过的读还得留着），闸当场就判"拒绝"。
+       以前是"把那一行删掉"—— 第二次来要写权限时那一行本来就存在，删了等于把读也一起收了。 */
+    async denyPerm(){
+      const p = this.A.perm;
+      if (!p) return;
+      try{
+        const got = await window.pywebview.api.ai_allow(p.path, null, null, "", "deny");
+        toast((got && got.msg) || "拒绝了", !(got && got.ok));
+      }catch(e){ toast("没成：" + (e && e.message ? e.message : e), true); }
+      await aiRefreshInfo(true);
+    },
+    allowRm(it){ aiAllowRm(it); },
+    allowPick(){ aiAllowPick(); },
+    /* 清单里那一行怎么显示：当前那个包 → `:包名 当前这个包`；`*` → 任意路径；别的按路径尾巴 */
+    permLabel(it){
+      if (!it) return "";
+      if (it.path === "*") return "任意路径";
+      const t = this.target;
+      const norm = s => String(s || "").replace(/[\\/]+$/, "").toLowerCase();
+      // ★ 符号走 `this.pSym()`（`mountVue` 的 globalProperties）—— 方法体里**读不到**
+      //   模板那种全局（`V-252` 的血：这一页不做 `with(this)` 回退）
+      if (t && norm(it.path) === norm(t)) return this.pSym() + ((aiPackage() || {}).id || "") + "　当前这个包";
+      const bits = String(it.path).split(/[\\/]/).filter(Boolean);
+      return bits.length ? bits[bits.length - 1] : it.path;
+    },
+    permWhy(it){ return (it && it.why) || ""; },
+    /* 路径下面那行小字（稿子里是「当前工作包」/「默认安全策略」那种说明）
+       ★ 这是 **methods**（带参数）—— computed 不收参数，写错就是「xxx is not a function」 */
+    permDesc(it){
+      if (!it) return "";
+      if (it.pending) return "它想用这里" + (it.why ? ("：" + it.why) : "");
+      if (it.path === "*") return "默认安全策略";
+      const t = this.target;
+      const norm = s => String(s || "").replace(/[\\/]+$/, "").toLowerCase();
+      if (t && norm(it.path) === norm(t)) return "当前工作包";
+      if (it.by === "ai") return "它请求的" + (it.why ? ("：" + it.why) : "");
+      return it.why || "你加的";
+    },
+    /* ---- ★ V-316：历史会话（点图标才开的那一份列表） ---- */
+    toggleHist(){
+      AIR.histOpen = !AIR.histOpen;
+      if (AIR.histOpen){ AIR.permPop = false; aiLoadRuns(); }
+      AIR.rev++;
+    },
+    /* V-340: permission popover (opened from the toolbar button) */
+    togglePermPop(){
+      AIR.permPop = !AIR.permPop;
+      if (AIR.permPop) AIR.histOpen = false;
+      AIR.rev++;
+    },
+    pickChain(c){ AIR.histOpen = false; AIR.pickId = (c && c.tail && c.tail.id) || ""; this.pickSession(); },
+    pickNewChat(){ AIR.histOpen = false; AIR.pickId = ""; this.pickSession(); },
+          /* ★ V-334：删掉**整条会话**（这条链上每一条记录）—— 直接删除，不弹二次确认（用户要求）。 */
+      async delChain(c){
+        const n = (c && c.turns) || 0;
+        const ids = (c && c.ids) || [];
+        if (!ids.length) return;
+        
+        let bad = 0;
+        for (const id of ids){
+          try{
+            const got = await window.pywebview.api.ai_run_forget(id, false, aiWhereDir());
+            if (!got || !got.ok) bad++;
+          }catch(e){ bad++; }
+        }
+        toast(bad ? ("有 " + bad + " 条没删掉") : ("删掉了这条会话（" + n + " 轮）"), !!bad);
+          // AIR.histOpen = false; // 用户要求：连续删除时不要关闭下拉列表
+        // 删掉的正好是现在看的这条 ⇒ 视图清空，重新认领
+        if (ids.indexOf(AIR.pickId) >= 0 || ids.indexOf(AIR.lastId) >= 0){
+          AIR.viewing = ""; AIR.pickId = ""; AIR.contId = ""; AIR.contTask = "";
+          AIR.lastId = ""; AIR.lastAdopted = "";
+          AIR.turns = []; AIR.steps = []; AIR.result = null; AIR.cur = -1;
+        }
+        await aiLoadRuns();
+        AIR.rev++;
+      },
+    chainTitle(c){
+      const t = (c && c.head && c.head.task) || "（没写任务）";
+      return t.length > 34 ? (t.slice(0, 34) + "…") : t;
+    },
+    chainMeta(c){
+      const bits = [];
+      if (c && c.turns > 1) bits.push(c.turns + " 轮");
+      if (c && c.tail && c.tail.interrupted) bits.push("⚠ 上次没跑完");
+      else if (c && c.tail && c.tail.ok) bits.push("✅");
+      const at = (c && c.tail && c.tail.started_text) || "";
+      if (at) bits.push(String(at).slice(5, 16));
+      return bits.join(" · ");
+    },
+    dropEnter(){ if (!AIR.dropHot){ AIR.dropHot = true; AIR.rev++; } },
+    dropLeave(e){
+      // 在子元素之间挪动也会发 dragleave —— 只有真离开这一页才灭掉高亮
+      const to = e && e.relatedTarget;
+      if (to && this.$el && this.$el.contains(to)) return;
+      if (AIR.dropHot){ AIR.dropHot = false; AIR.rev++; }
+    },
+    /* ---- ★ V-308：回答它 / 看提示词 ---- */
+    answer(choice, text, qid){ aiAnswer(choice, text, qid); },
+    openMessages(id){ aiOpenMessages(id); },
+    roleName(r){
+      return {system: "系统提示（它每次开工都收到这一份）", user: "用户 / 工具结果",
+              assistant: "它的回复", tool: "工具结果"}[r] || String(r || "?");
+    },
+    /* 每条消息的抬头那点小信息（工具调用名 / 花了多少字） */
+    msgHead(m){
+      const bits = [];
+      if (m.tool_calls && m.tool_calls.length)
+        bits.push("调用 " + m.tool_calls.map(c => (c.function || {}).name).join("、"));
+      if (m.tool_call_id) bits.push("回给 " + m.tool_call_id);
+      bits.push(((m.content || "").length) + " 字");
+      return bits.join(" · ");
+    },
+    msgText(m){
+      const c = m.content;
+      if (typeof c === "string" && c) return c;
+      if (m.tool_calls && m.tool_calls.length)
+        return m.tool_calls.map(x => (x.function || {}).name + "(" +
+                 String((x.function || {}).arguments || "").slice(0, 800) + ")").join("\n");
+      return "（空）";
+    },
+    async copyMessages(){
+      try{
+        const data = AIR.msgData || {};
+        const text = (data.messages || []).map(m =>
+          "===== " + (m.role || "?") + " =====\n" + this.msgText(m)).join("\n\n");
+        await navigator.clipboard.writeText(text);
+        toast("复制了 " + (data.messages || []).length + " 条");
+      }catch(e){ toast("复制失败：" + (e && e.message ? e.message : e), true); }
+    },
+    /* ---- ★ V-307：滚动条不抢你的（你报的"往上滑就被弹回最下面"） ---- */
+    onLogScroll(){
+      const el = this.$refs.log || (this.$el && this.$el.querySelector(".ai-log"));
+      if (!el) return;
+      const near = (el.scrollHeight - el.scrollTop - el.clientHeight) < 48;
+      if (near !== AIR.stick){ AIR.stick = near; AIR.rev++; }
+    },
+    toBottom(){ AIR.stick = true; this.followLog(true); },
     /* 回退到"开工前"那条快照（`V-236`）。默认 `only="all"`：缺的补上、变了的回退，       多出来的**不动**（和「文件管理 → 快照」里那个「只写回」一个语义）。 */
     rollback(snapIn){
       // ★ `V-257`：这里原来写的是裸 `A` / `target` / `shortPath` —— 那是**模块级/计算属性**
@@ -780,14 +1231,14 @@ const MossAi = {
       this.shake = false;        // 稿子：一开始打字就把"抖"那个状态摘掉
       const ta = this.$refs.ta;
       if (!ta) return;
-      ta.style.height = "56px";
+      ta.style.height = "40px";
       ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
     },
     resetLogs(){
       // ★ `V-258`：清空 = 把**所有轮**清掉（原来只是"从这一轮之后不再显示"，看不到效果）
       AIR.turns = []; AIR.cur = -1;
       AIR.muted = 0;
-      AIR.result = null; AIR.steps = []; AIR.sentTask = ""; AIR.viewing = ""; AIR.pickId = "";
+      AIR.result = null; AIR.steps = []; AIR.sentTask = ""; AIR.viewing = ""; AIR.pickId = ""; AIR.answeredQid = "";
       AIR.task = "";
       AIR.rev++;
       this.$nextTick(() => this.autoGrow());
@@ -857,11 +1308,63 @@ const MossAi = {
        那张 `(说话)` 卡，它和下面的「回答」卡是**同一段话**，画出来就是同一段话出现两遍。
        数据仍在记录里（`steps` 一条不少），只是不摆到脸上。 */
     visSteps(steps){ return (steps || []).filter(s => !s.mute); },
+    /* ★ `V-334`：把那条记录行的 `args`（JSON 文本）安全地变成对象。 */
+    talkArgs(s){
+        const v = s && s.args;
+        let a = null;
+        if (v && typeof v === "object") a = v;
+        else {
+          try { a = JSON.parse(v || "{}"); } catch(e) { a = {}; }
+        }
+        if (a && typeof a === "object" && Array.isArray(a.options)) {
+          // 修复选项为空：Python 后端 options 数组是字符串数组，但前端模板写了 o.label
+          a.options = a.options.map(o => {
+            if (typeof o === "string") return { label: o, value: o };
+            return o;
+          });
+        }
+        return (a && typeof a === "object") ? a : {};
+      },
     turnCards(t){
-      return this.visSteps(t.steps).map((s, i) => ({
-        key: "s" + (s.n || i), icon: this.stepIcon(s.tool), color: this.kindColor(s.tool),
-        action: this.stepTitle(s), tool: s.tool, meta: this.stepMeta(s), path: this.stepPath(s),
-      }));
+      // Render each ask/permission step as an interactive bubble only while its qid is live.
+      return this.visSteps(t.steps).map((s, i) => {
+        const isTalk = s.tool === "ask" || s.tool === "perm";
+        const ta = isTalk ? this.talkArgs(s) : {};
+        const answered = !!s.done || (!!ta.qid && this.A.answeredQids.includes(ta.qid));
+        if (isTalk) return {key: "s" + (s.n || i), type: "talk", tool: s.tool,
+                            step: Object.assign({}, s, {done: answered}), ta};
+        return {key: "s" + (s.n || i), type: "step",
+                icon: this.stepIcon(s.tool), color: this.kindColor(s.tool),
+                action: this.stepTitle(s), tool: s.tool, meta: this.stepMeta(s),
+                path: this.stepPath(s), step: s};
+      });
+    },    /* ---- ★ V-315：点开某一步（原始参数 + 原始输出） ---------------------------
+       ★ 为什么要它（你原话）："它的动作 产出的日志 或者文本 我希望我能点击查看 这样我能更进一步
+         观察它在干什么 对于我来说 它不应该是黑箱操作 应该让我有办法或者工具观察每个细枝末节"。
+       ★ 两处细节都在：`args` 是它填给工具的完整参数（格式化过的 JSON）、`out` 是**它当时看到的
+         那一份结果**（长内容在我们这边截过，卡片里会写明；**没截断的在「提示词」那一层**）。 */
+    openStep(c){
+      const s = (c && (c.step || c)) || null;
+      if (!s) return;
+      AIR.stepOpen = s;
+      AIR.rev++;
+    },
+    stepHead(s){
+      const bits = [];
+      if (s && s.at) bits.push(s.at);
+      if (s && s.ms) bits.push((s.ms / 1000).toFixed(1) + "s");
+      if (s && s.tokens) bits.push((s.est ? "≈" : "") + cntok(s.tokens) + " token");
+      if (s && s.note) bits.push(String(s.note).slice(0, 60));
+      return bits.join(" · ");
+    },
+    async copyStep(){
+      const s = AIR.stepOpen || {};
+      const text = "第 " + s.n + " 步 · " + s.tool + "\n目的：" + (s.why || "") +
+                   "\n\n【参数】\n" + (s.args || "") + "\n\n【输出】\n" + (s.out || "");
+      try{
+        await navigator.clipboard.writeText(text);
+        toast("复制了这一步的原文");
+      }catch(e){ toast("复制失败：" + (e && e.message ? e.message : e), true); }
     },
     doShake(){
       this.shake = false;
@@ -924,16 +1427,22 @@ const MossAi = {
     },
     /* ★ `V-253`（照稿子）：新卡片来了就**滚到底**（稿子里是 `scrollToBottom()`，
        配合 CSS 的 `scroll-behavior:smooth` 做平滑滚动）。
-       ★ 上一版我自己加了个"你往上翻就不抢"的判断 —— 稿子没这规矩，撤掉。 */
-    followLog(){
+       ★★ `V-307` 改回来一条 —— 用户 2026-10-07 报："当我向上滑动聊天记录的时候
+          它总是自动弹回到最下面去"。上一版我按稿子撤掉了"你往上翻就不抢"的判断，
+          结果就是你一边看历史、它一边把你拽回底部。
+       现在的规矩：**只在你本来就贴着底的时候跟滚**；你往上翻了就按住不动，
+       右下角浮一颗「回到最新」，点它才回去（`A.stick`）。
+       `force=true`：你主动点「回到最新」/ 新发一条指令时，无条件滚到底。 */
+    followLog(force){
       // `window.__followN`：探针的把手（无头浏览器里**平滑滚动不跑动画**，量 scrollTop 量不出来，
       // 所以断言"确实喊了跟滚"这一下 —— 真机上配合 CSS 的 scroll-behavior 就是平滑到底）。
+      if (!force && !AIR.stick) return;
       window.__followN = (window.__followN || 0) + 1;
       this.$nextTick(() => {
         const el = (this.$refs && this.$refs.log) ||
                    (this.$el && this.$el.querySelector(".ai-log"));
         if (!el) return;
-        el.scrollTo({top: el.scrollHeight, behavior: "smooth"});
+        el.scrollTo({top: el.scrollHeight, behavior: force ? "auto" : "smooth"});
       });
     },
     openRun(id){ aiOpenRun(id); },
@@ -1027,22 +1536,29 @@ const MossAi = {
     /* ★ `V-257`：token 数大了就换中文单位（万 / 亿）—— 底栏那三个数用 */
     cntok(n){ return cntok(n); },
     /* ★ `V-253`（照稿子）：步骤卡那三样 —— 人话动作 / 右边那格 meta / 里面那行等宽路径。
-       工具名由模板里那个 `b` 显示，别在这儿再拼一遍（不然是"改文件 edit_file edit_file"）。 */
+       工具名由模板里那个 `b` 显示，别在这儿再拼一遍（不然是"改文件 edit_file edit_file"）。
+       ★ `V-307`：**模型自己写的 `why`（这一步的目的）优先** —— 你原话"跑一遍 run_moss
+          我仅凭这个 无法判断它的目的"。它没写就退回按工具名翻译的那句。 */
     stepTitle(s){
+      const why = String((s && s.why) || "").trim();
+      if (why) return why;
       const zh = {list_dir: "读目录", read_file: "读文件", grep: "搜内容", edit_file: "改文件",
                   write_file: "写文件", run_moss: "跑一遍", spec: "查契约", done: "收尾",
-                  snap_clean: "清快照"};
+                  snap_clean: "清快照", ask: "问了你一句", allow_path: "请求放行目录"};
       const name = (s && s.tool) || "";
       if (zh[name]) return zh[name];
       // ★ `V-280`：它自己造的手 —— 认出来就明说，别混进"其它"
       if (this.selfNames[name]) return "用自制工具";
       return "其它";
     },
-    /* 右边那格（稿子里是"共 89 行, 这是 1-89 行"或时间）：我们的 note 就是这类信息 */
+    /* 右边那格（稿子里是"共 89 行, 这是 1-89 行"或时间）。
+       ★ `V-307`：**每一步的时间点**（你原话"它没有显示每个步骤的时间点"）+ 耗时 + 烧的 token。 */
     stepMeta(s){
       const bits = [];
+      if (s && s.at) bits.push(String(s.at));
+      if (s && s.ms >= 300) bits.push((s.ms / 1000).toFixed(1) + "s");
       if (s && s.note) bits.push(String(s.note));
-      if (s && s.ms >= 500) bits.push((s.ms / 1000).toFixed(1) + "s");
+      if (s && s.tokens) bits.push((s.est ? "≈" : "") + cntok(s.tokens) + " tok");
       if (!bits.length && s && s.n) bits.push("第 " + s.n + " 步");
       return bits.join(" · ");
     },
@@ -1130,12 +1646,13 @@ const MossAi = {
     AIR.tick = setInterval(() => {
       const p = aiPackage();
       const id = (p && p.id) || "";
-      const where = AIR.where;
       /* ★ `V-251`：**换了干活的地方 = 换了一条会话** —— 会话是"一个包一条"，
          切包时必须把接着聊那件事清掉（不然会把别的包的对话塞进这次任务），
-         然后去认领新包上次跑的那条。 */
-      if (id !== AIR.curId || where !== AIR.curWhere){
-        AIR.curId = id; AIR.curWhere = where;
+         然后去认领新包上次跑的那条。
+         ★ `V-315`：干活的地方**就是选中的那个包**（"在哪干活"那个下拉去掉了）——
+         所以这里只看 `id` 变没变。 */
+      if (id !== AIR.curId){
+        AIR.curId = id;
         AIR.contId = ""; AIR.contTask = ""; AIR.viewing = "";
         AIR.steps = []; AIR.result = null; AIR.lastId = ""; AIR.lastAdopted = "";
         AIR.sentTask = ""; AIR.muted = 0; AIR.pickId = "";
@@ -1147,15 +1664,43 @@ const MossAi = {
     }, 700);
     /* ★ `V-253`（照稿子）：刚进来时文本域是 56px，等一帧量一下（内容长的话自动长高） */
     this.$nextTick(() => this.autoGrow());
+    /* ★ `V-307`：滚动监听 —— 判"你是不是贴着底"，决定跟不跟滚（你往上翻就不许抢） */
+    this._sc = () => this.onLogScroll();
+    this.$nextTick(() => {
+      const el = this.$refs.log || (this.$el && this.$el.querySelector(".ai-log"));
+      if (el) el.addEventListener("scroll", this._sc, {passive: true});
+      this.onLogScroll();
+    });
+    /* ★ `V-307`/`V-316`：**拖一个文件夹到这一页 = 加进权限清单（读+写都开）**。
+       为什么走 `__mossAiDrop` 这个新钩子、不用 `__mossDropHook`：那个是**全局唯一**的，
+       已经被「版本快照 → 导出到」占着（草稿里记着这个坑）—— 共用一个就是看谁后挂。
+       `drop.js` 里多插了一行调它（见那边的注释）。 */
+    window.__mossAiDrop = (items) => {
+      if (typeof tab !== "undefined" && tab !== "ai") return false;
+      const list = items || [];
+      const it = list.filter(x => x && x.path && x.isDir !== false)[0] ||
+                 list.filter(x => x && x.path)[0];
+      if (!it) return false;
+      // 拖的是**文件** ⇒ 放行**它所在的目录**（放行一个文件本身没意义）
+      const p = String(it.path || "");
+      const use = (it.isDir === false) ? p.replace(/[\\/][^\\/]*$/, "") : p;
+      if (!use) return false;
+      AIR.dropHot = false;
+      aiAllowAdd(use);
+      return true;
+    };
     /* ★ `V-261`：Alt 那座"我说过的话"导航 —— 监听挂在 window 上（键盘焦点不一定在这一页里） */
     this._kd = e => this.altDown(e);
     this._ku = e => this.altUp(e);
     window.addEventListener("keydown", this._kd, true);
     window.addEventListener("keyup", this._ku, true);
-    /* ★ V-265：面板开着的时候，**点别处**也收起来（不然它一直挡着日志）*/
+    /* ★ V-265：面板开着的时候，**点别处**也收起来（不然它一直挡着日志）
+       ★ V-316：历史那一下拉同样处理 */
     this._md = e => {
-      if (!AIR.altOn) return;
       const t = e.target;
+      if (AIR.histOpen && !(t && t.closest && t.closest(".ai-hist-wrap"))) AIR.histOpen = false;
+      if (AIR.permPop && !(t && t.closest && t.closest(".ai-perm-wrap"))) AIR.permPop = false;
+      if (!AIR.altOn) return;
       if (t && t.closest && t.closest(".ai-jump")) return;
       AIR.altOn = false;
     };
@@ -1165,43 +1710,26 @@ const MossAi = {
     window.removeEventListener("keydown", this._kd, true);
     window.removeEventListener("keyup", this._ku, true);
     document.removeEventListener("mousedown", this._md, true);
+    // ★ `V-307`：把这一页自己挂的东西摘干净（不然换页之后拖放还会去改放行清单）
+    try{
+      const el = this.$refs.log || (this.$el && this.$el.querySelector(".ai-log"));
+      if (el && this._sc) el.removeEventListener("scroll", this._sc);
+    }catch(e){}
+    if (window.__mossAiDrop) window.__mossAiDrop = null;
+    if (AIR.tick){ clearInterval(AIR.tick); AIR.tick = null; }
   },
   template: `
-  <div class="aiwrap">
+  <div class="aiwrap" @dragover.prevent="dropEnter()" @dragleave="dropLeave($event)">
     <div class="ai-workspace">
 
-      <!-- 顶部配置栏（V-263 精简）：只留**切换会话**（吃掉剩下的宽度）+ **在哪干活**。
-           上限 / 模型都挪到下面输入框那一行了 —— 上面这一条不再换行。 -->
-      <header class="top-toolbar ai-bar">
-        <div class="custom-select grow" title="切换历史会话（一个会话几轮问答只占一条）"
-             @click="openSel($event)">
-          <span v-html='ico("history", "i")'></span>
-          <select class="ai-sess" v-model="A.pickId" :disabled="A.running" @change="pickSession()">
-            <option v-if="sessCurrent" :value="sessCurrent.tail.id"
-                    >当前: {{ (sessCurrent.head.task || "").slice(0, 60) }}{{ sessCurrent.turns > 1 ? ("（" + sessCurrent.turns + " 轮）") : "" }}</option>
-            <option v-for="c in sessOthers" :key="c.head.id" :value="c.tail.id"
-                    >历史: {{ (c.head.task || "").slice(0, 60) }}{{ c.turns > 1 ? ("（" + c.turns + " 轮）") : "" }}</option>
-            <option disabled>──────────</option>
-            <option value="">+ 新建空白会话</option>
-          </select>
-        </div>
 
-        <div class="custom-select" title="在哪干活（v1 只允许写 user_data/pkgs 下面）"
-             @click="openSel($event)">
-          <span v-html='ico("folder-tree", "i")'></span>
-          <select v-model="A.where" :disabled="A.running" @change="refresh()">
-            <option value="pkg" :disabled="!pkg">{{ pkg ? ("当前包 " + pSym() + pkg.id) : "（左边还没选包）" }}</option>
-            <option value="new">整个项目区</option>
-          </select>
-        </div>
-      </header>
 
       <p class="ai-warn" v-if="A.err">⚠ {{ A.err }}</p>
       <p class="ai-warn" v-else-if="!ready">⚠ {{ (info && info.why) || "还没配好 AI —— 去「设置 → AI」挑一家、把 key 填上（或 moss --ai-profile-set）。" }}</p>
       <p class="ai-warn" v-if="missing.length">⚠ 提示词文件缺了：{{ missing.join("、") }} —— 在 <code>system/ui/ai/prompts/</code> 或 <code>user_data/ai/prompts/</code> 里补上（不补也跑，只是 AI 少了那几条规矩）。</p>
-      <p class="ai-warn" v-if="target && !canWrite && A.where === 'pkg'">
-        ⚠ 这个包在 <code>system/</code> 下面 —— <b>它改不了</b>（v1 只许写 <code>user_data/pkgs/**</code>）。
-        想让 AI 真动手：把上面「在哪干活」换成整个项目区，或者选一个装在 <code>user_data/pkgs</code> 里的包。
+      <p class="ai-warn" v-if="target && !canWrite">
+        ⚠ 这个包在 <code>system/</code> 下面 —— <b>默认它改不了</b>。想让它真动手：
+        在左下角那份「权限」清单里，把这一行的<b>「写」勾上</b>（或者点「选目录…」把它加进来）。
       </p>
 
       <!-- ★ V-280/V-281：**技能** —— 用户平时看不到这一层（不在插件页、不是 :别名、不算包），
@@ -1249,62 +1777,151 @@ const MossAi = {
         </div>
       </section>
 
-      <!-- 中间日志流（V-263：**不再重复显示会话名** —— 顶栏那个下拉已经写着当前会话了） -->
+      <!-- ★ V-316：**放行清单那一块搬到下面左栏去了**（你原话：「左侧放这个放行这里」）——
+           这里不再有独立的「放行」面板，也没有「展开/收起」：权限就是下面左栏那份清单。 -->
+
+      <!-- ★ 「V-333」：**原来那张浮在输入框上面的问答卡整张删了** —— 你原话："申请权限 和复选框
+           和用户交互的部分 直接在聊天记录上进行渲染交互 … 那些弹窗就没了 也没有和聊天记录的重叠
+           问题了"。现在：问题 / 选项 / 「就这么回」/ 允许·拒绝，全部长在**聊天记录里那条气泡**上
+           （见上面 「ai-turn」 里 「type === 'talk'」 那一段），答完那条记录里就写着你的选择。 -->
+
+      <!-- 中间日志流（V-263：**不再重复显示会话名** —— 顶栏那个下拉已经写着当前会话了）
+           ★ 「V-333」：原来那层"给聊天区盖遮罩"（「V-332」）**撤了** —— 交互已经搬进聊天记录里，
+             再压暗就等于把要点的东西一起压暗了。 -->
       <main class="log-container ai-log" ref="log">
-        <!-- ★ V-258/263：日志按轮排 —— 一轮 = 一行「#N 用户对话 + 那句话」+ 它的步骤卡 + 它的结论卡。
-             点这一行就把这一轮折叠/展开。★ 这一行**做成一行的细条**（不再占两行）。 -->
+        <!-- ★ V-258/263：日志按轮排 —— 一轮 = 我说的那句 + 它的动作 + 它的结论。
+             ★ 「V-333」（你原话："整体改成那种微信气泡泡的风格 把我说的 和ai说的 以及 其他内容信息
+               分开 且给各自不同的图标 … 那些弹窗就没了 也没有和聊天记录的重叠问题了 我选择以后
+               后续我翻看聊天记录 也能看我之前的选择"）：
+               · **我说的** = 右边蓝色气泡（「moss-user」 图标）；
+               · **它说的**（问题 / 请求放行 / 结论）= 左边白气泡（「sparkles」 图标），
+                 要你点头的那种气泡里**直接带按钮 / 选项 / 输入框**；
+               · **其他信息**（它调了什么工具）= 整宽的淡底小条（各自的工具图标）。
+               权限请求和问答现在**都是聊天记录里的一条**（宿主把它记进步骤流，答完写回同一条）。 -->
         <div class="ai-turn" v-for="(t, ti) in A.turns" :key="t.key">
-          <!-- V-264：这一行不写「用户对话」（白占宽度）——靠底色说明这是用户说的 -->
-          <div class="ai-th" @click="toggleTurn(ti)"
-               :title="t.folded ? '点一下展开这一轮' : '点一下折叠这一轮'">
-            <b class="ai-th-n">#{{ ti + 1 }}</b>
-            <span class="ai-th-t">{{ t.task }}</span>
-            <span class="ai-th-a" :title="t.note || t.at"
-                  :class="{bad: /接不上/.test(t.note || '')}"
-                  >{{ t.folded ? "已折叠 · 点一下展开" : (t.note || t.at || "") }}</span>
-            <!-- ★ V-279：这一轮的「改」和「删」。
-                 · 都带 @click.stop —— 不然会顺手把这一轮折叠掉（父层是折叠开关）。
-                 · 「改」= 回到**这一轮自己的开工快照**（撤销它的改动），并把这句原话填回输入框；
-                   填好之后发出去 = 从上一轮接着重跑（contId 指向前一轮）—— 这就是改了再来一遍。
-                 · 「删」= 删掉**这一轮以及它之后**的记录（只允许从链尾往回连续删），并按快照回退。
-                 · 跑着的时候不给点（改一半把地基抽了，那才叫乱）。 -->
-            <span class="ai-th-x" v-if="t.id && !A.running">
-              <button @click.stop="editTurn(t)"
-                      title="改这一轮：回到它开工前的快照（撤销它改的东西），并把这句话填回输入框 —— 改好再发一次">编辑</button>
-              <button class="danger" @click.stop="delTurn(t)"
-                      title="删这一轮：从这一轮到会话末尾的记录一起删掉，并按快照回退">删除</button>
-            </span>
+          <div class="ai-bub me">
+            <span class="ai-bub-ic" v-html='ico("moss-user", "i")'></span>
+            <div class="ai-bub-b">
+              <div class="ai-bub-h">
+                <b class="ai-th-n">#{{ ti + 1 }}</b>
+                <span class="ai-th-a" :title="t.note || t.at"
+                      :class="{bad: /接不上/.test(t.note || '')}"
+                      >{{ t.folded ? "已折叠 · 点一下展开" : (t.note || t.at || "") }}</span>
+                <!-- ★ V-279：这一轮的「改」和「删」（带 @click.stop，不然会顺手折叠掉） -->
+                <span class="ai-th-x" v-if="t.id && !A.running">
+                  <button @click.stop="editTurn(t)"
+                          title="改这一轮：回到它开工前的快照（撤销它改的东西），并把这句话填回输入框 —— 改好再发一次">编辑</button>
+                  <button class="danger" @click.stop="delTurn(t)"
+                          title="删这一轮：从这一轮到会话末尾的记录一起删掉，并按快照回退">删除</button>
+                </span>
+              </div>
+              <div class="ai-bub-t" @click="toggleTurn(ti)"
+                   :title="t.folded ? '点一下展开这一轮' : '点一下折叠这一轮'">{{ t.task }}</div>
+            </div>
           </div>
 
           <template v-if="!t.folded">
-            <div class="step-card ai-step" v-for="c in turnCards(t)" :key="c.key"
-                 :class="'k-' + toolKind(c.tool)" :data-tool="c.tool || ''">
-              <div class="step-icon" v-html='ico(c.icon, "i")'></div>
-              <div class="step-content">
-                <div class="step-header">
-                  <span class="step-action" :style="{color: c.color}">{{ c.action }} <b>{{ c.tool }}</b></span>
-                  <span class="step-meta">{{ c.meta }}</span>
-                </div>
-                <span class="code-path" v-if="c.path">{{ c.path }}</span>
-              </div>
-            </div>
+            <template v-for="c in turnCards(t)" :key="c.key">
+              <!-- ① 它说的（问 / 求放行）：**按钮就长在这条气泡里** -->
+              <div class="ai-bub ai talk" v-if="c.type === 'talk'" :class="{waiting: !c.step.done}">
+                <span class="ai-bub-ic"
+                      v-html='ico(c.step.tool === "perm" ? "file-lock" : (c.ta.kind === "confirm" ? "alert-triangle" : "message-circle"), "i")'></span>
+                <div class="ai-bub-b">
+                  <div class="ai-bub-h">
+                    <b>{{ c.step.tool === "perm" ? "它想放行一个目录" : (c.ta.kind === "confirm" ? "危险操作" : "它在问你") }}</b>
+                    <span class="dim" v-if="!c.step.done && c.ta.qid && A.ask && A.ask.qid === c.ta.qid">
+                      已经等了 {{ A.ask.asking }} 秒</span>
+                    <span class="dim" v-else-if="!c.step.done && c.ta.path && A.perm && A.perm.path === c.ta.path">
+                      已经等了 {{ A.perm.asking }} 秒</span>
+                  </div>
+                                      <p class="ai-bub-q" v-if="c.step.tool === 'perm'">
+                      请求放行目录：<br>
+                      <span @click="openDir(c.ta.path)" style="cursor: pointer; text-decoration: underline; color: var(--accent); word-break: break-all;" title="在资源管理器中打开">{{ c.ta.path }}</span>
+                    </p>
+                    <p class="ai-bub-q" v-else>{{ c.step.brief }}</p>
+                  <p class="ai-bub-w" v-if="c.step.why">为什么：{{ c.step.why }}</p>
+                  <p class="ai-bub-w" v-if="c.ta.detail">{{ c.ta.detail }}</p>
 
-            <div class="ai-result" v-if="t.result" :class="{ok: !!t.result.ok, bad: !t.result.ok}">
-              <div class="ai-rhead"><span v-if="A.viewing" class="ai-old">历史记录</span>{{ rhead(t.result) }}<span
-                v-if="rshowReason(t.result)"> —— {{ t.result.reason }}</span></div>
-              <div class="ai-rsnap" v-if="t.result.snapshot">
-                <span>开工前已存快照 <code>{{ t.result.snapshot.id }}</code>（AI 存的，列表里带「AI」徽章）</span>
-                <button class="btn btn-outline" @click.stop="rollback(t.result.snapshot)"
-                        title="回到这次动手之前（只写回：缺的补上、变了的回退）">回退到开工前</button>
+                  <!-- 还没答：给动作（和以前那张卡一模一样的三条路：选项 / 打字 / 允许拒绝） -->
+                  <div class="ai-bub-a" v-if="!c.step.done">
+                    <template v-if="c.step.tool === 'perm'">
+                      <button class="btn btn-primary" :disabled="A.askBusy" @click="reqAllow()"
+                              v-html='ico("check", "i") + " 允许"'></button>
+                      <button class="btn btn-danger" :disabled="A.askBusy" @click="reqDeny()"
+                              v-html='ico("x", "i") + " 拒绝"'></button>
+                    </template>
+                    <template v-else>
+                      <button class="ai-ask-opt" v-for="o in (c.ta.options || [])" :key="o.value"
+                              :disabled="A.askBusy" @click="answer(o.value, A.askText, c.ta.qid)">
+                        <span class="ai-ask-opt-t">{{ o.label }}</span>
+                        <span class="ai-ask-opt-d" v-if="o.desc">{{ o.desc }}</span>
+                      </button>
+                      <div class="ai-ask-t" v-if="c.ta.allow_text">
+                        <input v-model="A.askText" spellcheck="false" :disabled="A.askBusy"
+                               placeholder="也可以直接打字回它（回车发送）"
+                               @keydown.enter.prevent="answer('', A.askText, c.ta.qid)">
+                        <button class="ai-ask-send" :disabled="A.askBusy"
+                                @click="answer('', A.askText, c.ta.qid)">就这么回</button>
+                      </div>
+                    </template>
+                  </div>
+
+                  <!-- 答完了：这条记录里写着**你当时选了什么**（翻旧会话照样看得见） -->
+                  <!-- 答完了：候选项照稿子排成胶囊（选中的那颗高亮打勾），回答跟在后面 -->
+                  <div class="ai-bub-ans" v-else>
+                    <div class="ai-ask-history" v-if="c.step.tool === 'ask' && c.ta.options && c.ta.options.length">
+                      <span class="ai-ask-history-label">全部候选项：</span>
+                      <span class="ai-ask-history-opt" v-for="o in c.ta.options" :key="o.value"
+                            :class="{chosen: String(o.value) === String(c.step.answer)}">
+                        {{ o.label }}
+                      </span>
+                    </div>
+                    <span class="ai-bub-mine" v-if="c.step.answer">{{ c.step.answer }}</span>
+                    <span class="ai-bub-note">{{ c.step.out || "（答完了）" }}</span>
+                  </div>
+                </div>
               </div>
-              <p v-if="t.result.summary" class="ai-rsum">{{ t.result.summary }}</p>
-              <p v-if="t.result.caveats" class="ai-rcav">它自己标的不确定：{{ t.result.caveats }}</p>
-              <div v-if="(t.result.files || []).length" class="ai-rfiles">动过的文件：<span
-                v-for="f in t.result.files" :key="f">{{ shortPath(f) }}　</span></div>
-              <div class="ai-rtok" v-if="t.result.usage">
-                token：输入 {{ t.result.usage.prompt_tokens }} / 输出 {{ t.result.usage.completion_tokens }} / 合计 {{ t.result.usage.total_tokens }}
-                （上限 {{ humanTokens(A.maxTokens) }}）
-                <span v-if="t.result.folded">· 折叠了 {{ t.result.folded }} 条旧结果</span>
+
+              <!-- ② 其他信息：它调了什么工具（整宽淡底一条，图标各自不同） -->
+              <div class="step-card ai-step" v-else
+                   :class="'k-' + toolKind(c.tool)" :data-tool="c.tool || ''"
+                   @click="openStep(c)"
+                   :title="'点一下看这一步的原始参数与输出（工具：' + (c.tool || '?') + '）'">
+                <div class="step-icon" v-html='ico(c.icon, "i")'></div>
+                <div class="step-content">
+                  <div class="step-header">
+                    <span class="step-action" :style="{color: c.color}">{{ c.action }} <b>{{ c.tool }}</b></span>
+                    <span class="step-meta">{{ c.meta }}</span>
+                  </div>
+                  <span class="code-path" v-if="c.path">{{ c.path }}</span>
+                </div>
+                <span class="ai-step-x" v-html='ico("eye", "i")'
+                      title="点一下看这一步的原始参数与输出"></span>
+              </div>
+            </template>
+
+            <!-- ③ 它说的（结论）：左边白气泡 -->
+            <div class="ai-bub ai" v-if="t.result">
+              <span class="ai-bub-ic" v-html='ico("sparkles", "i")'></span>
+              <div class="ai-bub-b">
+                <div class="ai-result" :class="{ok: !!t.result.ok, bad: !t.result.ok}">
+                  <div class="ai-rhead"><span v-if="A.viewing" class="ai-old">历史记录</span>{{ rhead(t.result) }}<span
+                    v-if="rshowReason(t.result)"> —— {{ t.result.reason }}</span></div>
+                  <div class="ai-rsnap" v-if="t.result.snapshot">
+                    <span>开工前已存快照 <code>{{ t.result.snapshot.id }}</code>（AI 存的，列表里带「AI」徽章）</span>
+                    <button class="btn btn-outline" @click.stop="rollback(t.result.snapshot)"
+                            title="回到这次动手之前（只写回：缺的补上、变了的回退）">回退到开工前</button>
+                  </div>
+                  <p v-if="t.result.summary" class="ai-rsum">{{ t.result.summary }}</p>
+                  <p v-if="t.result.caveats" class="ai-rcav">它自己标的不确定：{{ t.result.caveats }}</p>
+                  <div v-if="(t.result.files || []).length" class="ai-rfiles">动过的文件：<span
+                    v-for="f in t.result.files" :key="f">{{ shortPath(f) }}　</span></div>
+                  <div class="ai-rtok" v-if="t.result.usage">
+                    token：输入 {{ t.result.usage.prompt_tokens }} / 输出 {{ t.result.usage.completion_tokens }} / 合计 {{ t.result.usage.total_tokens }}
+                    （上限 {{ humanTokens(A.maxTokens) }}）
+                    <span v-if="t.result.folded">· 折叠了 {{ t.result.folded }} 条旧结果</span>
+                  </div>
+                </div>
               </div>
             </div>
           </template>
@@ -1324,28 +1941,127 @@ const MossAi = {
                                         humanTokens(A.compactAt) + '（' + ctxPct + '%）') : '')) : ''">
           <div class="pulse-dot"></div> AI 正在思考并执行...
         </div>
+
+        <!-- ★ V-307：**你往上翻的时候它不许把你拽回底部**（你报的那条）。
+             不跟滚的时候右下角浮一颗「回到最新」，点它才回去、并且重新跟上。 -->
+        <button class="ai-tobottom" v-if="!A.stick" @click="toBottom()"
+                :title="'有新内容 —— 点一下回到最新（你往上翻的时候它不会抢你的滚动条）'"
+                v-html='ico("chevron-down", "i") + " 回到最新"'></button>
       </main>
 
-      <!-- 底部输入与状态栏 -->
-      <footer class="bottom-area ai-foot">
-        <div class="prompt-box ai-box" :class="{focused: focused, 'error-shake': shake}">
-          <textarea class="prompt-textarea ai-task" ref="ta" v-model="A.task" spellcheck="false"
-            :disabled="A.running" @input="autoGrow" @focus="focused = true" @blur="focused = false"
-            @keydown="onKey"
-            placeholder="在此输入指令... (按 Enter 发送，Shift+Enter 换行)"></textarea>
+      <!-- ★ V-340：**所有按钮和信息都收进下面这一条工具栏**（照新稿子重排）——
+           顶上那条"历史图标"栏、左下角那张常驻权限卡都撤了，改成两个**点开才出的浮层**：
+             · 历史会话（点一条切过去；行尾垃圾篓直接删）
+             · 目录权限（粘路径 / 选目录 / 读·写开关 / 删）
+           中间日志流因此拿回整幅宽度，整页只剩「聊天 + 一条输入工具栏」两层。 -->
+      <footer class="bottom-area ai-foot ai-split">
+        <div class="chat-input-container ai-box ai-right" :class="{focused: focused, 'error-shake': shake}">
+          <div class="input-area">
+            <textarea class="prompt-textarea ai-task" ref="ta" v-model="A.task" spellcheck="false"
+              :disabled="A.running" @input="autoGrow" @focus="focused = true" @blur="focused = false"
+              @keydown="onKey"
+              placeholder="在此输入指令... (按 Enter 发送，Shift+Enter 换行)"></textarea>
+          </div>
 
-          <div class="prompt-toolbar">
-            <!-- ★ V-263：**token 上限靠左**（原来在顶栏）；提示语那句去掉了 -->
-            <div class="token-input-group ai-bud"
-                 :title="'token 上限（单位：百万）。默认 100 = 1 亿 token。烧到 ' + humanTokens(A.warnTokens) + ' 时劝它收尾，到顶就停手。'">
-              <span v-html='ico("gauge", "i")'></span> token 上限
-              <input type="number" step="10" min="0.5" max="20000" value="100" class="ai-bud-n"
-                     v-model.number="A.maxMillions" :disabled="A.running" @change="saveBudget()"> 百万
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <!-- Token：消耗 / 上限（单位一律"百万"），进度条当背景；上限数字可直接改 -->
+              <span class="tool-text ai-bud token-pill" role="progressbar"
+                    :aria-valuenow="tokenPct" aria-valuemin="0" aria-valuemax="100"
+                    :title="tokTip + '；点击上限数字可编辑（单位：百万）'">
+                <span class="token-pill-fill" :style="{width: tokenPct + '%'}"></span>
+                <span class="token-pill-text">{{ tokenUsedMillions }} /
+                  <input class="ai-token-limit ai-bud-n" type="number" min="0.5" max="20000" step="10"
+                         v-model.number="A.maxMillions" :disabled="A.running" @change="saveBudget()"
+                         title="token 上限（单位：百万）：这次任务最多烧多少 token。烧到 80% 时劝它收尾，到顶就停手。" aria-label="token 上限（百万）"> 百万</span>
+              </span>
+
+              <!-- 提示词：只留图标 -->
+              <button class="trigger-btn ai-mini ai-messages-icon" @click="openMessages()"
+                      title="查看这条会话的完整提示词历史"
+                      v-html='ico("file-text", "i")'></button>
+
+              <!-- 历史会话（点开才出） -->
+              <div class="popover-wrapper ai-hist-wrap">
+                <button class="trigger-btn ai-hist" :class="{active: A.histOpen}" @click.stop="toggleHist()"
+                        :title="'历史会话（只列**这个包**的）。现在：' + ((sessCurrent && sessCurrent.head && sessCurrent.head.task) || '新会话')">
+                  <span v-html='ico("history", "i")'></span> 历史会话
+                  <span class="badge" v-if="sessChains.length">{{ sessChains.length }}</span>
+                </button>
+                <div class="popover-panel ai-hist-list" :class="{show: A.histOpen}" v-if="A.histOpen" @click.stop>
+                  <div class="popover-title">当前包的历史<span class="popover-hint">点一条就切过去</span></div>
+                  <div class="history-list">
+                    <div class="history-item ai-hist-i" v-for="c in sessChains" :key="c.head.id"
+                         :class="{active: sessCurrent && (sessCurrent.head.id === c.head.id)}"
+                         :title="(c.head.task || '') + '　' + chainMeta(c)"
+                         @click="pickChain(c)">
+                      <div class="history-item-left">
+                        <span class="status-dot"></span>
+                        <span class="history-item-title ai-hist-t">{{ chainTitle(c) }}</span>
+                      </div>
+                      <div class="history-item-right">
+                        <span class="ai-hist-m">{{ chainMeta(c) }}</span>
+                        <button class="btn-delete ai-hist-x" @click.stop="delChain(c)" title="删除这次会话（它下面所有轮次）"
+                                v-html='ico("trash-2", "i")'></button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 目录权限（点开才出） -->
+              <div class="popover-wrapper ai-perm-wrap ai-perm" :class="{folded: !A.permPop}">
+                <button class="trigger-btn ai-perm-fold" :class="{active: A.permPop}" @click.stop="togglePermPop()"
+                        title="管理它读写哪些目录（点开看清单）">
+                  <span v-html='ico("file-lock", "i")'></span> 目录权限控制
+                  <span class="badge ai-perm-badge">{{ permBadge }}</span>
+                  <span class="dim ai-perm-foldw" v-if="A.perm">· 它想用「{{ permPendingLabel }}」</span>
+                </button>
+                <div class="popover-panel ai-perm-body" :class="{show: A.permPop}" v-if="A.permPop" @click.stop>
+                  <div class="popover-header ai-perm-add" :class="{hot: A.dropHot, bad: addPathBad || !!A.newPathErr}">
+                    <input v-model="A.newPath" spellcheck="false"
+                           placeholder="粘一个目录路径（或把文件夹拖到这一页）"
+                           :title="addPathBad ? ('这不是一个路径 —— ' + addPathHint) : '粘一个目录的完整路径'"
+                           @input="A.newPathErr = ''" @keydown.enter.prevent="allowAdd()">
+                    <button class="btn" @click="allowPick()" title="用系统对话框选一个目录加进来"
+                            v-html='ico("folder-open", "i") + " 选目录"'></button>
+                    <button class="btn" @click="allowAdd()" :disabled="!canAddPath"
+                            :title="canAddPath ? '把这个目录加进清单（读 + 写都开）' : '先填一个存在的目录的完整路径'"
+                            v-html='ico("moss-plus", "i") + " 添加"'></button>
+                  </div>
+                  <p class="ai-perm-err" v-if="addPathBad || A.newPathErr">
+                    <span v-html='ico("circle-alert", "i")'></span>
+                    {{ addPathBad ? addPathHint : A.newPathErr }}
+                  </p>
+                  <div class="path-list">
+                    <div class="path-item ai-perm-i" v-for="it in allowRows" :key="it.path"
+                         :class="{star: it.path === '*'}">
+                      <div class="path-info ai-perm-info" :title="it.path">
+                        <div class="path-title ai-perm-p">{{ permLabel(it) }}</div>
+                        <div class="path-desc ai-perm-d">{{ permDesc(it) }}</div>
+                      </div>
+                      <div class="path-controls ai-perm-togs">
+                        <label class="switch-group ai-sw" :title="'读：勾上它才能看 ' + it.path">读
+                          <span class="switch"><input type="checkbox" :checked="!!it.read"
+                            @change="allowSet(it, 'read', $event.target.checked)"><span class="slider"></span></span>
+                        </label>
+                        <label class="switch-group ai-sw" :title="'写：勾上它才能改 ' + it.path + '（关掉 = 只让它看）'">写
+                          <span class="switch"><input type="checkbox" :checked="!!it.write"
+                            @change="allowSet(it, 'write', $event.target.checked)"><span class="slider"></span></span>
+                        </label>
+                        <button class="btn-delete ai-perm-x" v-if="it.path !== '*'" @click="allowRm(it)"
+                                title="从清单里删掉（它就读不了也写不了这里）" v-html='ico("trash-2", "i")'></button>
+                        <span class="ai-perm-lock" v-else v-html='ico("file-lock", "i")'
+                              title="系统默认那一行，删不掉"></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <span class="sp"></span>
-            <div class="ai-actions">
-              <!-- ★ V-263：**切换模型也挪到这一行**（在清空 / 发送指令左边） -->
-              <div class="custom-select select-model" @click="openSel($event)"
+
+            <div class="toolbar-right ai-actions">
+              <div class="custom-select select-model btn-model" @click="openSel($event)"
                    :title="'这次用哪个模型。这家配了 ' + models.length + ' 个；换模型连带换上下文窗口。'">
                 <span v-html='ico("sparkles", "i")'></span>
                 <select class="ai-model" v-model="A.model" :disabled="A.running || !models.length"
@@ -1354,37 +2070,74 @@ const MossAi = {
                   <option v-if="!models.length" value="">（还没配 AI）</option>
                 </select>
               </div>
-              <!-- ★ V-270：**重新跑** —— 网络断了 / 跑挂了之后，一句原话不用重打。
-                   只在"这个包有跑过的记录"时出现（lastRun 就是干这个用的）。 -->
-              <button class="btn btn-outline" v-if="lastRun && !A.running" @click="again(lastRun)"
-                      :title="'把这句原话填回输入框（' + ((lastRun.task || '').slice(0, 24)) + '…）'"
-                      v-html='ico("refresh-cw", "i") + " 重新跑"'></button>
-              <button class="btn btn-outline" @click="resetLogs()"
-                      v-html='ico("rotate-ccw", "i") + " 清空"'></button>
               <button class="btn btn-outline" v-if="A.running" @click="stop"
                       v-html='ico("square", "i") + " 停止"'></button>
-              <button class="btn btn-primary primary ai-send" :disabled="A.running || A.busy || !ready"
-                      @click="start"
-                      v-html='A.running ? ico("loader-2", "i spin") + " 执行中" : ico("send", "i") + " 发送指令"'></button>
+              <div class="action-group">
+                <button class="action-group-btn btn-new-chat" @click="pickNewChat()"
+                        title="新建空白会话（下一条不带之前的对话）"
+                        v-html='ico("moss-plus", "i")'></button>
+                <button class="action-group-btn btn-send-main btn primary"
+                        :disabled="A.running || A.busy || !ready" @click="start"
+                        title="发送 (Enter)"
+                        v-html='A.running ? ico("loader-2", "i spin") : ico("send", "i")'></button>
+              </div>
             </div>
           </div>
         </div>
+      </footer>
 
-        <div class="status-footer">
-          <div style="display:flex;align-items:center;gap:8px">
-            <span :style="{color: lastColor, fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px'}">
-              <span v-html='ico(lastIcon, "i")'></span> {{ lastText }}
-            </span>
-            <span style="color:var(--aib-border-color)">|</span>
-            <span v-if="snapId">开工快照:
-              <span class="snapshot-tag" title="点击回滚到此快照" @click="rollback()">{{ snapId }}</span></span>
-            <span v-else>开工快照: —</span>
+      <!-- ★ V-315：**点开某一步看原始细节**（参数 + 输出）—— 你原话："它的动作 产出的日志 或者文本
+           我希望我能点击查看 … 它不应该是黑箱操作 应该让我有办法或者工具观察每个细枝末节"。 -->
+      <div class="ai-msgs ai-detail" v-if="A.stepOpen">
+        <div class="ai-msgs-h">
+          <span v-html='ico("search", "i")'></span>
+          <b>第 {{ A.stepOpen.n }} 步 · {{ A.stepOpen.tool }}</b>
+          <span class="dim">{{ stepHead(A.stepOpen) }}</span>
+          <span class="sp"></span>
+          <button class="btn btn-outline" @click="copyStep()" title="把这一步的原文复制走">复制</button>
+          <button class="btn btn-outline" @click="A.stepOpen = null">关闭</button>
+        </div>
+        <div class="ai-msgs-b">
+          <p class="ai-detail-w" v-if="A.stepOpen.why">它说这一步是为了：{{ A.stepOpen.why }}</p>
+          <div class="ai-msg r-assistant">
+            <div class="ai-msg-h"><b>参数</b><span class="dim">它填给这个工具的（完整 JSON）</span></div>
+            <pre class="ai-msg-t">{{ A.stepOpen.args || "（这一步没有参数）" }}</pre>
           </div>
-          <div :title="tokTip">
-            Token 消耗: <span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace">{{ tokLine }}</span>
+          <div class="ai-msg r-tool">
+            <div class="ai-msg-h"><b>输出</b>
+              <span class="dim">它当时看到的那一份结果（太长会被截，**没截的**在顶上那颗「提示词」里）</span></div>
+            <pre class="ai-msg-t">{{ A.stepOpen.out || "（这一步没有输出）" }}</pre>
           </div>
         </div>
-      </footer>
+      </div>
+
+      <!-- ★ V-307：**看这条会话喂给它的完整提示词**（系统提示 + 每一问 + 每一答 + 工具结果）。
+           放在这一层而不是宿主别的页面：它只跟"这条会话"有关。 -->
+      <div class="ai-msgs" v-if="A.msgOpen">
+        <div class="ai-msgs-h">
+          <span v-html='ico("file-text", "i")'></span>
+          <b>它这次收到的全部内容（提示词历史）</b>
+          <span class="dim" v-if="A.msgData">
+            {{ A.msgData.count || 0 }} 条 · {{ (A.msgData.bytes || 0) }} 字节
+            <template v-if="A.msgData.model"> · 模型 {{ A.msgData.model }}</template>
+          </span>
+          <span class="sp"></span>
+          <button class="btn btn-outline" @click="copyMessages()" title="把整份复制到剪贴板">复制</button>
+          <button class="btn btn-outline" @click="A.msgOpen = false">关闭</button>
+        </div>
+        <p class="ai-msgs-note dim" v-if="A.msgBusy">正在读…</p>
+        <p class="ai-msgs-note" v-else-if="A.msgData && !A.msgData.ok">{{ A.msgData.msg || A.msgData.note }}</p>
+        <div class="ai-msgs-b" v-else>
+          <div class="ai-msg" v-for="(m, i) in ((A.msgData && A.msgData.messages) || [])" :key="i"
+               :class="'r-' + (m.role || '?')">
+            <div class="ai-msg-h">
+              <b>{{ roleName(m.role) }}</b>
+              <span class="dim">{{ msgHead(m) }}</span>
+            </div>
+            <pre class="ai-msg-t">{{ msgText(m) }}</pre>
+          </div>
+        </div>
+      </div>
 
     </div>
 

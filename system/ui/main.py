@@ -1024,6 +1024,20 @@ RUNS_KEEP = 20
 AI = {"thread": None, "state": None, "task": "", "stop": False, "t0": 0.0}
 AI_LOCK = threading.Lock()
 
+#: ★ `V-325`：**"这条权限请求被拒了"** 的登记（`路径 → 拒绝那一刻`）。
+#:   为什么不能靠"那一行被删了"来判拒绝：第二次请求（要写）时那一行本来就存在（只读），
+#:   删了会把用户之前批过的**读**一起收掉。所以拒绝只在宿主这边记一笔，闸拿它当场判 `denied`，
+#:   清单本身**一个字都不动**。闸开工时比时间戳（只认这一趟里的拒绝），收工后自己清掉。
+_PERM_DENY = {}
+
+
+def _perm_key(pth):
+    """登记/查拒绝用的键：路径统一成小写 + 去掉尾部分隔符（`Path` 那套归一化）。"""
+    try:
+        return str(Path(str(pth or "")).resolve()).rstrip("\\/").lower()
+    except Exception:                                                # noqa: BLE001
+        return str(pth or "").rstrip("\\/").lower()
+
 #: AI 参数的缓存（`V-234`）：界面**没有** `MOSS_AI_*`，得回头问宿主
 #: （`moss --ai-config-reveal`）；那是起一个进程，不能每 700ms 轮询就问一次。
 _AI_CFG = {"t0": 0.0, "got": None}
@@ -1807,6 +1821,37 @@ class Api:
         import ai_loop
         return ai_client, ai_edits, ai_loop
 
+    def _ai_dir(self):
+        ai_dir = str(HERE / "ai")
+        if ai_dir not in sys.path:
+            sys.path.insert(0, ai_dir)
+        return ai_dir
+
+    def _ai_mode(self):
+        """`ai_mode`（`V-307`：三档权限 / 放行清单 / 临时空间）—— 惰性 import，坏不了界面。"""
+        self._ai_dir()
+        import ai_mode
+        return ai_mode
+
+    def _ai_runs(self):
+        """`ai_runs`（`V-243`/`V-307`：会话记录 —— 现在按"干活的地方"分桶）。"""
+        self._ai_dir()
+        import ai_runs
+        return ai_runs
+
+    def _ai_ask(self):
+        """`ai_ask`（`V-308`：它问、你答 —— loop 会阻塞在那儿等）。"""
+        self._ai_dir()
+        import ai_ask
+        return ai_ask
+
+    def _ai_wildcard(self):
+        """现在是不是"放手"（清单里「任意路径」那一行勾了**写**）—— `V-316`。"""
+        try:
+            return bool(self._ai_mode().wildcard_write())
+        except Exception:                                                # noqa: BLE001
+            return False
+
     def ai_params(self, refresh=False):
         """拿"当前那组 AI 参数"（`V-234`）。
 
@@ -1871,7 +1916,10 @@ class Api:
         return self.ai_budget(save=max_tokens)
 
     def ai_info(self, workdir="", refresh=False):
-        """这一页要显示的东西：模型 / 提示词（含缺失）/ 能写哪儿 / 预算 / 在不在跑。"""
+        """这一页要显示的东西：模型 / 提示词（含缺失）/ 能写哪儿 / 预算 / 在不在跑。
+
+        ★ `V-307`：多三样 —— **权限模式 + 放行清单 + 临时空间**（还有"这条会话算谁的"）。
+        """
         out = {"ok": True, "running": bool(AI.get("thread") and AI["thread"].is_alive()),
                "workdir": str(workdir or ""), "steps": 0}
         try:
@@ -1881,6 +1929,24 @@ class Api:
             bud = self.ai_budget()
             out["max_tokens"] = bud.get("max_tokens")
             out["warn_tokens"] = bud.get("warn")
+            # ★ `V-316`：权限清单（读/写勾选）+ 临时空间（现读 —— 改完要立刻看见）
+            # ★ `V-314`：临时空间**按插件分**（`state/<包id>/ai/tmp/`），所以要带 workdir
+            try:
+                M = self._ai_mode()
+                try:
+                    M.ensure_pkg(workdir)        # 当前这个包自动进清单（读+写默认开）
+                except Exception:                                     # noqa: BLE001
+                    pass
+                out.update(M.summary(workdir))
+            except Exception as exc:                                      # noqa: BLE001
+                out["mode_why"] = "权限模块起不来：%s" % exc
+            # ★ `V-307`：这条会话是"哪个包"的（历史按它分桶 —— 用户要的"只看这个模块的历史"）
+            try:
+                R = self._ai_runs()
+                out["scope"] = {k: (str(v) if k == "dir" else v)
+                                for k, v in R.scope_of(workdir).items()}
+            except Exception:                                             # noqa: BLE001
+                out["scope"] = {"kind": "all", "id": "", "dir": "", "label": "整个项目区"}
             # ★ 顺序要紧（`V-252`）：下面两处都要用 `p`，而 `p` 原来是在**这之后**才赋值的
             #   ⇒ `UnboundLocalError` 被那个 `except: pass` 吞掉，`context` / `compact_at`
             #   从来就没带上过（界面上那一行"上下文 xx / yy（zz%）"一直吃的是默认值）。
@@ -1962,16 +2028,36 @@ class Api:
                 cont_note = "新会话（没带之前的对话）"
             else:
                 try:
-                    ai_dir = str(HERE / "ai")
-                    if ai_dir not in sys.path:                         # noqa: PLC0415
-                        sys.path.insert(0, ai_dir)
-                    import ai_runs as _runs                                # noqa: PLC0415
-                    rec = _runs.get(cid)
+                    rec = self._ai_runs().get(cid)
                     if not rec:
                         cont_note = "接不上上次那条（没找到那条记录）—— 这次按新会话跑"
                     else:
                         hist = [m for m in (rec.get("messages") or [])
                                 if isinstance(m, dict) and m.get("role")]
+                        
+                        # ★ 修复残缺会话：如果上一次在等待工具/权限时被强退，
+                        #   末尾会有未闭合的 tool_calls，下次继续聊时 OpenAI 会报 HTTP 400。
+                        _pending = {}
+                        for m in hist:
+                            r = m.get("role")
+                            if r == "assistant" and m.get("tool_calls"):
+                                for c in m.get("tool_calls"):
+                                    _pending[c.get("id")] = True
+                            elif r == "tool":
+                                _pending.pop(m.get("tool_call_id", ""), None)
+                            else:
+                                _pending.clear()
+                        if _pending:
+                            while hist:
+                                r = hist[-1].get("role")
+                                if r == "tool":
+                                    hist.pop()
+                                elif r == "assistant" and hist[-1].get("tool_calls"):
+                                    hist.pop()
+                                    break
+                                else:
+                                    break
+
                         if hist:
                             cont_from = cid
                             cont_note = "接着上次那条聊（它还记着之前 %d 条对话）" % len(hist)
@@ -1987,11 +2073,37 @@ class Api:
             _ctx = _bud.context_window(_model, bud.get("context") or 0)
             _at = _bud.compact_at(_model, _ctx)
             _retain = _bud.retain_tokens(_model, _ctx)
-            AI.update({"task": task, "stop": False, "t0": time.time(),
+            # ---- `V-307`：这次跑的 id / 临时空间 / 权限模式 / 提问桥 / 每步落盘 --------
+            # ★ 为什么 id 要在**开工这一刻**定下来：每步落盘（`save_live`）和跑完那条正式
+            #   记录必须是**同一个文件** —— 用户强制重启那次丢记录，就是因为原来只有收尾写一次。
+            M = self._ai_mode()
+            R = self._ai_runs()
+            run_id = R.new_id()
+            scope = R.scope_of(wd)
+            M.begin_run(wd)                      # 清掉上一跑的"只允许这一次"+ 收拾这个桶的旧 tmp
+            tmp_dir = M.ensure_tmp(run_id, wd)   # `V-314`：tmp 跟着插件走（`state/<包id>/ai/tmp/`）
+            M.ensure_pkg(wd)                     # `V-316`：当前这个包自动进清单（读+写默认开）
+            started = time.time()
+            base = {
+                "id": run_id, "task": task, "workdir": wd,
+                "model": str(getattr(client, "model", "") or ""),
+                "max_tokens": cap, "started": started,
+                "started_text": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)),
+                # `V-316`：这次是不是"放手"（清单里勾了任意路径的写）—— 记一条账
+                "mode": "free" if M.wildcard_write() else "limited",
+                "tmp_dir": str(tmp_dir or ""),
+                "scope": scope.get("kind"), "scope_id": scope.get("id") or "",
+                "asked_continue": cid, "continue_note": cont_note,
+            }
+            AI.update({"task": task, "stop": False, "t0": started,
+                       "task_dir": wd,
                        "max_tokens": cap, "context": _ctx,
                        "compact_at": _at, "retain_tokens": _retain,
+                       "run_id": run_id, "scope": scope, "tmp": str(tmp_dir or ""),
+                       "asker": None, "loop": None,
                        "state": {"running": True, "steps": [], "result": None, "say": [],
-                                 "phase": "", "snapshot": None}})
+                                 "phase": "", "snapshot": None, "ask": None,
+                                 "usage": {}, "killed": [], "stopping": False}})
 
             def on_step(row):
                 with AI_LOCK:
@@ -2016,12 +2128,81 @@ class Api:
                 with AI_LOCK:
                     AI["state"]["snapshot"] = got
 
+            def on_ask(q):
+                """`V-308`：它现在挂着一个问题等人答（`None` = 没在问）。界面照这个画卡片。
+
+                ★ `V-333`：**问答也进聊天记录** —— 问题一出现就往步骤流插一条 `ask` 记录行，
+                  答完（或超时/停止）把结果写回同一条；这样界面上它是"它说的"一条气泡，
+                  翻旧会话还能看见你当时选了什么。
+                """
+                with AI_LOCK:
+                    AI["state"]["ask"] = q
+                    if q is None:
+                        _r = AI["state"].pop("ask_row", None)
+                    else:
+                        _r = None
+                if q is None:
+                    if _r:                              # 没答上（超时 / 停止 / 界面走了）
+                        try:
+                            if not _r.get("done"):
+                                _r.update({"done": True, "answer": "",
+                                           "out": "（这问题没等到回答：超时或已停止）"})
+                        except Exception:                # noqa: BLE001
+                            pass
+                    return
+                try:
+                    _loop = AI.get("loop")
+                    if _loop is None:
+                        return
+                    _row = _loop.note(
+                        "ask", str(q.get("question") or "（它有个问题）"),
+                        why=str(q.get("why") or ""),
+                        args={"qid": str(q.get("qid") or ""),
+                              "kind": str(q.get("kind") or "ask"),
+                              "options": list(q.get("options") or []),
+                              "allow_text": bool(q.get("allow_text")),
+                              "detail": str(q.get("detail") or "")},
+                        out="（在等你回答…）")
+                    with AI_LOCK:
+                        AI["state"]["ask_row"] = _row
+                except Exception:                                        # noqa: BLE001
+                    pass
+
+            def on_journal(part, force=False):
+                """`V-307`：**每步落盘** —— 重启 moss 之后这条记录还在（标"上次没跑完"）。"""
+                rec = dict(base)
+                rec.update({"steps": part.get("steps") or [],
+                            "usage": part.get("usage") or {},
+                            "messages": part.get("messages") or [],
+                            "files": part.get("files") or [],
+                            "procs": part.get("procs") or [],
+                            "killed": part.get("killed") or [],
+                            "snapshot": part.get("snapshot")})
+                if force:
+                    rec["continue_note"] = cont_note
+                R.save_live(rec, scope)
+                with AI_LOCK:
+                    AI["state"]["usage"] = dict(part.get("usage") or {})
+
+            asker = self._ai_ask().Asker(publish=on_ask, stop_check=lambda: bool(AI.get("stop")))
+            AI["asker"] = asker
+            # ★ `V-316`：权限**现读**（用户可能跑到一半去勾/取消勾）——`mode_fn` 只剩
+            #   "是不是放手"这一个问题，由清单里「任意路径」那一行回答。
+
+            def mode_now():
+                return "free" if M.wildcard_write() else "limited"
+
             def work():
                 loop = l.Loop(client, workdir=wd, max_tokens=cap,
                               compact_at=_at, retain_tokens=_retain,
                               on_step=on_step, say=say, on_phase=phase,
                               on_snapshot=on_snapshot,
-                              stop_check=lambda: bool(AI.get("stop")))
+                              stop_check=lambda: bool(AI.get("stop")),
+                              asker=asker, mode_fn=mode_now, on_journal=on_journal,
+                              run_id=run_id, tmp_dir=str(tmp_dir or ""),
+                              perm_gate=self._ai_perm_wait)
+                AI["loop"] = loop
+                got = {}
                 try:
                     if cont_note:
                         say(cont_note)
@@ -2033,19 +2214,30 @@ class Api:
                 except Exception as exc:                                  # noqa: BLE001
                     got = {"ok": False, "reason": "%s: %s" % (type(exc).__name__, exc),
                            "steps": [], "usage": {}, "files": []}
+                finally:
+                    # ★ `V-307`：**不管怎么收的场，子进程一个不留**（`loop.cleanup` 已经杀过一遍，
+                    #   这里再兜一次，并且把"杀掉几个"如实带给界面）。
+                    try:
+                        k = loop.cleanup("收尾")
+                        got["procs_killed"] = got.get("procs_killed") or k.get("pids") or []
+                    except Exception:                                      # noqa: BLE001
+                        pass
+                    AI["loop"] = None
+                    with AI_LOCK:
+                        AI["state"]["running"] = False     # ★ 已经到底了就别再显示"执行中"
+                        AI["state"]["ask"] = None
+                        AI["state"]["stopping"] = False
+                    asker.cancel("finished")
+                    try:
+                        M.clear_temp()                     # "只允许这一次"随这次跑结束
+                    except Exception:                                      # noqa: BLE001
+                        pass
                 # ★ `V-243`：跑完**落盘**（你说的"历史记录不保存是不行的"—— 原来只在内存里，
                 #   moss 一重启，任务原文/步骤流/结论/token 全没了）。存不上也不影响结果。
                 try:
-                    ai_dir = str(HERE / "ai")
-                    if ai_dir not in sys.path:
-                        sys.path.insert(0, ai_dir)
-                    import ai_runs
-                    saved = ai_runs.save({
-                        "task": task, "workdir": wd, "model": str(getattr(client, "model", "") or ""),
-                        "max_tokens": cap, "started": float(AI.get("t0") or 0),
-                        "started_text": time.strftime("%Y-%m-%d %H:%M:%S",
-                                                      time.localtime(float(AI.get("t0") or 0))),
-                        "seconds": round(time.time() - float(AI.get("t0") or time.time()), 1),
+                    rec = dict(base)
+                    rec.update({
+                        "seconds": round(time.time() - started, 1),
                         "stopped": bool(AI.get("stop")),
                         "ok": bool(got.get("ok")), "reason": got.get("reason") or "",
                         # ★ `V-269`：`kind="chat"` = 只是回答问题（没动文件、没验收）——
@@ -2059,14 +2251,16 @@ class Api:
                         #   「接着聊」靠它，重启 moss 也不会"只能重新再来"。
                         "messages": got.get("messages") or [],
                         "continued_from": got.get("continued_from") or "",
-                        # ★ `V-259`：**界面这次要接的是哪条**（空 = 新会话）—— 排查
-                        #   "怎么每次都当新会话"时，这两个字段一眼就能定案。
                         "asked_continue": got.get("asked_continue") or "",
                         "continue_note": got.get("continue_note") or "",
+                        # ★ `V-307`：杀掉了哪些进程 / 这次是哪个模式跑的（用户要看得见）
+                        "procs_killed": got.get("procs_killed") or [],
+                        "edited": got.get("edited") or 0,
                     })
-                    got["run_id"] = saved.get("id")
+                    saved = R.save(rec, scope)
+                    got["run_id"] = saved.get("id") or run_id
                 except Exception as exc:                                  # noqa: BLE001
-                    got["run_id"] = ""
+                    got["run_id"] = run_id
                     got["save_error"] = "%s: %s" % (type(exc).__name__, exc)
                 with AI_LOCK:
                     AI["state"]["result"] = got
@@ -2077,14 +2271,41 @@ class Api:
             th.start()
             # ★ 别在这儿假设 client 长什么样（`V-233` 探针用假模型时踩到）：
             #   线程已经起来了，这里再抛异常的话，页面会看到"起不来"而其实任务已经在跑。
-            return {"ok": True, "workdir": wd, "model": str(getattr(client, "model", "") or "")}
+            return {"ok": True, "workdir": wd, "model": str(getattr(client, "model", "") or ""),
+                    "run_id": run_id, "mode": mode_now(), "tmp": str(tmp_dir or ""),
+                    "scope": scope.get("label") or ""}
 
     def ai_poll(self):
-        """当前这次任务的进度（步骤流 + 结果）。界面每半秒问一次。"""
+        """当前这次任务的进度（步骤流 + 结果）。界面每半秒问一次。
+
+        ★ `V-307`/`V-308`：多回几样 —— **活的 token 账**（不用等跑完才看得到数字）、
+          **现在挂着的问题**（它问你话的那张卡）、权限模式、临时目录、杀掉过哪些进程。
+        """
         with AI_LOCK:
             st = AI.get("state")
             if not st:
                 return {"ok": True, "running": False, "idle": True, "steps": [], "say": []}
+            asker = AI.get("asker")
+            ask = st.get("ask")
+            # ★ `V-319` 修：`asking`（已经等了几秒）**只有 `Asker.state()` 会算**，
+            #   而 `st["ask"]` 是 publish 那一份原件 ⇒ 以前界面上是"已经等了 秒"（数字空着）。
+            if asker is not None:
+                try:
+                    # The Asker is authoritative. Do not fall back to the stale
+                    # published copy after an answer/timeout has cleared its queue.
+                    ask = asker.state()
+                except Exception:                                        # noqa: BLE001
+                    ask = None
+            # ★ `V-319` 退路：`st["ask"]` 还在、可 asker 那边已经收工时，也把秒数算出来
+            #   （不然又是"已经等了 秒"那种空数字）。
+            if ask and "asking" not in ask and ask.get("at"):
+                try:
+                    ask = dict(ask, asking=round(time.time() - float(ask.get("at")), 1))
+                except (TypeError, ValueError):
+                    pass
+            perm = AI.get("perm")
+            if perm:
+                perm = dict(perm, asking=round(time.time() - float(perm.get("at") or time.time()), 1))
             return {"ok": True, "running": bool(st.get("running")),
                     "task": AI.get("task") or "", "steps": list(st.get("steps") or []),
                     "say": list(st.get("say") or [])[-40:], "result": st.get("result"),
@@ -2098,18 +2319,315 @@ class Api:
                     "retain_tokens": int(AI.get("retain_tokens") or 0),
                     "prompt_tokens": int((st.get("steps") or [{}])[-1].get("ptok") or 0)
                                       if st.get("steps") else 0,
+                    # ---- `V-307`：活的那几样 ----
+                    "usage": dict(st.get("usage") or {}),
+                    "ask": ask,
+                    "asker": bool(asker is not None and asker.busy()),
+                    # ★ `V-319`：**待允许的目录**（左下角清单里那一行要闪烁）
+                    "perm": perm,
+                    "mode": str(AI.get("mode") or ""),
+                    "run_id": str(AI.get("run_id") or ""),
+                    "tmp": str(AI.get("tmp") or ""),
+                    "killed": list(st.get("killed") or []),
+                    "stopping": bool(st.get("stopping")),
+                    # `V-316`：现在是不是放手（界面不再有"模式"这一格，但轮询里带着它，
+                    # 让页面能显示"它现在能不能放手写"）
+                    "wildcard": self._ai_wildcard(),
                     "seconds": round(time.time() - float(AI.get("t0") or time.time()), 1)}
 
-    def ai_runs(self, limit=30):
-        """跑过的那些任务（`V-243`：重启 moss 还在）。列表**不带步骤流**，那个用 `ai_run(id)`。"""
+    def ai_runs(self, limit=30, workdir=""):
+        """跑过的那些任务（`V-243`：重启 moss 还在）。列表**不带步骤流**，那个用 `ai_run(id)`。
+
+        ★ `V-307`：**只看"这个干活的地方"那些** —— 用户原话「我在 github 可视化助手这里
+          使用了 ai 那么在历史这里 按说 它应该只要显示这个模块下的历史就可以了
+          不需要其他的插件的 ai 对话也显示出来」。
+          同时**顺手把老记录归位一次**（`migrate_once`：按 `workdir` 搬进各自的包目录）。
+        """
         try:
-            ai_dir = str(HERE / "ai")
-            if ai_dir not in sys.path:
-                sys.path.insert(0, ai_dir)
-            import ai_runs
-            return {"ok": True, "runs": ai_runs.list_runs(limit=int(limit or 30))}
+            R = self._ai_runs()
+            try:
+                R.migrate_once()
+            except Exception:                                            # noqa: BLE001
+                pass
+            scope = R.scope_of(workdir or self._ai_last_workdir())
+            return {"ok": True, "runs": R.list_runs(limit=int(limit or 30), scope=scope),
+                    "scope": {k: (str(v) if k == "dir" else v) for k, v in scope.items()}}
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "runs": [], "msg": "读不到历史：%s" % e}
+
+    def _ai_last_workdir(self):
+        """界面没带 `workdir` 时兜底：用这次会话（或最近一次）干活的那个目录。"""
+        wd = str(AI.get("task_dir") or "")
+        if wd:
+            return wd
+        sc = AI.get("scope") or {}
+        try:
+            if sc.get("kind") == "pkg" and sc.get("id"):
+                return str(HERE.parent / "pkgs" / str(sc["id"]))
+        except Exception:                                                # noqa: BLE001
+            pass
+        return ""
+
+    # ------------------------------------------------ 权限模式 / 放行清单（`V-307`）
+    def ai_mode_get(self, workdir=""):
+        """权限清单 + 临时空间（界面右下角那一块）。
+
+        ★ `V-316`：顺手**把当前这个包自动加进清单**（读+写都开）—— 你打开某个插件点 AI，
+          意思就是"我要改它"，不该还要你自己去加一条。
+        """
+        try:
+            M = self._ai_mode()
+            try:
+                M.ensure_pkg(workdir or self._ai_last_workdir())
+            except Exception:                                            # noqa: BLE001
+                pass
+            return M.summary(workdir or self._ai_last_workdir())
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
+    def ai_allow(self, path="", read=None, write=None, why="", action="add"):
+        """权限清单：`action` = `add` / `set`（改勾选）/ `rm`（删掉）/ `deny`（**拒绝一次请求**）。
+
+        ★ `V-316`：**读 / 写各一个勾**，不再有"模式"那种第二个开关控同一件事。
+          `path="*"` 那一行就是"任意路径"（勾上写 = 放手）。
+        ★ `V-325`：`deny` 是给"请求那一条上的「拒绝」"用的 —— 它**不改清单**（用户之前批过的
+          读还在），只在宿主这边记一笔"这条请求被拒了"，闸（`_ai_perm_wait`）当场就能判 `denied`。
+          以前是"把那一行删掉 = 拒绝"，可是第二次请求（要写）时那一行本来就存在（只读），
+          删了等于把用户批过的读也一起收了 —— 不对。
+        """
+        try:
+            M = self._ai_mode()
+            a = str(action or "add")
+            if a == "deny":
+                key = _perm_key(path)
+                with AI_LOCK:
+                    _PERM_DENY[key] = time.time()
+                cur = M.find(path)
+                if cur is not None and cur.get("pending"):
+                    M.allow_rm(path)                 # 这趟刚摆的"待允许"⇒ 收走（列表里本来不画它）
+                return {"ok": True, "msg": "已拒绝（清单里原来有的没动）",
+                        "summary": M.summary(self._ai_last_workdir())}
+            if a == "rm":
+                got = M.allow_rm(path)
+            else:
+                # ★ `V-319`：他勾了读/写（或加了一条）⇒ 那一行不再是"待允许"，闪烁收掉
+                _pend = False if (read is not None or write is not None) else None
+                got = M.allow_set(path, read=read, write=write, why=str(why or ""),
+                                  by="user", add=(a == "add"), pending=_pend)
+            return dict(got, summary=M.summary(self._ai_last_workdir()))
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
+    def ai_allow_pick(self):
+        """**选一个文件夹**加进放行清单（点「+ 加目录」那颗按钮）。
+
+        ★ 用 pywebview 的原生目录选择框（`window.create_file_dialog`）—— 用户原话
+          "允许通过添加或者拖动的方式 增加放行的路径"。拖动那条由界面接（`ai_allow`）。
+        ★ 拿不到对话框（老 webview / 无 GUI）就如实说，让用户手打路径 —— 不静默失败。
+        """
+        try:
+            import webview as _wv
+            win = webview.windows[0] if getattr(webview, "windows", None) else None
+            if win is None or not hasattr(win, "create_file_dialog"):
+                return {"ok": False, "msg": "这个环境没有目录选择框 —— 把路径粘到输入框里也一样"}
+            # ★ 这个版本的 pywebview 里 `FOLDER_DIALOG` **已弃用**（用它会在 stderr 打一行
+            #   deprecation 告警）—— 优先用新的 `FileDialog.FOLDER`，拿不到再退回老常量。
+            _kind = getattr(getattr(_wv, "FileDialog", None), "FOLDER", None)
+            if _kind is None:
+                _kind = getattr(_wv, "FOLDER_DIALOG", 20)
+            got = win.create_file_dialog(_kind, allow_multiple=False)
+            if not got:
+                return {"ok": False, "msg": "没选（取消了）", "cancel": True}
+            p = got[0] if isinstance(got, (list, tuple)) else got
+            M = self._ai_mode()
+            # ★ `V-328`：这里原来写的是 `allow_add(p, on=True, …)` —— `allow_add` 根本没有
+            #   `on` 这个参数（`V-316` 起就是 `read` / `write` 了）⇒ 每次「选目录…」都会
+            #   TypeError 被 except 兜住、报一句"选不了目录"。现在按真签名来（读+写都开）。
+            r = M.allow_add(p, read=True, write=True, why="用户选的目录", by="user")
+            return dict(r, summary=M.summary())
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "选不了目录：%s: %s" % (type(e).__name__, e)}
+
+    def ai_tmp(self, action="info", run_id="", workdir=""):
+        """AI 的临时空间：`info` / `open` / `clean`（用户要一个"能放心清理"的 tmp）。
+
+        ★ `V-314`：它是**这个插件自己的**那一格（`state/<包id>/ai/tmp/`），
+          所以三样操作都要带 `workdir` —— 清 A 包的临时文件不会碰 B 包的。
+        """
+        try:
+            M = self._ai_mode()
+            wd = str(workdir or self._ai_last_workdir())
+            if action == "open":
+                p = M.tmp_root(wd)
+                p.mkdir(parents=True, exist_ok=True)
+                os.startfile(str(p))                                    # noqa: S606
+                return {"ok": True, "msg": "打开了 %s" % p, "tmp": M.tmp_size(wd)}
+            if action == "clean":
+                got = M.tmp_clean(str(run_id or ""), wd)
+                return dict(got, tmp=M.tmp_size(wd))
+            return {"ok": True, "tmp": M.tmp_size(wd)}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
+    def _ai_perm_wait(self, path, why="", need="write", timeout=1800):
+        """**权限请求的闸**：请求出现在**权限卡上半段那一条**（琥珀底 + 允许 / 拒绝），等他点。
+
+        ★ `V-323`/`V-325`（用户把界面设计重发并说清了流程）：点「允许」⇒ 那一条消失、目录进
+        下面清单；点「拒绝」⇒ 那一条消失、清单里什么都不加。宿主这边靠**现读清单**判：
+        勾上了 = 放行、那条没了 = 拒绝。
+
+        回 `{granted, read, write, reason, seconds}`；`reason` = `ok` / `read-only` /
+        `denied` / `stopped` / `timeout`。
+
+        ★★ **写权限必须"问过一次"才算数**（用户报的：先批了读、随后它要写，
+        "它尝试写入也没问 直接失败了"）：老逻辑看到那一行已经是"只读"就**当场**回
+        `read-only`，于是他根本没机会点「允许」。现在：
+          · 进来先记下**请求前那一行是什么样**（`base_read`）；
+          · 要写、而那一行本来就只读 ⇒ **照问**（照旧阻塞，等他点允许/拒绝），
+            只有"等待期间他自己勾了读、写还关着"才算 `read-only`；
+          · 原来就没有那一行 ⇒ 由 `allow_pending_add` 摆一条待允许的（界面不画它，闸要用）。
+        """
+        M = self._ai_mode()
+        need_w = str(need or "write") != "read"
+        # ★ `V-328`：路径本身不合法（乱打的 / 不存在 / 不是目录）⇒ **别摆请求**，当场回它
+        #   `bad-path`（工具那边会把这句话原样还给模型，让它先去确认路径）。
+        problem = None
+        try:
+            problem = M.path_problem(path)
+        except Exception:                                            # noqa: BLE001
+            problem = None
+        if problem:
+            return {"granted": False, "reason": "bad-path", "msg": problem,
+                    "read": False, "write": False, "seconds": 0.0}
+        try:
+            base = M.find(path)
+        except Exception:                                            # noqa: BLE001
+            base = None
+        base_read = bool((base or {}).get("read"))
+        base_write = bool((base or {}).get("write"))
+        try:
+            M.allow_pending_add(path, why=why, need=need)
+        except Exception:                                            # noqa: BLE001
+            pass
+        t0 = time.time()
+        key = _perm_key(path)
+        # ★ `V-333`：**请求本身也进聊天记录**（用户原话："申请权限 … 直接在聊天记录上进行
+        #   渲染交互 … 我选择以后 后续我翻看聊天记录 也能看我之前的选择"）——
+        #   在这儿插一条 `perm` 记录行，答完**原地**把结果写回去（`answer` / `out` / `done`）。
+        _row = None
+        try:
+            _loop = AI.get("loop")
+            if _loop is not None:
+                _tail = Path(str(path)).name or str(path)
+                _row = _loop.note(
+                    "perm", "请求放行「%s」" % _tail, why=str(why or ""),
+                    args={"path": str(path), "need": str(need or "write")},
+                    out="（在等你点「允许 / 拒绝」…）")
+        except Exception:                                            # noqa: BLE001
+            _row = None
+        with AI_LOCK:
+            _PERM_DENY.pop(key, None)        # 这一趟从干净开始（上一次的拒绝不算）
+            AI["perm"] = {"path": str(path), "why": str(why or ""),
+                          "need": str(need or "write"), "at": t0}
+        reason, it = "timeout", None
+        while True:
+            if AI.get("stop"):
+                reason = "stopped"
+                break
+            # ★ `V-325`：他在那一条请求上点了「拒绝」⇒ 当场算拒绝（**清单一个字没动**）
+            with AI_LOCK:
+                _denied_at = _PERM_DENY.get(key, 0.0)
+            if _denied_at > t0:
+                reason = "denied"
+                break
+            try:
+                it = M.find(path)
+            except Exception:                                        # noqa: BLE001
+                it = None
+            if it is None:
+                reason = "denied"            # 那条没了（老流程的 ✕ / 用户自己删了）
+                break
+            if it.get("write") or (not need_w and it.get("read")):
+                reason = "ok"
+                break
+            # ★ 只读：只有"这一趟里它才拿到的读"才算用户的选择；
+            #   请求之前就是只读的（他批过读、没批写）⇒ **不算回答**，继续等（= 再问一次）。
+            if need_w and it.get("read") and not base_read:
+                reason = "read-only"
+                break
+            if time.time() - t0 > float(timeout or 1800):
+                reason = "timeout"
+                break
+            time.sleep(0.2)
+        with AI_LOCK:
+            AI["perm"] = None
+            _PERM_DENY.pop(key, None)        # 这一趟用完了，别留着影响下一次
+        try:
+            if reason != "denied":           # 拒绝那条留着他原来批过的权限；别的把这趟登记收掉
+                M.allow_set(path, pending=False)
+        except Exception:                                            # noqa: BLE001
+            pass
+        granted = reason == "ok" or (reason == "read-only" and not need_w)
+        # ★ `V-333`：把结果**写回那条记录行**（聊天记录里那一问一答就齐了）
+        if _row is not None:
+            try:
+                _ans = {"ok": "允许", "read-only": "只给了读", "denied": "拒绝",
+                        "stopped": "已停止", "timeout": "没回应"}.get(reason, reason)
+                _row.update({"done": True, "answer": _ans,
+                             "out": "你的选择：%s（读=%s 写=%s）" % (
+                                 _ans, "开" if (it or {}).get("read") or base_read else "关",
+                                 "开" if (it or {}).get("write") or base_write else "关")})
+            except Exception:                                        # noqa: BLE001
+                pass
+        return {"granted": granted, "reason": reason,
+                "read": bool((it or {}).get("read")) or base_read,
+                "write": bool((it or {}).get("write")) or base_write,
+                "seconds": round(time.time() - t0, 1)}
+
+    def ai_answer(self, qid="", text="", choice="", by="user"):
+        """**回答它的问题**（`V-308`）。答完 loop 那边就继续跑了。"""
+        with AI_LOCK:
+            asker = AI.get("asker")
+            cur = (AI.get("state") or {}).get("ask")
+        if asker is None:
+            return {"ok": False, "msg": "现在没有在等回答的问题（那次跑已经结束了）"}
+        if not cur or not qid or str(cur.get("qid")) != str(qid):
+            return {"ok": False, "msg": "这个问题已经过期或已经回答了，请处理当前仍在等待的问题。"}
+        got = asker.submit(text=text, choice=choice, by=by)
+        if got.get("ok"):
+            with AI_LOCK:
+                st = AI.get("state") or {}
+                row = st.get("ask_row")
+                if st:
+                    st["ask"] = None
+            # ★ `V-333`：把用户的选择写回那条记录行（聊天记录里"它问 / 我答"成对留着）
+            try:
+                if row is not None:
+                    _what = str(choice or "") or str(text or "")
+                    _args = row.get("args") or {}
+                    if isinstance(_args, str):
+                        try:
+                            _args = json.loads(_args)
+                        except (TypeError, ValueError):
+                            _args = {}
+                    row["options"] = list(_args.get("options") or [])
+                    row.update({"done": True, "answer": _what,
+                                "out": "你的回答：%s" % (_what or "（空）")})
+            except Exception:                                        # noqa: BLE001
+                pass
+        return got
+
+    def ai_session_messages(self, run_id=""):
+        """**看这条会话喂给它的完整提示词历史**（`V-307`）。
+
+        用户原话："我可以通过点击某个会话 来查看 这个会话喂给他的历史记录 或者叫提示词
+        (包括我问的和它回答的 所有历史)"。给的就是落盘的那份 `messages`（系统提示 + 每一问
+        + 它每次回的 + 工具结果），界面上按角色分色摆出来。
+        """
+        try:
+            return self._ai_runs().messages(str(run_id or ""))
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "messages": [], "msg": "%s: %s" % (type(e).__name__, e)}
 
     def ai_run(self, run_id=""):
         """一次任务的完整记录（含步骤流）—— 界面上点「看」用。
@@ -2118,11 +2636,7 @@ class Api:
           知道"这条能不能接着聊"（`cont`），真要接着聊时把 **id** 交回来，宿主自己去读。
         """
         try:
-            ai_dir = str(HERE / "ai")
-            if ai_dir not in sys.path:
-                sys.path.insert(0, ai_dir)
-            import ai_runs
-            rec = ai_runs.get(run_id)
+            rec = self._ai_runs().get(run_id)
             if rec:
                 rec = dict(rec)
                 msgs = rec.pop("messages", None) or []
@@ -2143,13 +2657,10 @@ class Api:
         ★ 和 `ai_run` 一样：**不带 `messages`**（那是模型要的对话，几百 KB，页面用不着）。
         """
         try:
-            ai_dir = str(HERE / "ai")
-            if ai_dir not in sys.path:
-                sys.path.insert(0, ai_dir)
-            import ai_runs
+            R = self._ai_runs()
             rid, chain, guard = str(run_id or ""), [], 0
             while rid and guard < 500:
-                rec = ai_runs.get(rid)
+                rec = R.get(rid)
                 if not rec:
                     break
                 chain.append(rec)
@@ -2192,15 +2703,17 @@ class Api:
         """`run_id` 所在那条会话链（链头 → 链尾，按时间排）。回 `[{run...}, ...]`。
 
         顺着 `continued_from` 往回走到头，再顺着"谁接着它"往前走。防环 500 步。
+        ★ `V-307`：记录现在**按"干活的地方"分桶**存（`state/<包id>/ai/runs/`），
+          所以往前找"谁接着它"要**所有桶一起看**（`everywhere=True`）。
         """
-        import ai_runs                                                 # noqa: PLC0415
-        rec = ai_runs.get(run_id)
+        R = self._ai_runs()
+        rec = R.get(run_id)
         if not rec:
             return []
         # 往回
         back, rid, guard = [], str(run_id), 0
         while rid and guard < 500:
-            r = ai_runs.get(rid)
+            r = R.get(rid)
             if not r:
                 break
             back.append(r)
@@ -2209,7 +2722,7 @@ class Api:
         back.reverse()                                                 # 链头在前
         head = back[0].get("id")
         # 往前（谁接着它 + 接着下一代……），按时间排序
-        rows = ai_runs.list_runs(limit=2000, with_steps=False)
+        rows = R.list_runs(limit=2000, with_steps=False, everywhere=True)
         kids = {}
         for r in rows:
             p = str(r.get("continued_from") or "")
@@ -2223,7 +2736,7 @@ class Api:
             seen.add(cur)
             r = next((x for x in rows if x.get("id") == cur), None)
             if r is None:
-                r = ai_runs.get(cur)
+                r = R.get(cur)
             if not r:
                 continue
             chain.append(r)
@@ -2253,10 +2766,7 @@ class Api:
              chat_only, group, warnings, chain_n, index}`。
         """
         try:
-            ai_dir = str(HERE / "ai")
-            if ai_dir not in sys.path:
-                sys.path.insert(0, ai_dir)
-            import ai_runs                                             # noqa: PLC0415
+            R = self._ai_runs()
             chain = self._ai_chain(run_id)
             ids = [r.get("id") for r in chain]
             if str(run_id) not in ids:
@@ -2299,7 +2809,7 @@ class Api:
                 group = str(target.get("group") or "")
                 after = target.get("from_at") or ""
                 others = []
-                for r in ai_runs.list_runs(limit=2000):
+                for r in R.list_runs(limit=2000, everywhere=True):
                     if r.get("id") in ids or not (r.get("files") or []):
                         continue
                     s = r.get("snapshot") or {}
@@ -2340,10 +2850,7 @@ class Api:
             return {"ok": False, "need_confirm": True, "plan": plan,
                     "msg": "这是破坏性操作：先确认（界面把上面那些事实摆给用户看）"}
         try:
-            ai_dir = str(HERE / "ai")
-            if ai_dir not in sys.path:
-                sys.path.insert(0, ai_dir)
-            import ai_runs                                             # noqa: PLC0415
+            R = self._ai_runs()
             import ai_snap as S                                        # noqa: PLC0415
             target = plan.get("target")
             restored = ""
@@ -2356,7 +2863,7 @@ class Api:
             # 删被删会话自己的镜像（**保留回退用的那一条**）
             dropped, kept = [], []
             for rid in plan["delete_ids"]:
-                rec = ai_runs.get(rid) or {}
+                rec = R.get(rid) or {}
                 s = rec.get("snapshot") or None
                 if not s or not s.get("id"):
                     continue
@@ -2367,7 +2874,7 @@ class Api:
                 if got.get("ok"):
                     dropped.append(s["id"])
             for rid in plan["delete_ids"]:
-                ai_runs.delete(rid)
+                R.delete(rid)
             return {"ok": True, "removed": plan["delete_ids"], "restored_from": restored,
                     "kept_snapshot": (kept[0] if kept else ""), "dropped_snapshots": dropped,
                     "prev_id": plan.get("prev_id") or "",
@@ -2451,21 +2958,71 @@ class Api:
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 
-    def ai_run_forget(self, run_id="", all_of_them=False):
-        """删一条（或全清）任务记录。记录只是回顾用的，删了不影响包。"""
+    def ai_run_forget(self, run_id="", all_of_them=False, workdir=""):
+        """删一条（或全清）任务记录。记录只是回顾用的，删了不影响包。
+
+        ★ `V-307`：记录按"干活的地方"分桶了 —— 全清**只清这个桶**（不会顺手把别的包的会话删掉）。
+        """
         try:
-            ai_dir = str(HERE / "ai")
-            if ai_dir not in sys.path:
-                sys.path.insert(0, ai_dir)
-            import ai_runs
-            return ai_runs.clear() if all_of_them else ai_runs.delete(run_id)
+            R = self._ai_runs()
+            scope = R.scope_of(workdir or self._ai_last_workdir())
+            return R.clear(scope) if all_of_them else R.delete(run_id)
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": str(e)}
 
     def ai_stop(self):
-        """按「停止」：**不硬杀**，只在每一轮开头告诉 loop 收工（正在发的请求让它自己结束）。"""
+        """按「停止」：**立刻停**（`V-307` 改成真的立刻）。
+
+        老行为（用户报的现场）：只在**下一轮开头**看一眼停止标志 ⇒ 界面提示"停在下一轮"，
+        然后正在跑的那次请求 / 那个工具就那么卡着，最长能挂二十分钟。现在一次做四件事：
+
+          ① 置停止标志 —— 模型那边**正在发的请求**会被掐断（`ai_client` 每 0.2 秒看一眼）；
+          ② **杀掉它起过的子进程**（连子孙）：`run_moss` 的阻塞循环每 0.15 秒看一眼，
+             正在跑的包会当场被 `taskkill /T` 收掉，loop 也会立刻收工；
+          ③ **放走挂着的问题**（它可能正等你回答 —— 不能让"停止"卡在一张没人答的卡片上）；
+          ④ 状态上写 `stopping`，线程万一还赖着没退，界面也不会永远显示"执行中"
+             （`work()` 的 `finally` 一定会把 `running` 落回 False）。
+        """
         AI["stop"] = True
-        return {"ok": True, "msg": "已经让它停在下一轮（正在发出的那次请求会先回来）。"}
+        killed, ms = [], 0.0
+        loop = AI.get("loop")
+        if loop is not None:
+            try:
+                got = loop.tools.kill_children("用户按了停止")
+                killed, ms = got.get("pids") or [], got.get("ms") or 0
+                with AI_LOCK:
+                    if AI.get("state"):
+                        AI["state"]["killed"] = list(AI["state"].get("killed") or []) + killed
+                        AI["state"]["stopping"] = True
+            except Exception:                                            # noqa: BLE001
+                pass
+        with AI_LOCK:
+            asker = AI.get("asker")
+        if asker is not None:
+            try:
+                asker.cancel("stopped")
+                with AI_LOCK:
+                    if AI.get("state"):
+                        AI["state"]["ask"] = None
+            except Exception:                                            # noqa: BLE001
+                pass
+        # 等一小会儿让它自己收尾（正常 ≤0.3 秒就回到了）：回来了就把结果说清楚，
+        # 没回来也**不骗人** —— 如实说"还在收尾"，界面照旧能接着操作。
+        th = AI.get("thread")
+        done = False
+        if th is not None:
+            try:
+                th.join(1.5)
+                done = not th.is_alive()
+            except Exception:                                            # noqa: BLE001
+                pass
+        if killed:
+            return {"ok": True, "killed": killed, "ms": ms, "done": done,
+                    "msg": "已停止 —— 顺手杀掉了 %d 个它起的进程（连子孙，%s毫秒）"
+                           % (len(killed), ms)}
+        return {"ok": True, "killed": [], "done": done,
+                "msg": "已停止（立刻生效，没有等下一轮）" if done else
+                       "已请求停止 —— 它正在收尾（子进程已经杀掉；还活着的请求会被掐断）"}
 
     def open_path(self, path):
         try:

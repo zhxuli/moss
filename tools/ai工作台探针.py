@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -130,12 +131,17 @@ def main():
         sys.modules.pop(m, None)
     import ai_client                                                      # noqa: E402
     import ai_edits                                                       # noqa: E402
+    import ai_mode as MO0                                                 # noqa: E402
     import ai_snap                                                        # noqa: E402
 
     spec = importlib.util.spec_from_file_location("moss_ui_main_aipane", UI / "main.py")
     M = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(M)
     api = M.Api()
+    # ★ `V-316`：权限是**一份清单**（读/写两个勾）。这个探针里好几个用例拿 `pkgs` 根当
+    #   "干活的地方"（原来那种"整个项目区"用法）—— 新模型下那要**显式在清单里**，
+    #   所以先把它加进去（等价于用户把那一行勾上了）。
+    MO0.allow_add(str(pkgs), read=True, write=True, why="探针：整个项目区")
 
     print("=" * 72)
     print("A：AI 参数从**宿主**来（`V-234`：界面自己没有 `MOSS_AI_*`）")
@@ -384,7 +390,10 @@ def main():
     mid = api.ai_poll()
     chk("D 先确认真在跑（线程起来了、没结束）", mid.get("running") is True, "running=%s" % mid.get("running"))
     stopped = api.ai_stop()
-    chk("D ai_stop 回了一句人话", stopped.get("ok") is True and "下一轮" in str(stopped.get("msg")),
+    # ★ `V-307`：停止**不再是「停在下一轮」**（用户报的「点了停止还卡二十分钟」就是它）——
+    #   现在回的话必须说清「已停止 / 立刻」，而且断言的**行为**在下面两条（真收工 + 真杀掉子进程）。
+    chk("D ai_stop 回了一句人话（说清「已停止」，不再说「停在下一轮」）",
+        stopped.get("ok") is True and "停止" in str(stopped.get("msg")),
         str(stopped.get("msg"))[:60])
     release.set()                                        # 放行：下一轮开头就该收工
     deadline, done = time.time() + 40, None
@@ -889,10 +898,14 @@ def main():
     chk("I ★ 但 `:skill list` / `doc` / `run` 这类不含「决定」的照旧随便用",
         "拒绝" not in str(_gate.call("run_moss", {"args": ":skill list"}))
         and "拒绝" not in str(_gate.call("run_moss", {"args": ":skill doc shot"})), "")
+    # ★ `V-307`：写权限变成**三档模式 + 放行清单**，判据搬到 `ai_mode.writable()`。
+    #   行为没变：技能目录能写、出厂插件目录不能写；`core/` 从"普通拒绝"升级成**硬锁**
+    #   （放手模式也写不了）—— 所以那句文案从「只允许写」变成「受保护路径（硬锁）」。
+    _core_err = str(ai_edits.check_writable(ROOT / "core" / "cli.py"))
     chk("I ★★ 写权限只多开这一处：技能目录能写、出厂插件目录和 core 写不了",
         ai_edits.check_writable(SKDIR / "x" / "pkg.json") is None and
         ai_edits.check_writable(ROOT / "system" / "pkgs" / "skill" / "core.py") is not None and
-        "只允许写" in str(ai_edits.check_writable(ROOT / "core" / "cli.py")), "")
+        ("只允许写" in _core_err or "受保护" in _core_err), _core_err[:60])
     chk("I 能**读**自己的技能（不然没法改它）",
         ai_edits.check_readable(SKDIR / "shot" / "pkg.json") is None, "")
 
@@ -906,6 +919,297 @@ def main():
     chk("I ★ 每只技能都带图标正文（墙上那排彩色图标）+ 为什么造它 + 时间 + 文件列表",
         bool(_row["icon_svg"]) and bool(_row["why"]) and bool(_row["created"])
         and isinstance(_row["files"], list) and len(_row["files"]) >= 3, "")
+
+    # ================================================================
+    print()
+    print("=" * 72)
+    print("J：`V-307`/`V-308` 宿主那一半 —— 会话按「干活的地方」分桶 / 每步落盘 /")
+    print("     看提示词 / 三档权限 / 放行清单 / 提问回话 / 临时空间 / 停止杀进程")
+    print("=" * 72)
+    import ai_ask as A                                                    # noqa: E402
+    import ai_mode as MO                                                  # noqa: E402
+    import ai_runs as RUN                                                 # noqa: E402
+
+    # ---- J-α：**历史按包分桶**（用户原话："我在 github 可视化助手这里使用了 ai……
+    #           在历史这里 按说 它应该只要显示这个模块下的历史就可以了"）----------------
+    _pkgA = pkgs / "aaa"
+    _pkgB = pkgs / "bbb"
+    for _p in (_pkgA, _pkgB):
+        _p.mkdir(parents=True, exist_ok=True)
+    _recA = RUN.save({"task": "A 的活", "workdir": str(_pkgA), "ok": True,
+                      "steps": [], "messages": [{"role": "user", "content": "A 问"}]})
+    _recB = RUN.save({"task": "B 的活", "workdir": str(_pkgB), "ok": True, "steps": []})
+    chk("J ★★ 两个包的会话**落在各自的插件数据目录里**（`state/<包id>/ai/runs/`）",
+        (udata / "state" / "aaa" / "ai" / "runs" / (_recA["id"] + ".json")).is_file()
+        and (udata / "state" / "bbb" / "ai" / "runs" / (_recB["id"] + ".json")).is_file(),
+        str(_recA.get("dir")))
+    _lA = api.ai_runs(30, str(_pkgA))
+    _lB = api.ai_runs(30, str(_pkgB))
+    chk("J ★★ 在 A 包的历史里**只看得到 A 的会话**（B 的一条都不露）",
+        [r["id"] for r in _lA["runs"]] == [_recA["id"]]
+        and [r["id"] for r in _lB["runs"]] == [_recB["id"]],
+        "A=%d 条 B=%d 条" % (len(_lA["runs"]), len(_lB["runs"])))
+    chk("J ★ 界面拿得到「这条会话算谁的」（顶栏/标题要显示）",
+        _lA.get("scope", {}).get("id") == "aaa", str(_lA.get("scope")))
+    chk("J ★ 按 id 照样读得到（不管它在哪个桶里）",
+        (api.ai_run(_recA["id"]).get("run") or {}).get("task") == "A 的活", "")
+    # 改名/搬家：数据目录跟着包走这件事由 `moss --rename` 负责（这里只钉住"按 id 找得到"）
+    chk("J ★ 全清**只清这个桶**（不会顺手把别的包的会话删了）",
+        api.ai_run_forget("", True, str(_pkgA)).get("removed") == 1
+        and (udata / "state" / "bbb" / "ai" / "runs" / (_recB["id"] + ".json")).is_file(), "")
+    # ★ `V-307`：**出厂包**（`system/pkgs/<id>`）也按它自己分桶 —— 在它的 AI 页聊的
+    #   不该混进"整个项目区"那一桶（用户原话是"只要显示这个模块下的历史就可以了"）。
+    _syspkg = ROOT / "system" / "pkgs" / "md5"
+    _recS = RUN.save({"task": "出厂包里的活", "workdir": str(_syspkg), "ok": True, "steps": []})
+    chk("J ★ 出厂包（system/pkgs/<id>）的会话也落在它自己的桶里",
+        RUN.scope_of(str(_syspkg)).get("id") == "md5"
+        and [r["id"] for r in api.ai_runs(30, str(_syspkg))["runs"]] == [_recS["id"]],
+        str(RUN.scope_of(str(_syspkg))))
+    RUN.delete(_recS["id"], str(_syspkg))
+
+    # ★ `V-314`：**目录名和 id 不一致**时以清单里的 id 为准（`D-27`：两者互不相干，
+    #   而数据目录是按 id 算的；不这么做的话 `moss --rename` 搬不走这些会话）。
+    _odd = pkgs / "ccc-dir"
+    _odd.mkdir(parents=True, exist_ok=True)
+    (_odd / "pkg.json").write_text('{"id": "ccc", "name": "目录名和 id 不一样"}', encoding="utf-8")
+    _recC = RUN.save({"task": "名字对不上的那个包", "workdir": str(_odd), "ok": True, "steps": []})
+    chk("J ★★ 目录名和 id 不一样时，会话按**清单里的 id** 落盘（不然改名搬不走）",
+        RUN.scope_of(str(_odd)).get("id") == "ccc"
+        and (udata / "state" / "ccc" / "ai" / "runs" / (_recC["id"] + ".json")).is_file(),
+        str(RUN.scope_of(str(_odd)).get("id")))
+    RUN.delete(_recC["id"], str(_odd))
+
+    # ---- J-β：**每步落盘**：跑一半被强关，记录还在（标着「上次没跑完」） ----------
+    _live = RUN.save_live({"id": "probe-live-0001", "task": "跑一半被强关的活",
+                           "workdir": str(_pkgB), "steps": [{"n": 1, "tool": "list_dir"}],
+                           "usage": {"total_tokens": 12}, "messages": []})
+    _row = [r for r in api.ai_runs(30, str(_pkgB))["runs"] if r["id"] == "probe-live-0001"]
+    chk("J ★★ 跑到一半的记录**已经落盘了**（不用等跑完 —— 你那次强制重启丢的就是它）",
+        bool(_live.get("ok")) and bool(_row) and _row[0].get("interrupted") is True,
+        str(_row[:1])[:120])
+    chk("J ★ 那条被明确标成「没跑完」（界面据此画 ⚠，不许看成跑完了）",
+        bool(_row) and _row[0].get("running") is True, "")
+    RUN.delete("probe-live-0001", str(_pkgB))
+
+    # ---- J-γ：**看这条会话喂给它的提示词**（用户要的那个"点开看历史"） -------------
+    _msgs = [{"role": "system", "content": "你是 moss 的助手"},
+             {"role": "user", "content": "把 zz 改成能算加法"},
+             {"role": "assistant", "content": None,
+              "tool_calls": [{"id": "c1", "type": "function",
+                              "function": {"name": "read_file", "arguments": "{}"}}]},
+             {"role": "tool", "tool_call_id": "c1", "content": "（文件内容）"}]
+    _rm = RUN.save({"task": "看提示词", "workdir": str(_pkgB), "ok": True, "steps": [],
+                    "messages": _msgs})
+    _got = api.ai_session_messages(_rm["id"])
+    chk("J ★★ 点开一条会话能拿到**整份提示词历史**（系统提示 + 我问的 + 它答的 + 工具结果）",
+        _got.get("ok") and _got.get("count") == 4
+        and [m["role"] for m in _got["messages"]] == ["system", "user", "assistant", "tool"],
+        "count=%s" % _got.get("count"))
+    chk("J ★ 老记录（没存对话）如实说「这条没有」，不装作有",
+        api.ai_session_messages("根本没有这条").get("ok") is False, "")
+    RUN.delete(_rm["id"], str(_pkgB))
+
+    # ---- J-δ：**权限清单（读/写两个勾）**（宿主 API，`V-316`） --------------------
+    _s0 = api.ai_mode_get(str(_pkgB))
+    chk("J ★★ 当前这个包**自动进清单**，读 + 写都默认开着（打开插件点 AI = 我就是要改它）",
+        any(x["path"] == str(_pkgB) and x["read"] and x["write"]
+            for x in (_s0.get("allow") or [])), str(_s0.get("allow"))[:120])
+    chk("J ★ 清单里**永远有一行「任意路径」**（勾上写 = 放手；删不掉）",
+        any(x["path"] == "*" for x in (_s0.get("allow") or [])), "")
+    chk("J ★ 默认**不是**放手（`wildcard` 为假）", _s0.get("wildcard") is False, "")
+    _out = tmp / "allowed_dir"
+    _out.mkdir(parents=True, exist_ok=True)
+    _a = api.ai_allow(str(_out), True, True, "探针加的", "add")
+    chk("J ★ 加一条（清单里带**读 / 写两个勾** + 为什么）",
+        _a.get("ok") and any(x["path"] == str(_out) and x["read"] and x["write"]
+                             for x in _a["summary"]["allow"]), str(_a.get("msg")))
+    _a2 = api.ai_allow(str(_out), True, False, "", "set")
+    chk("J ★★ 把「写」取消勾选 ⇒ 那一行立刻变成只读（读还在）",
+        any(x["path"] == str(_out) and x["read"] and not x["write"]
+            for x in _a2["summary"]["allow"]), "")
+    chk("J ★★ 后端也认这个状态：读得过、写不过",
+        MO.can_read(_out / "a.txt") is None and MO.can_write(_out / "a.txt") is not None, "")
+    _a3 = api.ai_allow(str(_out), None, None, "", "rm")
+    chk("J ★ 删掉那条 ⇒ 读写都不通了",
+        not any(x["path"] == str(_out) for x in _a3["summary"]["allow"])
+        and MO.can_read(_out / "a.txt") is not None, "")
+    # 「任意路径」勾上写 = 放手：哪儿都能写，而且危险操作不再问
+    _a4 = api.ai_allow("*", False, True, "", "set")
+    chk("J ★★ 把「任意路径」的写打开 = 放手（`ai_info` 里 wildcard 变真）",
+        _a4.get("ok") and api.ai_info(str(_pkgB)).get("wildcard") is True, "")
+    chk("J ★★ 放手之后：包外目录能写，而且**危险操作不再问**（`needs_confirm` 为假）",
+        MO.can_write(_out / "b.txt") is None
+        and MO.needs_confirm(MO.danger_of("run_moss", {"args": "--remove x"})) is False, "")
+    _a5 = api.ai_allow("*", False, False, "", "set")
+    chk("J ★ 关掉「任意路径」⇒ 又变回「要问」（现读，不用重启）",
+        _a5.get("ok") and api.ai_info(str(_pkgB)).get("wildcard") is False
+        and MO.needs_confirm(MO.danger_of("run_moss", {"args": "--remove x"})) is True, "")
+    chk("J ★ 硬锁路径**加不进**清单（`core/` 永远是拒绝）",
+        api.ai_allow(str(ROOT / "core"), True, True, "", "add").get("ok") is False, "")
+
+    # ---- J-ε：它问、你答（宿主这一半的桥） --------------------------------------
+    _asker = A.Asker(publish=lambda q: None, timeout=5)
+    _api_ask = {"ok": True}
+    with M.AI_LOCK:
+        M.AI["asker"] = _asker
+        M.AI["state"] = M.AI.get("state") or {}
+    _import_thread = None
+
+    def _ask_later():
+        time.sleep(0.3)
+        _api_ask.update(api.ai_answer("", "就按 B 来", "B") or {})
+
+    import threading as _th                                                 # noqa: E402
+    _import_thread = _th.Thread(target=_ask_later, daemon=True)
+    _import_thread.start()
+    _ans = _asker.ask("要 A 还是 B?", options=["A", "B"])
+    chk("J ★★ 界面那一下 `ai_answer` 真的**放走了它**（回话里带着答案）",
+        _ans.get("answered") is True and _ans.get("text") == "就按 B 来", str(_ans)[:80])
+    with M.AI_LOCK:
+        M.AI["asker"] = None
+
+    # ---- J-θ：`V-319` **权限请求走清单**（不弹卡片）+ 「已经等了 N 秒」有数 ----------
+    with M.AI_LOCK:
+        M.AI["stop"] = False        # 前面 D 段按过「停止」，这里先清掉（真流程里 ai_start 会清）
+    _pd = tmp / "perm_dir"
+    _pd.mkdir(parents=True, exist_ok=True)
+    MO.allow_rm(str(_pd))
+    _res = {}
+    _th2 = _th.Thread(target=lambda: _res.update(
+        api._ai_perm_wait(_pd, "探针要写这里", "write", timeout=15) or {}), daemon=True)
+    _th2.start()
+    _row = None
+    for _i in range(30):
+        _row = MO.find(str(_pd))
+        if _row and _row.get("pending"):
+            break
+        time.sleep(0.1)
+    chk("J ★★ 它一请求 ⇒ 清单里就多一行**待允许**（界面上那一行会闪），这会儿读写都不通",
+        bool(_row) and _row.get("pending") is True
+        and MO.can_read(_pd / "x.txt") is not None and MO.can_write(_pd / "x.txt") is not None,
+        str(_row)[:90])
+    _poll = api.ai_poll()
+    chk("J ★★ `ai_poll` 把这条请求带给界面（带路径 + 已经等了多久）",
+        (_poll.get("perm") or {}).get("path") == str(_pd)
+        and (_poll.get("perm") or {}).get("asking", 0) > 0, str(_poll.get("perm"))[:90])
+    api.ai_allow(str(_pd), True, True, "", "add")          # 用户在清单里勾「写」
+    _th2.join(6)
+    chk("J ★★ 用户一勾 ⇒ 闸**放行**（granted），那一行同时变成正式条目（不再 pending）",
+        _res.get("granted") is True and _res.get("write") is True
+        and not (MO.find(str(_pd)) or {}).get("pending"), str(_res)[:90])
+    chk("J ★ 放行之后当场能写", MO.can_write(_pd / "x.txt") is None, "")
+
+    # 只给读 ⇒ 闸要如实说 read-only（它要的是写）
+    MO.allow_rm(str(_pd))
+    _res2 = {}
+    _th3 = _th.Thread(target=lambda: _res2.update(
+        api._ai_perm_wait(_pd, "要写", "write", timeout=15) or {}), daemon=True)
+    _th3.start()
+    for _i in range(30):
+        if (MO.find(str(_pd)) or {}).get("pending"):
+            break
+        time.sleep(0.1)
+    api.ai_allow(str(_pd), True, False, "", "add")         # 用户只勾「读」
+    _th3.join(6)
+    chk("J ★★ 用户只勾「读」⇒ 闸回 read-only（不是含糊的「允许了」）",
+        _res2.get("reason") == "read-only" and _res2.get("granted") is False, str(_res2)[:80])
+
+    # 拒绝（点 ✕ = 那条没了）⇒ denied
+    MO.allow_rm(str(_pd))
+    _res3 = {}
+    _th4 = _th.Thread(target=lambda: _res3.update(
+        api._ai_perm_wait(_pd, "要写", "write", timeout=15) or {}), daemon=True)
+    _th4.start()
+    for _i in range(30):
+        if (MO.find(str(_pd)) or {}).get("pending"):
+            break
+        time.sleep(0.1)
+    api.ai_allow(str(_pd), None, None, "", "rm")           # 用户点 ✕
+    _th4.join(6)
+    chk("J ★★ 用户点 ✕（拒绝）⇒ 闸回 denied（它会收到「别动那里」）",
+        _res3.get("reason") == "denied" and _res3.get("granted") is False, str(_res3)[:80])
+
+    # 「已经等了 N 秒」不许是空数字（老 bug：publish 那一份没有 asking）
+    _asker3 = A.Asker(publish=lambda q: None, timeout=60)
+    with M.AI_LOCK:
+        M.AI["asker"] = _asker3
+        M.AI["state"] = {"ask": {"qid": "q-sec", "question": "在吗？", "options": [],
+                                 "allow_text": True, "kind": "ask", "why": "", "detail": "",
+                                 "at": time.time() - 7}}
+    _p3 = (api.ai_poll().get("ask") or {})
+    chk("J ★★ 「已经等了 N 秒」有数（以前那一位是空的 —— 你报的「已经等了秒」）",
+        _p3.get("asking", 0) >= 6, str(_p3)[:80])
+    with M.AI_LOCK:
+        M.AI["asker"] = None
+        M.AI["state"] = {}
+
+
+    # ---- J-ζ：临时空间（`V-314`：**按插件分**，看 / 清） --------------------------
+    _t = api.ai_tmp("info", "", str(_pkgB))
+    chk("J ★ 临时空间读得到（路径 + 大小 + 文件数）",
+        _t.get("ok") and "path" in (_t.get("tmp") or {}), str(_t.get("tmp")))
+    chk("J ★★ 它落在**这个插件的数据目录**里（`state/<包id>/ai/tmp`）",
+        "/state/bbb/ai/tmp" in str((_t.get("tmp") or {}).get("path") or "").replace("\\", "/"),
+        str((_t.get("tmp") or {}).get("path")))
+    _d = MO.ensure_tmp("probe-clean", str(_pkgB))
+    _d2 = MO.ensure_tmp("probe-clean-2", str(_pkgA))
+    (_d / "x.txt").write_text("x", encoding="utf-8")
+    (_d2 / "y.txt").write_text("y", encoding="utf-8")
+    api.ai_tmp("clean", "", str(_pkgB))
+    chk("J ★★ 清空**只清这个包的**（另一个包的临时文件一条没动）",
+        MO.tmp_size(str(_pkgB)).get("files") == 0 and MO.tmp_size(str(_pkgA)).get("files") == 1,
+        "B=%s A=%s" % (MO.tmp_size(str(_pkgB)).get("files"),
+                       MO.tmp_size(str(_pkgA)).get("files")))
+    api.ai_tmp("clean", "", str(_pkgA))
+
+    # ---- J-η：**停止 = 立刻 + 杀子进程**（用户报的"提示我停在下轮，然后依旧卡死"） ----
+    _long = tmp / "long_host2.py"
+    _long.write_text(
+        "# -*- coding: utf-8 -*-\n"
+        "import os, subprocess, sys, time\n"
+        "kid = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+        "open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pids2.txt'), 'w').write(\n"
+        "    '%d %d' % (os.getpid(), kid.pid))\n"
+        "time.sleep(120)\n", encoding="utf-8")
+    _oldh = os.environ.get("MOSS_HOST_CMD")
+    os.environ["MOSS_HOST_CMD"] = '"%s" "%s"' % (sys.executable, _long)
+    # ★ D 段把模型换成了 `SlowClient`（一直回 list_dir，用来制造"跑着的时候按停止"），
+    #   这里要**换回**按剧本走的 FakeClient —— 不换回来，这次跑的就是 200 步 list_dir。
+    ai_client.Client = FakeClient
+    SCRIPT[:] = [call("run_moss", {"args": ":sleepy", "timeout": 120})]
+    _r = api.ai_start("跑个长命令", str(_pkgB))
+    chk("J 那条长命令的任务起来了", bool(_r.get("ok")), str(_r)[:60])
+    _t0 = time.time()
+    while time.time() - _t0 < 6 and not (tmp / "pids2.txt").is_file():
+        time.sleep(0.2)
+    _mid = api.ai_poll()
+    chk("J 这会儿它确实在跑（界面上是「执行中」）", _mid.get("running") is True,
+        "步骤=%s 结果=%s" % ([s.get("tool") for s in (_mid.get("steps") or [])][-4:],
+                             str((_mid.get("result") or {}).get("reason"))[:90]))
+    _st = api.ai_stop()
+    chk("J ★★ 按停止**当场就停**（不是「停在下一轮」）", _st.get("done") is True or "停止" in str(_st.get("msg")),
+        str(_st.get("msg"))[:60])
+    _t1 = time.time()
+    while time.time() - _t1 < 20:
+        if not api.ai_poll().get("running"):
+            break
+        time.sleep(0.2)
+    chk("J ★★ 一两秒内就收工（老行为是「提示停在下轮」然后卡到超时）",
+        time.time() - _t1 < 8, "%.1f 秒" % (time.time() - _t1))
+    _pids2 = ((tmp / "pids2.txt").read_text(encoding="utf-8").split()
+              if (tmp / "pids2.txt").is_file() else [])
+    _alive2 = []
+    for _p in _pids2:
+        _o = subprocess.run(["tasklist", "/FI", "PID eq %s" % _p, "/NH"],
+                            capture_output=True, text=True, errors="replace")
+        if _p in (_o.stdout or ""):
+            _alive2.append(_p)
+    chk("J ★★ 它起的子进程**连子孙一起被收掉**（几十个 moss/python 的根因）",
+        len(_pids2) == 2 and not _alive2, "pid=%s 还活着=%s" % (_pids2, _alive2))
+    if _oldh is None:
+        os.environ.pop("MOSS_HOST_CMD", None)
+    else:
+        os.environ["MOSS_HOST_CMD"] = _oldh
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()
