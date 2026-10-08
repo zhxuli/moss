@@ -180,7 +180,31 @@ function addPathOk(p){
   // 别一个说行一个说不行（前端只筛形状；存不存在由宿主判）。
   return /^[a-zA-Z]:[\\/]/.test(s) || /^\\\\[^\\]/.test(s);
 }
-async function aiAllowAdd(pth){
+/* ★ V-344：把一条路径拆成「盘符 + 中间 + 尾巴」三段，给权限清单那行用。
+   为什么要拆：清单里每条目录只写最后一级（`bmi`）根本不知道它在哪儿；而整条路径塞进一格
+   又会被 `text-overflow` 从**右边**截掉 —— 最要紧的最后两级全没了。
+   拆完用 flex 排：盘符和「上一级\最后一级」**钉死**，中间那段**自己缩**
+   （放得下就全显示，放不下才出 …）。 */
+function permParts(p){
+  const s = String(p || "").trim();
+  if (!s || s === "*") return null;
+  const norm = s.replace(/\//g, "\\").replace(/\\+$/, "");
+  let head = "", rest = norm, m = null;
+  m = /^([A-Za-z]:)\\?/.exec(norm);
+  if (m){ head = m[1] + "\\"; rest = norm.slice(m[0].length); }
+  else {
+    m = /^(\\\\[^\\]+\\[^\\]+)\\?/.exec(norm);
+    if (m){ head = m[1] + "\\"; rest = norm.slice(m[0].length); }
+  }
+  const bits = rest.split("\\").filter(Boolean);
+  if (!bits.length) return {head: head, mid: "", tail: ""};
+  const keep = Math.min(2, bits.length);
+  const tail = bits.slice(bits.length - keep).join("\\");
+  const midBits = bits.slice(0, bits.length - keep);
+  return {head: head, mid: midBits.length ? (midBits.join("\\") + "\\") : "", tail: tail};
+}
+
+async function aiAllowAdd(pth, why){
   const p = String(pth || AIR.newPath || "").trim();
   AIR.newPathErr = "";
   if (!p){ AIR.newPathErr = "先填一个目录（或者把文件夹拖到这一页）"; AIR.rev++; return; }
@@ -190,7 +214,7 @@ async function aiAllowAdd(pth){
     return;
   }
   try{
-    const got = await window.pywebview.api.ai_allow(p, true, true, "", "add");
+    const got = await window.pywebview.api.ai_allow(p, true, true, String(why || "你手动加的"), "add", true);
     if (got && got.ok){
       toast(got.msg || "加好了");
       AIR.newPath = "";
@@ -958,7 +982,9 @@ const MossAi = {
        不往界面上摆 —— 请求在聊天记录那条气泡里问）。 */
     allowRows(){
       this.A.rev;
-      return (this.A.allow || []).filter(x => !x.pending);
+      // ★ V-344：每行预先把路径拆成三段（盘符 / 中间 / 尾巴），模板直接用
+      return (this.A.allow || []).filter(x => !x.pending)
+                                .map(x => Object.assign({}, x, {_p: permParts(x.path)}));
     },
     /* ★ `V-307`：历史下拉里那几条 —— 正在跑的 / 上次没跑完的要能一眼看出来。 */
     runLabel(){
@@ -1020,6 +1046,13 @@ const MossAi = {
         const r = await window.pywebview.api.fs_open_default(rel);
         if (r && !r.ok) toast(r.msg, true);
       },
+      /* ★ V-344：复制路径（hover 才出的那颗按钮） */
+      async copyPath(it){
+        const p = String((it && it.path) || "");
+        if (!p || p === "*") return;
+        try{ await navigator.clipboard.writeText(p); toast("路径已复制"); }
+        catch(e){ toast("复制失败：" + (e && e.message ? e.message : e), true); }
+      },
     saveBudget: aiSaveBudget,
     refresh(){ aiRefreshInfo(true); },          // 那颗「刷新」= 重新问一次宿主（不吃缓存）
     /* ---- ★ V-316：权限清单（读 / 写 两个勾，没有"模式"了） ---- */
@@ -1033,7 +1066,7 @@ const MossAi = {
     },
     permHoverIn(){ if (!AIR.permHover){ AIR.permHover = true; AIR.rev++; } },
     permHoverOut(){ if (AIR.permHover){ AIR.permHover = false; AIR.rev++; } },
-    allowAdd(){ aiAllowAdd(); },
+    allowAdd(){ aiAllowAdd(null, "你手动加的"); },
     allowSet(it, field, on){ aiAllowSet(it, field, on); },
     /* ★ `V-323`：上面那一条请求的「允许 / 拒绝」：
        · 危险确认（kind=confirm）⇒ 把选择交回宿主（它那边阻塞等着）
@@ -1686,7 +1719,7 @@ const MossAi = {
       const use = (it.isDir === false) ? p.replace(/[\\/][^\\/]*$/, "") : p;
       if (!use) return false;
       AIR.dropHot = false;
-      aiAllowAdd(use);
+      aiAllowAdd(use, "你拖进来的");
       return true;
     };
     /* ★ `V-261`：Alt 那座"我说过的话"导航 —— 监听挂在 window 上（键盘焦点不一定在这一页里） */
@@ -2037,7 +2070,15 @@ const MossAi = {
                     <div class="path-item ai-perm-i" v-for="it in allowRows" :key="it.path"
                          :class="{star: it.path === '*'}">
                       <div class="path-info ai-perm-info" :title="it.path">
-                        <div class="path-title ai-perm-p">{{ permLabel(it) }}</div>
+                        <!-- ★ V-344：盘符 + 上一级\最后一级钉死，中间那段自己缩（够就不省） -->
+                        <div class="path-title ai-perm-p">
+                          <template v-if="it._p && it._p.tail">
+                            <span class="pp-head" v-if="it._p.head">{{ it._p.head }}</span>
+                            <span class="pp-mid" v-if="it._p.mid">{{ it._p.mid }}</span>
+                            <span class="pp-tail">{{ it._p.tail }}</span>
+                          </template>
+                          <template v-else>{{ permLabel(it) }}</template>
+                        </div>
                         <div class="path-desc ai-perm-d">{{ permDesc(it) }}</div>
                       </div>
                       <div class="path-controls ai-perm-togs">
@@ -2049,6 +2090,11 @@ const MossAi = {
                           <span class="switch"><input type="checkbox" :checked="!!it.write"
                             @change="allowSet(it, 'write', $event.target.checked)"><span class="slider"></span></span>
                         </label>
+                        <!-- ★ V-344：hover 才出的两颗：复制路径 / 打开文件夹 -->
+                        <button class="btn-delete ai-perm-act" v-if="it.path !== '*'" @click="copyPath(it)"
+                                title="复制这个路径" v-html='ico("copy", "i")'></button>
+                        <button class="btn-delete ai-perm-act" v-if="it.path !== '*'" @click="openDir(it.path)"
+                                title="在资源管理器里打开" v-html='ico("folder-open", "i")'></button>
                         <button class="btn-delete ai-perm-x" v-if="it.path !== '*' && !it.current" @click="allowRm(it)"
                                 title="从清单里删掉（它就读不了也写不了这里）" v-html='ico("trash-2", "i")'></button>
                         <span class="ai-perm-lock" v-else v-html='ico("file-lock", "i")'

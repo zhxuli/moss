@@ -146,7 +146,8 @@ def _find(rows, pth):
 
 
 # ------------------------------------------------------------------ 改清单
-def allow_set(pth, read=None, write=None, why="", by="user", add=True, pending=None):
+def allow_set(pth, read=None, write=None, why="", by="user", add=True, pending=None,
+              force=False):
     """加一条 / 改一条（`read` / `write` 给 `None` 就保持原样；`pending` 给 `None` 也保持原样）。
 
     ★ `path` 是 `*` 时就是那行"任意路径"（用来表达"放手"）。
@@ -186,10 +187,17 @@ def allow_set(pth, read=None, write=None, why="", by="user", add=True, pending=N
         it["write"] = bool(write)
     if pending is not None:
         it["pending"] = bool(pending)
-    if why:
-        it["why"] = str(why)
-    if by and it.get("by") in ("", "user"):
-        it["by"] = str(by)
+    if force:
+        # ★ `V-344`：**用户主动加进来的**（拖进来 / 手输 / 选目录）—— 归属和说明都按用户的来。
+        #   不这么做的话，那条老的 `by="ai"` + `why="要求读这个目录的文件…"` 会**赖着不走**
+        #   ⇒ 你拖进来的目录被写成"它请求的：…"，可 AI 压根没请求过它（你报的就是这个）。
+        it["by"] = str(by or "user")
+        it["why"] = str(why or "")
+    else:
+        if why:
+            it["why"] = str(why)
+        if by and it.get("by") in ("", "user"):
+            it["by"] = str(by)
     cur["allow"] = rows
     got = save(cur)
     got["msg"] = "%s：读=%s 写=%s" % (it["path"], "开" if it.get("read") else "关",
@@ -198,8 +206,9 @@ def allow_set(pth, read=None, write=None, why="", by="user", add=True, pending=N
     return got
 
 
-def allow_add(pth, read=True, write=True, why="", by="user", pending=None):
-    return allow_set(pth, read=read, write=write, why=why, by=by, add=True, pending=pending)
+def allow_add(pth, read=True, write=True, why="", by="user", pending=None, force=False):
+    return allow_set(pth, read=read, write=write, why=why, by=by, add=True,
+                     pending=pending, force=force)
 
 
 def _is_abs_path(raw):

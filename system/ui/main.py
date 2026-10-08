@@ -2380,7 +2380,7 @@ class Api:
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 
-    def ai_allow(self, path="", read=None, write=None, why="", action="add"):
+    def ai_allow(self, path="", read=None, write=None, why="", action="add", force=False):
         """权限清单：`action` = `add` / `set`（改勾选）/ `rm`（删掉）/ `deny`（**拒绝一次请求**）。
 
         ★ `V-316`：**读 / 写各一个勾**，不再有"模式"那种第二个开关控同一件事。
@@ -2410,8 +2410,10 @@ class Api:
                 # ★ `V-343`：`add=True` 一直是"不存在就建、存在就改"（upsert）——
                 #   "当前这个包"那条在清单里本来**没有**（它是算出来的），
                 #   用户一动它的开关就得能建出来，所以 `set` 也走 upsert。
+                # ★ `V-344`：`force` = "这是**用户主动加的**"（拖进来 / 手输）——
+                #   让这条记录把归属和说明都改成用户的，别继承以前那条 `by="ai"` 的 why。
                 got = M.allow_set(path, read=read, write=write, why=str(why or ""),
-                                  by="user", add=True, pending=_pend)
+                                  by="user", add=True, pending=_pend, force=bool(force))
             return dict(got, summary=M.summary(self._ai_last_workdir()))
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
@@ -2441,7 +2443,7 @@ class Api:
             # ★ `V-328`：这里原来写的是 `allow_add(p, on=True, …)` —— `allow_add` 根本没有
             #   `on` 这个参数（`V-316` 起就是 `read` / `write` 了）⇒ 每次「选目录…」都会
             #   TypeError 被 except 兜住、报一句"选不了目录"。现在按真签名来（读+写都开）。
-            r = M.allow_add(p, read=True, write=True, why="用户选的目录", by="user")
+            r = M.allow_add(p, read=True, write=True, why="你选目录加的", by="user", force=True)
             return dict(r, summary=M.summary())
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "选不了目录：%s: %s" % (type(e).__name__, e)}
