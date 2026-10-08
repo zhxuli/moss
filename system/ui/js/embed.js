@@ -386,8 +386,9 @@ async function clickRun(p){
    （两套详情互斥，同一时刻只会存在一个，所以这里谁在就用谁）。 */
 function argsInput(){ return $("#args") || $("#hargs"); }
 
-async function startRun(p, args, cwd){
+async function startRun(p, args, cwd, opts){
   if (RUNS[p.id]) return;                // ★ 只拦"同一个包重复起"，不再拦别的包
+  const o = opts || {};
   const cmd = "moss " + PSYM + p.id + ((args || "").trim() ? " " + args.trim() : "");
   lastRun = {id: p.id, args: args, label: cmd};
   consoleKey = p.id;                     // 输出落进"这个包自己的"那份
@@ -397,8 +398,13 @@ async function startRun(p, args, cwd){
      ★ 这里**不再先问 `termCanRun()`** —— 那个判据以前要求"终端正显示着"，于是切去看过
        「包输出」之后点运行就永远走老路（用户报的"又回到之前的模式"）。
        `termRunPackage` 自己会：起会话 → 把这一版切回来 → 敲命令；任何一步不行都返回 false，
-       我们照旧往下走老那条管道，行为一点不变。 */
-  if (typeof termRunPackage === "function" && await termRunPackage(p, args, cwd)) return;
+       我们照旧往下走老那条管道，行为一点不变。
+     ★★ `V-365`（用户 2026-10-09 报的"设了 2 个自启动只起得来一个、日志还全串在一屏"）：
+       **自启动那一批要传 `{noTerm:true}` 绕开终端**。原因很硬 —— 终端**只有一条 shell**：
+       一个包还占着它的时候，第二条命令是敲进**那个正在跑的包**的 stdin 的（不是新起一个），
+       于是第二个起不来、而所有包的日志挤在同一块屏上（各包自己的「包输出」反倒空着）。
+       自启动是"后台起一批"，本来就该各走各的管道。 */
+  if (!o.noTerm && typeof termRunPackage === "function" && await termRunPackage(p, args, cwd)) return;
   setConsole(p.id, "$ " + cmd, "运行中");
   const r = await pywebview.api.run_start(p.id, args || "", cwd || "");
   if (!r.ok){

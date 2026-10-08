@@ -2472,17 +2472,42 @@ MOCK_JS = r"""
           blurSaved = ((((M.autoSaved || {}).items || [])[0] || {}).args) === "70%";
           hintBlur = !!document.querySelector("#auto-sec .dp-saved");
         }
-        // 禁用 = 删除：整条没了，参数框又收起来，按钮回到「启用」
-        let afterOff = -1, boxHidden1 = false, btnText1 = "?";
+        // 禁用 = 删除：整条没了，那两个框又收起来，按钮回到「启用」
+        let afterOff = -1, boxHidden1 = false, btnText1 = "?", pillOff = -1, hintOff = false;
         const sw1 = document.querySelector("#auto-sw");
         if (sw1){
           sw1.click();
           await sleep(600);
           afterOff = (((M.autoSaved || {}).items) || []).length;
-          const box4 = document.querySelector("#auto-args");
-          boxHidden1 = !!box4 && !box4.classList.contains("show");
+          const panel2 = document.querySelector("#auto-panel");
+          boxHidden1 = !!panel2 && !panel2.classList.contains("show");
           const sw2 = document.querySelector("#auto-sw");
           btnText1 = sw2 ? (sw2.textContent || "").trim() : "?";
+          // ★ `V-365`（你报的"禁用的时候出现了 2 个弹窗"）：一次动作**只许一处提示** ——
+          //   深色胶囊（`#toasts .toast`）一根都不许有，行内那句「已移除」要在。
+          pillOff = document.querySelectorAll("#toasts .toast").length;
+          hintOff = /已禁用|已移除/.test(
+            ((document.querySelector("#auto-sec .dp-saved") || {}).textContent || ""));
+        }
+        // ★ `V-365`（你报的"设了 2 个自启动，只起得来一个"）：**两条都要真起来**，
+        //   而且**各走各的管道**（`{noTerm:true}`）—— 不再挤进那条唯一的常驻 shell。
+        let autoBoth = false, autoPipes = 0, autoSeq = [], termCalls = -1;
+        if (typeof autostartRun === "function"){
+          M.auto = {items: [{kind: "pkg", id: "md5", args: "16896999", on: true},
+                            {kind: "pkg", id: "path", args: "", on: true}]};
+          M.runs = [];
+          AUTORAN = false;                       // 让它再跑一次（这个场景里允许重跑）
+          // 把 `termRunPackage` 换成"只记一笔"的桩：自启动**一次都不该经过终端**
+          const _origTerm = window.termRunPackage;
+          window.__termCalls = 0;
+          window.termRunPackage = async () => { window.__termCalls++; return true; };
+          await autostartRun();
+          await sleep(1200);
+          termCalls = window.__termCalls || 0;
+          window.termRunPackage = _origTerm;
+          autoSeq = (M.runs || []).map(r => r.pid);
+          autoPipes = autoSeq.length;
+          autoBoth = autoSeq.indexOf("md5") >= 0 && autoSeq.indexOf("path") >= 0;
         }
         // ★ 图标要对（用户点名的那两条）：**启用 = 圆圈里一个对号（circle-check）**、
         //   **禁用 = 圆圈里一道斜线（circle-slash）**。
@@ -2495,7 +2520,9 @@ MOCK_JS = r"""
                    onIcon === "circle-slash" &&
                    typed && flashed && hintOn && blurSaved && hintBlur &&
                    cwdTyped && cwdPicked && dropFlag && cwdDropped &&
-                   afterOff === 0 && boxHidden1 && btnText1.indexOf("启用") >= 0;
+                   pillOff === 0 && hintOff &&
+                   afterOff === 0 && boxHidden1 && btnText1.indexOf("启用") >= 0 &&
+                   autoBoth && autoPipes === 2 && termCalls === 0;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 块=" + (sec ? 1 : 0) +
           " 标题=[" + title0 + "] 说明=[" + desc0 + "] 初始:面板藏=" + boxHidden0 +
@@ -2507,7 +2534,10 @@ MOCK_JS = r"""
           " 失焦存=" + blurSaved + " 提示=" + hintBlur +
           "｜工作路径:手输=" + cwdTyped + " 点选=" + cwdPicked +
           " 拖入(划线=" + dropFlag + " 存了=" + cwdDropped + ")" +
-          "｜禁用后 条=" + afterOff + " 面板藏=" + boxHidden1 + " 按钮=" + btnText1;
+          "｜禁用后 条=" + afterOff + " 面板藏=" + boxHidden1 + " 按钮=" + btnText1 +
+          " 胶囊=" + pillOff + " 行内提示=" + hintOff +
+          "｜自启动两条都起=" + autoBoth + "(" + JSON.stringify(autoSeq) + ")" +
+          " 走终端次数=" + termCalls;
         document.title = ok ? "READY"
                             : ("AUTO-DETAIL-FAIL 标题=[" + title0 + "] 说明=[" + desc0 +
                                "] 初始:藏=" + boxHidden0 + " 两框=" + twoBoxes + " 钮=" + btnText0 +
@@ -2518,7 +2548,8 @@ MOCK_JS = r"""
                                " 失焦=" + blurSaved + "/" + hintBlur +
                                " 路径:手输=" + cwdTyped + " 点选=" + cwdPicked +
                                " 拖=" + dropFlag + "/" + cwdDropped +
-                               " 禁用后=" + afterOff + "/" + boxHidden1 + "/" + btnText1);
+                               " 禁用后=" + afterOff + "/" + boxHidden1 + "/" + btnText1 +
+                               " 胶囊=" + pillOff + " 提示=" + hintOff);
       }
       // ★ `V-305`：插件列表行**不显示简介**了，第二行是「符号 + id」（符号来自设置，别硬编码 `:`）
       if (h === "sym-list"){

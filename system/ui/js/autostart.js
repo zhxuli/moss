@@ -145,8 +145,13 @@ async function autoWire(kind, id, opts){
     if (it){                                   // 已经启用 ⇒ **禁用就是删除**
       AUTO.items = (AUTO.items || []).filter(
         x => !(x.kind === kind && String(x.id) === String(id)));
-      await autoPersist("已禁用（从自动启动里拿掉）：" + autoLabel(kind, id, it.name || o.name));
+      // ★ `V-365`：**只给一处提示**（以前 `autoPersist` 那句走 toast ⇒ 状态栏 + 深色胶囊
+      //   两下一起弹，你数成"2 个弹窗"）。这里改成跟"存参数"同一套**行内**提示；
+      //   ⚠️ 顺序要紧：`renderDetail()` 会把整块 DOM 换掉，所以提示要等重画之后再冒
+      //   （不然刚插进去就被冲掉、一个字都看不见）。
+      await autoPersist("");
       renderDetail();
+      setTimeout(() => autoSavedHint($("#auto-sw"), "已禁用（已移除）"), 60);
       return;
     }
     if ((AUTO.items || []).length >= (AUTO.max || AUTO_MAX)){
@@ -154,8 +159,9 @@ async function autoWire(kind, id, opts){
     }
     // 新启用：路径默认给"它本来会在哪儿跑"（包自己的目录 / 历史当初那个目录），参数先空着
     AUTO.items.push(autoMake(kind, id, o, {cwd: o.cwd || "", args: ""}));
-    await autoPersist("已启用：" + autoLabel(kind, id, o.name));
+    await autoPersist("");
     renderDetail();
+    setTimeout(() => autoSavedHint($("#auto-sw"), "已启用"), 60);
     // 稿子那句 `inputField.focus()`：展开之后光标落在**启动参数**框里。
     // ★ 不能只 `setTimeout(…, 30)`：`renderDetail()` 是**异步重画**（Vue 下一拍），
     //   定时器早了就 focus 到一个马上要被换掉的老节点上，光标又没了（预览里量到过）。
@@ -195,8 +201,7 @@ async function autoWire(kind, id, opts){
       return;
     }
     if (cwd) cwd.value = String(r.path || "");
-    if (await autoSaveFields(kind, id)) autoSavedHint(cwd || pick);
-  };
+    if (await autoSaveFields(kind, id)) autoSavedHint(cwd || pick);  };
 
   // ---- 工作路径：拖进来（真路径只有宿主知道 ⇒ 落到下面的 `__mossAutoDrop` 里取）
   const zone = $("#auto-dropzone");
@@ -255,25 +260,27 @@ async function autoSaveFields(kind, id){
   return await autoPersist("");                          // 静默存，提示交给 autoSavedHint 单独给
 }
 
-/* ★ `V-363`（你 2026-10-09 说的：「保存以后 你倒是给个提示啊」）—— 存完给三处提示：
+/* ★ `V-363`（你 2026-10-09 说的：「保存以后 你倒是给个提示啊」）—— 存完给两处提示：
      ① 输入框**变一下绿**（`.saved`）；
-     ② 输入框旁边**冒一句「✓ 已保存」**，1.6 秒后自己消失；
-     ③ **底部状态栏**留一行（`setStatus`，就是"最近一条状态提示"那一格）。
-   ★ 为什么不用 `toast()`：它一次报两处（状态栏 + 一颗深色胶囊，`V-61` 的规矩）——
-     参数是"改一下就存"的高频小动作，弹胶囊太吵；这里要的是"**看得见、但不挡事**"。 */
-function autoSavedHint(box){
-  flashAutoInput(box);
-  try{ setStatus("自动运行：启动参数已保存"); }catch(e){ /* 状态栏不在就算了 */ }
+     ② 输入框旁边**冒一句「✓ 已保存」**，1.6 秒后自己消失。
+   ★ `V-365`：**不再用 `toast()`**（你报的"禁用的时候出现了 2 个弹窗"）—— `toast()` 是
+     "状态栏 + 一颗深色胶囊"两处一起报（`V-61` 的规矩），这一行的小动作看着就是弹了两下。
+     所以这一行统一只走**行内**那一句（`text` 可以换词：已保存 / 已启用 / 已移除）。 */
+function autoSavedHint(box, text){
+  if (box) flashAutoInput(box);
+  const words = String(text || "已保存");
+  try{ setStatus("自动运行：" + words); }catch(e){ /* 状态栏不在就算了 */ }
   try{
-    const host = box.parentElement;
+    const host = (box && box.parentElement) ||
+                 document.querySelector("#auto-sec .dp-item-acts");
     if (!host) return;
     let hint = host.querySelector(".dp-saved");
     if (!hint){
       hint = document.createElement("span");
       hint.className = "dp-saved";
-      hint.textContent = "已保存";
-      host.insertBefore(hint, box.nextSibling);
+      host.appendChild(hint);
     }
+    hint.textContent = words;
     hint.classList.add("on");
     clearTimeout(hint._t);
     hint._t = setTimeout(() => { try{ hint.remove(); }catch(e){} }, 1600);
@@ -290,13 +297,18 @@ function flashAutoInput(box){
 
 /* ---------------------------------------------------------------- 启动时跑一次（`V-356`）
    ★ 只在**主窗口**做、而且**一辈子只做一次**（浮动窗口不做；点刷新反复走 `init()` 也不重跑）。
-   ★ 每条之间隔 700 毫秒：一次全塞进去，几个包会抢控制台 / 抢终端那一行提示符。 */
+   ★ 每条之间隔 700 毫秒：一次全塞进去会让它们挤成一团（下面那条更要紧）。
+   ★★ `V-365`（你 2026-10-09 报的「设了 2 个自启动，只能启动一个；日志还全串在一屏」）：
+     **这批一律走"自己的管道"（`{noTerm:true}`），不敲进那个常驻终端。**
+     终端只有**一条 shell**：第一个包还占着它的时候，第二条命令是敲进**那个包的 stdin** 的
+     （不是新起一个）⇒ 第二个起不来、而且所有包的日志挤在同一块屏上，各包自己的「包输出」
+     反倒空着。自启动是"后台起一批"，本来就该各走各的管道、各进各的输出缓冲。 */
 async function autostartRun(){
   if (FLOAT_PID || AUTORAN) return;
   AUTORAN = true;
   await autoLoad(true);
   const items = (AUTO.items || []).filter(x => x.on !== false);
-  const done = [];
+  const done = [], failed = [];
   for (let i = 0; i < items.length; i++){
     const it = items[i];
     try{
@@ -308,11 +320,20 @@ async function autostartRun(){
         done.push(nm);
       }else{
         const p = (DATA.packages || []).find(x => x.id === it.id);
-        // ★ `V-364`：**工作路径**也交给它（`startRun` 的第三个参数 = 这次运行的工作目录）
-        if (p){ await startRun(p, it.args || "", it.cwd || ""); done.push(PSYM + p.id); }
+        if (!p){ failed.push(it.id + "（找不到这个包）"); continue; }
+        // 工作路径 = 第三个参数；`noTerm` = 各走各的管道（见上面那段）
+        await startRun(p, it.args || "", it.cwd || "", {noTerm: true});
+        done.push(PSYM + p.id);
       }
-    }catch(e){ console.warn("自动启动失败：", it, e); }
+    }catch(e){ failed.push(it.id + "：" + ((e && e.message) || e)); }
     await new Promise(r => setTimeout(r, 700));
   }
-  if (done.length) toast("自动启动：起了 " + done.length + " 个 —— " + done.join("、"));
+  // ★ 收尾只报**一处**（状态栏那一行）—— `toast()` 会"状态栏 + 深色胶囊"两下一起弹，
+  //   而这条是开机就跑的，不该糊你一脸（`V-365` 跟你数"2 个弹窗"那条同一个道理）。
+  if (done.length || failed.length){
+    const bits = [];
+    if (done.length) bits.push("起了 " + done.length + " 个：" + done.join("、"));
+    if (failed.length) bits.push("没起来 " + failed.length + " 个：" + failed.join("、"));
+    try{ setStatus("自动运行：" + bits.join("；")); }catch(e){ /* 状态栏不在就算了 */ }
+  }
 }
