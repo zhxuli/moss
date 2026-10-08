@@ -18,6 +18,9 @@
 <link rel="stylesheet" href="css/files.css">
 <link rel="stylesheet" href="css/ai.css">
 <link rel="stylesheet" href="css/settings.css">
+<!-- `V-348`：命令行里那个常驻终端（xterm.js）的样式。**必须排在 css/app.css 之后**
+     （它自己那点默认样式要给我们的主题变量让位）。 -->
+<link rel="stylesheet" href="vendor/xterm.css">
 </head>
 <body>
 <header>
@@ -223,6 +226,12 @@
 <script src="vendor/dos.min.js"></script>
 <script src="vendor/lucide.js"></script>
 <script src="vendor/vue.global.prod.js"></script>
+<!-- `V-348`：命令行里那个常驻 DOS 终端用的终端模拟器（xterm.js，MIT，见 vendor/README.md）。
+     两个都是 **UMD 构建**，所以 `<script src>` 直接引就行（不用打包器）。
+     ★ 全局名有讲究：xterm 把每个导出摊到 `window` 上（`new Terminal(...)`），
+       而 addon 是**命名空间**（`new FitAddon.FitAddon()`）—— 后者写错不报错，只是不生效。 -->
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
 
 <!-- ★ 预览工具（tools/界面预览.py）把"假后端"插在下面这个 <script> 之前 ——
      锚点是 `<script>` 换行 + `/* =====`。它必须排在所有 js/ 脚本前面：

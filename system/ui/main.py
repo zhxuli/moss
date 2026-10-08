@@ -69,6 +69,24 @@ HOST = [str(x) for x in (DATA.get("host_cmd") or [])]
 
 
 
+def _shell_line(argv):
+    """把 argv 拼成一条**能在 cmd 里直接敲**的命令行（`V-352`，给终端用）。
+
+    ★ 和 `subprocess.list2cmdline` 的区别：那个是给 `CreateProcess` 的 CRT 用的，
+      只在"有空格"时加引号；而**在 cmd 里**，`&` `|` `^` `>` `<` 就算没空格也是操作符，
+      不括起来会被 cmd 拆成两条命令。所以这里带上它们一起判。
+    ★ 参数里真有双引号时用 cmd 自己那套写法（`""`）—— 它同时也是 CRT 认的写法。
+    """
+    out = []
+    for a in argv:
+        a = str(a)
+        if a == "" or any(c in a for c in ' \t&|^<>()'):
+            out.append('"' + a.replace('"', '""') + '"')
+        else:
+            out.append(a)
+    return " ".join(out)
+
+
 def _split(text):
     """把参数框里那串文本拆成 argv。
 
@@ -1019,6 +1037,22 @@ RUNS = {}
 RUNS_LOCK = threading.Lock()
 RUNS_KEEP = 20
 
+# 命令行里那个**常驻 DOS 终端**（`V-348`）：会话本体在 `system/ui/term.py`（同目录兄弟模块）。
+# ★ 惰性 import：终端这一块（ctypes / ConPTY / 管道）万一加载不了，只让「终端」这一个功能
+#   如实报错，**绝不许把整个界面拖下水** —— 出错的立场是"要看得见"，不是"连坐"（`V-76`）。
+_TERM = {"mod": None, "err": ""}
+
+
+def _term_mod():
+    if _TERM["mod"] is None and not _TERM["err"]:
+        try:
+            import term as _t
+        except Exception as e:                                         # noqa: BLE001
+            _TERM["err"] = "终端模块加载不了：%s" % e
+        else:
+            _TERM["mod"] = _t
+    return _TERM["mod"]
+
 # AI 工作台（`V-230`~`V-233`）那一次任务的状态：一个后台线程 + 一份能被轮询的状态。
 # 一次只有一个任务（同一个 tab 上并行跑两个 agent 只会互相踩文件）。
 AI = {"thread": None, "state": None, "task": "", "stop": False, "t0": 0.0}
@@ -1586,6 +1620,67 @@ class Api:
             pid = r["pid"]
         _kill_tree(pid)
         return {"ok": True, "msg": "已终止这次运行（连同它拉起的子进程）"}
+
+    # ------------------------------------------------ 常驻 DOS 终端（`V-348`）
+    # 为什么另起一套，而不是继续往上面那三件里塞：`run_*` 是**"一个包一次运行"**的管子，
+    # 包一退出管子就废 —— 用户报的正是「一旦停止运行就没法继续执行 dos 命令」。
+    # 终端是**界面自己的 shell**：一直活着，命令跑完回到提示符，接着敲就行。
+    # 两个后端（真伪控制台 / 管道）+ 自动降级都在 `system/ui/term.py` 里。
+    def term_start(self, cols=100, rows=30):
+        t = _term_mod()
+        if t is None:
+            return {"ok": False, "mode": "", "note": _TERM["err"], "alive": False,
+                    "history": "", "fresh": True}
+        return t.start(cols, rows, cwd=str(HOME), home=str(HOME))
+
+    def term_poll(self):
+        t = _term_mod()
+        if t is None:
+            return {"ok": False, "out": "", "mode": "", "note": _TERM["err"], "alive": False}
+        return t.poll()
+
+    def term_write(self, text=""):
+        t = _term_mod()
+        if t is None:
+            return {"ok": False, "msg": _TERM["err"]}
+        return t.write(text)
+
+    def term_run(self, pid, args_text="", cwd=None):
+        """把「跑这个包」**敲进那个常驻终端**（`V-352`）—— 包就真跑在这个 shell 里。
+
+        ★ 为什么不在界面那边拼命令：`HOST`（打包后是 `moss.exe`、源码运行时是
+          `<python> moss.py`）和参数拆法（`_split`）都在这儿，界面不认识它们
+          （`core/ui.py` 那条"界面不 import core"的边界照旧）。
+        ★ 退出码不用我们操心：moss 自己会在终端里打出 `[退出码] N` 那一行。
+        ★ `cwd` 用 `pushd/popd` 包起来：目录只对**这一次运行**有效，跑完 shell 还留在原处
+          （和 `run_start` 的 cwd 语义对齐 —— 不这么写，用户拖进一个目录之后 shell 就再也
+          回不来了）。
+        """
+        t = _term_mod()
+        if t is None:
+            return {"ok": False, "msg": _TERM["err"]}
+        argv = HOST + ["--pkg", str(pid)] + _split(args_text)
+        line = _shell_line(argv)
+        pre = ""
+        try:
+            if cwd and Path(str(cwd)).is_dir():
+                pre = 'pushd "%s" && (' % str(cwd)
+                line = line + ") & popd"
+        except OSError:
+            pre = ""
+        return t.run(pre + line)
+
+    def term_resize(self, cols=100, rows=30):
+        t = _term_mod()
+        if t is None:
+            return {"ok": False, "msg": _TERM["err"]}
+        return t.resize(cols, rows)
+
+    def term_stop(self):
+        t = _term_mod()
+        if t is None:
+            return {"ok": False, "msg": _TERM["err"]}
+        return t.stop()
 
     def open_ui(self, pid, args_text=""):
         """把包的界面开起来：**脱离**当前进程、不抓输出，所以不会卡住界面。"""

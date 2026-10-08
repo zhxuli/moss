@@ -371,6 +371,28 @@ body.float #embed-bar{padding:7px 14px}
 /* 还没跑过时那块输出区是**一大片纯黑**，看着像个洞。给一句暗色提示。 */
 #out:empty::before{content:"（还没有输出）在「详情」里点「运行」，输出会出现在这里。";
   color:#5d6773}
+/* ---------------------------------------------------------------- 常驻 DOS 终端（`V-348`）
+   ★ 它是**加法**：`#out` / `#inbar` 一个字都没动，只是"切到终端"的时候把它们让开。
+     切不切由 `#pane-console` 上那个 `.term` 类说了算（`termToggle()` 加 / 去）。
+   ★ xterm 自己那份 `vendor/xterm.css` 只管它的内部结构（`.xterm` / `.xterm-viewport` …），
+     外框和配色在这里定 —— 一律用 `--out-bg` / `--out-fg` / `--mono` 这几个**同款变量**，
+     所以浅色 / 深色主题都跟着走，不会冒出第二套配色。 */
+#termhost{flex:1 1 auto;min-height:140px;display:none;background:var(--out-bg);
+  padding:8px 6px 8px 12px;overflow:hidden}
+#pane-console.term #termhost{display:block}
+#pane-console.term #out,
+#pane-console.term #inbar{display:none}
+#termhost .xterm{height:100%}
+/* xterm 默认给视口刷一块纯黑 —— 我们要的是和输出区一样的那层底色 */
+#termhost .xterm-viewport{background:transparent !important}
+/* ★★ 顶上那行字**只许占一行**（多出来用省略号）。这是被用户报出来的一个真 bug：
+   它会随状态变长变短（"运行中" / "在等你回答" / 降级说明…），**一换行就把终端压矮**，
+   而 xterm 往下缩的时候会**把超出的行真的丢掉** —— 表现就是"输出的内容总是被清掉"，
+   而且终端被压成一条之后可点区域很小，点在外面焦点进不去 ⇒"敲不进去"。 */
+#pane-console .outbar{flex-wrap:nowrap}
+#outinfo{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+/* 顶上那颗「终端」开关：开着的时候要看得出来（和别的图标按钮一个调子） */
+#btn-term.on{background:var(--fill);color:var(--accent)}
 /* ---- 状态灯 ---- */
 /* ---- 状态：**只有两种** —— 运行中（绿色停止图标）/ 没运行（灰色播放图标）----
    ★ 不再显示"故障红 / 警告黄"：退出码误报太多 —— 很多正常的退出没有报错，

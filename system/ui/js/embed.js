@@ -391,6 +391,14 @@ async function startRun(p, args, cwd){
   const cmd = "moss " + PSYM + p.id + ((args || "").trim() ? " " + args.trim() : "");
   lastRun = {id: p.id, args: args, label: cmd};
   consoleKey = p.id;                     // 输出落进"这个包自己的"那份
+  /* ★★ `V-352`：终端在 ⇒ **把这条命令敲进那个常驻终端**，包就真跑在这个 shell 里。
+     为什么必须这样：真终端（ConPTY）的流里带**绝对光标定位**，把管道的文本倒进同一块屏
+     两股流会互相覆盖（用户当场看到"输出被替换了"）。跑在 shell 里就只有一股流。
+     ★ 这里**不再先问 `termCanRun()`** —— 那个判据以前要求"终端正显示着"，于是切去看过
+       「包输出」之后点运行就永远走老路（用户报的"又回到之前的模式"）。
+       `termRunPackage` 自己会：起会话 → 把这一版切回来 → 敲命令；任何一步不行都返回 false，
+       我们照旧往下走老那条管道，行为一点不变。 */
+  if (typeof termRunPackage === "function" && await termRunPackage(p, args, cwd)) return;
   setConsole(p.id, "$ " + cmd, "运行中");
   const r = await pywebview.api.run_start(p.id, args || "", cwd || "");
   if (!r.ok){
@@ -488,6 +496,12 @@ function runTail(code, text, stopped){
 async function stopRun(id){
   const run = RUNS[id];
   if (!run) return;
+  // `V-352`：跑在终端里的：真终端发真 Ctrl+C，管道后端请宿主按进程杀
+  if (run.term && typeof termStop === "function"){
+    const r0 = await termStop(id);
+    toast(r0.msg, !r0.ok);
+    return;
+  }
   const r = await pywebview.api.run_stop(run.rid);
   toast(r.msg, !r.ok);
   run.stopped = true;                    // 让 finishRun 别把它记成"故障"
