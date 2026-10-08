@@ -1988,7 +1988,8 @@ class Api:
     def ai_start(self, task="", workdir="", max_tokens=None, continue_id="", model=""):
         """开始一次任务（后台线程跑 loop，界面靠 `ai_poll` 拿步骤流）。
 
-        `workdir`：这次在哪儿干活 —— 当前选中的包目录，或者 `user_data/pkgs`（新建包）。
+        `workdir`：这次在哪儿干活 —— 当前选中的包目录（`user_data/pkgs/<包>` 或
+            `system/pkgs/<包>`），或者 `user_data/pkgs`（新建包）。
         `max_tokens`：这次任务的 token 上限（不给就读 `user_data/ai/budget.json`，默认 20 万）。
         `continue_id`（`V-251`）：**接着哪条记录聊** —— 把那条记录里的对话（`messages`）
             接上去，然后这次的任务作为新的一句追加在后面。空 = 新开一条。
@@ -1997,7 +1998,9 @@ class Api:
         ★ 为什么必须有：你原话「怎么还是找不到历史会话记录，一旦重新打开 moss 只能重新再来
           —— 你见哪个 AI 助手连历史记录都没有的？」。以前存了"任务 + 步骤流"，但**对话本身
           没存**，所以只能"看"，不能"接着说"。
-        写权限仍然只有 `user_data/pkgs/**`（`ai_edits` 那道闸，v1 的边界）。
+        写权限是**那份权限清单**说了算（`ai_mode.can_write`）：两个 `pkgs` 根
+        （`user_data/pkgs` + `system/pkgs`）下的**当前这个包**默认读写都开（`V-347` 起出厂包
+        也一样），硬锁那几处照旧写不了。
         """
         task = str(task or "").strip()
         if not task:

@@ -441,8 +441,13 @@ MOCK_JS = r"""
       // ★ `V-316`：**权限 = 一份清单**（每行一对「读 / 写」勾选）—— 没有"模式"了。
       //   真宿主由 `ai_mode.summary()` 给这几样；这里照它的形状造一份。
       //   第一行是"当前这个包"（打开插件点 AI 就该在里面，读+写都开）。
-      allow: [{path: state.home + "\\system\\pkgs\\md5", read: true, write: true,
-               why: "当前这个包", by: "auto", at: "2026-10-07 12:00:00"},
+      // ★ `V-347`：md5 是**出厂包**（真目录在 `system/pkgs/md5`）—— 假数据照它的**真位置**写，
+      //   别再假装它在 `user_data/pkgs` 下（那样"当前工作包"那一行永远对不上），
+      //   顺带把"出厂包那一页不许再说改不了"钉在这条场景里。
+      allow: [{path: (state.packages.filter(x => x.id === "md5")[0] || {}).dir ||
+                     (state.home + "\\system\\pkgs\\md5"),
+               read: true, write: true, why: "当前这个包", by: "current", factory: true,
+               at: "2026-10-07 12:00:00"},
               {path: "D:\\proj\\外面", read: true, write: false, why: "试一下", by: "user",
                at: "2026-10-07 12:01:00"},
               {path: "*", read: false, write: false, why: "任意路径（硬锁除外）", by: "system",
@@ -455,8 +460,10 @@ MOCK_JS = r"""
     // ★ `V-316`：权限清单 —— 加一条 / 改「读」「写」/ 删掉（预览里只记一下，够断言就行）
     ai_allow: async (path, read, write, why, action) => {
       M.allowCall = {path: path, read: read, write: write, action: action};
-      const rows = [{path: state.home + "\\user_data\\pkgs\\md5", read: true, write: true,
-                     why: "当前这个包", by: "auto", at: ""},
+      const rows = [{path: (state.packages.filter(x => x.id === "md5")[0] || {}).dir ||
+                            (state.home + "\\system\\pkgs\\md5"),
+                     read: true, write: true, why: "当前这个包", by: "current",
+                     factory: true, at: ""},
                     {path: "*", read: false, write: false, why: "任意路径（硬锁除外）",
                      by: "system", at: ""}];
       if (action !== "rm" && String(path || "") && String(path) !== "*"){
@@ -4342,6 +4349,13 @@ MOCK_JS = r"""
         const wInput = wChk ? [].slice.call(wChk.querySelectorAll(".ai-sw input"))[1] : null;
         if (wInput){ wInput.checked = true; wInput.dispatchEvent(new Event("change", {bubbles: true})); await sleep(250); }
         const permChgOk = !!(M.allowCall && M.allowCall.action === "set" && M.allowCall.write === true);
+        // ★ `V-347`：**出厂包那一页不许再说"改不了"**（用户报的就是这个：打开
+        //   `system/pkgs/<id>` 点 AI，顶上顶一条"这个包在 system/ 下面 —— 默认它改不了"）。
+        //   这一条场景选中的 md5 本来就是出厂包；假数据也从"假装在 user_data/pkgs"改回真位置了。
+        const warns0 = [].slice.call(document.querySelectorAll("#pane-ai .ai-warn"))
+                              .map(x => x.textContent).join(" | ");
+        const facOk = warns0.indexOf("改不了") < 0 && warns0.indexOf("只读") < 0 &&
+                      /出厂件/.test(descs[0] || "");
         // ★ `V-316`：**顶栏只剩一颗历史图标**（原来那个占满宽度的会话下拉没了）——
         //   点一下才出会话列表
         const histBtn = document.querySelector("#pane-ai .ai-hist");
@@ -4409,7 +4423,8 @@ MOCK_JS = r"""
                    budSaved === "250000000" &&
                    !!started && /dry-run/.test(startArgs) && stepsOk && resOk && filesOk && tokOk &&
                    snapOk && frameOk && sessOk && mdlOk && followOk &&
-                   permOk && permChgOk && histOk && permLean && whyOk && msgOk && budOk && detOk && noErr;
+                   permOk && permChgOk && facOk && histOk && permLean && whyOk && msgOk &&
+                   budOk && detOk && noErr;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") +
           "\n「AI」选项卡在 = " + tabShown + "、这一页显示出来了 = " + paneOn +
@@ -4433,6 +4448,8 @@ MOCK_JS = r"""
           " · 展开后输入区还在视野里 = " + footInView + "（" + geom + "）" +
           "\n★ V-316 权限清单 = " + permOk + "（" + permRows.length + " 行 / " + chkBoxes.length + " 个开关）" +
           " · 拨「写」通知宿主 = " + permChgOk +
+          "\n★ V-347 出厂包不说「改不了」+ 那一行标「出厂件」 = " + facOk +
+          "（" + warns0.replace(/\s+/g, " ").slice(0, 40) + "）" +
           "\n★ V-316 顶栏只剩历史图标 = " + histOk + "（下拉里的会话：" + histTxt.slice(0, 40) + "）" +
           "\n★ V-315 token 上限那格 = " + budOk + "（文字「" + budTxt + "」/ title 有 token 上限 = " +
           /token 上限/.test(budTitle) + "）" +
@@ -4447,7 +4464,8 @@ MOCK_JS = r"""
                                " 折叠=" + (folded0 ? 1 : 0) + " 展开=" + (expandedOk ? 1 : 0) +
                                " 上下=" + (stacked ? 1 : 0) + " 输入可见=" + (footInView ? 1 : 0) + "(" + geom + ")" +
                                " 权限清单=" + (permOk ? 1 : 0) + "/" + permRows.length + "行" + chkBoxes.length + "开关" +
-                               " 拨写=" + (permChgOk ? 1 : 0) + " 历史图标=" + (histOk ? 1 : 0) + "/" + barSels +
+                               " 拨写=" + (permChgOk ? 1 : 0) + " 出厂包提示=" + (facOk ? 1 : 0) +
+                                " 历史图标=" + (histOk ? 1 : 0) + "/" + barSels +
                                " 预算格=" + (budOk ? 1 : 0) + "「" + budTxt.slice(0, 10) + "」" +
                                " 步骤详情=" + (detOk ? 1 : 0) +
                                " 目的时间=" + (whyOk ? 1 : 0) +

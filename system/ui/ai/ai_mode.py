@@ -11,8 +11,9 @@
 
 于是**只有一个模型**：一份清单，每条 `{path, read, write}`。
   · **能不能读 / 能不能写，就看清单里那一行勾没勾**（外加几处"基础设施"永远可用，见下）；
-  · **当前这个包**第一次打开 AI 页时**自动进清单**，并且**读 + 写都默认打开**
-    （"打开这个插件点 AI = 我就是要改它"）；
+  · **当前这个包**（`user_data/pkgs/<一个包>` 或 `system/pkgs/<一个包>`）**读写都默认开着**
+    —— 它不是清单里的一条记录，是**算出来的默认**（`_scope_allows` / `_current_row`，`V-343`）；
+    出厂包也一样（`V-347`：用户说了"去掉这个限制 让用户可以自己修改 自由 DIY"）；
   · 「只想咨询、别改我代码」= 把那一行的**写**取消勾选（一键，不需要另一个"模式"）；
   · 「放手」= 把 `*`（任意路径）那一行的**写**打开 —— 那时**危险操作也不再问你**
     （你都已经说"随便写"了，再拦就是多一个开关控同一件事）。
@@ -317,26 +318,47 @@ def _hit(rows, path, kind):
     return None
 
 
-def _is_pkg_scope(scope):
-    """`scope` 是不是**某个具体的用户包**（`user_data/pkgs/<一个包>`）。
+def pkg_roots():
+    """包的**两个根**：用户包（`user_data/pkgs`）+ 出厂包（`system/pkgs`）。
 
-    ★ `V-343`：只有这一种 scope 才享受"默认读写都开"。两道排除：
-      · `user_data/pkgs` **根**（"新建包"那条路）—— 放开等于放开所有包，不行；
-      · `system/pkgs/*`（出厂样板包）—— 它是**只读**的样板，界面上也一直写着"默认改不了"。
+    ★ `V-347`：出厂包从这一版起**也算"当前这个包"** —— 用户的原话是「无法阻止用户修改 system
+      下面的包 我们应该去掉这个限制 让用户可以自己修改 自由 DIY 才能更有乐趣」，而这跟上一层
+      早就定过的事是同一个立场：`D-24`（界面的文件管理里 `system/` **可编辑**、**只提示不拦截**）。
+    """
+    return (E.write_root(), E.HOME / "system" / "pkgs")
+
+
+def is_factory(wd):
+    """这个目录是不是**出厂包**（`system/pkgs/` 底下）—— 只用来提示，不用来拦。"""
+    return _inside(wd, E.HOME / "system" / "pkgs")
+
+
+def _is_pkg_scope(scope):
+    """`scope` 是不是**某个具体的包**（`user_data/pkgs/<一个包>` 或 `system/pkgs/<一个包>`）。
+
+    ★ `V-343`：只有这一种 scope 才享受"默认读写都开"。两道排除照旧：
+      · 两个 `pkgs` 的**根**本身（`user_data/pkgs` / `system/pkgs`）—— 放开等于放开所有包；
+      · 更外面的东西（`system/ui` 之类）不是包，不该跟着沾光。
     """
     sc = str(scope or "").strip()
     if not sc:
         return False
     try:
-        root = os.path.realpath(str(E.write_root()))
         s = os.path.realpath(sc)
     except OSError:
         return False
-    if not s.startswith(root + os.sep):
-        return False
-    rel = os.path.relpath(s, root).replace("\\", "/")
-    parts = [x for x in rel.split("/") if x and x != "."]
-    return len(parts) >= 1
+    for r in pkg_roots():
+        try:
+            root = os.path.realpath(str(r))
+        except OSError:
+            continue
+        if not s.startswith(root + os.sep):
+            continue
+        rel = os.path.relpath(s, root).replace("\\", "/")
+        parts = [x for x in rel.split("/") if x and x != "."]
+        if parts:
+            return True
+    return False
 
 
 def _scope_allows(path, scope, kind, rows=None):
@@ -362,17 +384,26 @@ def _scope_allows(path, scope, kind, rows=None):
 
 
 def _current_row(workdir, rows=None):
-    """界面上那条「当前这个包」：清单里没有显式记录时，给一条**算出来的**默认（读写都开）。"""
+    """界面上那条「当前这个包」：清单里没有显式记录时，给一条**算出来的**默认（读写都开）。
+
+    ★ `V-347`：出厂包（`system/pkgs/<id>`）**也走这一条** —— 多带一个 `factory` 标记，
+      界面拿它在那行后面补一句「· 出厂件」（**只提示不拦**：宿主升级时 `system/` 会被整体替换）。
+      标记是**算出来的**，所以用户把「写」关掉之后落的那条显式记录也照样带着它。
+    """
     wd = str(workdir or "").strip()
     if not _is_pkg_scope(wd):
         return None
     rows = allow_list() if rows is None else rows
     own = _find(rows, wd)
     if own is not None:
-        return dict(own, current=True)
-    return {"path": wd, "read": True, "write": True,
-            "why": "当前这个包（默认：读写都开）", "by": "current",
-            "at": "", "pending": False, "current": True}
+        row = dict(own, current=True)
+    else:
+        row = {"path": wd, "read": True, "write": True,
+               "why": "当前这个包（默认：读写都开）", "by": "current",
+               "at": "", "pending": False, "current": True}
+    if is_factory(wd):
+        row["factory"] = True
+    return row
 
 
 #: 「只允许这一次」的**临时**放行（用户点那个选项时用）—— 只活在这一次跑里，不写清单

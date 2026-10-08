@@ -2,8 +2,8 @@
 """AI 工作台的**快照**那一段（`V-236`）：动手前先存一条，而且**只准清自己存的**。
 
 你要的两条规矩，落在这儿：
-  ① **动手前先存**：改的是用户的包，改坏了得能一键回退（存的时候把**那一次的任务原文**
-     一起写进清单 —— 你自己说的"这样我就知道是干啥之前的代码了"）；
+  ① **动手前先存**：改的是**这个包**（用户包或出厂包），改坏了得能一键回退（存的时候把
+     **那一次的任务原文**一起写进清单 —— 你自己说的"这样我就知道是干啥之前的代码了"）；
   ② **AI 只能清自己生成的**：不是"提醒它别删你的"，是**结构上删不动** ——
      删除只走 `BackupStore.delete_ai()`，那个函数先看清单里的 `by`，不是 `"ai"` 直接跳过。
 
@@ -95,14 +95,20 @@ def snapshot_before(task, workdir):
 
     只在"改一个已经存在的包"时存：新建包没什么可回退的（那目录本来就没有）。
     返回 `{ok, id, group, msg}`；存不了也**不拦着**干活（AI 该干的活照干，只是没退路）。
+
+    ★ `V-347`：**出厂包（`system/pkgs/<id>`）也存** —— 既然放开了让它改，那就得给它退路
+      （`BackupStore` 本来就认 `system/…` 这种来源，`group_for_sources` 会把 `system/pkgs/<x>`
+      归到 `<x>` 那一组，跟用户包一个待遇）。只放这一个口子：`system/` 下面的**别的东西**
+      （`system/ui`、契约…）不是这次任务的目标，仍然不存。
     """
     wd = Path(str(workdir or ""))
     try:
         if not wd.is_dir():
             return {"ok": False, "msg": "这个目录还不存在（新建包）—— 不用存动手前的快照"}
-        rel = _rel_of(wd)
-        if not str(rel).lower().startswith("user/"):
-            return {"ok": False, "msg": "只给 `user_data/` 里的包存快照（外面的人来管）"}
+        rel = str(_rel_of(wd)).replace("\\", "/").lower()
+        if not (rel.startswith("user/") or rel.startswith("system/pkgs/")):
+            return {"ok": False,
+                    "msg": "只给 `user_data/` 和 `system/pkgs/` 里的包存快照（别的地方的人来管）"}
         st = _store()
         srcs = [str(wd.resolve())]
         man = st.create(srcs, title=title_for(task), note=note_for(task),

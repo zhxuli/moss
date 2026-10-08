@@ -1250,9 +1250,24 @@ def main():
     M.allow_rm(str(_fresh))
     chk("S ★ 删掉那条显式记录 ⇒ 回到默认读写都开",
         M.can_write(_fresh / "run.py", scope=_fresh) is None, "")
-    chk("S ★★ `system/pkgs/*`（出厂样板）永远不当当前包 ⇒ 它不可写",
+    # ★ `V-347`：出厂包**也算"当前这个包"** —— 用户要的是"打开哪个包点 AI 就是要改它"，
+    #   别再拿"出厂件默认改不了"挡路（`D-24` 早就定了 `system/` 可编辑、只提示不拦截）。
+    chk("S ★★ `system/pkgs/<一个包>` 也算当前这个包 ⇒ 出厂包默认就能改（用户要的\"自由 DIY\"）",
         M.can_write(E.HOME / "system" / "pkgs" / "bmi" / "main.py",
-                    scope=E.HOME / "system" / "pkgs" / "bmi") is not None, "")
+                    scope=E.HOME / "system" / "pkgs" / "bmi") is None, "")
+    chk("S ★★ 但两个 `pkgs` 的**根本身**不算包（放开它 = 放开所有包）",
+        M.can_write(E.HOME / "system" / "pkgs" / "bmi" / "main.py",
+                    scope=E.HOME / "system" / "pkgs") is not None
+        and M.can_write(E.user_data() / "pkgs" / "zz" / "run.py",
+                        scope=E.user_data() / "pkgs") is not None, "")
+    chk("S ★ `_current_row` 认得出出厂包（带 `factory` 标记 ⇒ 界面才能说\"出厂件\"）",
+        bool((M._current_row(str(E.HOME / "system" / "pkgs" / "bmi")) or {}).get("factory"))
+        and M._current_row(str(_fresh)) is not None
+        and not (M._current_row(str(_fresh)) or {}).get("factory"), "")
+    # ★ `V-347`：出厂包**也存得了"动手前"的快照** —— 既然放开让它改，就得给它退路
+    _sg = S.snapshot_before("探针：出厂包也要有退路", E.HOME / "system" / "pkgs" / "bmi")
+    chk("S ★★ 出厂包也存得了「动手前」的快照（改之前有退路）",
+        _sg.get("ok") is True, str(_sg.get("msg"))[:80])
     if _pkgs_row:
         M.allow_add(str(pkgs), read=True, write=True, why="探针：整个项目区")
     # ② 读 / 写**各管各的**：清单里没有就都进不去（拿一个**包外**目录验，别被 pkgs 根那一行覆盖）

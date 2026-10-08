@@ -8,11 +8,12 @@
 代价是"找不到那段"会失败 —— 所以这里把失败**写清楚**（给候选行号、给最像的几行），
 让模型下一轮能自己修好，而不是瞎改别处。
 
-★ 写权限（`V-307` 起是**三档模式**，见 `ai_mode.py`）：
-    💬 咨询 = 一个文件都不许改；🔒 受限（默认）= 只写 `user_data/pkgs/**` +
-    `user_data/state/skill/**` + **放行清单里打开的路径**；🔓 放手 = 除受保护路径
-    （`core/`、`moss.exe`、`venv/`、`.git/`、`backups/`）外哪儿都能写。
-  读不设这个限制（要读 `system/pkgs/bmi` 当样板、要读契约），但读也框了范围。
+★ 写权限（`V-316` 起**只有一份清单**，判据在 `ai_mode.py`）：
+    清单里每条 = 一个目录 + 一对「读 / 写」勾；**当前这个包**（`user_data/pkgs/<包>` 或
+    `system/pkgs/<包>`，`V-347`）不在清单里也**默认读写都开**（算出来的，见 `_scope_allows`）；
+    「放手」= 把 `*`（任意路径）那一行的**写**打开（那时危险操作也不再问）。
+  硬锁（勾了 `*` 也写不了）：`core/`、`moss.exe`、`moss.py`、`venv/`、`.git/`、`backups/`。
+  读不设"当前包"以外的特权（要读 `system/pkgs/bmi` 当样板、要读契约），但读也框了范围。
 """
 import os
 import sys
@@ -39,7 +40,8 @@ def user_data():
     return Path(env) if env else (HOME / "user_data")
 
 
-#: v1 允许写的唯一地方（`user_data/pkgs/**`）
+#: 「用户包」那个根（`user_data/pkgs/**`）—— 出厂包那个根在 `ai_mode.pkg_roots()` 里
+#: （`system/pkgs/**`，`V-347` 起跟它一样能写）
 def write_root():
     return user_data() / "pkgs"
 

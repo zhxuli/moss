@@ -813,16 +813,25 @@ const MossAi = {
     missing(){ this.A.rev; return (this.A.info && this.A.info.missing_prompts) || []; },
     model(){ this.A.rev; return (this.A.info && this.A.info.model) || "（还没配 AI）"; },
     ready(){ this.A.rev; return !!(this.A.info && this.A.info.ok && this.A.info.model && this.A.info.has_key); },
-    /* 这个目标**写不写得了**（v1 只许写 `user_data/pkgs/**`）。
-       ★ 出厂包（`system/pkgs/*`）在左边就能选到，但它**改不了** —— 与其让用户白等一轮，
-         不如当场说清。只提示、不禁用：只读的任务（"讲讲这个包怎么写的"）照样能跑。 */
+    /* 这个目标**写不写得了**（`V-347`：用户包 / 出厂包一视同仁 —— 打开哪个包点 AI，
+       就是"我要改它"）。
+       ★ 判据就是那份权限清单，次序跟后端 `ai_mode.can_write()` 对齐：先看清单里有没有
+         **勾了「写」且盖住这个目录**的行（含 `*` 那条"放手"），再看"当前这个包"那一行
+         （用户把它的「写」关掉 = 只想咨询）。两边次序不一致的话，界面说"能写"、它一动
+         又被拒 —— 那种假象最难查。
+       ★ 只提示、不禁用：只读的任务（"讲讲这个包怎么写的"）照样能跑。 */
     canWrite(){
       this.A.rev;
-      const t = aiWhereDir(), root = (this.A.info && this.A.info.write_root) || "";
-      if (!t || !root) return false;
+      const t = aiWhereDir();
+      if (!t) return false;
       const norm = s => String(s).replace(/[\\/]+$/, "").toLowerCase();
-      return norm(t) === norm(root) || norm(t).indexOf(norm(root) + "\\") === 0 ||
-             norm(t).indexOf(norm(root) + "/") === 0;
+      const inside = (p, r) => !!r && (p === r || p.indexOf(r + "\\") === 0 ||
+                                       p.indexOf(r + "/") === 0);
+      const rows = this.A.allow || [];
+      if (rows.some(x => x.write && (x.path === "*" || inside(norm(t), norm(x.path))))) return true;
+      const own = rows.filter(x => norm(x.path) === norm(t)).pop();
+      if (own) return !!own.write;                      // 「当前这个包」那一行的勾
+      return inside(norm(t), norm((this.A.info && this.A.info.write_root) || ""));
     },
     /* ★ `V-258`：**最后一轮的结论** —— 底栏（上一次 ✅/✗、快照号、token 统计）用的就是它。
        `A.result` 只表示"现在这轮跑出结果没有"，所以另起一个"最近一次有结果的那轮"。 */
@@ -1130,7 +1139,9 @@ const MossAi = {
       if (it.path === "*") return "默认安全策略";
       const t = this.target;
       const norm = s => String(s || "").replace(/[\\/]+$/, "").toLowerCase();
-      if (t && norm(it.path) === norm(t)) return "当前工作包";
+      /* ★ `V-347`：出厂包多说四个字（宿主升级时 `system/` 会被整体替换）—— 只提示、不拦 */
+      if (t && norm(it.path) === norm(t))
+        return "当前工作包" + (it.factory ? " · 出厂件" : "");
       if (it.by === "ai") return "它请求的" + (it.why ? ("：" + it.why) : "");
       return it.why || "你加的";
     },
@@ -1809,8 +1820,8 @@ const MossAi = {
       <p class="ai-warn" v-else-if="!ready">⚠ {{ (info && info.why) || "还没配好 AI —— 去「设置 → AI」挑一家、把 key 填上（或 moss --ai-profile-set）。" }}</p>
       <p class="ai-warn" v-if="missing.length">⚠ 提示词文件缺了：{{ missing.join("、") }} —— 在 <code>system/ui/ai/prompts/</code> 或 <code>user_data/ai/prompts/</code> 里补上（不补也跑，只是 AI 少了那几条规矩）。</p>
       <p class="ai-warn" v-if="target && !canWrite">
-        ⚠ 这个包在 <code>system/</code> 下面 —— <b>默认它改不了</b>。想让它真动手：
-        在左下角那份「权限」清单里，把这一行的<b>「写」勾上</b>（或者点「选目录…」把它加进来）。
+        ⚠ 这个包现在<b>只读</b> —— 权限清单里它那一行的<b>「写」没勾</b>。想让它动手：
+        在下面那份「目录权限控制」清单里，把这一行的<b>「写」勾上</b>。
       </p>
 
       <!-- ★ V-280/V-281：**技能** —— 用户平时看不到这一层（不在插件页、不是 :别名、不算包），
