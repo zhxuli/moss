@@ -1321,3 +1321,7 @@
 .aiwrap .ai-perm-act{padding:3px;margin-left:2px}
 .aiwrap .ai-perm-act svg.i{width:15px;height:15px}
 .aiwrap .ai-perm-act:hover{color:var(--aib-primary);background:#eff6ff}
+
+/* ★ V-345：浮层不许横着出窗（兜底）——
+   真正的位置由 `fitPop()` 算（把浮层往左挪 + 必要时缩窄），这一条只是最后一道保险。 */
+.aiwrap .popover-panel{max-width:calc(100vw - 20px)}

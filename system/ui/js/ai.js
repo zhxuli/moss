@@ -1137,13 +1137,50 @@ const MossAi = {
     /* ---- ★ V-316：历史会话（点图标才开的那一份列表） ---- */
     toggleHist(){
       AIR.histOpen = !AIR.histOpen;
-      if (AIR.histOpen){ AIR.permPop = false; aiLoadRuns(); }
+      if (AIR.histOpen){
+        AIR.permPop = false; aiLoadRuns();
+        this.$nextTick(() => this.fitPop("hist"));      // ★ V-345：不许出窗
+      }
       AIR.rev++;
+    },
+    /* ★ V-345：浮层**不许跑出窗口**。
+       触发按钮在工具栏左边，而浮层死定 `left:0` ⇒ 窗口一窄右边缘就出屏
+       （你报的“右侧超过了屏幕 看不全”）。开的时候量一下：
+         ① 宽度先夹进窗口（真放不下就缩窄）；
+         ② 再把整个浮层往左挪，让右边缘不超窗；
+         ③ 最后连左边边也夹住（不让它从左边跑出去）。
+       窗口改大改小的时候会重量（见 `mounted` 里那个 resize）。 */
+    fitPop(which){
+      const panel = which === "hist" ? this.$refs.histPanel : this.$refs.permPanel;
+      const host  = which === "hist" ? this.$refs.histBtn : this.$refs.permBtn;
+      if (!panel || !host) return;
+      const vw = document.documentElement.clientWidth || window.innerWidth || 0;
+      if (!vw) return;
+      const hr0 = host.getBoundingClientRect();
+      // ★ 位置没变就别白算（这个函数会被 700ms 那一跳顺手叫一下）—— 省掉强制重排
+      const key = vw + "|" + Math.round(hr0.left) + "|" + Math.round(hr0.right);
+      if (!this._fitKeys) this._fitKeys = {};
+      if (this._fitKeys[which] === key) return;
+      this._fitKeys[which] = key;
+      const pad = 10;
+      panel.style.left = "";
+      panel.style.width = "";
+      const avail = Math.max(260, vw - pad * 2);
+      let w = panel.offsetWidth || 0;
+      if (w > avail){ w = avail; panel.style.width = w + "px"; }
+      const hr = host.getBoundingClientRect();
+      let left = 0;                                     // 相对 .popover-wrapper
+      if (hr.left + w > vw - pad) left = (vw - pad) - (hr.left + w);   // 往左挪
+      if (hr.left + left < pad) left = pad - hr.left;   // 左边也夹住
+      panel.style.left = Math.round(left) + "px";
     },
     /* V-340: permission popover (opened from the toolbar button) */
     togglePermPop(){
       AIR.permPop = !AIR.permPop;
-      if (AIR.permPop) AIR.histOpen = false;
+      if (AIR.permPop){
+        AIR.histOpen = false;
+        this.$nextTick(() => this.fitPop("perm"));      // ★ V-345：不许出窗
+      }
       AIR.rev++;
     },
     pickChain(c){ AIR.histOpen = false; AIR.pickId = (c && c.tail && c.tail.id) || ""; this.pickSession(); },
@@ -1694,7 +1731,17 @@ const MossAi = {
         aiLoadRuns();
       }
       if (AIR.running) aiPollOnce();
+      /* ★ `V-345`：浮层开着的时候顺手复算一次位置 —— 左侧栏 hover 展开/收起会让整页横移，
+         那不是 window 的 resize（上面那个监听收不到）。fitPop 自己有“没变就跳过”。 */
+      if (AIR.permPop) this.fitPop("perm");
+      if (AIR.histOpen) this.fitPop("hist");
     }, 700);
+    /* ★ V-345：窗口改大改小时重量浮层（不然刚才计算好的位置就过时了） */
+    this._rs = () => {
+      if (AIR.permPop) this.fitPop("perm");
+      if (AIR.histOpen) this.fitPop("hist");
+    };
+    window.addEventListener("resize", this._rs);
     /* ★ `V-253`（照稿子）：刚进来时文本域是 56px，等一帧量一下（内容长的话自动长高） */
     this.$nextTick(() => this.autoGrow());
     /* ★ `V-307`：滚动监听 —— 判"你是不是贴着底"，决定跟不跟滚（你往上翻就不许抢） */
@@ -1742,6 +1789,7 @@ const MossAi = {
   beforeUnmount(){
     window.removeEventListener("keydown", this._kd, true);
     window.removeEventListener("keyup", this._ku, true);
+    if (this._rs) window.removeEventListener("resize", this._rs);
     document.removeEventListener("mousedown", this._md, true);
     // ★ `V-307`：把这一页自己挂的东西摘干净（不然换页之后拖放还会去改放行清单）
     try{
@@ -2016,12 +2064,12 @@ const MossAi = {
 
               <!-- 历史会话（点开才出） -->
               <div class="popover-wrapper ai-hist-wrap">
-                <button class="trigger-btn ai-hist" :class="{active: A.histOpen}" @click.stop="toggleHist()"
+                <button ref="histBtn" class="trigger-btn ai-hist" :class="{active: A.histOpen}" @click.stop="toggleHist()"
                         :title="'历史会话（只列**这个包**的）。现在：' + ((sessCurrent && sessCurrent.head && sessCurrent.head.task) || '新会话')">
                   <span v-html='ico("history", "i")'></span> 历史会话
                   <span class="badge" v-if="sessChains.length">{{ sessChains.length }}</span>
                 </button>
-                <div class="popover-panel ai-hist-list" :class="{show: A.histOpen}" v-if="A.histOpen" @click.stop>
+                <div ref="histPanel" class="popover-panel ai-hist-list" :class="{show: A.histOpen}" v-if="A.histOpen" @click.stop>
                   <div class="popover-title">当前包的历史<span class="popover-hint">点一条就切过去</span></div>
                   <div class="history-list">
                     <div class="history-item ai-hist-i" v-for="c in sessChains" :key="c.head.id"
@@ -2044,13 +2092,13 @@ const MossAi = {
 
               <!-- 目录权限（点开才出） -->
               <div class="popover-wrapper ai-perm-wrap ai-perm" :class="{folded: !A.permPop}">
-                <button class="trigger-btn ai-perm-fold" :class="{active: A.permPop}" @click.stop="togglePermPop()"
+                <button ref="permBtn" class="trigger-btn ai-perm-fold" :class="{active: A.permPop}" @click.stop="togglePermPop()"
                         title="管理它读写哪些目录（点开看清单）">
                   <span v-html='ico("file-lock", "i")'></span> 目录权限控制
                   <span class="badge ai-perm-badge">{{ permBadge }}</span>
                   <span class="dim ai-perm-foldw" v-if="A.perm">· 它想用「{{ permPendingLabel }}」</span>
                 </button>
-                <div class="popover-panel ai-perm-body" :class="{show: A.permPop}" v-if="A.permPop" @click.stop>
+                <div ref="permPanel" class="popover-panel ai-perm-body" :class="{show: A.permPop}" v-if="A.permPop" @click.stop>
                   <div class="popover-header ai-perm-add" :class="{hot: A.dropHot, bad: addPathBad || !!A.newPathErr}">
                     <input v-model="A.newPath" spellcheck="false"
                            placeholder="粘一个目录路径（或把文件夹拖到这一页）"
