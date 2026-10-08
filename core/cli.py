@@ -801,10 +801,30 @@ def cmd_rename(name, new_id, table):
     # ③ 清单里的 id（放最后：它才是"身份"，前两步都成了再落这一笔；id 没变就不用写）
     if not same_id:
         try:
-            p = pkg_mod.load(dir_new)
-            if p is None:
-                raise ValueError("新目录里的 pkg.json 读不出来")
+            # ★ `V-357`：这里读**原样的 JSON**，不再走 `pkg_mod.load()`。
+            #   为什么（这一条是探针 E7/E8 抓出来的）：`load()` 会 `normalize()` ——
+            #   顺手补一堆默认键（`drop` / `version` …）、还会"纠正"手写歪的字段并打警告。
+            #   于是 `moss --rename` 会**顺手把用户的 pkg.json 重写一遍**（格式也换成
+            #   `indent=2`）：① 改名这件事被搞得很大；② 更名跟随的"身份指纹"
+            #   （`system/ui/main.py::_pkg_ident`）算的是清单内容 ⇒ **改完名指纹就变了**，
+            #   那条"更精准"的判据当场失效。改名就只该改该改的那几样。
+            p = json.loads((dir_new / "pkg.json").read_text(encoding="utf-8"))
+            if not isinstance(p, dict):
+                raise ValueError("新目录里的 pkg.json 不是一个对象")
             p["id"] = new_id
+            # ★ `V-357`（你 2026-10-09 提的）：「我们给他一个新的名字 那么 你需要也改它的
+            #   name」—— 骨架生成的显示名里**写着 id**（`"新建插件 my-first"`），只改 id 的话
+            #   包列表里那个名字会一直挂着旧名字，看着就像"没改成"。所以按下边这条规矩一起换：
+            #   · `name`（可能是 `{"zh-CN": …}` 这种多语言表）：**逐字替换**旧 id → 新 id
+            #     （等价于 python 的 `str.replace(old, new)`，你说就是要这个）；
+            #   · `aliases`：**整条等于旧 id 的**换成新 id（`V-355` 你定的"别名和 id 一致"）。
+            #     ⚠️ 这里**只能整条比**，不能 replace：别名 `myimg` 里含旧 id `img`，
+            #     一 replace 就把人家改成 `mypictures` 了。
+            if "name" in p:
+                p["name"] = _swap_ids(p.get("name"), old_id, new_id)
+            al = p.get("aliases")
+            if isinstance(al, list):
+                p["aliases"] = [new_id if str(a).lower() == old_id.lower() else a for a in al]
             (dir_new / "pkg.json").write_text(
                 json.dumps(p, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             done.append("清单 id")
@@ -818,11 +838,28 @@ def cmd_rename(name, new_id, table):
         _shortcut_sync()
         return 0
     out.print_cyan("已改名：%s → %s（改了 %s）" % (old_id, new_id, "、".join(done)))
+    print("       显示名 / 别名里的旧 id 也一起换过了（`name` 里出现 `%s` 的地方都换成 `%s`）。"
+          % (old_id, new_id))
     if layer == "user":
         out.print_cyan("       包调用现在要用 `moss :%s`（旧名字不再认识，除非你把它写进 aliases）。"
                        % new_id)
     _shortcut_sync()
     return 0
+
+
+def _swap_ids(value, old_id, new_id):
+    """把**显示名**里的旧 id 逐字换成新 id（`V-357`）—— 等价于 python 的 `str.replace`。
+
+    `value` 可能是普通字符串，也可能是 `{"zh-CN": "…"}` 这种多语言表（`pkg.display_name()`
+    两种都认），所以这里跟着往下钻一层。别的类型原样返回。
+    """
+    if isinstance(value, str):
+        return value.replace(old_id, new_id)
+    if isinstance(value, dict):
+        return dict((k, _swap_ids(v, old_id, new_id)) for k, v in value.items())
+    if isinstance(value, list):
+        return [_swap_ids(v, old_id, new_id) for v in value]
+    return value
 
 
 def _dir_stats(p):

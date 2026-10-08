@@ -92,7 +92,7 @@ BROWSERS = [
 
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
-          "btn-detail", "err-path", "args-clear", "backup", "backup-restore", "backup-sync", "backup-export", "backup-groups",
+          "btn-detail", "err-path", "args-clear", "pkg-auto", "backup", "backup-restore", "backup-sync", "backup-export", "backup-groups",
           "drop-hot", "drop-dir", "drop-file", "drop-ext", "console-input", "embed", "pane-resize",
           "list-order", "list-drag", "list-drag-filter", "list-drag-top", "vis-clean",
           "flat-buttons", "backup-diff", "refresh-keep-ctx", "compare", "hist-snap", "modal-kinds", "snap-modal",
@@ -408,6 +408,21 @@ MOCK_JS = r"""
     // `V-300`：插件列表的"自定义顺序 + 排序档"（真宿主存 user_data/state/_ui_order.json）
     list_state: async () => ({ok: true, ids: M.listOrder || [], sort: (M.listOrder || []).length ? "custom" : ""}),
     list_state_set: async (ids, sort) => { M.savedOrder = {ids: ids, sort: sort}; return {ok: true}; },
+    // `V-356` / `V-358`：自动启动（真宿主存 `user_data/state/_ui_autostart.json`）——
+    //   假后端存在 `M` 里，并且**真的改它**，这样"加入 / 改参数 / 开关 / 删除"在预览里
+    //   是能断言的（`V-358` 起它的入口在**详情页**，不在设置里了）。
+    autostart_get: async () => {
+      const a = M.auto || {items: []};
+      return {ok: true, items: (a.items || []).map(x => Object.assign({}, x)),
+              packages: (state.packages || []).map(p => ({id: p.id, name: p.name, kind: p.kind})),
+              max: 20};
+    },
+    autostart_set: async (items) => {
+      const rows = (items || []).map(x => Object.assign({}, x));
+      M.auto = {items: rows};
+      M.autoSaved = {items: rows};
+      return {ok: true, items: rows};
+    },
     hist_list: async () => ({ok: true, items: HIST}),
     hist_forget: async () => ({ok: true, msg: "(预览) 已删掉这条记录"}),
     pkg_states: async (ids) => {                       // 造两个"在跑"的，好看绿色停止图标
@@ -2150,11 +2165,16 @@ MOCK_JS = r"""
         //   （设置 → AI 引擎，`.set-ai` 里面）；② `V-253` 起 **AI 工作台那一页整个按稿子来** ——
         //   稿子的「清空」是 `btn-outline`（有描边）、「上限」那个数字框也有描边。
         //   别处照旧：一个描边都不许有。
+        //   ★ `V-360`：③ **详情页也豁免** —— 用户 2026-10-09 给的那份详情页稿子里，
+        //   `.btn-ghost` / `.auto-start-input` 本来就是 1px 描边的（而且他要"像素级还原"）。
+        //   和上面两条同一个道理：**稿子驱动的区域，稿子说了算**。
         const aiBox = document.querySelector(".set-ai");
         const aiPane = document.querySelector("#pane-ai");
+        const dtPane = document.querySelector("#pane-detail");
         [].slice.call(document.querySelectorAll("button")).forEach(function(b){
           if (aiBox && aiBox.contains(b)) return;
           if (aiPane && aiPane.contains(b)) return;
+          if (dtPane && dtPane.contains(b)) return;
           const cs = getComputedStyle(b);
           const w = Math.max(px(cs.borderTopWidth), px(cs.borderBottomWidth),
                              px(cs.borderLeftWidth), px(cs.borderRightWidth));
@@ -2164,6 +2184,7 @@ MOCK_JS = r"""
         });
         [].slice.call(document.querySelectorAll("input,textarea")).forEach(function(i){
           if (aiPane && aiPane.contains(i)) return;
+          if (dtPane && dtPane.contains(i)) return;
           const cs = getComputedStyle(i);
           if (px(cs.borderTopWidth) > 0) inBordered.push(label(i) + "=" + cs.borderTopWidth);
         });
@@ -2337,6 +2358,167 @@ MOCK_JS = r"""
           " 选中=" + (okSel ? pId : "×") + "]";
         document.title = ok ? "READY"
           : ("SYNC-FAIL 历史[行=" + hRow + " 右上=" + hTop + "] 插件[行=" + pRow + " 右上=" + pTop + "]");
+      }
+      // ★ `V-358` / `V-361`：**详情页里的「开机自动运行」那一行**（照用户稿子的 `toggleAutoStart`：
+      //   一颗按钮〔圆圈对号=启用 / 圆圈斜线=禁用〕、参数框平时收着、**禁用就是删除**、
+      //   参数**回车或失焦即存**、说明那行固定是「随宿主程序启动时自动初始化」）。
+      if (h === "pkg-auto"){
+        // ★ 图标怎么认：`ico()` 就是把图标表里那一颗的 body 原样套进 `<svg>`，
+        //   所以比 innerHTML 就知道画的是哪一颗（用户点名要"圆圈对号 / 圆圈斜线"）。
+        //   ⚠️ 归一化必须把"文件写法"和"浏览器序列化"抹平：文件里是 `'…' />`，
+        //   浏览器吐出来是 `"…"></circle>`（**空元素在 SVG 里会补一个结束标签**），
+        //   只压空白是比不上的（这一条栽了两次）。
+        const _norm = s => String(s || "")
+          .replace(/\s+/g, " ")
+          .replace(/'/g, '"')
+          .replace(/<\/(circle|path|rect|line|polyline|polygon|ellipse|g)>/g, "")
+          .replace(/\s*\/>/g, ">")
+          .replace(/\s+>/g, ">")
+          .trim();
+        const iconIs = (el, name) => {
+          const svg = el && el.querySelector("svg");
+          const rec = (window.__MOSS_ICONS || {})[name];
+          return !!(svg && rec && _norm(svg.innerHTML) === _norm(rec.body));
+        };
+        const iconOf = (el, names) => (names || []).filter(n => iconIs(el, n))[0] || "?";
+        // 从干净状态开始（同一个页面里跑过别的场景也不会串味）
+        M.auto = {items: []}; M.autoSaved = null;
+        if (typeof cur !== "undefined" && cur) select(cur.id);
+        await sleep(400);
+        const sec = document.querySelector("#pane-detail #auto-sec");
+        const panel0 = document.querySelector("#auto-panel");
+        const sw0 = document.querySelector("#auto-sw");
+        const desc0 = (document.querySelector("#auto-sec .auto-st") || {}).textContent || "";
+        const title0 = (document.querySelector("#auto-sec h4") || {}).textContent || "";
+        const boxHidden0 = !!panel0 && !panel0.classList.contains("show");
+        const twoBoxes = !!document.querySelector("#auto-cwd") &&
+                         !!document.querySelector("#auto-args") &&
+                         !!document.querySelector("#btn-auto-pick") &&
+                         !!document.querySelector("#auto-dropzone");
+        const btnText0 = sw0 ? (sw0.textContent || "").trim() : "?";
+        const offIcon = iconOf(sw0, ["circle-check", "circle-slash"]);
+        const noExtra = !document.querySelector("#auto-sec #btn-auto-save") &&
+                        !document.querySelector("#auto-sec #btn-auto-del") &&
+                        !document.querySelector("#auto-sec #btn-auto-add");
+        let added = 0, shownAfter = false, focused = false, everFocused = false, onIcon = "?";
+        let panelW = 0;
+        if (sw0){
+          sw0.click();                       // 启用
+          await sleep(700);
+          added = ((M.autoSaved || {}).items || []).length;
+          const panel1 = document.querySelector("#auto-panel");
+          shownAfter = !!panel1 && panel1.classList.contains("show");
+          panelW = panel1 ? Math.round(panel1.getBoundingClientRect().width) : 0;
+          const box1 = document.querySelector("#auto-args");
+          focused = !!box1 && document.activeElement === box1;   // 稿子那句 inputField.focus()
+          onIcon = iconOf(document.querySelector("#auto-sw"), ["circle-slash", "circle-check"]);
+          // 万一到点位时被抢走了：再扫一小会儿，看它**有没有到过**（区分"没聚焦"和"被重画顶掉"）
+          if (!focused){
+            for (let i = 0; i < 10 && !everFocused; i++){
+              await sleep(40);
+              const b = document.querySelector("#auto-args");
+              if (b && document.activeElement === b) everFocused = true;
+            }
+          }
+        }
+        // 参数：**回车即存**（并且变一下色 + 旁边冒一句「已保存」）
+        let typed = false, flashed = false, itemArgs = "", hintOn = false;
+        const box2 = document.querySelector("#auto-args");
+        if (box2){
+          box2.value = "60%";
+          box2.dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", bubbles: true}));
+          await sleep(500);
+          itemArgs = (((M.autoSaved || {}).items || [])[0] || {}).args || "";
+          typed = itemArgs === "60%";
+          flashed = box2.classList.contains("saved");
+          hintOn = !!document.querySelector("#auto-sec .dp-saved");
+        }
+        // ★ `V-364`：**工作路径**那三条路 —— ① 手输 + 回车；② 点选（预览里 `pick_dir` 是假后端）；
+        //   ③ **拖进来**（走 `window.__mossDrop` 那条真路：宿主把真路径交给落地口）。
+        let cwdTyped = false, cwdPicked = false, cwdDropped = false, dropFlag = false;
+        const c1 = document.querySelector("#auto-cwd");
+        if (c1){
+          c1.value = "D:\\手输的目录";
+          c1.dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", bubbles: true}));
+          await sleep(500);
+          cwdTyped = ((((M.autoSaved || {}).items || [])[0] || {}).cwd) === "D:\\手输的目录";
+        }
+        const pickBtn = document.querySelector("#btn-auto-pick");
+        if (pickBtn){
+          pickBtn.click();
+          await sleep(500);
+          cwdPicked = ((((M.autoSaved || {}).items || [])[0] || {}).cwd) === "D:\\预览选的目录";
+        }
+        // 拖放：先在投放区上"划一下"（dragover 立旗子），再让宿主把真路径送进落地口
+        const zone = document.querySelector("#auto-dropzone");
+        if (zone){
+          zone.dispatchEvent(new Event("dragover", {bubbles: true, cancelable: true}));
+          await sleep(60);
+          dropFlag = zone.classList.contains("drag-over");
+          if (typeof window.__mossDrop === "function"){
+            window.__mossDrop([{path: "D:\\拖进来的目录", isDir: true, dir: "D:\\",
+                                name: "拖进来的目录"}]);
+          }
+          await sleep(600);
+          cwdDropped = ((((M.autoSaved || {}).items || [])[0] || {}).cwd) === "D:\\拖进来的目录";
+        }
+        // 失焦也存（换一句再点走）—— 同样要有提示
+        let blurSaved = false, hintBlur = false;
+        const box3 = document.querySelector("#auto-args");
+        if (box3){
+          box3.value = "70%";
+          box3.dispatchEvent(new Event("blur", {bubbles: true}));
+          await sleep(500);
+          blurSaved = ((((M.autoSaved || {}).items || [])[0] || {}).args) === "70%";
+          hintBlur = !!document.querySelector("#auto-sec .dp-saved");
+        }
+        // 禁用 = 删除：整条没了，参数框又收起来，按钮回到「启用」
+        let afterOff = -1, boxHidden1 = false, btnText1 = "?";
+        const sw1 = document.querySelector("#auto-sw");
+        if (sw1){
+          sw1.click();
+          await sleep(600);
+          afterOff = (((M.autoSaved || {}).items) || []).length;
+          const box4 = document.querySelector("#auto-args");
+          boxHidden1 = !!box4 && !box4.classList.contains("show");
+          const sw2 = document.querySelector("#auto-sw");
+          btnText1 = sw2 ? (sw2.textContent || "").trim() : "?";
+        }
+        // ★ 图标要对（用户点名的那两条）：**启用 = 圆圈里一个对号（circle-check）**、
+        //   **禁用 = 圆圈里一道斜线（circle-slash）**。
+        const ok = !!sec && !!panel0 && !!sw0 && noExtra && twoBoxes &&
+                   title0.replace(/\s+/g, "") === "自动运行" &&
+                   desc0.replace(/\s+/g, "") === "随宿主程序启动时自动初始化" &&
+                   boxHidden0 && btnText0.indexOf("启用") >= 0 &&
+                   offIcon === "circle-check" &&
+                   added === 1 && shownAfter && panelW >= 380 && (focused || everFocused) &&
+                   onIcon === "circle-slash" &&
+                   typed && flashed && hintOn && blurSaved && hintBlur &&
+                   cwdTyped && cwdPicked && dropFlag && cwdDropped &&
+                   afterOff === 0 && boxHidden1 && btnText1.indexOf("启用") >= 0;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 块=" + (sec ? 1 : 0) +
+          " 标题=[" + title0 + "] 说明=[" + desc0 + "] 初始:面板藏=" + boxHidden0 +
+          " 两个框=" + twoBoxes + " 按钮=" + btnText0 + " 图标=" + offIcon +
+          " 后只一颗=" + noExtra +
+          "｜启用后 条=" + added + " 面板出=" + shownAfter + "(" + panelW + "px) 聚焦=" + focused +
+          " 图标=" + onIcon +
+          "｜参数:回车存=" + (typed ? "60%" : "×") + " 变色=" + flashed + " 提示=" + hintOn +
+          " 失焦存=" + blurSaved + " 提示=" + hintBlur +
+          "｜工作路径:手输=" + cwdTyped + " 点选=" + cwdPicked +
+          " 拖入(划线=" + dropFlag + " 存了=" + cwdDropped + ")" +
+          "｜禁用后 条=" + afterOff + " 面板藏=" + boxHidden1 + " 按钮=" + btnText1;
+        document.title = ok ? "READY"
+                            : ("AUTO-DETAIL-FAIL 标题=[" + title0 + "] 说明=[" + desc0 +
+                               "] 初始:藏=" + boxHidden0 + " 两框=" + twoBoxes + " 钮=" + btnText0 +
+                               " 图标=" + offIcon + " 只一颗=" + noExtra +
+                               " 启用后=" + added + "/" + shownAfter + "/" + panelW + "/" + focused +
+                               "/" + onIcon +
+                               " 参数回车=" + typed + " 变色=" + flashed + " 提示=" + hintOn +
+                               " 失焦=" + blurSaved + "/" + hintBlur +
+                               " 路径:手输=" + cwdTyped + " 点选=" + cwdPicked +
+                               " 拖=" + dropFlag + "/" + cwdDropped +
+                               " 禁用后=" + afterOff + "/" + boxHidden1 + "/" + btnText1);
       }
       // ★ `V-305`：插件列表行**不显示简介**了，第二行是「符号 + id」（符号来自设置，别硬编码 `:`）
       if (h === "sym-list"){
@@ -2928,10 +3110,32 @@ MOCK_JS = r"""
         const pane = document.querySelector("#set-body .set-pane.on");
         const on = !!pane && pane.dataset.group === want;
         const n = pane ? pane.querySelectorAll(".set-item, .set-field").length : 0;
-        const ok = on && n > 0;
+        // ★ `V-354`：高级设置那一页多了「退出时结束所有插件进程」（**改了 core 才有**）——
+        //   真点一下那颗开关 + 保存，看宿主（假后端）收到的是不是这一项。
+        //   为什么要这么较真：这一项走的是"面板 → --settings-set → 写回 config.toml"那条老路，
+        //   老 config.toml 里没有 [ui] 段（`_ensure_sections` 负责补），值得钉一条。
+        let advOk = true, advDiag = "";
+        if (h === "settings-adv"){
+          const sw = document.querySelector(
+            '#set-body .set-pane.on .set-item[data-key="ui.kill_pkgs_on_exit"] .sw');
+          advOk = !!sw;
+          if (sw){
+            sw.click();
+            await sleep(200);
+            const moved = (document.querySelector("#set-state") || {}).textContent || "";
+            await saveSettings();
+            await sleep(300);
+            const got = M.saved || {};
+            advOk = sw.getAttribute("aria-checked") === "true" &&
+                    got["ui.kill_pkgs_on_exit"] === true && /改了 1 项/.test(moved);
+            advDiag = " 新开关=" + sw.getAttribute("aria-checked") +
+                      " 存了=" + JSON.stringify(got);
+          }
+        }
+        const ok = on && n > 0 && advOk;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 分组=" + (pane ? pane.dataset.group : "-") +
-          " 项数=" + n;
+          " 项数=" + n + advDiag;
         document.title = ok ? "READY" : ("PANE-FAIL " + (pane ? pane.dataset.group : "-"));
       }
       // ★ 冲突那一路（`V-63` / `V-66` / `V-275`）：把「跑包」的前缀清空 ⇒ 和「路径调用」同时留空。
@@ -4041,9 +4245,55 @@ MOCK_JS = r"""
           const card = pane && pane.querySelector(".dwrap");
           if (!card) return null;
           const inp = card.querySelector(".argbox");
+          // ★ `V-359`：详情页整页换装成"卡片"那一套（照用户给的稿子）——这里顺手量
+          //    新结构的几件事：卡片在不在、路径栏在不在、`.dmeta` 里有没有 `:包id`、
+          //    以及**有没有哪块横向溢出**（稿子的卡片是横向排布，最容易在这儿溢出）。
+          // ★ `V-360`（像素级还原）：另外量两个"稿子的数"——
+          //    ① 参数框要吃满命令栏剩下的地方（稿子 `.cmd-input{flex:1}`）：量它右边界
+          //       到主动作按钮左边界之间那点缝（稿子 `.dp-primary{margin-left:8px}`）；
+          //    ② 属性区两格之间的间距（稿子 `.props-grid{gap:40px}`）。
+          // ★ 溢出怎么量：**只看布局**——某个直接子元素的右边界有没有捅出容器。
+          //   ⚠️ 不能用 `scrollWidth > clientWidth`：提示气泡（`.dp-tip::after`）是
+          //   **绝对定位**的，它的宽度也算进 scrollWidth ⇒ 一条 `示例: …` 就能报出假溢出
+          //   （这一轮就被它骗过一次：说 dp-props 789/678，其实一行排得整整齐齐）。
+          const over = el => {
+            const box = el.getBoundingClientRect();
+            return [].slice.call(el.children).some(function(c){
+              return c.getBoundingClientRect().right > box.right + 2;
+            });
+          };
+          const boxes = [].slice.call(card.querySelectorAll(".dp-card,.dp-cmdbar,.dp-props"));
+          const cmdInp = card.querySelector("#args,#hargs");
+          const cmdBtn = card.querySelector(".dp-cmdbar .dp-primary");
+          const barGap = (cmdInp && cmdBtn)
+            ? Math.round(cmdBtn.getBoundingClientRect().left - cmdInp.getBoundingClientRect().right)
+            : -1;
+          const ps = card.querySelectorAll(".dp-prop");
+          let propGap = -1, propRowGap = -1;
+          if (ps.length >= 2){
+            const r0 = ps[0].getBoundingClientRect(), r1 = ps[1].getBoundingClientRect();
+            propGap = Math.round(Math.abs(r1.left - r0.right));    // 同一行 ⇒ 稿子的 gap:40px
+            propRowGap = Math.round(Math.abs(r1.top - r0.bottom)); // 换行了 ⇒ 也是 40px
+          }
           return {pane: pane.clientWidth, card: card.clientWidth,
                   args: inp ? inp.clientWidth : 0,
-                  propK: (card.querySelector(".prop-k") || {}).clientWidth || 0};
+                  propK: (card.querySelector(".prop-k") || {}).clientWidth || 0,
+                  barGap: barGap, propGap: propGap, propRowGap: propRowGap,
+                  cards: card.querySelectorAll(".dp-card").length,
+                  pathBox: !!card.querySelector(".dp-path"),
+                  meta: ((card.querySelector(".dmeta") || {}).textContent || "").trim(),
+                  overflow: boxes.some(over),
+                  // 溢出时把"是哪一块、溢了多少"带出来（不然只能靠猜）
+                  overBox: (function(){
+                    const bad = boxes.filter(over)[0];
+                    if (!bad) return "";
+                    const info = card.querySelector(".dp-info");
+                    const kids = info ? [].slice.call(info.children).map(function(el){
+                      return ((el.className || el.tagName) + ":" + Math.round(el.getBoundingClientRect().width));
+                    }).join(" | ") : "";
+                    return ((bad.className || "?") + " 宽" +
+                            Math.round(bad.getBoundingClientRect().width) + " [" + kids + "]");
+                  })()};
         }
         const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
         select(p0.id);
@@ -4060,28 +4310,46 @@ MOCK_JS = r"""
         if (!hi){ document.title = "FILL-FAIL NO-HIST-CARD"; return; }
 
         const wide = pk.pane > 1400;
-        // ① 卡要填满（只留两侧各 20px 外边距）——旧版固定 760，这条在任何窗口下都不成立
-        const fillPkg = pk.card >= pk.pane - 44;
-        const fillHist = hi.card >= hi.pane - 44;
+        // ① 卡要填满（稿子 `.detail-page{padding:40px 60px}` ⇒ 两侧各 60px）——旧版固定 760，
+        //    这条在任何窗口下都不成立（`V-224` 那条要求的本意）。
+        const fillPkg = pk.card >= pk.pane - 130;
+        const fillHist = hi.card >= hi.pane - 130;
         // ② 在 1280 这种默认窗口下，卡就该比旧的 760 上限宽
-        const grewPkg = wide ? pk.card > 1500 : pk.card > 800;
-        // ③ 参数框：默认窗口 ≈ 老样子（620），宽窗口要跟着长（旧版恒 620）
-        const argsOk = wide ? pk.args > 900 : (pk.args > 500 && pk.args <= 640);
-        // ④ 标签列同理
-        const propOk = wide ? pk.propK > 120 : (pk.propK >= 90 && pk.propK <= 130);
+        const grewPkg = wide ? pk.card > 1500 : pk.card > 700;
+        // ③ 参数框：稿子 `.cmd-input{flex:1}` = **把命令栏剩下的地方吃满**（不是恒 620，
+        //    也不是定宽）。判据落在"它右边界离主动作按钮只差那 8px 的缝"——这才是稿子的样子。
+        const argsOk = pk.args > 300 && pk.barGap >= 0 && pk.barGap <= 16 &&
+                       hi.args > 300 && hi.barGap >= 0 && hi.barGap <= 16;
+        // ④ 属性区两格之间就是稿子的 `gap:40px`（一行排开时量横向、换行时量纵向；顺带保证
+        //    标签列没被写死成很窄）
+        const gapOk = m => (m.propGap >= 36 && m.propGap <= 44) ||
+                          (m.propRowGap >= 36 && m.propRowGap <= 44);
+        const propOk = gapOk(pk) && pk.propK >= 40 && (hi.propGap === -1 || gapOk(hi));
+        // ⑤ `V-359` 的新结构：卡片 ≥3 张、路径栏在、`.dmeta` 里有 `:包id`、没有横向溢出
+        const shapeOk = pk.cards >= 3 && hi.cards >= 2 && pk.pathBox && hi.pathBox &&
+                        pk.meta.indexOf(":") >= 0;
+        const noOverflow = !pk.overflow && !hi.overflow;
         const noErr = !(window.__errors || []).length;
-        const ok = fillPkg && fillHist && grewPkg && argsOk && propOk && noErr;
+        const ok = fillPkg && fillHist && grewPkg && argsOk && propOk && shapeOk &&
+                   noOverflow && noErr;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + "  窗口=" + window.innerWidth + "px  面板=" + pk.pane + "px" +
           "\\n包详情：卡 " + pk.card + "px（面板 " + pk.pane + "，填满=" + fillPkg + "）" +
           "  参数框 " + pk.args + "  标签列 " + pk.propK +
+          "\\n卡片=" + pk.cards + "/" + hi.cards + " 路径栏=" + (pk.pathBox ? 1 : 0) +
+          "/" + (hi.pathBox ? 1 : 0) + " 徽章=[" + pk.meta + "] 溢出=" + (pk.overflow ? 1 : 0) +
+          "/" + (hi.overflow ? 1 : 0) + " 框缝=" + pk.barGap + "/" + hi.barGap +
+          " 属性间距=" + pk.propGap + "/" + hi.propGap +
           "\\n历史详情：卡 " + hi.card + "px（面板 " + hi.pane + "，填满=" + fillHist + "）" +
           "\\n宽窗口=" + wide + "  比旧上限宽=" + grewPkg + "  参数框跟着长=" + argsOk +
           "  标签列跟着长=" + propOk + "  页内错误=" + (window.__errors || []).length;
         document.title = ok ? "READY"
                             : ("FILL-FAIL 包卡=" + (fillPkg ? 1 : 0) + " 历史卡=" + (fillHist ? 1 : 0) +
                                " 变宽=" + (grewPkg ? 1 : 0) + " 参数框=" + (argsOk ? 1 : 0) +
-                               " 标签列=" + (propOk ? 1 : 0) + " 错=" + (window.__errors || []).length);
+                               " 标签列=" + (propOk ? 1 : 0) + " 结构=" + (shapeOk ? 1 : 0) +
+                               " 溢出=" + (noOverflow ? 1 : 0) + "[" +
+                               (pk.overBox || hi.overBox || "") + "]" +
+                               " 错=" + (window.__errors || []).length);
       }
       // ★ `V-225`：`img` 也改成能内嵌了 —— 同一条链路：选中 → 「界面」选项卡 → 起后端 →
       //   iframe 加载**真页面**（ESM）→ 垫片 postMessage → 宿主 embed_send → 后端答 bootstrap。

@@ -18,6 +18,10 @@
 <link rel="stylesheet" href="css/files.css">
 <link rel="stylesheet" href="css/ai.css">
 <link rel="stylesheet" href="css/settings.css">
+<!-- ★ `V-359`：**详情页**那一套（照你 2026-10-09 给的那份 HTML 稿子换装）。
+     单独一个文件、类名 `dp-` 前缀 —— 稿子里的 `.card/.badge/.divider/.toast` 在
+     这个界面里都是被占用的全局名，混在一起必然打架。 -->
+<link rel="stylesheet" href="css/detail.css">
 <!-- `V-348`：命令行里那个常驻终端（xterm.js）的样式。**必须排在 css/app.css 之后**
      （它自己那点默认样式要给我们的主题变量让位）。 -->
 <link rel="stylesheet" href="vendor/xterm.css">
@@ -262,6 +266,9 @@
 </script>
 <script src="vendor/difflib.js"></script>
 <script src="js/core.js"></script>
+<!-- ★ `V-358`：自动启动（详情页那一块 + 开机跑一次）—— 排在 `list.js` 前面：
+     详情页重画时会调它的 `autoSectionHTML`，虽然那时只是"函数声明"，但早加载少一类意外。 -->
+<script src="js/autostart.js"></script>
 <script src="js/panels.js"></script>
 <script src="js/console.js"></script>
 <script src="js/drop.js"></script>

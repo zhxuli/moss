@@ -359,74 +359,18 @@ table.bk-tbl td.dim{color:var(--dim)}
      行标签、输入框 + 运行按钮、红色的删除按钮），去掉不影响使用；
    · 外边距 40 → 24、块内边距 22/24 → 16/20、块间距 20 → 14、属性行距 16 → 11。 */
 #pane-detail{overflow:auto;padding:0}
-/* 内容坐在一张白卡上：浅灰的图标块和浅灰的小节卡都要靠它当对照面。
-   `V-93`：卡本身的 1px 描边也去掉 —— 靠阴影和底色跟背景分开就够了。
-   ★ `V-224`：**跟着窗口长大**。原来卡死 `max-width:760px` + `margin:auto`（居中），
-     窗口一放大两边全是空的 ——「详情页很小、没自适应」就是它。命令行 / 文件管理 / 界面
-     那三页本来就是自适应的，只有详情这两张卡（包详情 + 历史详情，同一个 `.dwrap`）没有。
-     现在填满可用宽度（只留外边距），宽度相关的几处（标题、标签列、参数框）也跟着放宽 ——
-     见下面那几个 `clamp()`：**在默认的 1280 窗口下基本还是老样子，越宽越放宽**。 */
-.dwrap{max-width:none;margin:20px;padding:24px 28px;background:var(--panel);
-  border:0;border-radius:16px;
-  box-shadow:0 4px 24px rgba(0,0,0,.05)}
+/* ★ `V-359`：详情页**整页换装**（照用户 2026-10-09 给的那份稿子）—— 那一套全在
+   `css/detail.css`（类名 `dp-` 前缀，配色走令牌，按钮无描边）。
+   这里只留**四个两边共用的老钩子**，它们被别处量着 / 用着：
+     · `.dwrap`    整页容器（`detail-fill` 场景量它填满面板）
+     · `.dmeta`    里面得有 `:包id`（`sync-run` 场景拿它认"选中的是谁"）
+     · `.argbox`   参数框（`detail-fill` 量它跟不跟着窗口长）
+     · `.prop-k`   属性区那列标签（`detail-fill` 量它别写死）
+   原先"白卡 + 3 行网格 + 一小节一条分隔线"那一整套（`.dhead/.dicon/.dtitle/.ddesc/
+   .dsec/.danger-text/.props/.prop/.pdesc/.pex`）**已经删掉**了 —— 稿子用卡片重排了。 */
+.dwrap{max-width:none;margin:0;padding:18px 20px;background:transparent;border:0;
+  border-radius:0;box-shadow:none}
 
-/* ---------- 头部：**3 行网格** ----------
-   ┌──────────┬──────────────────────────────┐
-   │          │ 说明（最多两行）               │  行 1-2
-   │  [图标]   │                              │
-   │  名字     │ :md5 · v1.0.0 · task · 层     │  行 3
-   └──────────┴──────────────────────────────┘
-   为什么用 grid 而不是两个 flex 列：用户要的是"右侧三行 = 左侧两行图标 + 一行名字"，
-   也就是**左右的行要真的对齐**。grid 的行高由两列共同决定，天然等高；
-   两个各自堆叠的 flex 列只能靠调数值凑，一改字号就歪。
-   · 图标与名字在左列里**居中对齐**（列宽 = 两者较宽的那个，各自居中 ⇒ 互相对齐）；
-   · 名字**永不换行**（`nowrap` + 省略号）—— 名字一折行最难看；太长就省略，
-     左列封顶 200px，不至于把右边挤没；
-   · 说明**最多两行**（`-webkit-line-clamp:2`）。 */
-.dhead{display:grid;grid-template-columns:max-content minmax(0,1fr);
-  column-gap:18px;row-gap:8px;margin-bottom:16px}
-.dicon{grid-area:1 / 1 / 3 / 2;align-self:center;justify-self:center;
-  display:flex;align-items:center;justify-content:center;width:44px;height:44px;
-  background:var(--tile);border-radius:12px;color:var(--fg2)}
-.dicon svg,.dicon img{width:22px;height:22px}
-h1.dtitle{grid-area:3 / 1 / 4 / 2;align-self:baseline;text-align:center;font-size:21px;
-  font-weight:600;line-height:1.25;letter-spacing:.2px;margin:0;
-  max-width:clamp(200px,16vw,420px);      /* `V-224`：宽窗口给名字多一点地方 */
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ddesc{grid-area:1 / 2 / 3 / 3;align-self:center;margin:0;font-size:13.5px;
-  line-height:1.6;color:var(--fg2);word-break:break-word;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.dmeta{grid-area:3 / 2 / 4 / 3;align-self:baseline;font-size:12.5px;color:var(--dim);
-  font-family:var(--mono);line-height:1.5;word-break:break-all}
-
-/* ---------- 小节（`V-93`：去掉灰底和描边）----------
-   原来是"浅灰底 + 1px 描边的小节卡"，一屏能数出五六个框 —— 和"按钮不许有描边"是同一个毛病。
-   现在把一节压成一段：**只用一条极淡的分隔线**分开上一节，节内留白；危险那一节仍留一层
-   红晕（那是**语义**，不是外观），圆角回来一点把它和普通段落区分开。 */
-.dsec{background:transparent;border:0;border-top:1px solid var(--hair);border-radius:0;
-  padding:15px 2px;margin-bottom:0}
-.dsec:first-child{border-top:0;padding-top:0}
-.dsec:last-child{padding-bottom:0}
-.dsec.danger{background:color-mix(in srgb, #ef4444 5%, transparent);
-  border-top:1px solid color-mix(in srgb, #ef4444 18%, var(--hair));
-  border-radius:10px;padding:14px 16px;margin-top:14px;
-  display:flex;justify-content:space-between;align-items:center;gap:16px}
-.danger-text{font-size:13px;color:var(--dim);line-height:1.6;word-break:break-word}
-
-/* ---------- "标签 : 值" 的行 ---------- */
-.props{display:flex;flex-direction:column}
-.prop{display:flex;align-items:flex-start;gap:16px;padding-bottom:11px;
-  border-bottom:1px solid var(--line)}
-.prop:last-child{padding-bottom:0;border-bottom:none}
-.prop + .prop{padding-top:11px}
-.prop-k{width:clamp(96px,8vw,160px);flex:none;font-size:13.5px;color:var(--dim);
-  line-height:1.5;padding-top:1px}      /* `V-224`：宽窗口里标签列也放宽一点 */
-.prop-v{flex:1;min-width:0;font-size:13.5px;font-weight:500;color:var(--fg);line-height:1.5;
-  word-break:break-all}
-.prop-v .soft{font-weight:400;color:var(--dim)}
-.prop-v .pdesc{font-weight:400;color:var(--dim);font-size:12.5px;line-height:1.6;margin-top:3px}
-.prop-v .pex{font-weight:400;color:var(--dim2);font-size:12px;line-height:1.6;margin-top:3px;
-  font-family:var(--mono)}
 .tag{display:inline-block;background:var(--tag);color:var(--fg2);padding:2px 8px;
   border-radius:6px;font-size:12px;margin:0 6px 4px 0}
 
@@ -499,6 +443,16 @@ table.p th{color:var(--dim);font-weight:500}
 /* ★ 右内边距得用 ID 选择器写：上面那条 `#args,#hargs{…}` 是 ID 级，
    `.argbox > input` 那条（类+标签）压不过它 —— 否则长参数会钻到按钮下面。 */
 .argbox > #args,.argbox > #hargs{flex:1;min-width:0;padding-right:32px}
+/* ★ `V-358`：详情页里的「自动启动」那一块（`js/autostart.js`）—— 用户定的"放在详情里"。
+   输入框和上面那两个参数框**同一套皮**（`.inp` 是设置面板专用的、这里够不着，
+   所以按 `#auto-args` 自己写一条；别为它去改设置面板那套）。 */
+.auto-st{font-size:12.5px;color:var(--dim2)}
+.auto-st.on{color:var(--accent)}
+#auto-args{flex:1 1 auto;min-width:170px;max-width:420px;padding:8px 11px;border-radius:9px;
+  border:0;background:var(--fill);color:var(--fg);font-family:var(--mono);font-size:12.5px;
+  outline:none;transition:background .12s,box-shadow .12s}
+#auto-args:focus{background:var(--panel);box-shadow:0 0 0 3px var(--field-focus)}
+#auto-args::placeholder{color:var(--dim)}
 .argclear{position:absolute;right:6px;top:50%;transform:translateY(-50%);
   display:flex;align-items:center;justify-content:center;width:20px;height:20px;
   padding:0;border:0;border-radius:50%;background:transparent;color:var(--dim);

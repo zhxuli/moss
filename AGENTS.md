@@ -290,6 +290,53 @@
     探针会当场 `PermissionError` —— 那时用一个"把 `tempfile.mkdtemp` 换成 `os.makedirs`"的
     小垫片把探针跑起来（垫片放仓库外，别进 moss）。
 
+## 三件界面机制（`V-354` ~ `V-356`，2026-10-09）
+
+* **关界面时收插件进程**：开关 = `user_data/config.toml` 的 `[ui] kill_pkgs_on_exit`（**默认关**）。
+  ★ 读它的是**界面进程**（`system/ui/main.py::_cfg`，直接用 `tomllib` 读那个文件）—— 这不是绕过
+  `U-16`，恰恰是那条规矩的本来意思（界面不 import core）；**别改成"起个 `moss.exe` 问一句"**
+  （那要 ≈1 秒，而这是关窗口那一刻的事）。收进程走两条：`_pkg_pids()`（带着 `V-220` 那道
+  "可执行文件得真在包目录里"的硬条件）+ **界面自己的整棵子孙树**（AI 工作台的子进程、
+  常驻终端那个 shell）—— **千万别自己按 `MOSS_PKG_ID` 收**，那会杀掉 explorer。
+* **更名跟随**：判据在 `Api.pkg_watch`（**纯读盘、不起进程**；界面每 2.5 秒问一次，
+  `js/list.js::pkgWatchTick` / `followRename` 跟着走）。**指纹 = 清单去掉 `id`、并把 `name`
+  里那句旧 id 和"整条等于旧 id"的别名压成占位符之后的内容 + 层**（`_ident_norm`）——
+  `--rename` 动的就是这三样（`V-357`），别的字段**一个字都不许碰**，尤其别对整份清单做
+  `str.replace`（别名 `myoldname` 会跟着变，指纹就对不上了，`E7` 会红）；**也别往指纹里掺
+  目录名 / 文件时间**（那些正好会变）。兜底是"一个走一个来 ⇒ 按新旧 id 推断"。
+* **改名这三样归宿主一处落笔**（`core/cli.py::cmd_rename` 第 ③ 步）：`id` + 显示名里那句旧 id
+  + 整条等于旧 id 的别名。★ 那一步**读原样 JSON、只改这三样**（别改回 `pkg_mod.load()`：
+  `normalize()` 会顺手重写整份清单、还会让上面的指纹失效）。
+* **自动启动**：「详情」页（包详情 / 历史详情）里那一行 —— `js/autostart.js` 一份实现两边用。
+  它叫**「自动运行」**（不是"开机"）；一行里就一颗按钮：`启用`（圆圈对号）/ `禁用`（圆圈斜线），
+  **禁用 = 从自动启动里拿掉**（没有单独的"删除/保存"按钮）；那一组输入平时收着、点「启用」才展开，
+  里面是**两个框**：**工作路径**（`cwd`，可**手输 / 点选**走 `pick_dir` / **拖文件夹进来**）+
+  **启动参数**（`args`）——两个框都**回车或失焦即存**，存完给提示（框变绿 + 「✓ 已保存」+ 状态栏一行）。
+  ★ 拖放那条路：`drop.js::__mossDrop` 里给它留了**第三个钩子 `window.__mossAutoDrop`**
+  （跟 `__mossDropHook`〔备份导出〕/ `__mossAiDrop`〔AI 放行清单〕同一模式，别抢那个唯一槽）。
+  值在 `user_data/state/_ui_autostart.json`（`{kind,id,args,cwd,name,on}`），**故意不进 `config.toml`**。
+  跑它的是 `js/autostart.js::autostartRun`（只主窗口、一辈子只跑一次；包走 `startRun(p,args,cwd)`，
+  历史走 `path_start`）。
+* **详情页那一套在 `system/ui/css/detail.css`（`V-359`/`V-360`，照用户给的稿子）**：类名一律 `dp-`
+  前缀 —— 稿子的 `.card/.badge/.divider/.toast/.tooltip` 在这界面里都是被占用的全局名。
+  ★★ **用户 2026-10-09 明说"务必做到像素级还原"** ⇒ 这份 CSS 是稿子的**逐条搬运**：
+  数值 / 圆角 / 间距 / 颜色 / 过渡曲线**一律照抄**（`--primary:#3b82f6`、`.card{padding:24px 32px}`、
+  `.detail-page{padding:40px 60px}`、`.props-grid{gap:40px}` …）。只有这四件是"允许的偏离"：
+  ① 类名加前缀；② 图标用 `ico()`（这界面**不联网**，稿子用的是 Phosphor CDN；缺的用
+     `tools/取图标.py` 补，已经补过 `circle-check`/`rocket`/`puzzle`/`text-cursor-input`）；
+  ③ **深色模式兜底**（`prefers-color-scheme:dark` 里换一套深色值；亮色下 = 稿子原值）；
+  ④ `.dp-props` 留了 `flex-wrap`（稿子是"整窗宽"页面，moss 这边左边有 ~300px 侧栏，
+     1280 下不 wrap 会溢出 111px —— 宽窗口下跟稿子一样是一行 40px）。
+  ★ `V-92`「按钮 / 输入框不许有描边」**对 `#pane-detail` 豁免**（跟 `.set-ai` / `#pane-ai` 同一待遇，
+  `flat-buttons` 场景里放行）—— 稿子的 `.btn-ghost` / `.auto-start-input` 本来就是描边的。
+  ★ 四个老钩子被预览场景量着，别删：`.dwrap`（填满面板）/ `.dmeta`（里面要有 `:包id`）/
+  `.argbox`（参数框吃满命令栏）/ `.prop-k`（标签列别写死）。
+* 探针：**`tools\更名跟随探针.py`**（A 更名跟随 / B 退出收进程〔含"不相干进程不许碰"的反向
+  控制〕/ C 新设置项 / D 自动启动 / **E 真跑一次 `moss --rename`**）；预览那边新场景
+  **`pkg-auto`** 管详情里的自动启动那一行、**`detail-fill`** 管详情页的骨架与宽度
+  （1280 / 2560 两种窗口都要跑）、`settings` / `settings-adv` 管设置面板
+  —— **改详情页或设置面板时要跟着改它们**。
+
 ## 要写包 / 改包
 
 1. **新包**：`moss --new <id>` 生成一个能跑的骨架（`user_data/pkgs/<id>/`）。

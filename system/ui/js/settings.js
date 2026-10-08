@@ -12,6 +12,10 @@
    ★ 为什么是"经典脚本 + 全局组件"而不是 .vue 单文件：页面是 pywebview 从 `file://`
      打开的，`file://` 下的 ES module 会被 CORS 拦掉（见 index.html 里的说明）。
      `vue.global.prod.js` 自带模板编译器，所以 `template:` 字符串在这里能用。 */
+/* ★ `V-358`：**自动启动那一组从这里搬走了** —— 用户说「把那个自动启动放在详情里面去设置
+   而不是放到设置里面去 那样很不直观」。现在它在「详情」页（包详情 / 历史详情各一块），
+   实现在 `js/autostart.js`，设置面板里一个字都不留。 */
+
 const MossSettings = {
   name: "moss-settings",
   template: `

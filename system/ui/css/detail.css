@@ -1,0 +1,276 @@
+/* moss 界面 · detail.css —— **详情页**（`V-359` / `V-360`：照用户 2026-10-09 给的那份 HTML
+   「像素级」还原）
+   ============================================================================
+   这一份是那份稿子 CSS 的**逐条搬运**：数值、圆角、间距、颜色、过渡曲线全是稿子里的原值
+   （`--primary:#3b82f6` / `--bg-body:#f3f4f6` / `--border:#e5e7eb` / `--shadow-sm|md` /
+   `all .3s cubic-bezier(.4,0,.2,1)` …），只做三件**不得不做**的事：
+
+     ① **类名加 `dp-` 前缀**：稿子的 `.card/.badge/.divider/.toast/.tooltip` 在这界面里
+        都是被占用的全局名，混在一起必然打架（`.toast` 还是全局提示用的）。
+     ② **图标换成本仓库那套 `ico()`**：稿子用 Phosphor 的 CDN 字体图标，而这个界面
+        **不许联网**（`vendor/README.md`：不引 CDN）。缺的几个已经用 `tools/取图标.py`
+        补进 `system/icon/svg/`（`circle-check` / `rocket` / `puzzle` / `text-cursor-input`）。
+     ③ **深色模式兜底**：稿子是纯亮色（硬编码 hex），而这个界面跟随系统深浅色。所以
+        **亮色下就是稿子的原值**（下面的 `#pane-detail{…}` 变量块），另外用同一批变量名
+        在 `prefers-color-scheme:dark` 里换一套深色值 —— 不这么做，夜里整页白得刺眼。
+
+   ★ `V-92`「按钮 / 输入框不许有描边」那一条**对详情页豁免**（就像 `.set-ai` / `#pane-ai`
+     那两块稿子驱动的区域一样，`tools/界面预览.py` 的 `flat-buttons` 场景里已经放行）：
+     稿子的 `.btn-ghost` / `.auto-start-input` 本来就是 1px 描边的，这是你要的样子。
+
+   ★ 四个**老钩子**被预览场景量着 / 别处用着，改版也要留着（挂在同名元素上）：
+     `.dwrap`（整页容器）、`.dmeta`（里面得有 `:包id`）、`.argbox`（参数框）、`.prop-k`（标签列）。
+*/
+
+/* ---------------------------------------------------------------- 变量（稿子的 :root 原值） */
+#pane-detail{
+  --dp-primary:#3b82f6; --dp-primary-hover:#2563eb;
+  --dp-danger:#ef4444; --dp-danger-bg:#fef2f2;
+  --dp-bg-body:#f3f4f6; --dp-bg-card:#ffffff;
+  --dp-text-main:#1f2937; --dp-text-muted:#6b7280; --dp-text-light:#9ca3af;
+  --dp-border:#e5e7eb;
+  --dp-shadow-sm:0 1px 2px 0 rgba(0,0,0,.05);
+  --dp-shadow-md:0 4px 6px -1px rgba(0,0,0,.1),0 2px 4px -1px rgba(0,0,0,.06);
+  --dp-transition:all .3s cubic-bezier(.4,0,.2,1);
+  --dp-radius-md:8px; --dp-radius-lg:12px;
+  --dp-fill-row:#f8fafc; --dp-fill-bar:#fafafa; --dp-fill-icon:#f0f4f8;
+  --dp-fill-icon2:#e2e8f0; --dp-hover-strong:#e2e8f0;
+  background:var(--dp-bg-body);
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  #pane-detail{
+    --dp-primary:#5b9bf8; --dp-primary-hover:#7cb0fa;
+    --dp-danger:#f87171; --dp-danger-bg:rgba(248,113,113,.14);
+    --dp-bg-body:#151517; --dp-bg-card:#1c1c1e;
+    --dp-text-main:#f5f5f7; --dp-text-muted:#a1a1a6; --dp-text-light:#8e8e96;
+    --dp-border:#2c2c30;
+    --dp-shadow-sm:0 1px 2px 0 rgba(0,0,0,.5);
+    --dp-shadow-md:0 4px 6px -1px rgba(0,0,0,.55),0 2px 4px -1px rgba(0,0,0,.4);
+    --dp-fill-row:#232326; --dp-fill-bar:#232326; --dp-fill-icon:#232326;
+    --dp-fill-icon2:#2c2c30; --dp-hover-strong:#3a3a3f;
+  }
+}
+
+/* ---------------------------------------------------------------- 详情页主体（稿子 .detail-page）
+   稿子：padding:40px 60px; width:100%; max-height:100vh; overflow-y:auto; box-sizing:border-box
+   ——「跟着窗口长大、不卡死在 760 居中」那条（`V-224`）在这儿照旧成立。 */
+#pane-detail .dwrap{padding:40px 60px;width:100%;box-sizing:border-box;margin:0;
+  background:transparent;border:0;border-radius:0;box-shadow:none}
+
+/* ---------------------------------------------------------------- 卡片通用（稿子 .card） */
+.dp-card{background:var(--dp-bg-card);border-radius:var(--dp-radius-lg);
+  padding:24px 32px;margin-bottom:24px;
+  box-shadow:var(--dp-shadow-sm);border:1px solid rgba(0,0,0,.03);
+  transition:var(--dp-transition)}
+.dp-card:hover{box-shadow:var(--dp-shadow-md)}
+@media (prefers-color-scheme: dark){
+  .dp-card{border-color:rgba(255,255,255,.05)}
+}
+
+/* ---------------------------------------------------------------- 卡 1：基础信息（稿子 .header-card / .plugin-icon / .plugin-info） */
+.dp-card.dp-head{display:flex;gap:24px;align-items:flex-start}
+.dp-icon{width:68px;height:68px;border-radius:16px;flex-shrink:0;display:flex;
+  align-items:center;justify-content:center;color:var(--dp-primary);
+  background:linear-gradient(135deg,var(--dp-fill-icon),var(--dp-fill-icon2));
+  box-shadow:inset 0 2px 4px rgba(255,255,255,.5)}
+.dp-icon svg,.dp-icon img{width:32px;height:32px}
+.dp-info{flex:1;min-width:0}
+/* 稿子：h1{font-size:24px;font-weight:600;display:flex;align-items:center;gap:12px;margin-bottom:8px} */
+.dp-info h1{font-size:24px;font-weight:600;display:flex;align-items:center;gap:12px;
+  margin:0 0 8px;color:var(--dp-text-main);line-height:1.25}
+/* 徽章那一条（`<span class="dp-badges dmeta">` —— `.dmeta` 是 `sync-run` 场景要的钩子） */
+.dp-badges{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#pane-detail .dmeta{grid-area:auto;font-family:inherit;font-size:11px;color:var(--dp-text-muted)}
+/* 稿子 .badge */
+.dp-badge{font-size:11px;padding:3px 8px;border-radius:10px;background:var(--dp-bg-body);
+  color:var(--dp-text-muted);font-weight:500;letter-spacing:.5px;white-space:nowrap}
+.dp-badge.mono{font-family:var(--mono)}
+
+/* 稿子 .desc-wrapper（含提示气泡） */
+.dp-desc{position:relative;display:inline-flex;align-items:center;gap:6px;
+  color:var(--dp-text-muted);font-size:14px;margin:0 0 24px;max-width:100%}
+/* 稿子 .divider */
+.dp-divider{height:1px;background-color:var(--dp-border);margin:0 0 24px 0;width:100%}
+
+/* 稿子 .path-display / .path-text / .path-actions / .path-icon-btn */
+.dp-path{display:flex;align-items:center;gap:12px;padding:10px 16px;
+  background:var(--dp-fill-row);border:1px solid var(--dp-border);
+  border-radius:var(--dp-radius-md);font-family:var(--mono);font-size:13px;
+  color:var(--dp-text-muted)}
+.dp-path .dp-path-text{flex:1;min-width:0;color:var(--dp-text-main);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.dp-path-actions{display:flex;align-items:center;gap:8px}
+.dp-path-ico{display:flex;color:#cbd5e1}
+.dp-path-ico svg{width:18px;height:18px}
+button.dp-path-btn{display:inline-flex;align-items:center;justify-content:center;
+  width:32px;height:32px;border:none;background:transparent;border-radius:6px;
+  color:var(--dp-text-muted);cursor:pointer;transition:var(--dp-transition)}
+button.dp-path-btn:hover{background:var(--dp-hover-strong);color:var(--dp-primary)}
+button.dp-path-btn svg{width:18px;height:18px}
+/* 复制成功那一下：稿子把图标换成绿色对号并停 2 秒 */
+button.dp-path-btn.ok{color:#10b981}
+
+/* 稿子 .props-grid / .prop-item / .prop-label / .prop-value
+   ★ 唯一一处"照稿子会出事"的地方：稿子那页是**整窗宽**（标题都写着"极宽版"），而 moss 的详情
+     区左边还站着一个 ~300px 的侧栏 ⇒ 1280 窗口下那三格按 min-content 摆不下（实测溢出 111px）。
+     所以这里**允许换行**（`flex-wrap`）：宽窗口下跟稿子一模一样（一行排开、间距 40px），
+     窄窗口下退成两行，而不是把卡片撑出横向滚动条。 */
+.dp-props{display:flex;gap:40px;flex-wrap:wrap;margin-top:24px;padding-top:24px;
+  border-top:1px solid var(--dp-border)}
+.dp-prop{display:flex;flex-direction:column;gap:4px;min-width:0}
+/* `.prop-k` / `.prop-v` 是老钩子（`detail-fill` 量它们），视觉就是稿子的 .prop-label / .prop-value */
+#pane-detail .prop-k{font-size:12px;color:var(--dp-text-light);text-transform:uppercase;
+  width:auto;min-width:0;padding-top:0;line-height:1.5}
+#pane-detail .prop-v{font-size:14px;font-weight:500;color:var(--dp-text-main);display:flex;
+  align-items:center;gap:6px;line-height:1.5;word-break:break-all}
+#pane-detail .prop-v.mono{font-family:var(--mono);font-weight:500}
+
+/* ---------------------------------------------------------------- 卡 2：快捷执行（稿子 .cmd-bar / .cmd-prefix / .cmd-input） */
+.dp-cmdbar{display:flex;align-items:center;background:var(--dp-fill-bar);
+  border:1px solid var(--dp-border);border-radius:var(--dp-radius-md);
+  padding:8px 8px 8px 16px;transition:var(--dp-transition)}
+.dp-cmdbar:focus-within{background:var(--dp-bg-card);border-color:var(--dp-primary);
+  box-shadow:0 0 0 3px rgba(59,130,246,.1)}
+.dp-cmd-ico{display:flex;color:var(--dp-text-light);margin-right:12px}
+.dp-cmd-ico svg{width:20px;height:20px}
+.dp-cmd-prefix{font-family:var(--mono);font-size:14px;color:var(--dp-primary);
+  font-weight:600;white-space:nowrap}
+/* 参数框：稿子的 `.cmd-input{padding-left:16px}` + 我们这个 `#args` / `#hargs` 那套壳
+   （`.argbox` 是钩子，那个"有内容才浮出来的清空按钮"就挂在它上面） */
+#pane-detail .argbox{margin-left:16px;flex:1;min-width:180px;max-width:none}
+#pane-detail .dp-cmdbar > .argbox > #args,
+#pane-detail .dp-cmdbar > .argbox > #hargs{flex:1;min-width:0;max-width:none;
+  border:none;background:transparent;outline:none;font-family:var(--mono);font-size:14px;
+  color:var(--dp-text-main);padding:0 32px 0 16px;height:auto}
+#pane-detail .dp-cmdbar > .argbox > #args:focus,
+#pane-detail .dp-cmdbar > .argbox > #hargs:focus{background:transparent;box-shadow:none}
+#pane-detail .dp-cmdbar > .argbox > #args::placeholder,
+#pane-detail .dp-cmdbar > .argbox > #hargs::placeholder{
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+  color:var(--dp-text-light)}
+.dp-cmdbar .dp-primary{margin-left:8px}
+
+/* ---------------------------------------------------------------- 按钮（稿子 .btn-primary / .btn-ghost / .btn-danger） */
+button.dp-primary{padding:10px 24px;background:var(--dp-primary);color:#fff;border:none;
+  border-radius:6px;font-size:14px;font-weight:500;cursor:pointer;
+  transition:var(--dp-transition);display:flex;align-items:center;gap:8px;
+  white-space:nowrap}
+button.dp-primary:hover{background:var(--dp-primary-hover);transform:translateY(-1px);
+  box-shadow:var(--dp-shadow-md)}
+button.dp-primary:disabled{opacity:.5;cursor:default;transform:none;box-shadow:none}
+button.dp-primary svg{width:17px;height:17px}
+
+button.dp-ghost{padding:8px 16px;background:transparent;border:1px solid var(--dp-border);
+  border-radius:var(--dp-radius-md);color:var(--dp-text-main);font-size:13px;cursor:pointer;
+  transition:var(--dp-transition);display:flex;align-items:center;gap:6px}
+button.dp-ghost:hover{background:var(--dp-bg-body);border-color:var(--dp-text-light)}
+button.dp-ghost.on{border-color:var(--dp-primary);color:var(--dp-primary);
+  background:rgba(59,130,246,.05)}
+button.dp-ghost svg{width:16px;height:16px}
+button.dp-ghost.danger{color:var(--dp-danger);border-color:transparent;
+  background:var(--dp-danger-bg)}
+button.dp-ghost.danger:hover{background:var(--dp-danger);color:#fff;
+  border-color:var(--dp-danger)}
+
+/* ---------------------------------------------------------------- 卡 3：高级设置（稿子 .settings-list / .setting-item） */
+.dp-list{display:flex;flex-direction:column}
+.dp-item{display:flex;justify-content:space-between;align-items:center;padding:20px 0;
+  border-bottom:1px solid var(--dp-border)}
+.dp-item:last-child{border-bottom:none;padding-bottom:0}
+.dp-item:first-child{padding-top:0}
+.dp-item-info{display:flex;align-items:center;gap:16px;min-width:0}
+.dp-item-ico{width:40px;height:40px;background:var(--dp-bg-body);border-radius:50%;
+  display:flex;align-items:center;justify-content:center;color:var(--dp-text-muted);
+  flex:none}
+.dp-item-ico svg{width:20px;height:20px}
+.dp-item-ico.danger{color:var(--dp-danger);background:var(--dp-danger-bg)}
+.dp-item-text{min-width:0}
+.dp-item-text h4{font-size:15px;font-weight:500;color:var(--dp-text-main);display:flex;
+  align-items:center;gap:6px;margin:0}
+.dp-item-text h4.danger{color:var(--dp-danger)}
+.dp-item-text p{font-size:13px;color:var(--dp-text-light);margin:4px 0 0}
+.dp-item-acts{display:flex;align-items:center;gap:12px;flex:none;flex-wrap:wrap;
+  justify-content:flex-end}
+
+/* 稿子 .auto-start-input（老版单个框）—— `V-364` 起换成下面那组"可展开面板"，
+   这条留着是因为**历史详情那边**（和旧缓存）还可能画到它 */
+#pane-detail .dp-auto-input{width:0;padding:0;border:1px solid transparent;
+  border-radius:6px;font-size:13px;outline:none;transition:var(--dp-transition);
+  opacity:0;pointer-events:none;background:transparent;color:var(--dp-text-main);
+  font-family:var(--mono)}
+#pane-detail .dp-auto-input.show{width:200px;padding:8px 12px;
+  border-color:var(--dp-border);opacity:1;pointer-events:auto}
+#pane-detail .dp-auto-input:focus{border-color:var(--dp-primary);
+  background:var(--dp-bg-card)}
+#pane-detail .dp-auto-input::placeholder{color:var(--dp-text-light);font-family:inherit}
+
+/* === `V-364`（照你 2026-10-09 那份新稿子）：**可展开的输入组 = 工作路径 + 启动参数** ===
+   稿子的数：收着 `width:0;opacity:0;overflow:hidden`；展开 `.show{width:420px;gap:12px;
+   margin-right:12px}`；路径组 `flex:1.2`、参数框 `flex:1`、浏览按钮左边一条竖分割线。 */
+.dp-expand{display:flex;align-items:center;width:0;opacity:0;overflow:hidden;
+  transition:var(--dp-transition)}
+.dp-expand.show{width:420px;opacity:1;margin-right:12px;gap:12px}
+/* 工作路径那一格（输入 + 浏览按钮 + 拖拽反馈） */
+.dp-pathgroup{display:flex;align-items:center;flex:1.2;min-width:0;
+  border:1px solid transparent;border-radius:6px;background:transparent;
+  transition:var(--dp-transition)}
+.dp-expand.show .dp-pathgroup{border-color:var(--dp-border)}
+.dp-pathgroup:focus-within{border-color:var(--dp-primary);background:var(--dp-bg-card)}
+.dp-pathgroup.drag-over{border-color:var(--dp-primary);border-style:dashed;
+  background:rgba(59,130,246,.1)}
+#pane-detail .dp-pathgroup input[type="text"]{flex:1;min-width:0;border:none;
+  background:transparent;outline:none;padding:8px 12px;font-size:13px;
+  color:var(--dp-text-main);font-family:inherit}
+#pane-detail .dp-pathgroup input[type="text"]::placeholder{color:var(--dp-text-light)}
+button.dp-browse{display:flex;align-items:center;justify-content:center;
+  background:transparent;border:none;color:var(--dp-text-muted);padding:8px 12px;
+  cursor:pointer;transition:var(--dp-transition);border-left:1px solid transparent}
+.dp-expand.show button.dp-browse{border-left-color:var(--dp-border)}
+button.dp-browse:hover{color:var(--dp-primary);background:rgba(0,0,0,.02)}
+button.dp-browse svg{width:15px;height:15px}
+/* 启动参数那一格 */
+#pane-detail .dp-param{flex:1;min-width:0;border:1px solid transparent;border-radius:6px;
+  padding:8px 12px;font-size:13px;outline:none;background:transparent;
+  transition:var(--dp-transition);color:var(--dp-text-main);font-family:inherit}
+.dp-expand.show .dp-param{border-color:var(--dp-border)}
+#pane-detail .dp-param:focus{border-color:var(--dp-primary);background:var(--dp-bg-card)}
+#pane-detail .dp-param::placeholder{color:var(--dp-text-light)}
+
+/* 回车 / 失焦 / 点选 / 拖进来 —— 存下来时那两下反馈（`V-361`/`V-363`）：
+   框变绿 + 旁边冒一句「已保存」（1.6 秒自己消失，不挡事） */
+#pane-detail .dp-param.saved,
+#pane-detail .dp-pathgroup input[type="text"].saved,
+#pane-detail .dp-auto-input.saved{border-color:#10b981;
+  box-shadow:0 0 0 3px rgba(16,185,129,.15);border-radius:6px}
+#pane-detail .dp-saved{display:inline-flex;align-items:center;gap:4px;
+  font-size:12.5px;color:#10b981;white-space:nowrap;
+  animation:dp-saved-in .18s ease-out}
+#pane-detail .dp-saved::before{content:"✓";font-weight:700}
+@keyframes dp-saved-in{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
+
+/* 「自动运行」那句说明：**一直**是稿子那句，不随状态变（`V-361`） */
+#pane-detail .auto-st{font-size:13px;color:var(--dp-text-light);margin:4px 0 0}
+
+/* ---------------------------------------------------------------- 提示气泡（稿子 .tooltip / .icon-tip 原样） */
+.dp-tip{position:relative;cursor:pointer;display:inline-flex;align-items:center}
+.dp-tip-ico{color:var(--dp-text-light);transition:color .2s}
+.dp-tip-ico svg,.dp-tip > svg{width:15px;height:15px}
+.dp-tip-ico:hover,.dp-tip:hover{color:var(--dp-primary)}
+.dp-tip::after{content:attr(data-tip);position:absolute;bottom:100%;left:50%;
+  transform:translateX(-50%) translateY(-8px);background:rgba(17,24,39,.9);color:#fff;
+  padding:6px 12px;border-radius:6px;font-size:12px;white-space:nowrap;opacity:0;
+  visibility:hidden;transition:var(--dp-transition);pointer-events:none;z-index:100;
+  font-weight:normal}
+.dp-tip::before{content:"";position:absolute;bottom:100%;left:50%;
+  transform:translateX(-50%) translateY(0);border-width:6px;border-style:solid;
+  border-color:rgba(17,24,39,.9) transparent transparent transparent;opacity:0;
+  visibility:hidden;transition:var(--dp-transition);pointer-events:none;z-index:100}
+.dp-tip:hover::after,.dp-tip:hover::before{opacity:1;visibility:visible;
+  transform:translateX(-50%) translateY(-4px)}
+
+/* ---------------------------------------------------------------- 别处共用的那几样，在这里也照稿子的调子收一收 */
+#pane-detail .warnbox{margin:0}
+/* 上面那一行小字（"命令预览 / 运行在右上角"）：稿子的命令栏本身就是预览，
+   所以这一行只在需要时出现，样式跟稿子的 `.setting-text p` 一致 */
+#pane-detail .dp-hint{font-size:13px;color:var(--dp-text-light);margin-top:10px}

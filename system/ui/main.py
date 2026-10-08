@@ -19,6 +19,7 @@ v0 只做四件事：列包、看一个包的说明与参数、带参数跑并�
 import base64
 import codecs
 import ctypes
+import hashlib
 import ctypes.wintypes as wt
 import json
 import os
@@ -150,11 +151,16 @@ def _json_from_host(out):
     """从宿主的 stdout 里取出那份 JSON。取不到返回 None。
 
     ★ 为什么不能直接 `json.loads(整段)`：宿主启动时会先跑 `config.load()`，
-      而配置文件**不存在**（首次运行）或**写坏了**时，它会往 stdout 打几句
-      「[配置] 未找到配置文件……」。那几行和我们这份 JSON 混在一起就是
+      而配置文件里**有多余的段**（或不存在 / 写坏了）时，它会往 **stdout** 打几句
+      「[配置] …」。那几行和我们这份 JSON 混在一起就是
       `Extra data: line 1 column N` —— 界面只好退回旧快照，看起来就是"界面不刷新，
-      还不知道为什么"（`V-31` 那次就是这一类）。所以：整段能解析就用整段，
-      不然**从最后往前找第一个 `{` 开头的行**——两条命令的输出都是一行 JSON。
+      还不知道为什么"（`V-31` 那次就是这一类）。
+    ★ `V-362`：这里曾经只兜"**单行** JSON"那一档（从后往前找一行以 `{` 开头的）——
+      而 `--ai-config` / `--settings` 这类**是多行缩进的 JSON**（`indent=2`）⇒
+      只要 stdout 前面多一句话（实测：配置文件里多一个 `[cleanup]` 段，
+      宿主每跑一次都打 6 行警告），整段解不了、逐行也解不了 ⇒ 界面报
+      **「读 AI 参数失败」**。现在改成跟 `_first_json` 一条路：**从每个 `{` 开始试
+      `raw_decode`**，前置噪音和多行 JSON 一起吃得下。
     """
     s = (out or "").strip()
     if not s:
@@ -163,15 +169,8 @@ def _json_from_host(out):
         return json.loads(s)
     except ValueError:
         pass
-    for line in reversed(s.splitlines()):
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            return json.loads(line)
-        except ValueError:
-            continue
-    return None
+    got = _first_json(s)
+    return got if isinstance(got, dict) else None
 
 
 # ================================================================ 文件系统
@@ -1445,6 +1444,341 @@ def _settings_rules():
 def _settings_current():
     """宿主给的"当前生效值"（键 → 值）；没打开过面板就是空的（那时 `check` 用默认值兜底）。"""
     return dict(_SETTINGS_CUR)
+
+
+# ================================================================ 退出 / 更名跟随 / 自动启动
+# `V-354` ~ `V-356`（用户 2026-10-09 提的三件）。★ 这三块都在**界面自己的进程**里算：
+# 不再为了问一句"包表变了吗"去起一个 `moss.exe`（那要 ≈1 秒，而这是每 2.5 秒一轮的事）。
+#: 「退出时结束所有插件进程」那个开关的出厂默认（和 `core/config.py` 里那个键的默认值一致）。
+DEFAULT_KILL_ON_EXIT = False
+
+_CFG_CACHE = {"t": 0.0, "data": None}
+
+
+def _cfg(section, key, default=None):
+    """读 `user_data/config.toml` 里的一项（`V-354`）。
+
+    ★ 为什么不回头问宿主（`moss --settings`）：那是起一个进程（真机 ≈1 秒），而这句
+      只是"关界面的那一刻，那个开关开着没有"。读文件 1 毫秒，而且**手改 config.toml
+      立刻生效**（不用重启 moss）。读不到 / 读坏了就交回默认值 —— 收进程这件事绝不许
+      因为一个配置文件而变玄学（读不出来就是"没开"）。
+    ★ 缓存 2 秒：同一轮里可能被问好几次（关相邻的两个窗口）。
+    """
+    now = time.time()
+    if _CFG_CACHE["data"] is None or (now - _CFG_CACHE["t"]) > 2.0:
+        data = {}
+        try:
+            import tomllib                                             # noqa: PLC0415
+            data = tomllib.loads((USER_DATA / "config.toml").read_text(encoding="utf-8"))
+        except Exception:                                              # noqa: BLE001
+            data = {}
+        _CFG_CACHE["data"] = data if isinstance(data, dict) else {}
+        _CFG_CACHE["t"] = now
+    try:
+        val = (_CFG_CACHE["data"].get(str(section)) or {}).get(str(key), default)
+    except Exception:                                                  # noqa: BLE001
+        val = default
+    return default if val is None else val
+
+
+def _pkg_ids_on_disk():
+    """磁盘上现在有哪些包（返回**目录名**集合）。
+
+    ★ 为什么要问磁盘：认进程靠的是命令行里那段 `/pkgs/<目录名>/`（`D-27`：目录名和 id
+      允许不一样），而界面手里那份 `DATA` 是上次刷新时的。
+    """
+    out = set()
+    for root in (USER_DATA / "pkgs", HOME / "system" / "pkgs"):
+        try:
+            for d in root.iterdir():
+                if d.is_dir() and (d / "pkg.json").is_file():
+                    out.add(d.name)
+        except OSError:
+            pass
+    return out
+
+
+def _kill_all_pkg_procs():
+    """把**所有**插件进程收掉（连子孙），返回被杀掉的 pid 列表（`V-354`）。
+
+    ★ 认进程一律走 `_pkg_pids()` —— 它身上带着 `V-220` 那道硬条件（可执行文件得真在包
+      目录里），所以不会像"只认 `MOSS_PKG_ID`"那样把 explorer.exe / 用户的浏览器一起
+      杀掉（那两起真事故都记在 `_pkg_pids` 的注释里）。
+    ★ 三个来源都要收：① 界面自己起的（`RUNS`）；② 内嵌界面的后端（`EMBED`）；
+      ③ 别的什么人起的（终端敲的、上一次界面留下的孤儿）—— 按包目录名去认；
+      ④ **界面自己拉起的整棵树**（AI 工作台的子进程、常驻终端那个 shell 都在里面）。
+    """
+    killed = []
+    # ① 界面自己起的后台运行（含"在终端里跑"的那种）
+    try:
+        with RUNS_LOCK:
+            runs = [dict(r) for r in RUNS.values()]
+    except Exception:                                                  # noqa: BLE001
+        runs = []
+    for r in runs:
+        proc = r.get("proc")
+        try:
+            pid = int(r.get("pid") or (proc.pid if proc is not None else 0) or 0)
+        except Exception:                                              # noqa: BLE001
+            pid = 0
+        if pid:
+            _kill_tree(pid)
+            killed.append(pid)
+    # ② 内嵌界面的后端
+    try:
+        embeds = list(EMBED.items())
+    except Exception:                                                  # noqa: BLE001
+        embeds = []
+    for _pkg, rec in embeds:
+        try:
+            proc = (rec or {}).get("proc")
+            if proc is not None and proc.poll() is None:
+                _kill_tree(proc.pid)
+                killed.append(int(proc.pid))
+        except Exception:                                              # noqa: BLE001
+            pass
+    # ③ 剩下的：按"包"认（记下的进程树 / 命令行里的包目录 / 包自己的窗口）
+    parents = _pid_parents()
+    cmdlines = _pids_by_cmdline()
+    owner_pkg = {}
+    for w in _top_windows():
+        pid = w["pid"]
+        if pid != os.getpid() and pid not in owner_pkg:
+            owner_pkg[pid] = _env_pkg_id(pid)
+    ids = set(_pkg_procs) | set(EMBED) | set(_pkg_ids_on_disk())
+    ids |= {str(p.get("id")) for p in (DATA.get("packages") or []) if p.get("id")}
+    pids = set()
+    for one in ids:
+        if not one:
+            continue
+        try:
+            pids |= _pkg_pids(str(one), parents, cmdlines, owner_pkg)
+        except Exception:                                              # noqa: BLE001
+            pass
+    pids.discard(os.getpid())                    # 别把自己（界面）算进去
+    pids |= _with_descendants(pids, parents)     # 连带它们的子孙
+    # ④ **界面自己拉起的整棵树**（= 这个进程的全部活着的子孙）：AI 工作台的子进程、
+    #    常驻终端那个 shell（包就跑在里面）、以及任何还没被上面三条认出来的 —— 关掉界面
+    #    就不留活口（`V-307` 那个"几十个 moss/python 进程"的现场就是没这一条）。
+    #    ★ 这一条**只碰自己的子孙**，所以照样不会动用户的浏览器 / 编辑器。
+    pids |= _with_descendants({os.getpid()}, parents)
+    pids.discard(os.getpid())
+    for pid in sorted(pids):
+        _kill_tree(int(pid))
+        killed.append(int(pid))
+    return sorted(set(killed))
+
+
+def _on_ui_closing():
+    """界面窗口被关掉（× / 任务栏 / 界面里退出）时要干的事（`V-354`）。
+
+    ★ 走 pywebview 的 `closing` 事件：winforms 后端在 `FormClosing` 里**同步**调它，
+      而 `window.destroy()`（`Api.quit` 那条路）也会经过它（`destroy_window` → `Close()`）。
+    ★ 返回值要是**真值**：`closing.set()` 会把每个处理函数的返回值收起来，谁回了 `False`
+      就等于"取消这次关闭"。我们只干活、不拦人。
+    ★ 这里是**阻塞**的（同步事件）：收进程几百毫秒，窗口会晚一会儿才消失 —— 这是有意的，
+      不然进程还没收完窗口就没了，"收干净"这件事就没人保证了。
+    """
+    try:
+        if bool(_cfg("ui", "kill_pkgs_on_exit", DEFAULT_KILL_ON_EXIT)):
+            pids = _kill_all_pkg_procs()
+            drop_log("退出：按设置收掉插件进程 %d 个 —— %s" % (len(pids), pids[:20]))
+    except Exception as e:                                             # noqa: BLE001
+        drop_log("退出：收插件进程时出错（不影响关闭）：%r" % (e,))
+    return True
+
+
+# ---------------------------------------------------------------- 更名跟随（`V-355`）
+# 用户原话：「如果用户对当前打开的界面 不存在了 对不上了 但是出现了一个新的id 那基本就能
+# 判断是它改名了 …… 当然如果你有更精准的办法更好了」。
+# 「更精准的办法」= **身份指纹**：`pkg.json` 去掉 `id` 之后的内容 + 层 + 那个文件的创建时间。
+# 为什么它就够准：`moss --rename` 那三步（包目录 / 数据目录 / 清单里的 id）里，清单只改
+# `id` 一个字段，而且是**截断重写同一个文件**（创建时间不变）⇒ 这三样在改名前后一字不差。
+# 编码之外还留了一条兜底（一个走、一个来 ⇒ 按新旧 id 推断），两条都会在界面上说明依据。
+#: id -> 指纹；id -> 包目录（判"是真没了还是改坏了"用）
+_PKG_IDENT = {}
+_PKG_DIRS = {}
+#: 上一次全量扫描的 id 集合（`None` = 还没扫过，第一次只记基线、不报任何东西）
+_PKG_KNOWN = None
+
+
+def _swap_pid(value, pid):
+    """把**显示名**里的旧 id 逐字换成占位符（只给 `name` 用，见 `_ident_norm`）。"""
+    if isinstance(value, str):
+        return value.replace(pid, "@id@") if pid else value
+    if isinstance(value, dict):
+        return dict((k, _swap_pid(v, pid)) for k, v in value.items())
+    if isinstance(value, list):
+        return [_swap_pid(v, pid) for v in value]
+    return value
+
+
+def _ident_norm(data, pid):
+    """把清单压成"**改名前后一模一样**"的那一份内容（再键排序算指纹）。
+
+    ★ 只动**改名真正会动的那些字段**（`core/cli.py::cmd_rename` 第 ③ 步）：
+      · `id`        —— 整个去掉（它就是被换掉的那个）；
+      · `name`      —— 旧 id **逐字**换成新 id ⇒ 这里统一压成 `@id@`；
+      · `aliases`   —— **整条等于**旧 id 的换成新 id ⇒ 这里同样整条压成 `@id@`。
+      ⚠️ 别的字段**一个字都不许碰** —— 尤其不能对整份清单做 `str.replace`：
+        别名 `myoldname` 里含旧 id，可改名**并不动它**；要是把它压成 `my@id@`，
+        改名前后就对不上了（真踩过：探针 E7 当场红）。
+    """
+    out = dict(data) if isinstance(data, dict) else {}
+    out.pop("id", None)
+    if "name" in out:
+        out["name"] = _swap_pid(out.get("name"), str(pid or ""))
+    al = out.get("aliases")
+    if isinstance(al, list):
+        p = str(pid or "")
+        out["aliases"] = ["@id@" if (p and str(a) == p) else a for a in al]
+    return out
+
+
+def _pkg_ident(man, layer, pid=""):
+    """一个包的**身份指纹**（改名时不变）。算不出来回 None（调用方当"读坏了"）。
+
+    ★ 指纹 = 清单**去掉 id、把显示名里那句旧 id 和等于旧 id 的别名压成占位符**之后的内容
+      （键排序）+ 在哪一层。为什么它就是"同一个包"：`moss --rename` 动的就这三样
+      （`core/cli.py::cmd_rename` 第 ③ 步），别的字段一个字不动
+      （连空白/排版都不算数 —— 我们比的是解析后的内容，不是字节）。
+    ★ 为什么不掺"目录名 / 目录时间 / 文件时间"：那几样正好是**会变**的，掺进去就认不出来了。
+    ★ 撞车怎么办（两个包的清单除了 id 一模一样，比如同一份骨架复制出来的）：这一步要求
+      "**唯一命中**"才认（见 `_pkg_watch_poll`），撞车就自动退到第二条判据（一个走一个来）。
+    """
+    try:
+        data = json.loads(Path(man).read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        body = json.dumps(_ident_norm(data, pid), ensure_ascii=False, sort_keys=True)
+        return hashlib.sha1(("%s|%s" % (layer, body)).encode("utf-8")).hexdigest()
+    except Exception:                                                  # noqa: BLE001
+        return None
+
+
+def _pkg_scan():
+    """扫一遍磁盘上的包：`({id: 指纹}, {id: 目录}, 读不出来的目录数)`。
+
+    ★ 纯读盘（两个 `pkgs` 根下的 `pkg.json`），不起进程 —— 才敢每 2.5 秒走一次。
+    """
+    fps, dirs, broken = {}, {}, 0
+    for layer, root in (("user", USER_DATA / "pkgs"), ("system", HOME / "system" / "pkgs")):
+        try:
+            entries = sorted(root.iterdir())
+        except OSError:
+            continue
+        for d in entries:
+            man = d / "pkg.json"
+            if not (d.is_dir() and man.is_file()):
+                continue
+            try:
+                pid = str((json.loads(man.read_text(encoding="utf-8")) or {}).get("id")
+                          or d.name)
+            except Exception:                                          # noqa: BLE001
+                broken += 1                    # 正在被编辑 / 写坏了：这一轮当"不知道"
+                continue
+            fp = _pkg_ident(man, layer, pid)   # ★ 指纹要**自己的 id**（归一化用）
+            if fp is None:
+                broken += 1
+                continue
+            fps.setdefault(pid, fp)            # 先扫 user 层 ⇒ 覆盖关系和宿主一致
+            dirs.setdefault(pid, str(d))
+    return fps, dirs, broken
+
+
+def _pkg_watch_poll():
+    """看一眼「包表变了吗 / 谁改名了」（界面每 2.5 秒问一次）。
+
+    返回 `{"renamed": [[旧, 新, 依据], ...], "gone": [id, ...], "changed": bool,
+    "ids": [...]}`。第一次调用**只记基线**（不然界面一开就把"我上次看到的"当成变了）。
+    """
+    global _PKG_KNOWN
+    fps, dirs, _broken = _pkg_scan()
+    out = {"renamed": [], "gone": [], "changed": False, "ids": sorted(fps)}
+    if _PKG_KNOWN is None:
+        _PKG_IDENT.clear()
+        _PKG_IDENT.update(fps)
+        _PKG_DIRS.clear()
+        _PKG_DIRS.update(dirs)
+        _PKG_KNOWN = set(fps)
+        return out
+    old, old_dirs = dict(_PKG_IDENT), dict(_PKG_DIRS)
+    gone = [i for i in old if i not in fps]
+    added = [i for i in fps if i not in old]
+    used = set()
+    # ① 指纹对得上 = 铁定是同一个包改了名
+    for g in sorted(gone):
+        hit = [a for a in added if a not in used and fps[a] == old[g]]
+        if len(hit) == 1:
+            used.add(hit[0])
+            out["renamed"].append([g, hit[0], "指纹一致"])
+    # ② 兜底：一个走、一个来 ⇒ 按新旧 id 推断（用户自己提的那条判据）
+    left_g = [g for g in gone if not any(r[0] == g for r in out["renamed"])]
+    left_a = [a for a in added if a not in used]
+    if len(left_g) == 1 and len(left_a) == 1:
+        out["renamed"].append([left_g[0], left_a[0], "按新旧 id 推断"])
+        used.add(left_a[0])
+    # ③ 真没了的：目录都不在了才说（`pkg.json` 正被编辑时目录还在 ⇒ 不吓人）
+    for g in gone:
+        if any(r[0] == g for r in out["renamed"]):
+            continue
+        try:
+            still = Path(old_dirs.get(g) or "").is_dir()
+        except OSError:
+            still = False
+        if not still:
+            out["gone"].append(g)
+    # ★ `changed` 只认"**结构**变了"（多了 / 少了 / 改名了）—— 故意**不**把"清单内容变了"
+    #   算进来：界面拿到 `changed` 会去问一遍宿主（那是起一个 `moss.exe`，≈1 秒），而
+    #   AI 干活时会一次次改包里的文件（`pkg.json` 也在其中）⇒ 每改一下就起一个进程，
+    #   那是白烧。清单内容变了那条路由现有的 `refreshPkgs`（存盘的调用点）自己管。
+    out["changed"] = bool(out["renamed"] or out["gone"] or added
+                          or (set(fps) != set(old)))
+    _PKG_IDENT.clear()
+    _PKG_IDENT.update(fps)
+    _PKG_DIRS.clear()
+    _PKG_DIRS.update(dirs)
+    _PKG_KNOWN = set(fps)
+    return out
+
+
+# ---------------------------------------------------------------- 自动启动（`V-356` / `V-358`）
+# 用户原话：「启动 moss 的 ui 以后 可以自动启动一些插件或历史记录（可以自定义参数）」，
+# 后来（`V-358`）又说了它该在哪儿：「把那个自动启动放在详情里面去设置 而不是放到设置里面去
+# 那样很不直观 那个地方可以编辑 删除 以及查看启动状态」。
+# ⇒ **配置的入口在「详情」页**（包详情 / 历史详情各有一块），设置里那一组整个撤掉了；
+#   也**没有"总开关"**了 —— 每条自己有一个开关（"已加入 · 开 / 关"），
+#   这也是"不允许两个开关控制同一件事"那条规矩（`V-316`）的延续。
+# ★ 存哪儿：`user_data/state/_ui_autostart.json` —— **不进 config.toml**：那是一串带参数的
+#   条目（不是一个键一行），面板那种渲染摆不下；而 `_ui_order.json` 一直是这么存的（同一套路）。
+AUTOSTART_FILE = USER_DATA / "state" / "_ui_autostart.json"
+#: 最多几条（再多也不是"自动启动"了，是把界面当开机脚本用）
+AUTOSTART_MAX = 20
+
+
+def _autostart_read():
+    """读自动启动那份配置，回**条目表** `[{kind, id, args, cwd, name, on}, …]`。
+
+    文件不在 / 读坏了 = 空表（**绝不许因此起不来界面**，也不许崩在详情页上）。
+    """
+    try:
+        data = json.loads(AUTOSTART_FILE.read_text(encoding="utf-8"))
+    except Exception:                                                  # noqa: BLE001
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    items = []
+    for it in (data.get("items") or [])[:AUTOSTART_MAX]:
+        if not isinstance(it, dict):
+            continue
+        kind = "hist" if str(it.get("kind")) == "hist" else "pkg"
+        pid = str(it.get("id") or "").strip()
+        if not pid:
+            continue
+        items.append({"kind": kind, "id": pid, "args": str(it.get("args") or ""),
+                      "cwd": str(it.get("cwd") or ""), "name": str(it.get("name") or ""),
+                      "on": it.get("on") is not False})
+    return items
 
 
 class Api:
@@ -4416,6 +4750,61 @@ class Api:
         return {"ok": r.get("code") == 0, "code": r.get("code"),
                 "msg": (r.get("out") or "").strip() or "（宿主没说什么）"}
 
+    # ------------------------------------------------------------ 更名跟随（`V-355`）
+    #   界面每 2.5 秒问一次："包表变了吗 / 谁改名了"。**纯读盘、不起进程** ——
+    #   起一次 `moss.exe` 要 1 秒，这种轮询绝不能走那条路。
+    def pkg_watch(self):
+        """回 `{ok, renamed, gone, changed, ids}`（含义见 `_pkg_watch_poll`）。"""
+        try:
+            got = _pkg_watch_poll()
+        except Exception as e:                                         # noqa: BLE001
+            _note("pkg_watch 失败：%r" % (e,))
+            return {"ok": False, "renamed": [], "gone": [], "changed": False, "ids": [],
+                    "msg": str(e)}
+        got["ok"] = True
+        return got
+
+    # ------------------------------------------------------------ 自动启动（`V-356` / `V-358`）
+    def autostart_get(self):
+        """「详情」页那一块要的数据：**条目表** + 可选的插件清单（提示用）。
+
+        ★ 没有"总开关"：每条自己一个 `on`（`V-358` 你去掉那个开关的）。
+        """
+        return {"ok": True, "items": _autostart_read(),
+                "packages": [{"id": str(p.get("id") or ""),
+                              "name": str(p.get("name") or p.get("id") or ""),
+                              "kind": str(p.get("kind") or "")}
+                             for p in (DATA.get("packages") or []) if p.get("id")],
+                "max": AUTOSTART_MAX}
+
+    def autostart_set(self, items=None):
+        """整表存回自动启动（原子写 `user_data/state/_ui_autostart.json`）。
+
+        ★ 界面上那几下（加入 / 改参数 / 开关 / 删掉）都是"改内存里那一份 → 整表存回来"，
+          和插件列表排序（`list_state_set`）一个路子：**没有"保存"按钮漏掉一半**这种事。
+        """
+        rows = []
+        for it in (items or [])[:AUTOSTART_MAX]:
+            if not isinstance(it, dict):
+                continue
+            pid = str(it.get("id") or "").strip()
+            if not pid:
+                continue
+            rows.append({"kind": "hist" if str(it.get("kind")) == "hist" else "pkg",
+                         "id": pid[:400], "args": str(it.get("args") or "")[:400],
+                         "cwd": str(it.get("cwd") or "")[:400],
+                         "name": str(it.get("name") or "")[:120],
+                         "on": it.get("on") is not False})
+        try:
+            AUTOSTART_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = AUTOSTART_FILE.with_name(AUTOSTART_FILE.name + ".tmp")
+            tmp.write_text(json.dumps({"items": rows}, ensure_ascii=False, indent=1),
+                           encoding="utf-8")
+            os.replace(str(tmp), str(AUTOSTART_FILE))
+        except Exception as e:                                         # noqa: BLE001
+            return {"ok": False, "msg": "存不了：%s" % e}
+        return {"ok": True, "items": rows}
+
     def quit(self):
         window.destroy()
         return {"ok": True}
@@ -4981,4 +5370,7 @@ if __name__ == "__main__":
     if DEBUG:
         print("[moss] 开发模式：devtools 已开（F12 / 右键「检查」）。"
               "页面里的报错也会写到界面右下角状态栏。", flush=True)
+    # ★ `V-354`：关窗口那一刻要干的事（按设置把插件进程收掉）。挂的是**主窗口** ——
+    #   浮动窗口（`ui_float` 开的那些）不挂：关一个浮动窗口顺手把插件全杀了是不对的。
+    window.events.closing += _on_ui_closing
     webview.start(_arm_file_drop, debug=DEBUG)

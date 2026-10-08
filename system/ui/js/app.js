@@ -85,6 +85,9 @@ async function init(){
   consoleKey = "__host__";
   paintConsole();
   pkgPollStart();          // 每 2.5 秒把所有包的状态对一次（列表 + 按钮都要）
+  // ★ `V-355`：另起一路"包表变了吗 / 谁改名了"的轮询（宿主那边**纯读盘**，不起进程）。
+  //   更名跟随（AI 改的名 / 你在终端里改的名）就靠它做到"自动无感刷新"。
+  pkgWatchStart();
   // 默认上下文：不选包时给一个"全部文件"（根 = user_data），能自己往上走到 system。
   // ★ `V-98` 修一个真 bug（你 2026-09-30 报的"点了刷新包列表，文件管理的路径就变错"）：
   //   这一段以前是**无条件**把上下文和路径按回 `__all__` + `user/`；而"刷新包列表"那颗 ⟳
@@ -104,6 +107,7 @@ async function init(){
   }
   fmRender();
   bindDropZone();          // 拖文件进来（`V-35`）：高亮 + 收宿主送来的真实路径
+  autostartRun();          // ★ `V-356`：启动界面之后自动跑起那几条（实现在 js/autostart.js）
 }
 function paintStaticIcons(){
   // 注意：这里**没有"退出"按钮** —— 标题栏本来就有 ×，重复一个是多余的

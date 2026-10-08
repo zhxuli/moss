@@ -547,8 +547,15 @@ function iconHTML(p, cls){
   return '<span class="' + cls + '"></span>';
 }
 function pkgRel(p){
+  return relOfDir(p && p.dir);
+}
+/* 包目录 → 页面用的 rel（`user/...` / `system/...`；不在两个根里回 null）。
+   ★ `V-355`：更名跟随要拿**改名前的目录**算旧 rel，而那时手上只有一条路径字符串
+     （包里那个对象已经跟着旧 id 一起没了）—— 所以这一段单独抽出来。 */
+function relOfDir(dir){
   const norm = s => String(s || "").replace(/\\/g, "/").replace(/\/+$/, "");
-  const d = norm(p.dir), userd = norm(DATA.user_data), sysroot = norm(DATA.home) + "/system";
+  const d = norm(dir), userd = norm(DATA.user_data), sysroot = norm(DATA.home) + "/system";
+  if (!d) return null;
   if (d === userd || d.startsWith(userd + "/")) return "user" + d.slice(userd.length);
   if (d === sysroot || d.startsWith(sysroot + "/")) return "system" + d.slice(sysroot.length);
   return null;
@@ -570,23 +577,46 @@ function renderDetailHTML(){
   if (!who) return '<div class="empty">左边选一个包，或者一条历史</div>';
   if (isHist(who)) return renderDetailHistHTML(who);
   const p = cur, params = p.params || [];
-  const prop = (k, v) => '<div class="prop"><div class="prop-k">' + esc(k) +
-    '</div><div class="prop-v">' + v + '</div></div>';
-  let html = '<div class="dwrap"><div class="dhead">' +
-      // 头部 4 块直接摆进 3 行网格（位置由 CSS 的 grid-area 定，DOM 顺序不影响画面）
-      '<div class="dicon">' + iconHTML(p, "") + '</div>' +
-      '<h1 class="dtitle" title="' + esc(p.name) + '">' + esc(p.name) + '</h1>' +
-      (p.desc ? '<p class="ddesc">' + esc(p.desc) + '</p>' : '') +
-      '<div class="dmeta">' + esc(PSYM + p.id) + ' · v' + esc(p.version || "?") + ' · ' +
-        esc(p.kind) + ' · ' + esc(p.layer) + ' 层' +
-        (p.shadowed ? ' · 遮住了 ' + esc(p.shadowed) + ' 层的同名包' : '') + '</div>' +
-    '</div>';
+  const prop = (k, v) => '<div class="dp-prop"><span class="prop-k">' + esc(k) +
+    '</span><span class="prop-v">' + v + '</span></div>';
+  // ★ `V-359`/`V-360`：整页按你给的那份稿子（**像素级**）——
+  //   卡片 1 基础信息：图标 / 名字 + 徽章 / 说明 / 分隔线 / 路径栏 / 属性区。
+  //   ★ `.dmeta` 那个类**必须留着**（里面有 `:包id`）—— `sync-run` 场景拿它认"选中的是谁"。
+  const dirText = String(p.dir || "");
+  let html = '<div class="dwrap"><div class="dp-card dp-head">' +
+      '<div class="dp-icon">' + (iconHTML(p, "") || ico("puzzle", "i")) + '</div>' +
+      '<div class="dp-info">' +
+        '<h1 title="' + esc(p.name) + '">' + esc(p.name) +
+          '<span class="dp-badges dmeta">' +
+            '<span class="dp-badge">' + esc(PSYM + p.id) + '</span>' +
+            '<span class="dp-badge">v' + esc(p.version || "?") + '</span>' +
+            '<span class="dp-badge">' + esc(p.kind || "task") + '</span>' +
+            '<span class="dp-badge">' + esc(p.layer) + ' 层</span>' +
+            (p.shadowed ? '<span class="dp-badge">遮住了 ' + esc(p.shadowed) + ' 层的同名包' +
+                          '</span>' : '') +
+          '</span></h1>' +
+        (p.desc
+          ? '<div class="dp-desc dp-tip" data-tip="此说明将被列在 moss 的包列表里，方便快速识别。">' +
+            esc(p.desc) + '<span class="dp-tip-ico">' + ico("info", "i") + '</span></div>'
+          : '') +
+        '<div class="dp-divider"></div>' +
+        // 路径栏（稿子的 .path-display）：包的目录 + 复制 + 打开目录
+        '<div class="dp-path">' +
+          '<span class="dp-path-ico">' + ico("folder", "i") + '</span>' +
+          '<span class="dp-path-text" id="pkg-dir" title="' + esc(dirText) + '">' +
+            esc(dirText || "（没拿到目录）") + '</span>' +
+          '<div class="dp-path-actions">' +
+            '<button class="dp-path-btn dp-tip" id="btn-copy-dir" data-tip="复制路径">' +
+              ico("copy", "i") + '</button>' +
+            '<button class="dp-path-btn dp-tip" id="btn-open-dir" data-tip="打开目录">' +
+              ico("folder-open", "i") + '</button>' +
+          '</div>' +
+        '</div>';
 
-  // 属性：别名 / 标签 / AI。用"标签 : 值"的行，不做成一堆药丸 ——
-  // 药丸只留给"点一下就填进去"那种真动作（例子）。
+  // 属性区（稿子的 .props-grid）：别名 / 标签 / AI / 参数
   const props = [];
   if ((p.aliases || []).length)
-    props.push(prop("别名", (p.aliases || []).map(a => '<span class="mono">:' + esc(a) +
+    props.push(prop("别名 (Alias)", (p.aliases || []).map(a => '<span class="mono">:' + esc(a) +
       '</span>').join('&nbsp; ')));
   if ((p.tags || []).length)
     props.push(prop("标签", (p.tags || []).map(t => '<span class="tag">' + esc(t) +
@@ -594,66 +624,92 @@ function renderDetailHTML(){
   if (p.ai_expose)
     props.push(prop("AI", '可调用 <span class="soft">· 风险 ' +
       esc(p.ai_risk || "?") + '</span>'));
-  if (props.length)
-    html += '<section class="dsec"><div class="props">' + props.join("") + '</div></section>';
-
-  if (params.length){
-    html += '<section class="dsec"><div class="props">' +
-      params.map(pa => '<div class="prop"><div class="prop-k mono">' + esc(pa.name) +
-        '</div><div class="prop-v">' + esc(pa.type || "string") +
-        '<span class="soft"> · ' + (pa.required ? "必填" : "可留空") +
-        (pa.rest ? " · 余下全给它" : "") + '</span>' +
-        (pa.desc ? '<div class="pdesc">' + esc(pa.desc) + '</div>' : '') +
-        (pa.placeholder ? '<div class="pex">例：' + esc(pa.placeholder) + '</div>' : '') +
-        '</div></div>').join("") + '</div></section>';
-  }
-  // ★ 过滤掉空的例子：`pkg.json` 里 `ai.examples` 的 `args` 可能是空串
-  //   （有的包就是 ['', '']），不过滤会画出一排**空药丸**、整块看着像坏了。
-  const exs = (p.examples || []).map(x => String(x || "")).filter(x => x.trim());
-  if (exs.length){
-    html += '<section class="dsec"><div class="chips">' +
-      exs.map(e => '<button class="chip" data-args="' + esc(e) + '">' + esc(e) +
-        '</button>').join("") + '</div></section>';
-  }
-
-  // ★ 目录名和 id 允许不一样（`D-27` 方案 C）。不一样时**不报错**，只是把这件事
-  //   摆在明面上，并给一个现成的统一动作（宿主那条 `--rename <id> <id>` 只改目录名）。
+  // 参数：稿子就是"参数 <名字>"当标签、`类型 + 「可留空」徽章`当值，
+  // **示例和说明都进那格的提示气泡**（稿子：`data-tip="示例: 要重复的内容"`）
+  params.forEach(pa => {
+    const tip = [
+      String(pa.desc || "").trim(),
+      pa.rest ? "余下全给它" : "",
+      String(pa.placeholder || "").trim() ? ("示例: " + String(pa.placeholder).trim()) : "",
+    ].filter(Boolean).join(" · ");
+    props.push('<div class="dp-prop"><span class="prop-k">参数 ' + esc(String(pa.name || "")) +
+      '</span><span class="prop-v' + (tip ? ' dp-tip' : '') + '"' +
+      (tip ? ' data-tip="' + esc(tip) + '"' : '') + '>' +
+      '<span class="mono">' + esc(pa.type || "string") + '</span>' +
+      '<span class="dp-badge">' + (pa.required ? "必填" : "可留空") + '</span></span></div>');
+  });
+  // 目录名和 id 不一样（`D-27` 方案 C）：不报错，只摆出来 + 给个一键统一
   const dirBase = (String(p.dir || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop()) || "";
   const oddDir = dirBase && dirBase !== p.id;
-  const renameBtn = '<button class="btn" id="btn-rename" title="给这个包改名（moss --rename）">' +
-      ico("pencil", "i") + '<span>更名</span></button>';
+  if (oddDir)
+    props.push(prop("目录名", '<span class="mono">' + esc(dirBase) + '</span>' +
+      '<span class="soft">· 和 id 不一样（不碍事）</span>'));
+  if (props.length)
+    html += '<div class="dp-props">' + props.join("") + '</div>';
+  html += '</div></div>';
 
-  html += '<section class="dsec"><div class="runrow">' +
+  // ★ 卡片 2：快捷执行（稿子的 .cmd-bar：图标 + 前缀 + 参数框 + 主动作按钮）
+  html += '<div class="dp-card"><div class="dp-cmdbar">' +
+      '<span class="dp-cmd-ico">' + ico("terminal", "i") + '</span>' +
+      '<span class="dp-cmd-prefix">moss ' + esc(PSYM + p.id) + '</span>' +
       // ★ 参数框右边那颗"一键清空"（`V-86`，你要的）：**有内容时才浮出来**，
       //   悬浮在框内右侧（`.argbox` 定位），点一下清空并把光标留在框里。
       '<span class="argbox">' +
-        '<input id="args" placeholder="参数（可留空；回车 = 运行）" value="' +
+        '<input id="args" placeholder="点击输入附加参数并回车执行..." value="' +
           esc(ARGS[p.id] || "") + '">' +
         '<button class="argclear" id="btn-args-clear" title="清空参数" hidden>' +
           ico("x", "i") + '</button>' +
       '</span>' +
-      '<button class="btn" id="btn-openui" title="打开这个包自己的界面（后台运行，不等它）">' +
-        ico("app-window", "i") + '<span>打开界面</span></button></div>' +
-      '<div class="runhint">命令预览: <span class="mono" id="preview"></span>' +
-      ' · 右上角是「运行 / 停止」</div></section>' +
-    // 更名：单独一块（它既不是危险动作，也不属于「跑一下」）
-    '<section class="dsec"><div class="row-split">' +
-      (oddDir
-        ? '<span class="hint">目录名 <span class="mono">' + esc(dirBase) +
-          '</span> 和 id <span class="mono">' + esc(p.id) +
-          '</span> 不一样（不碍事）</span>' +
-          '<span class="row-inline">' +
-          '<button class="btn" id="btn-align" title="只把包目录名改成 id —— 数据目录和清单都不动">' +
-            ico("folder-tree", "i") + '<span>对齐目录名</span></button>' +
-          renameBtn + '</span>'
-        : '<span class="hint">改 id：包目录名、数据目录 ' +
-          '<span class="mono">user_data/state/&lt;id&gt;</span>、清单里的 id 一起改</span>' +
-          renameBtn) +
-      '</div></section>' +
-    '<section class="dsec danger">' +
-      '<div class="danger-text">永久删除: 包本体 + 它的数据（不进回收站）</div>' +
-      '<button class="btn danger" id="btn-remove" title="卸载这个包（moss --remove）">' +
-        ico("trash-2", "i") + '<span>卸载</span></button></section></div>';
+      '<button class="dp-primary" id="btn-openui"' +
+        ' title="打开这个包自己的界面（后台运行，不等它）· 运行 / 停止在右上角">' +
+        ico("play", "i") + '<span>打开界面</span></button>' +
+    '</div>' +
+    // 稿子这条命令栏本身就是"命令预览"，所以这里只在 DOM 里留一个不占地方的钩子
+    '<span hidden id="preview"></span>';
+  // 例子：稿子把它们放进"参数"那格的提示气泡里了（见上面 data-tip），
+  // 这里另外给一排可点的药丸 **只在有例子时**出现（稿子没有这一块，默认不占版面）
+  const exs = (p.examples || []).map(x => String(x || "")).filter(x => x.trim());
+  if (exs.length){
+    html += '<div class="dp-hint">常用的参数（点一下填进上面的框）：<span class="chips">' +
+      exs.map(e => '<button class="chip" data-args="' + esc(e) + '">' + esc(e) +
+        '</button>').join("") + '</span></div>';
+  }
+  html += '</div>';
+
+  // ★ 卡片 4：高级设置（稿子把"更名 / 开机自动运行 / 卸载"收成一张卡的三行）
+  const renameBtn = '<button class="dp-ghost" id="btn-rename" title="给这个包改名（moss --rename）">' +
+      ico("pencil", "i") + '<span>更名</span></button>';
+  html += '<div class="dp-card"><div class="dp-list">' +
+      '<div class="dp-item">' +
+        '<div class="dp-item-info">' +
+          '<span class="dp-item-ico">' + ico("text-cursor-input", "i") + '</span>' +
+          '<div class="dp-item-text"><h4>更改标识符' +
+            '<span class="dp-tip dp-tip-ico" data-tip="将同步修改包目录名、数据目录及清单中的 id">' +
+              ico("circle-alert", "i") + '</span></h4>' +
+            '<p>修改插件的唯一 ID 和文件夹名称</p></div>' +
+        '</div>' +
+        '<div class="dp-item-acts">' +
+          (oddDir
+            ? '<button class="dp-ghost" id="btn-align" title="只把包目录名改成 id —— ' +
+              '数据目录和清单都不动">' + ico("folder-tree", "i") + '<span>对齐目录名</span></button>'
+            : '') +
+          renameBtn + '</div>' +
+      '</div>' +
+      // ★ `V-358`：**自动启动**（你定的：这一块放"详情"里，不放设置里）——
+      //   加入 / 看状态 / 改参数 / 删除都在这儿，见 `js/autostart.js`。
+      autoSectionHTML("pkg", p.id, {}) +
+      '<div class="dp-item">' +
+        '<div class="dp-item-info">' +
+          '<span class="dp-item-ico danger">' + ico("trash-2", "i") + '</span>' +
+          '<div class="dp-item-text"><h4 class="danger">卸载此插件' +
+            '<span class="dp-tip dp-tip-ico" data-tip="永久删除：包本体 + 数据">' +
+              ico("circle-alert", "i") + '</span></h4>' +
+            '<p>将永久抹除数据，此操作无法撤销</p></div>' +
+        '</div>' +
+        '<button class="dp-ghost danger" id="btn-remove" title="卸载这个包（moss --remove）">' +
+          ico("trash-2", "i") + '<span>卸载</span></button>' +
+      '</div>' +
+    '</div></div></div>';
   return html;
 }
 
@@ -712,6 +768,32 @@ function wireDetail(){
   $("#btn-remove").onclick = () => cmdRemovePkg(p);
   $("#btn-rename").onclick = () => cmdRenamePkg(p);
   if ($("#btn-align")) $("#btn-align").onclick = () => cmdAlignPkgDir(p);
+  // ★ `V-359`（稿子新增的路径栏那两颗）：复制路径 / 打开目录。
+  if ($("#btn-copy-dir")) $("#btn-copy-dir").onclick = () => copyDirPath(p.dir);
+  if ($("#btn-open-dir")) $("#btn-open-dir").onclick = async () => {
+    const rel = pkgRel(p);
+    const r = rel ? await pywebview.api.fs_open_default(rel)
+                  : await pywebview.api.open_path(String(p.dir || ""));
+    toast(r.msg || (r.ok ? "已打开" : "打不开"), !r.ok);
+  };
+  autoWire("pkg", p.id, {});          // ★ `V-358`：自动启动那一块（见 js/autostart.js）
+}
+
+/* 复制一条路径到剪贴板（`V-359`，稿子里路径栏那颗按钮）。
+   ★ 为什么要有兜底：`navigator.clipboard` 只在**安全上下文**里有（这一页是
+     `http://127.0.0.1:端口` + token，算安全上下文），但预览工具那边是 `file://`
+     / 临时副本，未必给。拿不到就照实说一句，别静默失败。 */
+async function copyDirPath(text){
+  const s = String(text || "");
+  if (!s){ toast("没有可复制的路径", true); return; }
+  try{
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(s);
+      toast("已复制：" + s);
+      return;
+    }
+  }catch(e){ /* 落到下面那句 */ }
+  toast("这个环境不让读剪贴板 —— 路径：" + s, true);
 }
 
 
@@ -775,63 +857,161 @@ async function cmdRenamePkg(p){
     fmReRoot(oldRel, np ? pkgRel(np) : null);
     if (np) select(newId);
     else renderDetail();
+    // ★ `V-357`：清单里那几样（`id` / 显示名里那个旧 id / 别名）**都是宿主改的**
+    //   （`core/cli.py::cmd_rename` 第 ③ 步，一次落笔）—— 界面不再自己写一遍 pkg.json，
+    //   免得同一个文件两个人写（你定的"别名和 id 一致"也归那一步管）。
+    toast("已改名为 " + PSYM + newId + "（显示名里的旧名字也一起换了）");
   });
 }
 
+/* ---------------------------------------------------------------- 更名跟随（`V-355`）
+   用户原话：「如果用户对当前打开的界面 不存在了 对不上了 但是出现了一个新的 id 那基本
+   就能判断是它改名了 …… 当然如果你有更精准的办法更好了」。
+   判据在**宿主**那边（`Api.pkg_watch`）：① 身份指纹一致 = 铁定改名；② 一个走一个来 =
+   按新旧 id 推断。这里只管"跟着走"：换选中、搬文件管理缓存的路径、把内嵌界面按新 id
+   重新起起来 —— 也就是你要的"自动无感刷新"。
+   ★ 为什么由界面自己轮询（2.5 秒一次）：改名是**别的进程**干的（AI 工作台那条 `run_moss`、
+   你在终端里敲的 `moss --rename`），界面这边没有任何回调可听。 */
+let renameTimer = null;
+let renameTickBusy = false;
+
+function pkgWatchStart(){
+  if (renameTimer || FLOAT_PID) return;      // 浮动窗口：只要那一帧，不掺和这些
+  renameTimer = setInterval(pkgWatchTick, 2500);
+  setTimeout(pkgWatchTick, 900);             // 开机先对一次（把宿主那份基线立起来）
+}
+
+async function pkgWatchTick(){
+  if (renameTickBusy) return;
+  renameTickBusy = true;
+  let r = null;
+  try{ r = await pywebview.api.pkg_watch(); }catch(e){ r = null; }
+  renameTickBusy = false;
+  if (!r || !r.ok) return;
+  const rens = r.renamed || [];
+  for (let i = 0; i < rens.length; i++)
+    await followRename(rens[i][0], rens[i][1], rens[i][2], rens[i][3]);
+  if ((r.gone || []).length) await followGone(r.gone);
+  else if (r.changed && !rens.length) await refreshPkgs(cur ? cur.id : null, true);
+}
+
+/* 一个包改名了 —— 跟着它走（把"打开着的那个"换成新名字）。 */
+async function followRename(oldId, newId, how, oldDir){
+  if (!oldId || !newId || oldId === newId) return;
+  const wasOpen = !!(cur && cur.id === oldId);
+  const oldRel = relOfDir(oldDir) || (wasOpen ? pkgRel(cur) : null);
+  // 详情页那个参数框是**按 id** 记的（`ARGS[id]`）、命令行缓冲也是按 id 记的
+  if (ARGS[oldId] !== undefined){ ARGS[newId] = ARGS[oldId]; delete ARGS[oldId]; }
+  if (RUNS[oldId]){ RUNS[newId] = RUNS[oldId]; delete RUNS[oldId]; }
+  if (consoleKey === oldId) consoleKey = newId;
+  // 内嵌界面的后端是**按旧 id** 起的：目录都搬走了 ⇒ 停掉，改完名按新 id 再起起来
+  const hadEmbed = (typeof embedRunning === "function") && embedRunning(oldId);
+  if (hadEmbed) await embedStop(oldId, true);
+  await refreshPkgs(newId);
+  const np = (DATA.packages || []).find(x => x.id === newId);
+  if (oldRel && np) fmReRoot(oldRel, pkgRel(np));
+  if (wasOpen && np){
+    select(newId, /*keepTab*/ true);         // 人正开着它 ⇒ 换成新名字，不切走他那一页
+    if (hadEmbed && embedSupported(np)) await embedOpen(np, {keepTab: true});
+  }
+  toast("已跟随改名：" + PSYM + oldId + " → " + PSYM + newId +
+        (how ? "（" + how + "）" : ""));
+}
+
+/* 打开着的那个包**真没了**（卸载 / 目录被删）—— 别把一张死页留在界面上。 */
+async function followGone(ids){
+  const wasOpen = !!(cur && ids.some(x => x === cur.id));
+  await refreshPkgs(null, true);       // `refreshPkgs` 自己会把 `cur` 收成 null
+  const names = ids.map(x => PSYM + x).join("、");
+  if (wasOpen) toast("这个包已经不在了：" + names, true);
+  else toast("有包不在了：" + names);
+}
+
 /* ---------------------------------------------------------------- 详情：一条历史
-   和包那份**长得一样**（同一个 .hd / .sec / .row-inline 结构），内容按"这条记录
-   真有什么"来给 —— **没有的就不显示**（参数空着不写"参数（无）"，
-   上次结果不知道就不写；说明性的废话也不写）。 */
+   和包那份**同一个骨架**（`V-359` 起都按你给的那份稿子：卡片 1 基础信息 / 卡片 2 快捷
+   执行 / 卡片 3 高级设置），内容按"这条记录真有什么"来给 —— **没有的就不显示**
+   （参数空着不写"参数（无）"，上次结果不知道就不写；说明性的废话也不写）。 */
 function renderDetailHistHTML(it){
   const when = (it.ts || "").replace("T", " ");
   const gone = it.exists === false;
+  const prop = (k, v) => '<div class="dp-prop"><span class="prop-k">' + esc(k) +
+    '</span><span class="prop-v">' + v + '</span></div>';
   // 只放"真有值"的行；一行都没有，这一块就不出现
   const rows = [];
-  if (it.cwd) rows.push(["工作目录", it.cwd,
-    it.cwd_exists === false ? "这个目录也不在了" : ""]);
-  if (it.args) rows.push(["参数", it.args, ""]);
-  if (when) rows.push(["时间", when, ""]);
+  if (it.cwd) rows.push(prop("工作目录", '<span class="mono">' + esc(it.cwd) + '</span>' +
+    (it.cwd_exists === false ? '<span class="soft">· 这个目录也不在了</span>' : '')));
+  if (it.args) rows.push(prop("参数", '<span class="mono">' + esc(it.args) + '</span>'));
+  if (when) rows.push(prop("时间", esc(when)));
   if (it.exit !== null && it.exit !== undefined)
-    rows.push(["上次退出码", String(it.exit), ""]);
-  let html = '<div class="dwrap"><div class="dhead">' +
-      // 历史没有"说明"，右边第一二行留空 —— 路径放在**第三行**，和左边的名字对齐
-      '<div class="dicon">' + histIconHTML(it, "") + '</div>' +
-      '<h1 class="dtitle" title="' + esc(it.name) + '">' + esc(it.name) + '</h1>' +
-      '<div class="dmeta">' + esc(it.target || "") + '</div>' +
-    '</div>';
+    rows.push(prop("上次退出码", esc(String(it.exit))));
+  const dirText = String(it.target || "");
+  let html = '<div class="dwrap"><div class="dp-card dp-head">' +
+      '<div class="dp-icon">' + histIconHTML(it, "") + '</div>' +
+      '<div class="dp-info">' +
+        '<h1 title="' + esc(it.name) + '">' + esc(it.name) +
+          '<span class="dp-badges dmeta">' +
+            '<span class="dp-badge">历史</span>' +
+            (it.exists === false ? '<span class="dp-badge">文件不在了</span>' : '') +
+          '</span></h1>' +
+        '<div class="dp-divider"></div>' +
+        '<div class="dp-path">' +
+          '<span class="dp-path-ico">' + ico("file-text", "i") + '</span>' +
+          '<span class="dp-path-text" id="pkg-dir" title="' + esc(dirText) + '">' +
+            esc(dirText || "（这条没有目标路径）") + '</span>' +
+          '<div class="dp-path-actions">' +
+            '<button class="dp-path-btn dp-tip" id="btn-copy-dir" data-tip="复制路径">' +
+              ico("copy", "i") + '</button>' +
+            '<button class="dp-path-btn dp-tip" id="btn-open-dir" data-tip="打开所在目录">' +
+              ico("folder-open", "i") + '</button>' +
+          '</div>' +
+        '</div>' +
+        (rows.length ? '<div class="dp-props">' + rows.join("") + '</div>' : '') +
+      '</div></div>';
   if (gone){
-    html += '<div class="warnbox">' + ico("alert-triangle", "i") +
-      '<span>这个文件已经不在了，跑不了。记录还留着，想清掉就点下面那个按钮。</span></div>';
+    html += '<div class="dp-card"><div class="warnbox">' + ico("alert-triangle", "i") +
+      '<span>这个文件已经不在了，跑不了。记录还留着，想清掉就点下面那个按钮。</span></div></div>';
   }
-  html += '<section class="dsec"><div class="runrow">' +
+  html += '<div class="dp-card"><div class="dp-cmdbar">' +
+      '<span class="dp-cmd-ico">' + ico("terminal", "i") + '</span>' +
+      '<span class="dp-cmd-prefix">moss /' + esc(it.name) + '</span>' +
       // ★ 这里用 `#hargs` / `#hpreview`（而不是包详情那对 `#args` / `#preview`）：
       //   两个详情同一个时刻只会存在一个（都往 #pane-detail 里写），
       //   但静态检查"整个页面每个 id 只能出现一次"就分不清了 —— 换成不同的 id，
       //   那条检查才继续有用。要取输入框请走 `argsInput()`。
       '<span class="argbox">' +
-        '<input id="hargs" placeholder="参数（留空 = 上次那样；回车 = 运行）" value="' +
+        '<input id="hargs" placeholder="点击输入附加参数并回车执行..." value="' +
           esc(it.args || "") + '"' + (gone ? " disabled" : "") + '>' +
         // 和包详情那颗一样（`V-86`）：有内容才浮出来 —— 目标没了的这条禁用着，就不给
         '<button class="argclear" id="btn-hargs-clear" title="清空参数" hidden>' +
           ico("x", "i") + '</button>' +
       '</span>' +
-      '<button class="btn" id="btn-run2"' + (gone ? " disabled" : "") + '>' +
+      '<button class="dp-primary" id="btn-run2"' + (gone ? " disabled" : "") + '>' +
         ico("play", "i") + '<span>运行</span></button>' +
-      '<button class="btn" id="btn-opendir" title="用 Windows 资源管理器打开它所在的目录">' +
-        ico("folder-open", "i") + '<span>打开所在目录</span></button></div>' +
-      '<div class="runhint">命令预览: <span class="mono" id="hpreview"></span></div>' +
-      '</section>';
-  if (rows.length){
-    html += '<section class="dsec"><div class="props">' +
-      rows.map(r => '<div class="prop"><div class="prop-k">' + esc(r[0]) +
-        '</div><div class="prop-v mono">' + esc(r[1]) +
-        (r[2] ? ' <span class="soft">' + esc(r[2]) + '</span>' : '') +
-        '</div></div>').join("") + '</div></section>';
-  }
-  html += '<section class="dsec danger">' +
-      '<div class="danger-text">只删这条记录，那个文件本身不动</div>' +
-      '<button class="btn danger" id="btn-forget" title="从历史里删掉这条记录">' +
-        ico("trash-2", "i") + '<span>删除这条记录</span></button></section></div>';
+    '</div><span hidden id="hpreview"></span></div>';
+  // ★ `V-358`：这条历史也能"自动启动"（开界面时按它当初的目录 / 参数再跑一次）——
+  //   和包详情那一块同一份实现（`js/autostart.js`）。
+  html += '<div class="dp-card"><div class="dp-list">' +
+      autoSectionHTML("hist", it.target, {cwd: it.cwd || "", name: it.name || "",
+                                          args: it.args || ""}) +
+      '<div class="dp-item">' +
+        '<div class="dp-item-info">' +
+          '<span class="dp-item-ico">' + ico("folder-open", "i") + '</span>' +
+          '<div class="dp-item-text"><h4>打开所在目录</h4>' +
+            '<p>用资源管理器打开它当初跑的那个目录</p></div>' +
+        '</div>' +
+        '<button class="dp-ghost" id="btn-opendir" title="用 Windows 资源管理器打开它所在的目录">' +
+          ico("folder-open", "i") + '<span>打开</span></button>' +
+      '</div>' +
+      '<div class="dp-item">' +
+        '<div class="dp-item-info">' +
+          '<span class="dp-item-ico danger">' + ico("trash-2", "i") + '</span>' +
+          '<div class="dp-item-text"><h4 class="danger">删除这条记录</h4>' +
+            '<p>只删这条记录，那个文件本身不动</p></div>' +
+        '</div>' +
+        '<button class="dp-ghost danger" id="btn-forget" title="从历史里删掉这条记录">' +
+          ico("trash-2", "i") + '<span>删除</span></button>' +
+      '</div>' +
+    '</div></div></div>';
   return html;
 }
 
@@ -868,6 +1048,12 @@ function wireDetailHist(it){
     pywebview.api.fs_open_default(histDir(it)).then(r => toast(r.msg, !r.ok));
   };
   $("#btn-forget").onclick = () => cmdForgetHist(it);
+  // ★ `V-359`（稿子新增的路径栏那两颗）—— 历史这条：复制的是目标路径
+  if ($("#btn-copy-dir")) $("#btn-copy-dir").onclick = () => copyDirPath(it.target);
+  // ★ `V-358`：自动启动那一块。历史那条的"身份"是**目标路径**（`it.target`），
+  //   目录和名字一并传过去 —— 加入时它们要存进条目里（跑的时候要用）。
+  autoWire("hist", it.target, {cwd: it.cwd || "", name: it.name || "",
+                               args: it.args || ""});
 }
 
 /* 老签名保留：想往指定的 box 里塞还能用（谁在用就照旧）。 */

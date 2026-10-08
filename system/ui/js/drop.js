@@ -518,6 +518,17 @@ window.__mossDrop = function(items){
       return;
     }
   }catch(e){ uiLog("host drop: AI 钩子抛了 " + e); }
+  // ★ `V-364`：详情页「自动运行」那一行的**工作路径**框也是一个落地口 ——
+  //   拖一个文件夹上去 = 把它设成这个包自动运行时的当前目录（用户原话：
+  //   "还可以单独设置工作路径 它可以通过点选 或者鼠标拖动或者输入的方式来完成"）。
+  //   ★ 同样另起一个名字（不抢 `__mossDropHook`：那个槽是「版本快照 → 导出到」占着的）；
+  //     它自己只在"这次拖的落点确实是那个框"时才收（内部有个 `dragOn` 旗子）。
+  try{
+    if (typeof window.__mossAutoDrop === "function" && window.__mossAutoDrop(items)){
+      uiLog("host drop: 被「自动运行」的工作路径框收下了");
+      return;
+    }
+  }catch(e){ uiLog("host drop: 自动运行钩子抛了 " + e); }
   const p = cur;
   const it = items[0];
   uiLog("host drop: " + JSON.stringify(items));
