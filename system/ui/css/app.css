@@ -413,6 +413,15 @@ body.float #embed-bar{padding:7px 14px}
   border:none;border-radius:6px;background:transparent;cursor:pointer}
 .hstat button:hover,.rowstat button:hover{background:var(--hover)}
 .item[data-state=running],.hitem[data-state=running]{box-shadow:inset 3px 0 0 #1f9d55}
+/* ★ `V-366`（用户 2026-10-09 给的那份稿子「方案C」）：**这一行在自动运行列表里** ⇒
+   左边缘一条 **3px 短竖线**（上下各留 25%，只右侧带圆角，显得精致、又不占地方）。
+   稿子里的类名是 `.status-left-line`，这儿叫 `.item.pkg-autorun`（一眼知道是什么）。
+   ★ 跟上面"在跑"那条**分得开**：在跑 = 绿色 `inset 3px` **整行高**；这一条 = 强调色、
+   **只占中间一半** —— 两个同时成立时（在跑 + 也会自动运行）看得出来是两件事。
+   `pointer-events:none`：它只是个记号，别把行首那 3px 的点击吃掉（整行是可点的）。 */
+.item.pkg-autorun{position:relative}
+.item.pkg-autorun::before{content:"";position:absolute;left:0;top:25%;height:50%;width:3px;
+  background:var(--accent);border-radius:0 3px 3px 0;pointer-events:none}
 /* ★ 这里原来挂着一句 `.status{…}` 后面跟着**两行没有选择器的裸声明**
    （`border:1.6px …` / `animation:spin …}`）—— 是删小圆点时没清干净的残留：
    裸声明在顶层是非法 CSS，整段被浏览器丢掉，`animation` 引用的 `@keyframes spin`

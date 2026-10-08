@@ -2492,6 +2492,7 @@ MOCK_JS = r"""
         // ★ `V-365`（你报的"设了 2 个自启动，只起得来一个"）：**两条都要真起来**，
         //   而且**各走各的管道**（`{noTerm:true}`）—— 不再挤进那条唯一的常驻 shell。
         let autoBoth = false, autoPipes = 0, autoSeq = [], termCalls = -1;
+        let autoMarks = false, autoMarked = "", markTip = "", markLine = "", markOnly = false;
         if (typeof autostartRun === "function"){
           M.auto = {items: [{kind: "pkg", id: "md5", args: "16896999", on: true},
                             {kind: "pkg", id: "path", args: "", on: true}]};
@@ -2508,6 +2509,21 @@ MOCK_JS = r"""
           autoSeq = (M.runs || []).map(r => r.pid);
           autoPipes = autoSeq.length;
           autoBoth = autoSeq.indexOf("md5") >= 0 && autoSeq.indexOf("path") >= 0;
+          // ★ `V-366`：左边列表里那两个包要**多一条竖线**（`.item.pkg-autorun`），
+          //   其余行不许有；而且鼠标停上去要有「已设置自动运行」。
+          const marked = [].slice.call(document.querySelectorAll("#list .item.pkg-autorun"))
+                               .map(el => el.dataset.id).sort();
+          autoMarked = marked.join(",");
+          autoMarks = marked.length === 2 && autoMarked === "md5,path";
+          const mEl = document.querySelector('#list .item[data-id="md5"]');
+          if (mEl){
+            markTip = mEl.getAttribute("title") || "";
+            const cs = getComputedStyle(mEl, "::before");
+            markLine = Math.round(parseFloat(cs.width) || 0) + "x" +
+                       Math.round((parseFloat(cs.height) || 0)) + "px/" + cs.backgroundColor;
+          }
+          const otherEl = document.querySelector('#list .item:not(.pkg-autorun)');
+          markOnly = !!otherEl;      // 还有"没标记"的行在（不是把所有行都标了）
         }
         // ★ 图标要对（用户点名的那两条）：**启用 = 圆圈里一个对号（circle-check）**、
         //   **禁用 = 圆圈里一道斜线（circle-slash）**。
@@ -2522,7 +2538,8 @@ MOCK_JS = r"""
                    cwdTyped && cwdPicked && dropFlag && cwdDropped &&
                    pillOff === 0 && hintOff &&
                    afterOff === 0 && boxHidden1 && btnText1.indexOf("启用") >= 0 &&
-                   autoBoth && autoPipes === 2 && termCalls === 0;
+                   autoBoth && autoPipes === 2 && termCalls === 0 &&
+                   autoMarks && markTip.indexOf("已设置自动运行") >= 0 && markOnly;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 块=" + (sec ? 1 : 0) +
           " 标题=[" + title0 + "] 说明=[" + desc0 + "] 初始:面板藏=" + boxHidden0 +
@@ -2537,7 +2554,9 @@ MOCK_JS = r"""
           "｜禁用后 条=" + afterOff + " 面板藏=" + boxHidden1 + " 按钮=" + btnText1 +
           " 胶囊=" + pillOff + " 行内提示=" + hintOff +
           "｜自启动两条都起=" + autoBoth + "(" + JSON.stringify(autoSeq) + ")" +
-          " 走终端次数=" + termCalls;
+          " 走终端次数=" + termCalls +
+          "｜列表记号=" + autoMarked + " 竖线=" + markLine + " 提示=[" + markTip + "]" +
+          " 还有没标的行=" + markOnly;
         document.title = ok ? "READY"
                             : ("AUTO-DETAIL-FAIL 标题=[" + title0 + "] 说明=[" + desc0 +
                                "] 初始:藏=" + boxHidden0 + " 两框=" + twoBoxes + " 钮=" + btnText0 +

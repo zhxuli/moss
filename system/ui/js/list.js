@@ -1146,6 +1146,12 @@ const MossList = {
   methods: {
     selId(){ return cur ? cur.id : null; },
     stateOf(id){ return rowStateOf(id); },          // 宿主口径：在跑 / 没在跑
+    /* ★ `V-366`：这一行在不在**自动运行**那份名单里（`js/autostart.js` 的 `AUTO.items`）。
+       ★ 得走方法（模板里读不到全局，`V-252` 的血）；带括号用 ⇒ 不是 computed 也没关系。
+       ★ 数据变了要重画列表才会跟着变 —— `autostart.js::autoPaintMarks()` 负责喊那一嗓子。 */
+    isAutoRun(id){
+      try{ return autoPkgIds().has(String(id)); }catch(e){ return false; }
+    },
     rowHTML(p){
       // ★ `V-300`：行首一个把手（`.drag-grip`）—— 视觉提示；其实整行都能拖（见 initListDrag）。
       //   ⚠️ 类名别用 `.grip`（那是"拖我调宽"竖条的全局类，撞名会变一条贯穿竖线）。
@@ -1165,8 +1171,10 @@ const MossList = {
       <div v-if="!rows.length" class="empty">{{ emptyHTML }}</div>
       <template v-else>
         <div v-for="p in rows" :key="p.id" class="item"
-             :class="{sel: p.id === selId(), dragging: L.dragId === p.id}"
+             :class="{sel: p.id === selId(), dragging: L.dragId === p.id,
+                      'pkg-autorun': isAutoRun(p.id)}"
              :data-id="p.id" :data-state="stateOf(p.id)"
+             :title="isAutoRun(p.id) ? '已设置自动运行' : ''"
              @click="pick(p.id)" v-html="rowHTML(p)"></div>
       </template>
     </template>`,

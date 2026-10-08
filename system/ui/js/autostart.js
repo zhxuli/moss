@@ -37,9 +37,26 @@ function autoFind(kind, id){
   return (AUTO.items || []).find(x => x.kind === kind && String(x.id) === String(id)) || null;
 }
 
+/* ---------------------------------------------------------------- 列表上的记号（`V-366`）
+   ★ 用户原话：「有时候 我们想找找到我们弄了哪些自动启动的项目 目前没有一个统一管理的方案
+     我觉得可以这样设计 让自动运行的这种 列表这里 稍稍不一样」＋给了"左侧一条 3px 短竖线"的稿子。
+   ⇒ 左边插件列表里，凡是**在自动运行名单里**的包，行首就多一条竖线（`.item.pkg-autorun`，
+   样式在 `app.css`），鼠标停上去有 `title="已设置自动运行"`。 */
+function autoPkgIds(){
+  const s = new Set();
+  (AUTO.items || []).forEach(x => { if (x.kind === "pkg" && x.id) s.add(String(x.id)); });
+  return s;
+}
+
+/* 名单变了 ⇒ 让左边那份列表重画一遍（它是 Vue 组件，数据不是响应式的，靠举牌）。
+   ★ 顺手在这儿做，不用担心"有几处忘了喊"（`autoLoad` 回来、启用、禁用都会经过它）。 */
+function autoPaintMarks(){
+  try{ if (typeof renderList === "function") renderList(); }catch(e){ /* 列表不在就算了 */ }
+}
+
 /* 读一次（`force` = 不管缓存重读，比如刚存完）。读不到**不抛**：详情页少一块，别的照旧。 */
 async function autoLoad(force){
-  if (AUTO.loaded && !force) return AUTO.items;
+  if (AUTO.loaded && !force){ autoPaintMarks(); return AUTO.items; }
   let r = null;
   try{ r = await pywebview.api.autostart_get(); }catch(e){ r = null; }
   if (r && r.ok){
@@ -47,6 +64,7 @@ async function autoLoad(force){
     AUTO.max = r.max || AUTO_MAX;
     AUTO.loaded = true;
   }
+  autoPaintMarks();
   return AUTO.items;
 }
 
@@ -151,7 +169,8 @@ async function autoWire(kind, id, opts){
       //   （不然刚插进去就被冲掉、一个字都看不见）。
       await autoPersist("");
       renderDetail();
-      setTimeout(() => autoSavedHint($("#auto-sw"), "已禁用（已移除）"), 60);
+      setTimeout(() => autoSavedHint($("#auto-sw"), "已移除"), 60);
+      autoPaintMarks();                       // `V-366`：左边列表那条竖线跟着消失
       return;
     }
     if ((AUTO.items || []).length >= (AUTO.max || AUTO_MAX)){
@@ -162,6 +181,7 @@ async function autoWire(kind, id, opts){
     await autoPersist("");
     renderDetail();
     setTimeout(() => autoSavedHint($("#auto-sw"), "已启用"), 60);
+    autoPaintMarks();                         // `V-366`：左边列表那条竖线跟着出现
     // 稿子那句 `inputField.focus()`：展开之后光标落在**启动参数**框里。
     // ★ 不能只 `setTimeout(…, 30)`：`renderDetail()` 是**异步重画**（Vue 下一拍），
     //   定时器早了就 focus 到一个马上要被换掉的老节点上，光标又没了（预览里量到过）。
@@ -260,16 +280,16 @@ async function autoSaveFields(kind, id){
   return await autoPersist("");                          // 静默存，提示交给 autoSavedHint 单独给
 }
 
-/* ★ `V-363`（你 2026-10-09 说的：「保存以后 你倒是给个提示啊」）—— 存完给两处提示：
+/* ★ `V-363`（你 2026-10-09 说的：「保存以后 你倒是给个提示啊」）—— 存完在这一行里给个提示：
      ① 输入框**变一下绿**（`.saved`）；
-     ② 输入框旁边**冒一句「✓ 已保存」**，1.6 秒后自己消失。
-   ★ `V-365`：**不再用 `toast()`**（你报的"禁用的时候出现了 2 个弹窗"）—— `toast()` 是
+     ② 旁边**冒一句短的**（「已保存」/「已启用」/「已移除」），1.6 秒后自己消失。
+   ★ `V-365`：**不用 `toast()`**（你报的"禁用的时候出现了 2 个弹窗"）—— `toast()` 是
      "状态栏 + 一颗深色胶囊"两处一起报（`V-61` 的规矩），这一行的小动作看着就是弹了两下。
-     所以这一行统一只走**行内**那一句（`text` 可以换词：已保存 / 已启用 / 已移除）。 */
+   ★ `V-366`：**连状态栏那一行也不要了**（你说「左下角显示 自动运行: 已禁用(已移除) 这是啥意思
+     …给我去掉」）—— 就这么一下小动作，只留**贴着控件的那一句**，别去动全局那条状态栏。 */
 function autoSavedHint(box, text){
   if (box) flashAutoInput(box);
   const words = String(text || "已保存");
-  try{ setStatus("自动运行：" + words); }catch(e){ /* 状态栏不在就算了 */ }
   try{
     const host = (box && box.parentElement) ||
                  document.querySelector("#auto-sec .dp-item-acts");
@@ -328,12 +348,12 @@ async function autostartRun(){
     }catch(e){ failed.push(it.id + "：" + ((e && e.message) || e)); }
     await new Promise(r => setTimeout(r, 700));
   }
-  // ★ 收尾只报**一处**（状态栏那一行）—— `toast()` 会"状态栏 + 深色胶囊"两下一起弹，
-  //   而这条是开机就跑的，不该糊你一脸（`V-365` 跟你数"2 个弹窗"那条同一个道理）。
-  if (done.length || failed.length){
-    const bits = [];
-    if (done.length) bits.push("起了 " + done.length + " 个：" + done.join("、"));
-    if (failed.length) bits.push("没起来 " + failed.length + " 个：" + failed.join("、"));
-    try{ setStatus("自动运行：" + bits.join("；")); }catch(e){ /* 状态栏不在就算了 */ }
+  // ★ 收尾只报**一处**（状态栏那一行）—— 但 `V-366` 之后连那行也去掉了：
+  //   自启动是开机就跑的，"起了几个"这句话放在**左边列表的竖线**上更省事（`V-366`），
+  //   真起不来的时候（找不到包 / 起进程报错）才值得说一句，而且只说**失败**那一半。
+  const bad = failed.length;
+  if (bad){
+    try{ setStatus("自动运行：" + bad + " 个没起来 —— " + failed.join("、")); }
+    catch(e){ /* 状态栏不在就算了 */ }
   }
 }
