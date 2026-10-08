@@ -56,7 +56,7 @@ def path():
 
 
 def _blank():
-    return {"allow": [], "seeded": []}
+    return {"allow": []}
 
 
 def _norm_perm(it):
@@ -91,9 +91,11 @@ def load():
     for it in (raw.get("allow") or []):
         if isinstance(it, dict):
             one = _norm_perm(it)
-            if one:
+            # ★ `V-343`：`by="auto"` 那批是"打开 AI 页就把当前这个包写进清单"那个时代的产物 ——
+            #   现在"当前这个包"改成**算出来的默认**（见 `_scope_allows`），这些行是纯垃圾：
+            #   留着只会让清单越用越长（真机上攒了 6 个 `system/pkgs/*` 的出厂样板包）。
+            if one and str(one.get("by") or "") != "auto":
                 cur["allow"].append(one)
-    cur["seeded"] = [str(x) for x in (raw.get("seeded") or []) if str(x).strip()]
     # 老文件里那个 `mode`（`V-307`~`V-315` 的三档）→ **翻译成清单里的勾选**，别让它悄悄失效
     old_mode = str(raw.get("mode") or "")
     if old_mode and not raw.get("seeded"):
@@ -109,8 +111,7 @@ def load():
 def save(d):
     """原子写（先 `.tmp` 再 `os.replace`）—— 和窗口几何 / 排序一个路子。"""
     d = d if isinstance(d, dict) else _blank()
-    out = {"allow": [x for x in (d.get("allow") or []) if isinstance(x, dict) and x.get("path")],
-           "seeded": [str(x) for x in (d.get("seeded") or [])]}
+    out = {"allow": [x for x in (d.get("allow") or []) if isinstance(x, dict) and x.get("path")]}
     try:
         p = path()
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -279,30 +280,6 @@ def allow_rm(pth):
     return got
 
 
-def ensure_pkg(workdir, why="当前这个包"):
-    """**当前这个包自动进清单**（`V-316`）：第一次打开它的 AI 页时加进去，**读 + 写都打开**。
-
-    ★ 只自动加**一次**（`seeded` 里记着 id）：用户要是后来自己删了它，不会被我们偷偷加回来。
-    """
-    try:
-        import ai_runs as R                                          # noqa: PLC0415
-        pid = R.pkg_of(workdir)
-    except Exception:                                                # noqa: BLE001
-        pid = ""
-    if not pid:
-        return {"ok": True, "added": False, "id": ""}
-    cur = load()
-    if pid in (cur.get("seeded") or []):
-        return {"ok": True, "added": False, "id": pid}
-    got = allow_set(str(workdir), read=True, write=True, why=why, by="auto", add=True)
-    cur = load()
-    cur["seeded"] = list(dict.fromkeys((cur.get("seeded") or []) + [pid]))
-    save(cur)
-    got["added"] = True
-    got["id"] = pid
-    return got
-
-
 # ------------------------------------------------------------------ 判权限
 def _inside(path, root):
     try:
@@ -329,6 +306,64 @@ def _hit(rows, path, kind):
         if pth == WILDCARD or _inside(path, pth):
             return it
     return None
+
+
+def _is_pkg_scope(scope):
+    """`scope` 是不是**某个具体的用户包**（`user_data/pkgs/<一个包>`）。
+
+    ★ `V-343`：只有这一种 scope 才享受"默认读写都开"。两道排除：
+      · `user_data/pkgs` **根**（"新建包"那条路）—— 放开等于放开所有包，不行；
+      · `system/pkgs/*`（出厂样板包）—— 它是**只读**的样板，界面上也一直写着"默认改不了"。
+    """
+    sc = str(scope or "").strip()
+    if not sc:
+        return False
+    try:
+        root = os.path.realpath(str(E.write_root()))
+        s = os.path.realpath(sc)
+    except OSError:
+        return False
+    if not s.startswith(root + os.sep):
+        return False
+    rel = os.path.relpath(s, root).replace("\\", "/")
+    parts = [x for x in rel.split("/") if x and x != "."]
+    return len(parts) >= 1
+
+
+def _scope_allows(path, scope, kind, rows=None):
+    """**这次干活的那个包**：读 / 写默认都开 —— 但它**不是清单里的一条记录**（`V-343`）。
+
+    ★ 为什么不再落盘（用户报的"清单越用越长"）：以前"AI 页在哪个包上打开过"就把它写进
+      `allow`（`read=True, write=True`）⇒ **在左边点过一遍包列表，清单就长满了**，
+      连出厂样板包都会被写进去；而且那是个**只读查询的副作用**，非常难查。
+    ★ 现在的规矩：
+      · scope 里默认全放行（`_is_pkg_scope` 认的那种包）；
+      · **只有用户主动动过那一行的开关**，才会真的落一条显式记录 —— 那时以记录为准
+        （他把「写」关掉 = "我只想咨询，别改我代码"）。
+    """
+    if not _is_pkg_scope(scope):
+        return False
+    if not _inside(path, scope):
+        return False
+    rows = allow_list() if rows is None else rows
+    own = _find(rows, scope)
+    if own is None:
+        return True                      # 没被用户覆盖过 ⇒ 默认开
+    return bool(own.get(kind))
+
+
+def _current_row(workdir, rows=None):
+    """界面上那条「当前这个包」：清单里没有显式记录时，给一条**算出来的**默认（读写都开）。"""
+    wd = str(workdir or "").strip()
+    if not _is_pkg_scope(wd):
+        return None
+    rows = allow_list() if rows is None else rows
+    own = _find(rows, wd)
+    if own is not None:
+        return dict(own, current=True)
+    return {"path": wd, "read": True, "write": True,
+            "why": "当前这个包（默认：读写都开）", "by": "current",
+            "at": "", "pending": False, "current": True}
 
 
 #: 「只允许这一次」的**临时**放行（用户点那个选项时用）—— 只活在这一次跑里，不写清单
@@ -421,14 +456,19 @@ def writable_builtin(path):
     return is_ai_tmp(path) or _inside(path, E.tool_root())
 
 
-def can_read(path):
-    """能读就回 None，不能读就回一句**给人看的原因**。"""
+def can_read(path, scope=None):
+    """能读就回 None，不能读就回一句**给人看的原因**。
+
+    `scope` = **这次干活的那个包**（`V-343`：它在 scope 里默认就能读，不需要清单里有一条）。
+    """
     if path is None:
         return None
     if readable_builtin(path):
         return None
     rows = allow_list()
     if _hit(rows, path, "read"):
+        return None
+    if _scope_allows(path, scope, "read", rows):
         return None
     return ("[拒绝] 读权限没开：`%s` 不在 AI 能读的清单里。\n"
             "两条路：① 用 `allow_path` 工具**请求**（`need=\"read\"`）—— 那条请求会出现在"
@@ -437,8 +477,12 @@ def can_read(path):
             % path)
 
 
-def can_write(path):
-    """能写就回 None，不能写就回一句**给人看的原因**。"""
+def can_write(path, scope=None):
+    """能写就回 None，不能写就回一句**给人看的原因**。
+
+    `scope` = **这次干活的那个包**（`V-343`：它在 scope 里默认就能写；用户把那一行的「写」
+    关掉之后，以清单里那条显式记录为准）。
+    """
     if path is None:
         return None
     bad = protected(Path(path))
@@ -448,6 +492,8 @@ def can_write(path):
         return None
     rows = allow_list()
     if _hit(rows, path, "write"):
+        return None
+    if _scope_allows(path, scope, "write", rows):
         return None
     return ("[拒绝] 写权限没开：`%s` 不在清单里（或者那一行的**写**没勾）。\n"
             "两条路：① 用 `allow_path` 工具**请求**（`need=\"write\"`）—— 那条请求会出现在"
@@ -657,37 +703,68 @@ def perm_note(workdir=""):
 
     ★ 为什么要写清：权限现在是**用户勾出来的清单**，它自己看不见那个界面 ——
       不告诉它，它就会在"写不了的地方"白撞几次（真机上那就是白烧 token）。
+    ★ `V-343`：**当前这次干活的包**是"算出来的默认"（不在清单里）—— 必须单独说一句，
+      不然它会以为"清单里没有 ⇒ 不能写"，白撞一轮。
     """
     rows = allow_list()
-    wr = [it["path"] for it in rows if it.get("write")]
-    rd = [it["path"] for it in rows if it.get("read")]
+    wd = str(workdir or "").strip()
+    cur = _current_row(workdir, rows)
+    cur_write = bool(cur and cur.get("write"))
+    wr = [it["path"] for it in rows
+          if it.get("write") and it.get("path") != WILDCARD and it.get("path") != wd]
+    rd = [it["path"] for it in rows
+          if it.get("read") and it.get("path") != WILDCARD and it.get("path") != wd]
     star_w = wildcard_write()
     out = []
+    if cur is not None and cur_write:
+        out.append("★ **这次干活的那个包** = `%s`：**默认就能读、能写**，不用申请"
+                   "（用户随时可以在界面上把它的「写」关掉）。" % wd)
+    elif cur is not None:
+        out.append("★ **这次干活的那个包** = `%s`：用户把它的「写」**关掉了** —— "
+                   "这一轮你只能读它，别改。" % wd)
     if star_w:
         out.append("🔓 **放手**：除硬锁路径外**哪儿都能写**（危险操作也不再问你）。"
                    "越是这样越要自己兜住：改之前想清楚，改完跑一遍。")
     elif wr:
-        out.append("能写：%s" % "；".join("`%s`" % p for p in wr))
-    else:
+        out.append("清单里另外勾了「写」的：%s" % "；".join("`%s`" % p for p in wr))
+    elif not cur_write:
         out.append("**一个地方都不能写**（用户把「写」全关着）—— 这是**只读**的一轮："
                    "读必要的、答他问的，用 `answer` 收尾，别试着改文件。")
+
     if not star_w:
-        out.append("要动清单外的目录：用 `allow_path` **请求**（`need` 说清只读还是要写）—— "
+        out.append("要动**清单外**的目录：用 `allow_path` **请求**（`need` 说清只读还是要写）—— "
                    "那条请求会出现在**权限卡上半段**（琥珀底那条），他点「允许」就进清单了"
-                   "（他点「拒绝」或一直不理就别硬来）。")
-    if len(rd) < len(rows):
-        out.append("清单里勾了「读」的：%s" % "；".join("`%s`" % p for p in rd) or "（没有）")
+                   "（他点「拒绝」或一直不理就别硬来）。"
+                   "★ 别拿「只是想看看」去申请：当前那个包和 `system/pkgs/` 样板本来就看得见。")
+    if rd:
+        out.append("清单里另外勾了「读」的：%s" % "；".join("`%s`" % p for p in rd))
     out.append("你自己那几处永远可用：临时空间（`MOSS_AI_TMP`）、你自己造的手"
                "（`user_data/state/skill/`）、契约（只能用 `spec` 工具读）、样板包（`system/pkgs/`）。")
     return "\n".join(out)
 
 
+
 def summary(workdir=""):
-    """给界面用的一份状态（`ai_info` 会把它摊进返回值）。"""
+    """给界面用的一份状态（`ai_info` 会把它摊进返回值）。
+
+    ★ `V-343`：**当前这个包**不再靠"写进清单"体现，而是**算出来的第一条**
+      （`_current_row`）—— 所以它不会污染 `mode.json`，清单也不会随"点过哪些包"变长。
+    """
     rows = allow_list()
+    star = rows[-1] if rows and str(rows[-1].get("path")) == WILDCARD else None
+    body = rows[:-1] if star else rows
+    cur = _current_row(workdir, rows)
+    out = ([cur] if cur else []) + \
+          [it for it in body
+           if not (cur and _norm(it.get("path")) == _norm(cur.get("path")))]
+    if star:
+        out.append(star)
     return {"ok": True,
-            "allow": rows,
+            "allow": out,
             "wildcard": wildcard_write(),
-            "writable_n": len([1 for it in rows if it.get("write")]),
+            # 界面上那颗「可写 N 处」胶囊数的是**清单里的**（"任意路径"那行不算）
+            "writable_n": len([1 for it in out
+                               if it.get("write") and it.get("path") != WILDCARD]),
+            "current": (cur or {}).get("path") or "",
             "tmp": tmp_size(workdir), "tmp_keep": TMP_KEEP,
             "protected": [{"name": n, "why": w} for n, w in PROTECTED_WHY]}

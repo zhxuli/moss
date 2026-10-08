@@ -317,15 +317,9 @@ class Tools:
         #:   权限卡**上半段**那一条请求显示出来（琥珀底 + 允许 / 拒绝）、**阻塞**到他点一下，
         #:   回 `{granted, read, write, reason}`。没有它（命令行 / 探针）就当"没人可问"。
         self.perm_gate = perm_gate
-        # ★ `V-316`：**当前这个包自动进权限清单**（读 + 写都开）—— "打开这个插件点 AI =
-        #   我就是要改它"。宿主在 `ai_info`/`ai_start` 里也会加，这里再兜一次：
-        #   命令行直跑 loop / 探针那条路不走宿主，不兜的话"当前包可写"就成了空话。
-        #   ★ 只加一次（`seeded` 记着 id）：用户后来自己删了那一行，不会被偷偷加回来。
-        try:
-            import ai_mode as _M                                   # noqa: PLC0415
-            _M.ensure_pkg(str(self.workdir))
-        except Exception:                                          # noqa: BLE001
-            pass
+        # ★ `V-343`：这里原来会 `ensure_pkg()` —— **把当前这个包写进权限清单**。
+        #   现在不写了：`can_read/can_write` 会拿 `scope=self.workdir` 当场判"这是这次干活的
+        #   那个包 ⇒ 默认放行"（`ai_mode._scope_allows`），清单里因此干干净净。
         self.procs = {}            # {pid: Popen} 这一次跑起过的、可能还活着的
         self.killed = []           # 杀掉的 pid（如实报给界面）
         self.last_stop_ms = 0.0    # 上一次"停止"到子进程真死花了多久（证据）
@@ -548,7 +542,7 @@ class Tools:
 
     def _t_edit_file(self, args):
         r = E.apply_edit(self._path(args), args.get("find"), args.get("replace"),
-                         bool(args.get("replace_all")))
+                         bool(args.get("replace_all")), scope=self.workdir)
         if r.get("ok"):
             self.edit_seq += 1
             self._remember(self._path(args))
@@ -556,7 +550,8 @@ class Tools:
         return "[失败] %s%s" % (r.get("error") or "", ("\n提示：" + r["hint"]) if r.get("hint") else "")
 
     def _t_write_file(self, args):
-        r = E.write_new(self._path(args), args.get("content"), bool(args.get("overwrite")))
+        r = E.write_new(self._path(args), args.get("content"), bool(args.get("overwrite")),
+                        scope=self.workdir)
         if r.get("ok"):
             self.edit_seq += 1
             self._remember(self._path(args))

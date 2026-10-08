@@ -165,11 +165,10 @@ def main():
     print("=" * 72)
     d = pkgs / "demo"
     d.mkdir()
-    # ★ `V-316`：权限是**一份清单**（读/写两个勾）—— 这里的 `E.apply_edit` 是**直连**调用
-    #   （没有经过 `Tools`，所以不会自动给"当前包"上账），先把它当成"当前那个包"加进去。
-    #   真机上这一步由宿主（`ai_info`/`ai_start`）和 `Tools()` 自己做。
+    # ★ `V-343`：权限 = 一份清单 + 本次 scope 默认放行。这里的 `E.apply_edit` 是**直连**调用
+    #   （没经过 `Tools`，拿不到 workdir）⇒ 用"只允许这一次"把这一次的目录放进来。
     import ai_mode as M0                                                   # noqa: E402
-    M0.ensure_pkg(str(d))
+    M0.allow_temp(str(d))
     f = d / "run.py"
     f.write_bytes("# -*- coding: utf-8 -*-\r\nprint(\"hi\")\r\nprint(\"hi\")\r\n".encode("utf-8"))
     r = E.apply_edit(f, 'print("hi")', 'print("hello")')
@@ -1222,20 +1221,40 @@ def main():
     chk("S ★ 清单里没有 ⇒ **读**也拒（读/写是两件事，各勾各的）",
         "拒绝" in str(T.Tools(workdir=fake_pkg).call(
             "read_file", {"path": str(_out / "没有这个.txt")})), "")
-    # ① 当前这个包**自动**进清单，读+写都开（"打开这个插件点 AI = 我就是要改它"）
-    #   （`Tools()` 一 new 出来就会 `ensure_pkg` —— 前面 B/D 那些用例已经把它加上了）
+    # ① ★ `V-343`：**当前这个包不再写进清单** —— 它是"这次 scope 默认放行"，**算出来的**。
+    #   为什么改（用户报的"权限清单越用越长"）：以前"AI 页在哪个包上打开过"就把它写进
+    #   `allow`；而 `ai_info` 是个**只读查询**（每 700ms 一跳、换一次选中的包就调一次）
+    #   ⇒ 在左边点过一遍包列表，清单就长满了，连 `system/pkgs/*` 都被写了进去。
     _row0 = [x for x in M.allow_list() if x["path"] == str(fake_pkg)]
-    chk("S ★★ 当前这个包**自动**在清单里，而且读 + 写都默认开着",
-        bool(_row0) and _row0[0]["read"] and _row0[0]["write"], str(_row0[:1])[:90])
-    # 只自动加**一次**：拿一个**新目录**验（用户后来自己删了，不会被偷偷加回来）
+    chk("S ★★ 当前这个包**不落盘**（清单里没有它 —— 这是越用越长的根治）",
+        not _row0, str(_row0[:1])[:90])
+    # ★ 上面那句"整个项目区"给 `pkgs` **根**开过一条 —— 它会盖住 scope 规则。
+    #   先把它摘掉、孤立地验这两条；验完原样放回去。
+    _pkgs_row = M.find(str(pkgs))
+    if _pkgs_row:
+        M.allow_rm(str(pkgs))
     _fresh = pkgs / "zzseed"
     _fresh.mkdir(parents=True, exist_ok=True)
-    _seed = M.ensure_pkg(str(_fresh))
-    chk("S ★★ 新包第一次打开 AI ⇒ 自动进清单（读+写）",
-        _seed.get("added") is True and M.can_write(_fresh / "run.py") is None
-        and M.can_read(_fresh / "run.py") is None, str(_seed.get("msg"))[:70])
-    chk("S ★ 只自动加**一次**（`seeded` 记着 id）",
-        M.ensure_pkg(str(_fresh)).get("added") is False, "")
+    chk("S ★★ 带着 scope 判 ⇒ 当前这个包默认就能读能写（不用清单里先有一条）",
+        M.can_read(_fresh / "run.py", scope=_fresh) is None
+        and M.can_write(_fresh / "run.py", scope=_fresh) is None, "")
+    chk("S ★★ 不带 scope（= 当成别的包）⇒ 读不了也写不了",
+        M.can_read(_fresh / "run.py") is not None
+        and M.can_write(_fresh / "run.py") is not None, "")
+    # 用户主动把「写」关掉 ⇒ **那一刻**才真的落一条显式记录，并且以它为准
+    M.allow_set(str(_fresh), read=True, write=False, why="只想咨询", by="user")
+    chk("S ★★ 用户关掉「写」⇒ 落一条显式记录；写立刻被拦、读还开着",
+        M.can_read(_fresh / "run.py", scope=_fresh) is None
+        and M.can_write(_fresh / "run.py", scope=_fresh) is not None
+        and bool([x for x in M.allow_list() if x["path"] == str(_fresh)]), "")
+    M.allow_rm(str(_fresh))
+    chk("S ★ 删掉那条显式记录 ⇒ 回到默认读写都开",
+        M.can_write(_fresh / "run.py", scope=_fresh) is None, "")
+    chk("S ★★ `system/pkgs/*`（出厂样板）永远不当当前包 ⇒ 它不可写",
+        M.can_write(E.HOME / "system" / "pkgs" / "bmi" / "main.py",
+                    scope=E.HOME / "system" / "pkgs" / "bmi") is not None, "")
+    if _pkgs_row:
+        M.allow_add(str(pkgs), read=True, write=True, why="探针：整个项目区")
     # ② 读 / 写**各管各的**：清单里没有就都进不去（拿一个**包外**目录验，别被 pkgs 根那一行覆盖）
     chk("S ★ 清单里没有这个目录 ⇒ 读不了也写不了（清单说了算）",
         M.can_read(_out / "a.txt") is not None and M.can_write(_out / "a.txt") is not None, "")
@@ -1289,6 +1308,8 @@ def main():
         "能写" in _note and "allow_path" in _note, _note[:80])
     for _it in M.allow_list():
         M.allow_set(_it["path"], write=False)
+    # ★ `V-343`：当前这个包不在清单里（默认读写都开）—— 要它只读，得**显式关一次**
+    M.allow_set(str(fake_pkg), read=True, write=False)
     chk("S ★ 「写」全关着时，提示词明说这一轮是**只读**（用 answer 收尾，别硬改）",
         "一个地方都不能写" in M.perm_note(str(fake_pkg)), "")
     M.allow_set(str(fake_pkg), write=True)
@@ -1405,8 +1426,8 @@ def main():
     chk("S ★★ 请求放行 ⇒ 闸收到了（路径 + 理由 + 要读还是要写）",
         bool(_gates) and _gates[0]["path"] == str(_out2) and _gates[0]["need"] == "write"
         and _gates[0]["why"] == "要把结果写那儿", str(_gates[:1])[:90])
-    chk("S ★★ 用户勾了 ⇒ 工具回的是「放行了（读=开 写=开）」，而且当场能写",
-        "放行了" in _got8 and "写=开" in _got8
+    chk("S ★★ 用户勾了 ⇒ 工具回的是「已经进清单（读=开 写=开）」，而且当场能写",
+        "已经进清单" in _got8 and "读=开" in _got8 and "写=开" in _got8
         and any(x.get("path") == str(_out2) and x.get("read") and x.get("write")
                 for x in M.allow_list()), _got8[:80])
     # 只给了读

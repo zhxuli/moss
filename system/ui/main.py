@@ -1933,10 +1933,10 @@ class Api:
             # ★ `V-314`：临时空间**按插件分**（`state/<包id>/ai/tmp/`），所以要带 workdir
             try:
                 M = self._ai_mode()
-                try:
-                    M.ensure_pkg(workdir)        # 当前这个包自动进清单（读+写默认开）
-                except Exception:                                     # noqa: BLE001
-                    pass
+                # ★ `V-343`：这里**不再** `ensure_pkg()` —— `ai_info` 是个**只读查询**，
+                #   每 700ms 一跳、换一次选中的包就调一次；在里面写盘等于
+                #   "在左边点过一遍包列表，权限清单就长满了"（用户报的那个）。
+                #   现在"当前这个包"由 `summary(workdir)` **算出来**（第一条），不落盘。
                 out.update(M.summary(workdir))
             except Exception as exc:                                      # noqa: BLE001
                 out["mode_why"] = "权限模块起不来：%s" % exc
@@ -2082,7 +2082,6 @@ class Api:
             scope = R.scope_of(wd)
             M.begin_run(wd)                      # 清掉上一跑的"只允许这一次"+ 收拾这个桶的旧 tmp
             tmp_dir = M.ensure_tmp(run_id, wd)   # `V-314`：tmp 跟着插件走（`state/<包id>/ai/tmp/`）
-            M.ensure_pkg(wd)                     # `V-316`：当前这个包自动进清单（读+写默认开）
             started = time.time()
             base = {
                 "id": run_id, "task": task, "workdir": wd,
@@ -2377,10 +2376,6 @@ class Api:
         """
         try:
             M = self._ai_mode()
-            try:
-                M.ensure_pkg(workdir or self._ai_last_workdir())
-            except Exception:                                            # noqa: BLE001
-                pass
             return M.summary(workdir or self._ai_last_workdir())
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
@@ -2412,8 +2407,11 @@ class Api:
             else:
                 # ★ `V-319`：他勾了读/写（或加了一条）⇒ 那一行不再是"待允许"，闪烁收掉
                 _pend = False if (read is not None or write is not None) else None
+                # ★ `V-343`：`add=True` 一直是"不存在就建、存在就改"（upsert）——
+                #   "当前这个包"那条在清单里本来**没有**（它是算出来的），
+                #   用户一动它的开关就得能建出来，所以 `set` 也走 upsert。
                 got = M.allow_set(path, read=read, write=write, why=str(why or ""),
-                                  by="user", add=(a == "add"), pending=_pend)
+                                  by="user", add=True, pending=_pend)
             return dict(got, summary=M.summary(self._ai_last_workdir()))
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}

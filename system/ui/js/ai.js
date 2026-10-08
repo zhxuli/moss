@@ -2049,10 +2049,10 @@ const MossAi = {
                           <span class="switch"><input type="checkbox" :checked="!!it.write"
                             @change="allowSet(it, 'write', $event.target.checked)"><span class="slider"></span></span>
                         </label>
-                        <button class="btn-delete ai-perm-x" v-if="it.path !== '*'" @click="allowRm(it)"
+                        <button class="btn-delete ai-perm-x" v-if="it.path !== '*' && !it.current" @click="allowRm(it)"
                                 title="从清单里删掉（它就读不了也写不了这里）" v-html='ico("trash-2", "i")'></button>
                         <span class="ai-perm-lock" v-else v-html='ico("file-lock", "i")'
-                              title="系统默认那一行，删不掉"></span>
+                              title="系统默认那一行 / 当前这个包，删不掉（把开关关掉就行）"></span>
                       </div>
                     </div>
                   </div>

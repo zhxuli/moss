@@ -70,14 +70,15 @@ def inside(path, root):
     return p == r or p.startswith(r + os.sep)
 
 
-def check_writable(path):
+def check_writable(path, scope=None):
     """能写就回 None，不能写就回一句**给人看的原因**（会被原样回给模型）。
 
-    ★ `V-316`：判据在 `ai_mode.can_write()` —— 现在是**一份清单**（每条一对「读/写」勾选），
-      当前那个包默认就在清单里、读写都开着。这里只留一个转调，规矩只有一份。
+    ★ `V-316`：判据在 `ai_mode.can_write()` —— 一份清单（每条一对「读/写」勾选）。
+    ★ `V-343`：`scope` = **这次干活的那个包** —— 它在 scope 里默认就能写，
+      **不需要清单里先有一条记录**（这正是"清单越用越长"的根治）。
     """
     import ai_mode as M                                          # noqa: PLC0415（防环）
-    return M.can_write(path)
+    return M.can_write(path, scope=scope)
 
 
 def read_roots():
@@ -125,10 +126,11 @@ def check_readable(path, scope=None):
                     "`%s` 是**别的包**，不归这次任务管（样板请看 `system/pkgs/bmi`，那是留给你抄的）。"
                     % (sc, path))
     # ★ `V-316`：**清单说了算**（勾了「读」的目录才给看）
-    return M.can_read(path)
+    #   ★ `V-343`：再加上"这次干活的那个包"—— 它默认就能看，不用清单里有一条。
+    return M.can_read(path, scope=scope)
 
 
-def read_text(path, offset=1, limit=400):
+def read_text(path, offset=1, limit=400, scope=None):
     """带行号读一段（行号照 `read` 工具的习惯从 1 开始）。
 
     ★ 读出来**统一成 `\\n`**（CRLF 的文件也显示成 `\\n`）—— 因为模型是"照抄看见的东西"
@@ -138,7 +140,7 @@ def read_text(path, offset=1, limit=400):
     p = Path(path)
     if not p.is_file():
         return None, "没有这个文件：%s" % p
-    bad = check_readable(p)
+    bad = check_readable(p, scope)
     if bad:
         return None, bad
     try:
@@ -162,14 +164,14 @@ def _crlf(raw):
     return b"\r\n" in raw
 
 
-def apply_edit(path, find, replace, replace_all=False):
+def apply_edit(path, find, replace, replace_all=False, scope=None):
     """把 `find` 换成 `replace`。回 `{ok, replaced, error, hint}`。
 
     ★ 多命中且没写 `replace_all` ⇒ **拒绝**（`V-229` 那类"改错地方"的事故就是这么来的）。
     ★ 零命中 ⇒ 给**候选行号 + 最像的几行**（模型下一轮能自己对齐）。
     """
     p = Path(path)
-    bad = check_writable(p)
+    bad = check_writable(p, scope)
     if bad:
         return {"ok": False, "error": bad}
     if not p.is_file():
@@ -205,7 +207,7 @@ def apply_edit(path, find, replace, replace_all=False):
     return {"ok": True, "replaced": (n if replace_all else 1)}
 
 
-def write_new(path, content, overwrite=False):
+def write_new(path, content, overwrite=False, scope=None):
     """写一个文件。
 
     ★ 已存在时**默认拒绝**（改已有的用 `apply_edit`，别整文件覆盖 —— 那样最容易悄悄丢内容）。
@@ -213,7 +215,7 @@ def write_new(path, content, overwrite=False):
       （它没有"覆盖"这个动作可调）。所以给它一条明路：**显式 `overwrite=true`** 才允许覆盖。
     """
     p = Path(path)
-    bad = check_writable(p)
+    bad = check_writable(p, scope)
     if bad:
         return {"ok": False, "error": bad}
     if p.exists() and not overwrite:
