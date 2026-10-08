@@ -51,13 +51,15 @@ def browser():
     return None
 
 
-def fake_bridge(hang_first=False):
+def fake_bridge(hang_first=False, poll_out="hello-from-skill\n"):
     """一段假桥：**在垫片之前**就把它摆好 —— 模拟"桥早就绪、ready 事件已错过"。
 
     `hang_first=True`：**第一次 `list` 永远不回**（返回一个永不 settle 的 promise）——
     这就是 `V-285` 报的那个真现场：消息在桥还没接好时发出去、没人接，promise 一直挂着；
     第二次调用才接上。（pywebview 的桥是消息式的：`api.js` 的 `_jsApiCallback` →
     `chrome.webview.postMessage`，回话从 `_returnValuesCallbacks` 里取。）
+
+    `poll_out`：`run_poll` 吐出来的那一坨（`V-346` 的 G 段拿它喂一句**带路径的真话**）。
     """
     if hang_first:
         api_list = ('  list: (function(){ var n = 0; return function(){\n'
@@ -93,11 +95,16 @@ window.pywebview = {api: {
   rm: async () => ({ok: true, msg: "ok"}),
   reveal: async () => ({ok: true, msg: "ok"}), plan: async () => ({ok: true}),
   promote: async () => ({ok: true, msg: "ok"}), run_once: async () => ({ok: true, msg: "ok"}),
+  /* `V-301` 起：面板里那些路径链接点下去走它。`V-346` 的 G 段靠 `window.__opened`
+     看**收到了什么**（路径对不对、`mode` 是 open 还是 reveal、有没有带原样那份）。 */
+  open_path: async (params) => {
+      (window.__opened = window.__opened || []).push(params || {});
+      return {ok: true, msg: "ok"}; },
   /* `V-302`：交互式运行那四条 —— 起进程 / 轮询 / 写输入 / 停（假后端按剧本吐输出） */
   run_start: async () => ({ok: true, rid: "r1", cmd: ["python", "run.py"]}),
   run_poll: (function(){ var n = 0; return async () => { n = n + 1;
       return {ok: true, running: n < 2, code: n < 2 ? null : 0,
-              out: "hello-from-skill\\n", cmd: ["python", "run.py"],
+              out: """ + json.dumps(poll_out) + """, cmd: ["python", "run.py"],
               at: "2026-10-05 17:00:00"}; }; })(),
   run_input: async () => ({ok: true, msg: "ok"}),
   run_stop: async () => ({ok: true, msg: "ok"}),
@@ -200,6 +207,90 @@ def judge_run():
 </script>"""
 
 
+#: `V-346` 的现场：`shot` 技能打的那句真话 —— 路径尾巴上蘸着"（7680×2160，9125074 字节）"。
+SHOT_PATH = r"D:\python\two\moss\user_data\state\shot\shots\shot-20261008-114021.png"
+SHOT_META = "（7680×2160，9125074 字节）"
+SHOT_OUT = ("整个屏幕 截下来了：%s（7680×2160，9125074 字节）\n"
+            "（我看不到图 —— 这是留证据给用户看的；要看像素请自己用 PIL 量。）" % SHOT_PATH)
+#: 抠路径的单测表：`[原文, 期望抠出来的路径]`（括号那些是重点 —— `V-346` 就是栽在这儿）
+SHOT_UNITS = [
+    [r"D:\项目\截图（1）.png", r"D:\项目\截图（1）.png"],                 # 名字里真有全角括号 → 不许剪
+    [r"D:\备份（副本）", r"D:\备份（副本）"],                             # 没扩展名 → 不许剪
+    [r"D:\a\报告（副本）.txt（7680×2160）", r"D:\a\报告（副本）.txt"],     # 括号前面已是带扩展名的全名 → 剪
+    [r"(see D:\a\b.txt)", r"D:\a\b.txt"],                               # 外面套着半角括号 → 剪掉收括号
+    ["D:\\a\\b.txt。", "D:\\a\\b.txt"],                                  # 句尾句号 → 剪
+    ["user_data/ai/skill_runs.jsonl（这个文件）", "user_data/ai/skill_runs.jsonl"],
+]
+
+
+def judge_path():
+    """`V-346`：跑一次 → 命令行里那句带路径的话 —— **链接要指向真路径，而且两个动作都要在**。
+
+    判据（都写进 `document.title`）：
+      `p`    = `data-p` 解出来**正好是**那条 png（老代码这里会多出"（7680×2160，9125074"）
+      `text` = 链接**显示的字**也正好是它
+      `href` = 是个真 `file:///D:/…`（不再是 `javascript:void(0)` 那句假 url）
+      `raw`  = 带着**没剪过的原样**（后端拿它先试一次，文件名真带括号时能救回来）
+      `tail` = 尾巴上那段说明文字**还在页面上**（只是不再属于链接）
+      `open` / `rev` = 点路径收到 `mode=open`、点小文件夹图标收到 `mode=reveal`
+      `hasraw` = 两次都带了 `raw`
+      `unit` = 上面那张单测表过了几条
+    """
+    return ("""<script>
+(function(){
+  var WANT = """ + json.dumps(SHOT_PATH) + """;
+  var META = """ + json.dumps(SHOT_META) + """;
+  var UNITS = """ + json.dumps(SHOT_UNITS, ensure_ascii=False) + """;
+  var n = 0, done = false;
+  function finish(t){ if(done) return; done = true; document.title = t; }
+  var t = setInterval(function(){
+    n++;
+    if (document.querySelectorAll(".tile").length > 0){ clearInterval(t); step1(); }
+    else if (n > 600){ clearInterval(t); finish("PATH-STUCK"); }
+  }, 50);
+  function step1(){
+    document.querySelector(".tile").click();
+    setTimeout(function(){
+      var b = document.querySelector("#d-run");
+      if (b) b.click();
+      setTimeout(step2, 1300);
+    }, 300);
+  }
+  function step2(){
+    var pre = document.querySelector(".drawer .run-out");
+    var a = pre && pre.querySelector("a.plink");
+    var d = pre && pre.querySelector("button.plink-dir");
+    var got = a ? decodeURIComponent(a.getAttribute("data-p") || "") : "";
+    var txt = a ? (a.textContent || "").trim() : "";
+    var href = a ? (a.getAttribute("href") || "") : "";
+    var raw = a ? (a.getAttribute("data-r") || "") : "";
+    var tail = pre ? ((pre.textContent || "").indexOf(META) >= 0) : false;
+    window.__opened = [];
+    if (a) a.click();
+    if (d) d.click();
+    setTimeout(function(){
+      var calls = window.__opened || [];
+      var mOpen = calls.some(function(c){ return c && c.mode === "open" && c.path === WANT; });
+      var mRev  = calls.some(function(c){ return c && c.mode === "reveal" && c.path === WANT; });
+      var rawOk = calls.length > 0 && calls.every(function(c){ return typeof c.raw === "string"; });
+      var L = window.SKILL_PATHS.linkify;
+      function pick(s){
+        var m = L(s).match(/data-p="([^"]*)"/);
+        return m ? decodeURIComponent(m[1]) : "(no-link)";
+      }
+      var unitOk = 0;
+      for (var i = 0; i < UNITS.length; i++){ if (pick(UNITS[i][0]) === UNITS[i][1]) unitOk++; }
+      finish("PATH a=" + (a?1:0) + " d=" + (d?1:0) + " p=" + (got===WANT?1:0) +
+             " text=" + (txt===WANT?1:0) + " href=" + (href.indexOf("file:///D:/")===0?1:0) +
+             " raw=" + (raw?1:0) + " tail=" + (tail?1:0) +
+             " open=" + (mOpen?1:0) + " rev=" + (mRev?1:0) + " hasraw=" + (rawOk?1:0) +
+             " unit=" + unitOk + "/" + UNITS.length + " got=[" + got + "]");
+    }, 250);
+  }
+})();
+</script>""")
+
+
 def build(case, tmp):
     """造一份现场：`case` = A（桥先说）/ B（没桥）/ C（桥晚到）。回 index.html 的路径。
 
@@ -236,10 +327,18 @@ setTimeout(function(){
 </script>""" % json.dumps(re.sub(r"</?script>", "", fake_bridge()))
     elif case == "F":
         inject = fake_bridge()                        # `V-302`：点「运行测试」的交互
+    elif case == "G":
+        # `V-346`：`shot` 那句真话 —— 路径尾巴上蘸着"（7680×2160，9125074 字节）"
+        inject = fake_bridge(poll_out=SHOT_OUT)
     page = page.replace('<script src="moss-embed.js"></script>',
                         inject + '<script src="moss-embed.js"></script>', 1)
-    page = page.replace("</body>",
-                        (judge_run() if case == "F" else judge_script()) + "</body>", 1)
+    if case == "F":
+        judge = judge_run()
+    elif case == "G":
+        judge = judge_path()
+    else:
+        judge = judge_script()
+    page = page.replace("</body>", judge + "</body>", 1)
     d = tmp / case
     d.mkdir(parents=True, exist_ok=True)
     shutil.copytree(str(UI), str(d), dirs_exist_ok=True)
@@ -372,6 +471,26 @@ def main():
     tf, domf = title_of(exe, uf, tmp, "f")
     chk("F ★★ 点运行测试后：按钮在 / 切到了「命令行」/ 命令行里有输出",
         "RUN btn=1 consoleTab=1 out=1" in tf, tf)
+
+    print()
+    print("=" * 72)
+    print("G：`V-346` —— 命令行里那句带路径的话：**链接要指向真路径 + 两个开法都要在**")
+    print("=" * 72)
+    ug = build("G", tmp)
+    tg, domg = title_of(exe, ug, tmp, "g")
+    chk("G ★★★ 你报的那个 bug：链接的 url **正好是那条 png**（老代码这儿会多出"
+        "「（7680×2160，9125074」）",
+        "p=1" in tg and "text=1" in tg and "got=[" + SHOT_PATH + "]" in tg, tg)
+    chk("G ★★ 尾巴上那段说明文字**还在页面上**（只是不再属于链接）",
+        "tail=1" in tg, tg)
+    chk("G ★ 链接的 `href` 是**真的 `file:///`**（不再是 `javascript:void(0)` 那句假 url）",
+        "href=1" in tg, tg)
+    chk("G ★★ 两个开法都在：点路径 = 直接打开 / 点小文件夹图标 = 打开所在文件夹",
+        "a=1" in tg and "d=1" in tg and "open=1" in tg and "rev=1" in tg, tg)
+    chk("G ★ 两次调用都带上**没剪过的原样**（后端先拿它试 —— 文件名真带括号时能救回来）",
+        "raw=1" in tg and "hasraw=1" in tg, tg)
+    chk("G ★★ 抠路径那几条单测全过（名字里的全角括号不许剪、说明文字的括号要剪）",
+        ("unit=%d/%d" % (len(SHOT_UNITS), len(SHOT_UNITS))) in tg, tg)
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()

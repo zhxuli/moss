@@ -189,6 +189,63 @@ def _pump_run(rid):
             pass
 
 
+# ================================================================ 打开路径（`V-346`）
+#: 从右往左退的时候**可以切**的那些字符（标点 / 括号 / 引号 / 空白）。
+#: **故意不含 `\` `/`** —— 在分隔符上切会切出 `D:` 这种盘符相对路径，那不是个地方。
+_CUTS = "，。；：！？、（）【】《》「」『』,;:.()[]{}<>\"'` \t"
+
+
+def _exists(p):
+    try:
+        return p.exists()
+    except OSError:                                     # 盘拔了 / 名字非法 / 权限不够
+        return False
+
+
+def _open_target(raw, shown=""):
+    """把界面上报来的**候选路径**收敛到真存在的那一段 → `(Path 或 None, 剪过没有)`。
+
+    界面上那条路径是从**一整段文字**里正则抠出来的，尾巴上常蘸着说明文字
+    （`…114021.png（7680×2160，9125074 字节）` 里的 `（7680×2160，9125074`）。
+    前端 `paths.js` 已经收了一道，这里是**第二道、也是最硬的一道：判据是文件系统本身**。
+
+    顺序（`shown` 是前端修剪过的样子，`raw` 是它抠出来的原样）：
+      ① **原样先试** —— 文件名里真带全角括号（`报告（旧）.txt`）时，前端可能剪过头，
+         但原样是存在的 ⇒ 以**原样**为准（这才是那段文字真正指的东西）；
+      ② 都不存在 ⇒ **按标点从右往左退**，退到第一个真存在的为止；
+      ③ 还不行 ⇒ 退到**最长的存在祖先**（跟老行为一致：至少把上级目录打开）。
+    """
+    seen, cands = set(), []
+    for one in (raw, shown):
+        s = str(one or "").strip().strip('"')
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        p = Path(s)
+        cands.append(p if p.is_absolute() else (HOME / p))   # `user_data/…` 按 moss 根解析
+    if not cands:
+        return None, False
+    for p in cands:                                     # ① 原样
+        if _exists(p):
+            return p, False
+    for p in cands:                                     # ② 从右往左按标点退
+        s = str(p)
+        for i in range(len(s) - 1, 0, -1):
+            if s[i] not in _CUTS:
+                continue
+            cut = s[:i].rstrip(_CUTS)
+            if len(cut) < 3 or cut.endswith(":"):       # `D:` / `C:` 不是个地方
+                continue
+            if _exists(Path(cut)):
+                return Path(cut), True
+    q = cands[-1].parent                                # ③ 最长的存在祖先
+    while q != q.parent:
+        if _exists(q):
+            return q, True
+        q = q.parent
+    return None, False
+
+
 class Api:
     """界面能调的方法（`window.pywebview.api.<名字>(params)` / 内嵌时走垫片）。"""
 
@@ -398,30 +455,41 @@ class Api:
         return {"ok": ok, "msg": msg, "log": str(S.run_log_path())}
 
     def open_path(self, params=None):
-        """在**资源管理器**里打开一个文件或目录（详情里那些可点的路径用它）。
+        """打开一个文件 / 目录（详情里那些可点的路径用它）。`V-346` 起有**两种开法**：
 
-        · 目录 → 直接打开它；
-        · 文件 → 打开**它所在的目录并选中它**（`explorer /select,`）；
-        · 路径不在了 → 退到它的上级目录（也告诉用户一声）。
+        · `mode="reveal"` → **在资源管理器里打开它所在的文件夹**并选中它
+          （`explorer /select,`；**目录**就是打开它上一级、并选中它）—— 默认；
+        · `mode="open"`   → **直接打开**：文件交给默认程序，目录就打开它。
+
+        两条保险（`V-346`）：路径按 `raw` → `path` 依次试、不在就**按标点从右往左退**
+        （`_open_target`）—— 因为界面那条路径是从一整段文字里抠出来的，尾巴上常带说明文字。
         """
-        raw = str((params or {}).get("path") or "").strip().strip('"')
+        p = dict(params or {})
+        raw = str(p.get("path") or "").strip().strip('"')
         if not raw:
             return {"ok": False, "msg": "没有路径"}
-        path = Path(raw)
+        mode = "open" if str(p.get("mode") or "").lower() == "open" else "reveal"
+        path, trimmed = _open_target(str(p.get("raw") or raw), raw)
+        if path is None:
+            return {"ok": False, "msg": "路径不在：%s" % raw}
         try:
-            if path.is_dir():
-                os.startfile(str(path))                                  # noqa: S606  Windows
-            elif path.is_file():
-                subprocess.Popen('explorer /select,"%s"' % str(path))     # noqa: S603,S607
+            if mode == "open":
+                os.startfile(str(path))                 # noqa: S606  Windows：文件走默认程序 / 目录就打开它
+                what = "打开了"
+            elif str(path.parent) == str(path):         # 盘根（`D:\`）没有"上一级"可开 —— 直接开它
+                os.startfile(str(path))                 # noqa: S606  Windows
+                what = "打开了"
             else:
-                parent = path.parent
-                if parent.is_dir():
-                    os.startfile(str(parent))
-                    return {"ok": True, "msg": "这个路径不在了，打开了上级：%s" % parent}
-                return {"ok": False, "msg": "路径不在：%s" % path}
+                # `explorer /select,` 这条命令**两种都对**：文件 = 开所在目录并选中它；
+                # 目录 = 开它上一级并选中它。正好是那颗小文件夹图标要的意思。
+                subprocess.Popen('explorer /select,"%s"' % path)     # noqa: S603,S607
+                what = "打开了所在文件夹"
         except OSError as e:
             return {"ok": False, "msg": "打不开：%s" % e}
-        return {"ok": True, "msg": "打开了：%s" % path}
+        msg = "%s：%s" % (what, path)
+        if trimmed:
+            msg += "（路径尾巴上那段说明文字已经去掉）"
+        return {"ok": True, "msg": msg}
 
     # ---------------------------------------------------------------- 写（都要人点）
     def allow(self, params=None):

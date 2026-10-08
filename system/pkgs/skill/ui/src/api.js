@@ -90,7 +90,14 @@
     /* `V-301`：运行日志（新的在前）+ 清日志 + 在资源管理器里打开某个路径（详情里可点的路径用） */
     runs:     function (id) { return call('runs', { id: id || '' }); },
     clearRuns: function (id) { return call('clear_runs', { id: id || '' }); },
-    openPath: function (path) { return call('open_path', { path: path || '' }); },
+    /* `V-346`：`how` = `open`（直接打开：文件用默认程序、目录就打开它）/
+       `reveal`（在资源管理器里打开它所在的文件夹并选中它）。不给就是 `open`。
+       `raw` = `paths.js` 抠出来**还没修剪**的原样候选 —— 后端先拿它试一次，
+       文件名里真带全角括号（`报告（旧）.txt`）时能把被前端剪掉的那截救回来。 */
+    openPath: function (path, how, raw) {
+      return call('open_path', { path: path || '', mode: how === 'reveal' ? 'reveal' : 'open',
+                                 raw: raw || '' });
+    },
     copy:     copyText,
   };
 })();

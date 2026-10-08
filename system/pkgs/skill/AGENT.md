@@ -72,6 +72,7 @@ moss :skill plan|promote <名字> [新id]  转插件之前先看冲突 / 真转
 ui/index.html       模板 + 挂载点（模板就在 #app 里面，垫片和 app.js 必须在后面）
 ui/src/api.js       后端桥的**唯一入口**（window.SKILL_API，界面别直接碰 moss/pywebview）
 ui/src/icons.js     界面自己的图标（细线 + 实心两套，手画的 svg；**不用图标字体 CDN**）
+ui/src/paths.js     **把输出里的路径变成能点开的链接**（`V-301` 建；`V-346` 重写成两个动作）
 ui/src/comp-*.js    四个组件：卡片 / 详情弹窗 / 确认框 / 提示条
 ui/src/app.js       根组件 + 启动（★ 那段注释记着 V-283~V-287 踩过的坑，别删）
 ui/style/*.css      tokens → base → layout → components（`<link>` 顺序即层叠顺序）
@@ -133,4 +134,11 @@ ui/vendor/          vue.global.prod.js（**全局版**：自带模板编译器�
 | `allow {id, yes}` / `rm {id, confirm}` | 允许 / 撤销 / 删除 |
 | `run_once {id, args}` | 试跑一次（走的是 AI 那条一样的路：stdin JSON → stdout） |
 | `reveal {dir}` | 在资源管理器里打开这个技能的目录 |
+| `open_path {path, raw?, mode}` | **输出里那些路径链接走的它**（`V-301` 加、`V-346` 改成两种开法）：`mode="open"` = 直接打开（文件交给默认程序、目录就打开它）/ `mode="reveal"` = 在资源管理器里打开**它所在的文件夹**并选中它。`raw` 是**没修剪过的原样**候选，先拿它试（文件名里真带全角括号时能救回来）；不在就按标点从右往左退、再退到最长的存在祖先 |
 | `sys_copy {text}` | 放进剪贴板（界面"复制路径"和"**复制文件内容**"都用它；`V-290` 加，tkinter 实现） |
+
+★ **路径链接那两个动作**（`V-346`，`ui/src/paths.js`）：输出的每一处路径都渲染成
+**路径本身**（`<a class="plink" data-act="open">`，点了直接打开）+ **紧跟一颗小文件夹图标**
+（`<button class="plink-dir" data-act="reveal">`，点了开所在文件夹）。两者都走上面那个 `open_path`。
+抠路径时尾巴上那段说明文字要剪干净（`…114021.png（7680×2160，9125074 字节）` 里的括号部分）——
+但**名字里真带全角括号的不许剪**（`截图（1）.png`），判据和踩过的坑都写在 `paths.js` 文件头。

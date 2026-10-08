@@ -543,7 +543,18 @@
 .run-input .rin:disabled { opacity: .55; }
 .icon-btn.stop { color: var(--bad); }
 .icon-btn.stop:hover { background: var(--bad-soft); }
-/* 路径链接（`paths.js`）：能点、点了在资源管理器里打开 */
+/* 路径链接（`paths.js`）：**路径本身 = 直接打开**；紧跟的小文件夹图标 = 打开所在文件夹（`V-346`） */
 .plink { color: var(--accent); text-decoration: underline; text-decoration-style: dotted;
-  text-underline-offset: 2px; cursor: pointer; word-break: break-all; }
+  text-underline-offset: 2px; cursor: pointer; word-break: break-all; border-radius: 3px; }
 .plink:hover { text-decoration-style: solid; }
+.plink:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+/* 那颗小文件夹图标：平时安静（半透明）、hover / 聚焦才亮 —— 别抢路径本身的注意力。
+   尺寸跟着字走（`1.05em`），因为它是长在 `<pre>` 那行等宽字里的。 */
+.plink-dir { display: inline-flex; align-items: center; justify-content: center;
+  vertical-align: -0.18em; width: 1.05em; height: 1.05em; margin-left: 3px; padding: 0;
+  border: 0; border-radius: 4px; background: transparent; color: var(--ink-muted);
+  cursor: pointer; opacity: .45;
+  transition: opacity .15s ease, color .15s ease, background-color .15s ease; }
+.plink-dir svg { display: block; width: 100%; height: 100%; }
+.plink-dir:hover { opacity: 1; color: var(--primary); background: var(--primary-soft); }
+.plink-dir:focus-visible { opacity: 1; outline: 2px solid var(--primary); outline-offset: 1px; }
