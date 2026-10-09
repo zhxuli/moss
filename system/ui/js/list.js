@@ -643,7 +643,7 @@ function renderDetailHTML(){
   const oddDir = dirBase && dirBase !== p.id;
   if (oddDir)
     props.push(prop("目录名", '<span class="mono">' + esc(dirBase) + '</span>' +
-      '<span class="soft">· 和 id 不一样（不碍事）</span>'));
+      '<span class="soft">· 与 id 不同（右边可以一键统一）</span>'));
   if (props.length)
     html += '<div class="dp-props">' + props.join("") + '</div>';
   html += '</div></div>';
@@ -793,7 +793,7 @@ async function copyDirPath(text){
       return;
     }
   }catch(e){ /* 落到下面那句 */ }
-  toast("这个环境不让读剪贴板 —— 路径：" + s, true);
+  toast("复制不了，路径：" + s, true);
 }
 
 
@@ -842,7 +842,8 @@ async function cmdRenamePkg(p){
       setTab("console");
       return;
     }
-    toast("已改名为 " + PSYM + newId);
+    // ★ `V-367`：这里以前先弹一句「已改名为 x」，函数末尾又弹一句（带"显示名里的旧名字
+    //   也一起换了"）—— 一个动作两颗胶囊，说的还是同一件事。**只在末尾说一次**。
     // ★ `V-89`：备份库里那个**分组文件夹**跟着改名（不然"改个 id 就一起改"这件事
     //   在备份那侧就断了）。改名失败不影响主流程，只在状态栏/日志里说一声。
     try{
@@ -914,8 +915,9 @@ async function followRename(oldId, newId, how, oldDir){
     select(newId, /*keepTab*/ true);         // 人正开着它 ⇒ 换成新名字，不切走他那一页
     if (hadEmbed && embedSupported(np)) await embedOpen(np, {keepTab: true});
   }
-  toast("已跟随改名：" + PSYM + oldId + " → " + PSYM + newId +
-        (how ? "（" + how + "）" : ""));
+  // ★ `V-367`：不再回显宿主那条判据（`how` = "指纹一致" / "按新旧 id 推断"）——
+  //   那是**它是怎么认出来的**，属于内部机制；用户要知道的只有"跟着改了"。
+  toast("已跟随改名：" + PSYM + oldId + " → " + PSYM + newId);
 }
 
 /* 打开着的那个包**真没了**（卸载 / 目录被删）—— 别把一张死页留在界面上。 */
@@ -1205,8 +1207,8 @@ const MossHist = {
     emptyHTML(){
       this.R.rev;              // 同上：`HIST` 也是普通数组，得靠举牌信号才会重算
       return HIST.length ? "没有匹配的历史"
-        : ('还没有历史。<br>历史只记<b>路径调用</b>（<span class="mono">moss zeen</span> 这种）——'
-           + '<br>包调用不进历史。');
+        : ('还没有历史。<br>这里记的是<b>直接跑文件</b>的那种调用（<span class="mono">moss zeen</span>）；'
+           + '<br>跑插件不进历史。');
     },
   },
   methods: {

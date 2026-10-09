@@ -249,7 +249,7 @@ const MossSettings = {
             <b>预览：</b> {{ live }}
             <!-- ★ V-275：改动还没保存时，这段预览是**上一次问宿主**（打开面板那次）算的 ——
                  老实说一句，别让它看着像"实时反映你刚才的改动"。 -->
-            <span v-if="changed.length" style="opacity:.65">（改动还没保存 —— 这段预览是按已保存的值算的）</span>
+            <span v-if="changed.length" style="opacity:.65">（改动还没保存，预览还是上一次的）</span>
           </div>
 
           </template>
@@ -336,7 +336,7 @@ const MossSettings = {
             </div>
 
             <div class="sc-preview" id="set-sc-preview">
-              <div class="sc-ph">开启后长这样（参数原样传、退出码也原样传；新开一个终端才生效）</div>
+              <div class="sc-ph">开启后长这样（新开一个终端才生效）</div>
               <div class="sc-cols">
                 <div class="sc-col">
                   <div class="sc-coltitle">原来</div>
@@ -539,7 +539,7 @@ const MossSettings = {
       const r = await pywebview.api.cd_uninstall();
       this.cd.busy = false;
       await this.cdLoad();
-      toast(r && r.ok ? "已卸掉 cd 增强（cd 回到「注入按键」那条路）" : "没卸掉", !(r && r.ok));
+      toast(r && r.ok ? "已卸掉 cd 增强" : "没卸掉", !(r && r.ok));
     },
     setScMode(m){
       // 三种程度互斥：1 = 仅前缀（生成 `<前缀>`，= moss）；2 = 前缀+包名（生成 `<前缀><包名>`）；0 = 都关
@@ -928,7 +928,7 @@ const MossSettings = {
       if (r && r.live) this.live = r.live;
       if (!r || !r.ok || list.some(p => p.level !== "warn")){
         this.problems = list.length ? list
-          : [{key: "", why: (r && r.msg) || "宿主没说为什么", level: "error", also: []}];
+          : [{key: "", why: (r && r.msg) || "没拿到失败原因", level: "error", also: []}];
         toast("没保存 —— 看标红的地方", true);
         return;
       }
@@ -943,10 +943,13 @@ const MossSettings = {
       }
       // ★ `V-298`：宿主存完会回"具体做了什么"（加/删 PATH、生成/删哪些短命令）。
       //   **有具体的就别再弹那句泛泛的「已保存」** —— 否则一次保存冒两个弹窗（你报的）。
+      // ★ `V-367`：现在**连那些具体回执也并进同一条** —— 以前除了"已保存"还会连着弹最多
+      //   4 颗胶囊（改 PATH 一条、生成短命令一条…），一次点保存满屏提示。
       const scMsgs = (r && r.shortcut) || [];
-      if (list.length) toast("已保存（有 " + list.length + " 条提醒）");
-      else if (!scMsgs.length) toast("已保存到 config.toml（下一次启动 moss 生效）");
-      scMsgs.slice(0, 4).forEach(m => toast(m));
+      const head = list.length ? ("已保存（有 " + list.length + " 条提醒）")
+                               : "已保存到 config.toml";
+      const det = scMsgs.slice(0, 4).join("；") + (scMsgs.length > 4 ? ("；…还有 " + (scMsgs.length - 4) + " 条") : "");
+      toast(det ? (head + "；" + det) : (head + "（下一次启动 moss 生效）"));
       // ★ `V-275`：**不关面板** —— 按钮自己变灰（没有改动了）、提醒 / 预览留在眼前，
       //   这就是你描述的那个状态："点保存 → 灰一下 → 干完回到没编辑过的样子"。
     },

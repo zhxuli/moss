@@ -159,10 +159,10 @@ async function aiRefreshInfo(force){
 }
 
 /* ★ `V-316`：**没有"模式"了** —— 权限就是那份清单（读/写两个勾）。
-   这一函数留着只是为了让老调用点不炸（不该再有人调它）。 */
+   这一函数留着只是为了让老调用点不炸（不该再有人调它）。
+   ★ `V-367`：嘴上也不再讲"以前有个模式、现在没了"这种**改版说明** —— 只说清单在哪儿。 */
 async function aiSetMode(){
-  toast("现在没有「模式」了：权限就在下面左边那份清单里 —— 勾「读」/「写」，或者把"
-        + "「任意路径」那一行的写打开（= 放手）", true);
+  toast("权限就在下面那份清单里：给哪一行勾上「读」「写」，它就能碰哪儿", true);
 }
 
 /* ★ `V-316`：**权限清单** —— 加一条 / 拨「读」「写」/ 删掉 / 用系统对话框选目录。
@@ -545,7 +545,7 @@ function aiOpenSkills(){
   const ps = (typeof DATA !== "undefined" && DATA && DATA.packages) || [];
   const p = ps.filter(x => x.id === "skill" ||
                            (x.aliases || []).indexOf("skill") >= 0)[0];
-  if (!p){ toast("找不到技能管理器（system/pkgs/skill）", true); return; }
+  if (!p){ toast("找不到技能管理器 —— 先在插件列表里跑一次 skill", true); return; }
   if (typeof embedOpen === "function" && typeof embedSupported === "function" && embedSupported(p)){
     embedOpen(p, {});
     return;
@@ -564,7 +564,7 @@ function aiOpenSkills(){
      确认了才 `ai_session_truncate(id, true)`。
      —— 破坏性动作先把事实亮出来，这规矩和「清空历史」那类按钮一致。 */
 async function aiTurnPlan(id){
-  if (!id){ toast("这一轮没有记录 id（老记录）—— 改不了", true); return null; }
+  if (!id){ toast("这条是更早的记录，改不了", true); return null; }
   try{
     const p = await window.pywebview.api.ai_session_plan(id);
     if (!p || !p.ok){ toast("算不出这一轮要删什么：" + ((p && p.msg) || "?"), true); return null; }
@@ -580,44 +580,51 @@ function aiPlanHtml(p){
            (p.delete_tasks || []).map((t, i) =>
              "　#" + (p.index + 1 + i) + " " + esc(String(t || "（没写任务）").slice(0, 40))).join("<br>"));
   if (p.target){
-    out.push("<b>先回退到镜像</b> <code>" + esc(p.target.id) + "</code>" +
+    out.push("<b>先回退到快照</b> <code>" + esc(p.target.id) + "</code>" +
              (p.fallback ? "（**不是这一轮自己的**，是更早那条）" : "") +
              " —— 那一刻的包目录。<br>也就是：这一轮改的东西**会被撤掉**" +
              (p.fallback ? "，连同它那之后的改动" : "") + "。");
   }else if (!p.chat_only){
-    out.push("<b>没有可回退的镜像</b> —— 删掉之后代码回不到那一刻，**只是记录没了**。");
+    out.push("<b>没有可回退的快照</b> —— 删掉之后代码回不到那一刻，**只是记录没了**。");
   }
   (p.warnings || []).forEach(w => out.push("⚠ " + esc(String(w))));
   out.push('<span class="dim">回退要用的那条快照**保留**；你自己存的快照一条都不动；覆盖前会留 ' +
            '<code>.bak</code>。</span>');
   return out.join("<br>");
 }
+/* ★ `V-367`：**这里不再 toast** —— 这个动作的收尾话在 `aiAfterTruncate()` 末尾一次说完
+   （以前这里先弹"删好了"，紧接着那边再弹一句"接不上"，一个动作两条不一样的话）。 */
 async function aiDoTruncate(id){
   try{
     const r = await window.pywebview.api.ai_session_truncate(id, true);
     if (!r || !r.ok){ toast("没删成：" + ((r && r.msg) || "?"), true); return null; }
-    toast(r.msg || "删好了");
     return r;
   }catch(e){ toast("没删成：" + (e && e.message ? e.message : e), true); return null; }
 }
 /* 删完了之后收场：把记录列表重读一遍，把**剩下的那半条会话**重新摆出来，
    并且让"下一次跑"接着 `p.prev_id`（删掉的那轮已经没了，不能再接它）。
-   `fill` = 编辑那一支：把这句原话填回输入框（改好再发一次就是"重来"）。 */
-async function aiAfterTruncate(p, task, fill){
+   `fill` = 编辑那一支：把这句原话填回输入框（改好再发一次就是"重来"）。
+   `done` = 宿主那句结果（`aiDoTruncate` 的 `r.msg`）—— 和下面的结论**拼成一条**再说。
+   ★ `V-367`：一个动作只留一条提示（以前"删好了"+"接不上"= 两条）。 */
+async function aiAfterTruncate(p, task, fill, done){
   AIR.viewing = "";
   await aiLoadRuns();
+  let tail = "";
   if (p.prev_id){
     await aiOpenThread(p.prev_id, true);
-    if (AIR.contId){ AIR.contTask = (AIR.turns[AIR.turns.length - 1] || {}).task || ""; }
-    else { toast("前面那条是更早的记录（没存对话）—— 只能看，接不上了", true); }
+    if (AIR.contId){ AIR.contTask = (AIR.turns[AIR.turns.length - 1] || {}).task || "";
+                     tail = "，下一条接着上一轮聊"; }
+    else { tail = "（前面那条是更早的记录、没存对话 —— 接不上，下一条按新会话跑）"; }
   }else{
     // 删的就是链头 ⇒ 这条会话没了：日志清空，输入框回到"新会话"
     AIR.turns = []; AIR.cur = -1; AIR.steps = []; AIR.result = null; AIR.answeredQid = "";
     AIR.sentTask = ""; AIR.lastId = ""; AIR.pickId = "";
     AIR.contId = ""; AIR.contTask = ""; AIR.muted = 0;
+    tail = "，这条会话没了（下一条按新会话跑）";
   }
   if (fill){ AIR.task = String(task || ""); }
   AIR.rev++;
+  toast((done || "删好了") + tail);
 }
 
 async function aiPollOnce(){
@@ -1546,7 +1553,7 @@ const MossAi = {
         {label: "回退并填回输入框", danger: true, cb: async () => {
           const r = await aiDoTruncate(p.id);
           if (!r) return;
-          await aiAfterTruncate(p, t.task, true);
+          await aiAfterTruncate(p, t.task, true, r.msg);
         }});
     },
     /* ★ `V-279`：删这一轮 —— 记录删 `N..链尾`（只允许从链尾往回连续删），并按快照回退。 */
@@ -1558,7 +1565,7 @@ const MossAi = {
         {label: "删掉并回退", danger: true, cb: async () => {
           const r = await aiDoTruncate(p.id);
           if (!r) return;
-          await aiAfterTruncate(p, "", false);
+          await aiAfterTruncate(p, "", false, r.msg);
         }});
     },
     /* ★ `V-253`：底部那颗「发送指令」—— 稿子里的行为是"空着点不给发 + 抖一下" */
@@ -1588,7 +1595,9 @@ const MossAi = {
                 (AIR.runs || []).filter(x => x.id === id)[0];
       // ★ `V-262`：先**把整条会话读回来**（几轮都在），再决定"能不能接着聊" ——
       //   顺序不能反：`aiOpenThread` 自己也会根据链尾设 `contId`，得让它先落定。
-      await aiOpenThread(tail);
+      // ★ `V-367`：读不回来就**到此为止** —— 以前照样往下走，会再弹一句"接着这条聊"，
+      //   和"读不到这条会话"两句互相打脸（一个动作两条提示）。
+      if (!(await aiOpenThread(tail))) return;
       AIR.viewing = tail;                 // 标一下"这是翻出来的历史"（结论卡上会带牌子）
       if (r && r.cont){
         AIR.contId = tail; AIR.contTask = r.task || "";
@@ -1695,7 +1704,7 @@ const MossAi = {
     /* 新开一条：下一条任务不带老对话 */
     newChat(){
       AIR.contId = ""; AIR.contTask = "";
-      toast("下一条按**新会话**跑（老记录还在，随时能接着聊）");
+      toast("下一条按新会话跑（老记录还在，随时能接着聊）");
     },
     again(r){ AIR.task = r.task || ""; AIR.contId = ""; AIR.contTask = "";
               toast("需求已填回输入框（按新会话跑）—— 改一改再点发送"); },
@@ -1817,8 +1826,8 @@ const MossAi = {
 
 
       <p class="ai-warn" v-if="A.err">⚠ {{ A.err }}</p>
-      <p class="ai-warn" v-else-if="!ready">⚠ {{ (info && info.why) || "还没配好 AI —— 去「设置 → AI」挑一家、把 key 填上（或 moss --ai-profile-set）。" }}</p>
-      <p class="ai-warn" v-if="missing.length">⚠ 提示词文件缺了：{{ missing.join("、") }} —— 在 <code>system/ui/ai/prompts/</code> 或 <code>user_data/ai/prompts/</code> 里补上（不补也跑，只是 AI 少了那几条规矩）。</p>
+      <p class="ai-warn" v-else-if="!ready">⚠ {{ (info && info.why) || "还没配好 AI —— 去「设置 → AI」挑一家、把 key 填上。" }}</p>
+      <p class="ai-warn" v-if="missing.length">⚠ 提示词文件缺了：{{ missing.join("、") }}（不补也能跑，只是少了那几条规矩）。</p>
       <p class="ai-warn" v-if="target && !canWrite">
         ⚠ 这个包现在<b>只读</b> —— 权限清单里它那一行的<b>「写」没勾</b>。想让它动手：
         在下面那份「目录权限控制」清单里，把这一行的<b>「写」勾上</b>。
@@ -1832,7 +1841,7 @@ const MossAi = {
            「管理技能」把 :skill 那个界面嵌出来（图标墙 / 详情 / 转为插件 / 删除都在那边）。 -->
       <section class="ai-selft" v-if="selfN || selfPend || selfBroken.length">
         <div class="ai-selft-h" :class="{bad: selfPend > 0}" @click="selfToggle()"
-             title="它给自己造的能力（技能 = 一个包，但不在插件页里）">
+             title="它给自己造的小工具（不在插件页里）">
           <span v-html='ico("sparkles", "i")'></span>
           <span>技能 · {{ selfN }}</span>
           <span v-if="selfPend">· {{ selfPend }} 只等你允许</span>
@@ -2020,7 +2029,7 @@ const MossAi = {
         </div>
 
         <p class="ai-empty" v-if="!A.turns.length">
-          还没有跑过。它会：读契约 → 改文件 → 跑一次证明能跑 → 收工。
+          还没有跑过。写下你要它做什么 —— 它会读代码、动手改、跑一遍验证，然后把结果摆在这儿。
         </p>
 
         <!-- 思考中指示器（永远在最下方）——照稿子：一个呼吸点 + 一行字。
@@ -2076,7 +2085,7 @@ const MossAi = {
               <!-- 历史会话（点开才出） -->
               <div class="popover-wrapper ai-hist-wrap">
                 <button ref="histBtn" class="trigger-btn ai-hist" :class="{active: A.histOpen}" @click.stop="toggleHist()"
-                        :title="'历史会话（只列**这个包**的）。现在：' + ((sessCurrent && sessCurrent.head && sessCurrent.head.task) || '新会话')">
+                        :title="'历史会话（只列这个包的）。现在：' + ((sessCurrent && sessCurrent.head && sessCurrent.head.task) || '新会话')">
                   <span v-html='ico("history", "i")'></span> 历史会话
                   <span class="badge" v-if="sessChains.length">{{ sessChains.length }}</span>
                 </button>
@@ -2210,7 +2219,7 @@ const MossAi = {
           </div>
           <div class="ai-msg r-tool">
             <div class="ai-msg-h"><b>输出</b>
-              <span class="dim">它当时看到的那一份结果（太长会被截，**没截的**在顶上那颗「提示词」里）</span></div>
+              <span class="dim">它当时看到的那一份结果（太长会截断，完整内容看顶上那颗「提示词」）</span></div>
             <pre class="ai-msg-t">{{ A.stepOpen.out || "（这一步没有输出）" }}</pre>
           </div>
         </div>

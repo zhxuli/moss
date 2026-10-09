@@ -111,9 +111,12 @@ def available(table=None):
     if not exe:
         return False, "找不到能跑界面的 Python（%s）" % (why or "没配解释器")
     if not _has_webview(exe):
-        return False, ("这个 Python 里没有 pywebview：%s\n"
-                       "       自带运行时（system\\runtimes\\python\\）里是带的；"
-                       "系统 Python 需要自己 pip install pywebview" % exe)
+        # `V-367`：这句会出现在**弹给用户的 MessageBox** 里 ⇒ 说人话。
+        #   以前写的是"这个 Python 里没有 pywebview：<路径>\n       自带运行时
+        #   （system\runtimes\python\）里是带的；系统 Python 需要自己 pip install
+        #   pywebview" —— 里面既有内部目录，又有一段**源码缩进漏进了文案**（那 7 个空格）。
+        return False, ("界面缺一个组件（pywebview），跑不起来。\n"
+                       "用 moss 自带的 Python 跑界面就行；%s 里没有这个组件。" % exe)
     return True, exe
 
 

@@ -332,13 +332,14 @@ const MossFileSnap = {
     },
     statTip(){
       const s = BK.stat || {};
-      return "这个对象的快照：" + (s.backups || 0) + " 次 · 文件 " + (s.files || 0) +
+      // `V-367`："这个对象"是我们这边的数据模型说法 ⇒ 说"本组"
+      return "本组快照：" + (s.backups || 0) + " 次 · 文件 " + (s.files || 0) +
              " 个 · 内容块 " + (s.objects || 0) + " 个（占 " + humanSize(s.store_bytes) + "）" +
              (s.saved ? ("；去重省了 " + humanSize(s.saved)) : "");
     },
     scopeTip(){
-      return "快照的来源：\n" + bkScopeRels().join("\n") +
-             "\n（按这组来源算出来的分组就是 " + bkGroupForCtx() + "）";
+      // `V-367`：以前这里还回显一句"按这组来源算出来的分组就是 @user"—— 那是**算法**，删掉
+      return "快照的来源：\n" + bkScopeRels().join("\n");
     },
     /* ★ `V-250`：外面（AI / 盘上变了）喊刷新用的那面旗。读它 = 登记依赖，
        `watch: bkrRev` 才会被叫醒。 */
@@ -435,7 +436,9 @@ const MossFileSnap = {
           '<div class="snap-body">' +
             '<div class="snap-row"><span>标题</span><input id="snap-title" placeholder="可留空（留空就用时间）"></div>' +
             '<div class="snap-row"><span>注释</span><input id="snap-note" placeholder="这次改了什么"></div>' +
-            '<div class="snap-sub">过滤规则 —— 这次要排掉的东西（下面是我们**发现的东西**，点一下加/去；也能自己改）</div>' +
+            // ★ `V-367`：这段是**直接 innerHTML**，不走 `askConfirm2` 那道 `**`→`<b>`
+            //   转换 ⇒ 写 `**xx**` 的话用户看到的就是两个星号。这里用真标签 + 人话。
+            '<div class="snap-sub">过滤规则 —— 这次要排掉的东西（下面是按当前目录推荐的，点一下加/去；也能自己改）</div>' +
             '<div class="snap-pres" id="snap-pres">读预设…</div>' +
             '<div class="snap-rules-top"><span class="snap-hint" id="snap-rt">规则（一行一条）</span>' +
               '<span class="sp"></span>' +
@@ -504,7 +507,7 @@ const MossFileSnap = {
         });
         ta.value = base.join("\n");
         w.querySelector("#snap-hint").textContent +=
-          (gi && gi.ok && gi.rules && gi.rules.length) ? ("　·　这个对象已记住 " + gi.rules.length + " 条") : "";
+          (gi && gi.ok && gi.rules && gi.rules.length) ? ("　·　本组已记住 " + gi.rules.length + " 条") : "";
         const box = w.querySelector("#snap-pres");
         /* 新加进去的规则**插在最上面**（你说点了以后掉到下面很难受） */
         const addRules = (pats) => {
@@ -627,13 +630,16 @@ const MossFileSnap = {
         esc((g.builtin || []).join(" / ")) + "</span><br><br>" +
         "<b>兼容</b>（和 .gitignore 一个意思）：<br>" +
         "<code>*.log</code> 按名字 · <code>build/</code> 只排目录 · <code>?ache</code> 一个字符 · " +
-        "<code>**/deep.txt</code> 任意层级 · <code>logs/**</code> 目录下全部 · " +
+        // ★ `V-367`：**通配符得躲开 `askConfirm2` 的 `**`→`<b>`**（它认 `**粗体**`）——
+        //   直接写 `**/deep.txt</code> … <code>logs/**` 会被它当成一对"粗体"吃掉，
+        //   用户看到的 glob 就少了那几个星号。`&#42;` 渲染出来还是 `*`，且不带 `*` 字符。
+        "<code>&#42;&#42;/deep.txt</code> 任意层级 · <code>logs/&#42;&#42;</code> 目录下全部 · " +
         "<code>/user/state/tmp</code> 从根锚定 · <code>user/pkgs/old/</code> 按路径 · " +
         "<code>!keep.log</code> 反向保留 · <code>[0-9]*.tmp</code> 字符集 · <code>#</code> 注释<br><br>" +
         "<b>不兼容</b>：子目录各自的 .gitignore 继承 / 转义（<code>\\#</code>、<code>\\!</code>）/ " +
         "大小写敏感（我们一律不区分）/ git 那条「被排掉的目录里不能再 <code>!</code> 放回来」（我们允许）。<br><br>" +
         "完整的清单也写在那个文件里（打开就是模板）。用记事本改完就生效 —— 下次存快照按新规则。",
-        {tip: "在界面里直接改这个文件还没做（记在 V-104 E）"});
+        {tip: "想改就打开这个文件用记事本改（在界面里直接改还没做）"});
     },
     /* 重算"当前目录"的对照：先问一下现在这一层每个文件的指纹（大小不一样就不必问），
        再拼出模型。选中快照变化、目录切换、盘上变了都会走到这里。 */
@@ -783,7 +789,7 @@ const MossFileSnap = {
           body + "<br>没有多出来的文件，两种做法是一样的。<br>开始？", run(false));
       }else{
         askConfirm2("恢复这个快照", body,
-          {label: "只写回", title: "只把快照里的写回来（git restore）：多出来的一个不动",
+          {label: "只写回", title: "只把快照里的写回来：现在多出来的一个不动",
            cb: run(false)},
           {label: "一模一样", title: "连多出来的 " + extra + " 个也挪进回收站（git reset --hard / clean），不真删",
            cb: run(true)});
@@ -864,7 +870,7 @@ const MossFileSnap = {
       if (!n){ toast("这一组里没有 AI 存的快照"); return; }
       askConfirm("清掉 AI 存的快照",
         "要清掉 <b>" + n + "</b> 条<b> AI 存的</b>快照（标题带「AI」徽章那种）。<br>" +
-        "你自己存的那些<b>一条都不会动</b> —— 后端只删清单里 <code>by=ai</code> 的。<br>不可撤销。",
+        "你自己存的那些<b>一条都不会动</b> —— 只删 AI 存的那几条。<br>不可撤销。",
         async () => {
           BK.busy = "清理中…";
           try{
@@ -882,7 +888,7 @@ const MossFileSnap = {
     },
     async del(id, title){
       askConfirm("删掉这个快照",
-        "「" + esc(title || id) + "」<br>删完会把没人再引用的内容块一并回收。<br>不可撤销。",
+        "「" + esc(title || id) + "」<br>删完会把只被它占着的数据一并清掉。<br>不可撤销。",
         async () => {
           BK.busy = "删除中…";
           try{
@@ -901,7 +907,7 @@ const MossFileSnap = {
       const info = await pywebview.api.backup_group_info(g);
       if (!info || !info.ok){ toast("✗ " + ((info && info.msg) || "拿不到信息"), true); return; }
       if (!info.backups){ toast("还没有快照"); return; }
-      askConfirm("删掉这个对象的全部快照",
+      askConfirm("删掉这一组的全部快照",
         "<b>" + esc(g) + "</b>：<b>" + info.backups + "</b> 次、" + humanSize(info.store_bytes) +
         "，整个文件夹都会删掉。<br>不可撤销。",
         async () => {
@@ -946,7 +952,7 @@ const MossFileSnap = {
        注意：这里是**模板字符串里面**，注释里不能出现反引号（会把模板提前截断）。 -->
   <div class="grip b-bkgrip" title="拖我调宽（双击复原）"></div>
   <div class="bk-snap-head">
-    <span class="bk-snap-title" :title="'「' + ctxLabel + '」的版本快照 —— 存在 user_data/backups/' + ctxGroup + '/（按包 id 分文件夹，改 id 就改这个名字）'">
+    <span class="bk-snap-title" :title="'「' + ctxLabel + '」的版本快照'">
       <span v-html='ico("history", "i")'></span>版本快照
     </span>
     <span class="sp"></span>
@@ -966,13 +972,13 @@ const MossFileSnap = {
       <div class="bk-ig" :title="igTip" @click.stop="editIgnore()">
         过滤：{{ igShort }}
       </div>
-      <span class="bk-ig bk-pre" title="试算：按现在的规则，这次会存哪些、排掉哪些（不落盘）"
+      <span class="bk-ig bk-pre" title="试算：按现在的规则，这次会存哪些、排掉哪些（只是预览，不会真的存）"
             @click.stop="preview()">试算</span>
       <span class="sp"></span>
       <button class="iconbtn b-bkcancel" title="取消（不存了）" v-html='ico("x", "i")'
               @click="BK.formOpen = false"></button>
       <button class="iconbtn b-bksave" :disabled="!!BK.busy"
-              title="存成一次快照（内容按指纹去重，重复的只存一份）"
+              title="存成一次快照（相同内容的文件只存一份，所以快照很省地方）"
               v-html='ico("check", "i")' @click="create()"></button>
     </div>
 
@@ -996,7 +1002,7 @@ const MossFileSnap = {
         <span class="bk-byf" :class="{on: BK.byFilter === 'me'}" @click="BK.byFilter = 'me'">我存的</span>
         <span class="bk-byf" :class="{on: BK.byFilter === 'ai'}" @click="BK.byFilter = 'ai'">AI 存的</span>
         <span class="sp"></span>
-        <span class="bk-byc" v-if="aiCount" :title="'只删 AI 存的（by=ai）—— 你自己存的一条都不会动'"
+        <span class="bk-byc" v-if="aiCount" :title="'只删 AI 存的快照 —— 你自己存的一条都不会动'"
               @click="cleanAi()">清掉 AI 的（{{ aiCount }}）</span>
       </div>
       <div v-for="it in shownItems" :key="it.id" class="bk-tl-item" :class="{on: it.id === BK.sel}"
@@ -1012,7 +1018,7 @@ const MossFileSnap = {
           <span class="bk-time">{{ shortTime(it.created_text) }}</span>
           <div class="bk-card-act">
             <button class="iconbtn b-bkrestore" data-bk-act="restore" @click.stop="restore(it)"
-                    title="恢复（git restore）：把快照里的写回来 —— 缺的补上、不一样的回退（覆盖前留 .bak）；现在多出来的一个都不动"
+                    title="恢复：把快照里的写回来 —— 缺的补上、不一样的还原（原文件先留一份 .bak）；现在多出来的一个都不动"
                     v-html='ico("moss-history", "i")'></button>
             <button class="iconbtn b-bkexport" data-bk-act="export" @click.stop="exportDialog(it)"
                     title="导出到文件夹（另存一份；也可以直接把一个文件夹拖到边栏上）"
@@ -1084,7 +1090,7 @@ const MossFileSnap = {
       <span v-if="BK.busy" class="bk-busy">{{ BK.busy }}</span>
       <button class="iconbtn b-bkgc" title="回收：把没人引用的内容块删掉（删快照时会自动做）"
               v-html='ico("eraser", "i")' @click="gcNow()"></button>
-      <button class="iconbtn warn b-bkdropgroup" title="删掉这个对象的全部快照（整个文件夹）"
+      <button class="iconbtn warn b-bkdropgroup" title="删掉这一组的全部快照（整个文件夹）"
               v-html='ico("trash-2", "i")' @click="dropGroup()"></button>
     </div>
   </template>

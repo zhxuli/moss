@@ -463,8 +463,9 @@ def write(text):
     if not ok and s.mode == "pipe" and "\x03" in str(text):
         # 管道模式给不了 Ctrl+C（没有控制台可以发中断信号）—— 如实说一句，
         # 别让界面以为发出去了（家规：不许静默假装成功）。
+        # `V-367`：别解释"后端/控制台"这些内部构造，只说这个模式做不到什么
         return {"ok": False, "mode": s.mode,
-                "msg": "管道模式给不了 Ctrl+C（这个后端没有控制台可以发中断）"}
+                "msg": "当前是简化终端，拦不了 Ctrl+C —— 想中断就切到真终端再按"}
     return {"ok": ok, "mode": s.mode}
 
 

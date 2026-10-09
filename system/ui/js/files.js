@@ -263,7 +263,8 @@ function fmReloadPages(rels){
     });
   });
   if (dirty.length)
-    toast("盘上这几个文件被改了，而你手里有没保存的改动 —— 先看一眼再存：" +
+    // `V-367`："盘上"是我们这边的说法，破折号后面才是重点 ⇒ 说明白话
+    toast("这些文件在别处被改过了，你手上这份还没保存 —— 先看一眼再存：" +
           dirty.join("、"), true);
   return dirty;
 }
@@ -331,13 +332,16 @@ function fmClosePage(rel){
 function fmSave(t){
   if (!t || t.binary) return;
   pywebview.api.fs_write(t.rel, t.text, t.encoding || "utf-8", t.bom || "").then(r => {
-    toast(r.ok ? ("已保存 " + t.rel + (r.factory ? "（出厂件）" : "")) : ("✗ " + r.msg), !r.ok);
-    if (!r.ok) return;
+    // ★ `V-367`：**存的是包清单**（pkg.json）时由"对账"那一支说一句收尾 ——
+    //   以前这里先说「已保存」、紧接着 `afterManifestSaved` 又报「这个包没收下：…」，
+    //   一个动作两条互相打脸的话。现在：成功 / 被拒 / 要不要统一目录名，都只由那边说。
+    if (!r.ok){ toast("✗ " + r.msg, true); return; }
     // `t.original` 一改，两处黄点（子选项卡上那颗 / 编辑器标题栏那颗）和保存按钮的
     // 灰不灰，Vue 自己就跟着重算了 —— 原来这里要手工 `fmPaintBar()` / `fmPaintDirty()`。
     t.original = t.text; fmPaintBar();
     // 存的是**包清单** ⇒ 界面手里那份包数据已经过期了，重新解析一遍
-    if (isPkgManifest(t.rel)) refreshPkgs(null, true).then(() => afterManifestSaved(t.rel, t.text));
+    if (isPkgManifest(t.rel)) refreshPkgs(null, true).then(() => afterManifestSaved(t.rel, t.text, r));
+    else toast("已保存 " + t.rel + (r.factory ? "（出厂件）" : ""));
   });
 }
 
@@ -371,7 +375,7 @@ async function refreshPkgs(preferId, quiet){
       cur = null; renderDetail();
       // `quiet`：存清单那条路自己会说得更准（是 JSON 坏了还是 id 不合法），
       // 别在这儿再抢一句含糊的（`V-33`）。
-      if (!quiet) toast("这个包已经不在列表里了（pkg.json 被删掉或改坏了）", true);
+      if (!quiet) toast("这个包已经不在列表里了（说明文件被删掉或改坏了）", true);
     }
   }
   fmPaintBar();                  // 子选项卡上那个包名可能变了
@@ -381,7 +385,7 @@ async function refreshPkgs(preferId, quiet){
   const sr = fresh.stale_reason;
   if (sr && sr !== lastStaleReason){
     lastStaleReason = sr;
-    toast("读包表失败，界面现在显示的是旧数据：" + sr, true);
+    toast("包列表没读出来，下面显示的还是上一次的：" + sr, true);
   } else if (!sr){
     lastStaleReason = "";
   }
@@ -403,7 +407,10 @@ async function refreshPkgs(preferId, quiet){
        （目录名一起改；旧数据目录还在的话一起搬），然后把文件管理里的路径
        从旧的换成新的；
      · 都对得上 → 什么都不做。 */
-async function afterManifestSaved(fileRel, text){
+async function afterManifestSaved(fileRel, text, saved){
+  // ★ `V-367`：`saved` = `fs_write` 的返回。存清单这条路**只在这儿报一次**
+  //   （见 `fmSave` 的注释）：收下了且三把钥匙对得上 ⇒ 说"已保存"。
+  const okMsg = () => toast("已保存 " + fileRel + ((saved && saved.factory) ? "（出厂件）" : ""));
   if (DATA.stale_reason) return;                 // 包表本身没读回来，别乱下结论（上面弹过了）
   const dirRel = String(fileRel).replace(/\/[^/]+$/, "");   // `…/pkg.json` → 它所在的包目录
   const base = dirRel.split("/").pop() || "";
@@ -412,16 +419,19 @@ async function afterManifestSaved(fileRel, text){
   let why = "", newId = "";
   if (!p){
     try{ newId = String((JSON.parse(text) || {}).id || "").trim().toLowerCase(); }
-    catch(e){ why = "pkg.json 不是合法 JSON（" + e.message + "）"; }
+    catch(e){ why = "这不是合法的 JSON（" + e.message + "）"; }
     if (!why && !ID_RE.test(newId))
-      why = "id '" + newId + "' 不合法（只允许 " + ID_RE.source + "）";
+      // `V-367`：别把正则源码 `^[a-z][a-z0-9_-]{0,31}$` 摆给用户看（"不合法"三个字留着 ——
+      //   预览场景 `pkg-edit-bad-id` 钉的就是它）
+      why = "id '" + newId + "' 不合法：只能用小写字母、数字、- 和 _，最长 32 个字，"
+            + "而且要用字母开头";
     if (!why && DATA.packages.some(x => x.id === newId))
       why = "id '" + newId + "' 已经被别的包用了";
-    if (!why) why = "清单读不出来（宿主没认这个包）";
-    toast("✗ 宿主没收下这个包：" + why, true);
+    if (!why) why = "moss 没认下这个包（清单读不出来）";
+    toast("✗ 这个包没被接受：" + why, true);
     return;
   }
-  if (p.id === base) return;                    // 三把钥匙对得上，收工
+  if (p.id === base){ okMsg(); return; }         // 三把钥匙对得上，收工
   const oldData = "user/state/" + base, newData = "user/state/" + p.id;
   let moveData = false;
   try{
@@ -453,13 +463,15 @@ async function unifyPkgDir(p, dirRel, moveData, layer){
     setTab("console");
     return;
   }
+  // ★ `V-367`：搬运结果和"统一完成"**并成一条**（以前两颗胶囊，后一颗把前一颗盖掉）
+  let note = "";
   if (moveData){
     const base = String(dirRel).split("/").pop();
     const rr = await pywebview.api.fs_rename("user/state/" + base, p.id);
-    toast(rr.ok ? ("旧数据已搬到 state/" + p.id)
-                : ("⚠ 目录名改好了，但旧数据没搬成：" + rr.msg), !rr.ok);
+    note = rr.ok ? "，旧数据也一起搬好了"
+                 : ("（但旧数据没搬成：" + rr.msg + "）");
   }
-  toast("已统一：包目录名 → " + p.id);
+  toast("已统一：包目录名 → " + p.id + note, note.indexOf("没搬成") >= 0);
   const newRel = (layer || "user") + "/pkgs/" + p.id;
   await refreshPkgs(p.id);
   fmReRoot(dirRel, newRel);                       // ★ 文件管理里的路径跟着搬

@@ -376,7 +376,7 @@ const MossDragBar = {
           (takes
             ? '<span>拖到 <b>' + (fp.name || DRAG.framePid) + '</b> 的界面上了：松手就交给它' +
               '（<b>' + esc(PSYM) + '</b>' + DRAG.framePid + '）—— 这一次不跑命令行</span>'
-            : '<span><b>' + (fp.name || DRAG.framePid) + '</b> 的界面不收这个（它没声明收拖入）' +
+            : '<span><b>' + (fp.name || DRAG.framePid) + '</b> 的界面不收拖进来的东西' +
               ' —— 松手不会有反应</span>');
       }
       const n = DATA ? DATA.packages.filter(p => dropAccepts(p, DRAG.items)).length : 0;
@@ -543,8 +543,9 @@ window.__mossDrop = function(items){
     DROP_ARGS.id = null;
     return;
   }
-  if (items.length > 1)
-    toast("拖进来 " + items.length + " 个，先用第一个：" + (it.name || it.path));
+  // ★ `V-367`：拖进来多个的那句"先用第一个"**并到收尾那条提示里**（以前是两颗胶囊）
+  const many = items.length > 1
+    ? ("（拖进来 " + items.length + " 个，先用第一个 " + (it.name || it.path) + "）") : "";
   // ★ `V-201` / `V-205`：目标帧**优先**是"拖过去的那一帧"（罩子那条路），没有才看当前选中的包。
   //   这一帧的内嵌界面正跑着、而且它收得下 ⇒ 把真实路径**送给那一帧**，而不是再起一个
   //   命令行进程（拖文件夹给 `path` 这种界面型包，用户的意图是"加进列表里"）。
@@ -554,7 +555,7 @@ window.__mossDrop = function(items){
     const send = items.map(x => String(x.path || "")).filter(Boolean);
     pushEmbedEvent(target.id, "drop", {items: send});
     uiLog("host drop → 内嵌界面 " + PSYM + target.id + " " + JSON.stringify(send));
-    toast("把 " + send.length + " 个路径交给了 " + PSYM + target.id + " 的界面");
+    toast("把 " + send.length + " 个路径交给了 " + PSYM + target.id + " 的界面" + many);
     return;
   }
   const cmds = dropCommandsFor(p, it.isDir);
@@ -587,7 +588,7 @@ window.__mossDrop = function(items){
   else DROP_ARGS.id = null;
   if (box){ box.value = args; box.dispatchEvent(new Event("input")); }
   toast((cwd ? "以 " + cwd + " 为当前目录" : "按当前参数") +
-        (piece ? (cmd.base ? "、只把文件名交给它" : "") : "") + "运行 " + PSYM + p.id);
+        (piece ? (cmd.base ? "、只把文件名交给它" : "") : "") + "运行 " + PSYM + p.id + many);
   startRun(p, args, cwd);
 };
 

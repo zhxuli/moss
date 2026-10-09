@@ -57,8 +57,12 @@ function paintSwitchCounts(){
   if (b) b.textContent = String(h);
 }
 
+/* ★ `V-367`：`init()` 也是那颗 ⟳ 的处理器 ⇒ **只在头一次**给状态栏写"就绪"。
+   以前每次刷新都写一遍，于是"点 ⟳"会先被改成"就绪"、再弹一句"已刷新"（一个动作两条话），
+   新建 / 卸载之后那句结果也会被它盖掉。 */
+let bootedOnce = false;
 async function init(){
-  setStatus("就绪");        // 状态栏（`V-61`）：还没干任何事时它是空的，给一句起点
+  if (!bootedOnce){ bootedOnce = true; setStatus("就绪"); }   // 状态栏（`V-61`）的起点
   DATA = await pywebview.api.state();
   // ★ `V-305`：跑包符号从 payload 拿（`symbols.plugin`，默认 `:`）—— 全界面都用它、别硬编码。
   if (DATA && DATA.symbols && DATA.symbols.plugin !== undefined) PSYM = DATA.symbols.plugin;
@@ -152,7 +156,9 @@ $("#btn-refresh").onclick = async () => {
   const nh = (typeof HIST !== "undefined" && HIST ? HIST.length : 0);
   notice("已刷新", "插件：<b>" + np + "</b> 个<br>历史记录：<b>" + nh + "</b> 条" +
          "<br><br>列表已经是最新的了。",
-         {tip: "这一条只是回执：哪怕什么都没变，也说明按钮是好的"});
+         // `V-367`：这句 tip 以前是"这一条只是回执：哪怕什么都没变，也说明按钮是好的"——
+         //   那是**我们为什么做这个弹框**，对用户没用。换成他会关心的。
+         {tip: "刷新会重扫插件与历史（正在跑的包不受影响）"});
 };
 /* `V-178`：切换插件/历史时，**工具条也跟着换**（各有一排分类+排序） */
 $("#sw-pkg").onclick = () => { setSide("pkg"); window.syncListBars && window.syncListBars(); };
@@ -199,7 +205,7 @@ async function cmdNewPkg(){
     const r = await pywebview.api.run_host("--new " + id);
     setConsole("__host__", "$ moss --new " + id + "\n\n" + (r.out || "(没有输出)") +
                "\n" + runTail(r.code, r.out, false), "退出码 " + r.code);
-    toast(r.code === 0 ? ("已新建 " + PSYM + id + "（user_data/pkgs/）") : "✗ 新建失败，看「命令行」",
+    toast(r.code === 0 ? ("已新建 " + PSYM + id) : "✗ 新建失败，看「命令行」",
           r.code !== 0);
     if (r.code === 0){
       await init();                       // 重新扫包列表，新包就出现了
@@ -216,9 +222,11 @@ async function cmdRemovePkg(p){
   try{
     const b = await pywebview.api.backup_group_info(p.id);
     if (b && b.ok && b.backups)
-      bkLine = "<br>· 备份库里还有它的 <b>" + b.backups + "</b> 次备份（占 " +
-               humanSize(b.store_bytes) + "，<b>不会跟着删</b>；要清就去「文件管理 → 备份」里" +
-               "选中这个分组点垃圾桶）";
+      // `V-367`：原来写的是「文件管理 → 备份」—— 界面上没有这个名字（那边叫「版本快照」），
+      //   指路指错了；顺带把"分组"这种内部叫法也换掉。
+      bkLine = "<br>· 备份库里还有它的 <b>" + b.backups + "</b> 次旧快照（占 " +
+               humanSize(b.store_bytes) + "，<b>不会跟着删</b>；要清就在文件管理右边那栏" +
+               "「版本快照」里删掉它）";
   }catch(e){}
   askConfirm("卸载这个包",
     "将<b>永久删除</b>（不进回收站）：<br>· 包本体 " + p.dir + "<br>" +

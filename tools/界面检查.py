@@ -29,8 +29,19 @@ js_by_file = {f.name: f.read_text(encoding="utf-8") for f in js_files}
 fails = []
 
 
+def _safe(s):
+    """按控制台编码兜一下再打印。★ 实测（`V-367`）：要在 GBK 控制台上打印 `✗`（U+2717）会
+    **直接抛 UnicodeEncodeError** —— 于是"检查发现了问题"反倒把检查自己搞崩（exit 1 + 一段
+    Traceback，看着像脚本坏了，真正那条问题反而看不见）。换成 `?` 也比崩强。"""
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        return str(s).encode(enc, "replace").decode(enc, "replace")
+    except Exception:                                                     # noqa: BLE001
+        return str(s).encode("ascii", "replace").decode("ascii")
+
+
 def chk(name, ok, detail=""):
-    print(("  OK  " if ok else " FAIL ") + name + (("  " + str(detail)) if detail else ""))
+    print(_safe(("  OK  " if ok else " FAIL ") + name + (("  " + str(detail)) if detail else "")))
     if not ok:
         fails.append(name)
 
@@ -236,6 +247,31 @@ for _name, _src in js_by_file.items():
             _top[_n] = _name
 chk("js/*.js 顶层名字不重名", not _dup_top,
     ("被后加载的盖掉：%s" % _dup_top) if _dup_top else "%d 个顶层名" % len(_top))
+
+# ---------------- 12. 界面上不许有"注释味"（`V-367` / `V-368`） ----------------
+# ★ 你点名的那个毛病：`toast("这次是宿主的纯文本输出 —— 先切回「包输出」那一版给你看（终端还在，
+#   随时切回来）")` —— 那是**写给同事看的**，被做成了界面提示。整句话机器判不了"像不像注释"，
+#   但**两个硬特征一定能钉住**（也正好是实测踩过的）：
+#     ① 用户会看见的字符串里出现 `**`：toast / `title=` / 结论卡都**不走 markdown** ⇒
+#        用户真会看见两个星号（`askConfirm2` 反而会把它变粗体，所以通配符得写 `&#42;`）；
+#     ② 出现账本里的工单号（`V-104 E` 那种）—— 编号不进界面。
+#   只扫**第一个字符串实参**（`notice(title, body)` 的正文故意不扫：那段是给 `askConfirm2`
+#   做粗体用的，`**` 在那里是对的）。
+_visible_bad = []
+for _name, _src in js_by_file.items():
+    for _m in re.finditer(r'\b(?:toast|setStatus|notice)\(\s*"((?:[^"\\]|\\.)*)"', _src):
+        _s = _m.group(1)
+        if "**" in _s:
+            _visible_bad.append("%s：%s（** 星号）" % (_name, _s[:46]))
+        if re.search(r"\bV-\d{2,3}\b", _s):
+            _visible_bad.append("%s：%s（工单号）" % (_name, _s[:46]))
+    for _m in re.finditer(r':?title="([^"]*)"', _src):
+        _s = _m.group(1)
+        if "**" in _s or re.search(r"\bV-\d{2,3}\b", _s):
+            _visible_bad.append("%s：%s（title）" % (_name, _s[:46]))
+chk("界面文案里没有 ** 星号 / 工单号", not _visible_bad,
+    ("这些要改：%s" % _visible_bad[:6]) if _visible_bad
+    else "扫了 toast/setStatus/notice 的第一个实参 + title")
 
 for _t in (tmp_js,):
     _t.unlink(missing_ok=True)

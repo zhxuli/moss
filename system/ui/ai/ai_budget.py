@@ -134,7 +134,8 @@ def check(max_tokens, context=0):
     if ctx and not (2000 <= ctx <= 10000000):
         return "上下文窗口不合理（2000 ~ 1000 万之间；留空就按模型名猜）。"
     if ctx and retain_tokens(context=ctx) >= compact_at(context=ctx):
-        return "保留量不能 ≥ 触发线（DSH 也是这么校验的）。"
+        # `V-367`：不拿别的项目（DSH）当依据解释，也不报内部参数名
+        return "这个上下文窗口太小：留给收尾的余量反而比触发点还大 —— 把窗口填大一点。"
     return None
 
 

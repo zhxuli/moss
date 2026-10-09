@@ -714,7 +714,7 @@ class Loop:
                     else:
                         messages.append({"role": "user",
                                          "content": "【工具结果】%s\n%s" % (name, out)})
-                    return self._finish(False, "用户按了停止（立刻停，没有等下一轮）", used, missing)
+                    return self._finish(False, "用户按了停止", used, missing)
                 if native:
                     messages.append({"role": "tool", "tool_call_id": call.get("id") or name,
                                      "content": str(out)})
@@ -783,7 +783,9 @@ class Loop:
         #   或者没改动但真跑成功过），只是没来得及说 `done` —— 那就照实判通过，
         #   并在原因里写清"它没来得及收工"。真机那次（`calc` 本来就支持指数）就卡在这儿。
         if not result["ok"] and self.tools.verified():
-            return self._finish(True, "步数用完了（%d 步），但**验收已经通过**（它没来得及说 done）"
+            # `V-367`：这句话显示在结论卡上（**不走 markdown**）⇒ 不许带 `**`；
+            #   也别把内部工具名 `done` 摆给用户看
+            return self._finish(True, "步数用完了（%d 步），但改动已经跑通验证（它没来得及收尾）"
                                       % self.max_steps,
                                 used, missing,
                                 summary="（它没来得及写 summary —— 看上面的步骤流：%s）"

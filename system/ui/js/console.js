@@ -96,7 +96,8 @@ function consolePaneKey(){ return consoleKey || "__host__"; }
 /* 输入行那句占位话（`V-43`）：没在跑 / 跑完了 → 换一句，省得你以为发了没反应。 */
 function consoleInbarPlaceholder(key){
   if (RUNS[key]) return "包在等你的回答就敲在这里，回车发送（比如 1 / 2 / 3）";
-  return key === "__host__" ? "宿主自己的输出没有输入这回事"
+  // `V-367`：别用"没有输入这回事"这种自述口吻 —— 说清"这里为什么敲不了"
+  return key === "__host__" ? "这是 moss 自己的输出，不接受输入"
                             : "这个包现在没在跑 —— 先在「详情」里点运行";
 }
 
@@ -442,7 +443,8 @@ function termHintText(){
   if (!MOSS_TERM.started) return "常驻 DOS 终端 · 命令跑完还能接着敲";
   if (MOSS_TERM.mode === "conpty")
     return "真终端（Tab 补全 / Ctrl+C 都是 cmd 的）";
-  return "管道模式 · 界面自己回显，↑↓ 有历史（没有 Tab 补全 / Ctrl+C）";
+  // `V-367`：以前写「管道模式 · 界面自己回显」—— "界面自己回显"是**实现**（用户只关心能力差异）
+  return "简化终端 · ↑↓ 有历史（没有 Tab 补全 / Ctrl+C）";
 }
 
 /* `V-348` / `V-352`：某个包的输出要不要**倒进终端**。
@@ -470,13 +472,14 @@ function termMirror(key, raw){
 }
 
 /* 真终端模式下，**宿主的纯文本输出**（自检 / 历史 / 宿主命令那几条路）在这块屏上没地方放
-   —— 倒进 pty 会被它的光标定位覆盖。所以老实**切回「包输出」那一版**给你看，并说一句
-   （终端没被关掉，切回来还在）。 */
+   —— 倒进 pty 会被它的光标定位覆盖。所以老实**切回「包输出」那一版**给你看。
+   ★ `V-367`：以前这里还 `toast()` 一句解释（"这次是宿主的纯文本输出 —— 先切回…"）——
+     那是**写代码的人对自己说的话**，不该弹给用户（你点名的）。切换本身看得见：
+     顶栏那颗按钮立刻变成「切回 DOS 终端」，想回去随时点。**一句都不说**。 */
 function termNeedPlainView(k){
   const run = RUNS[k];
   if (run && run.term) return;            // 在终端里跑的：输出本来就在终端里，不许动
   termHide();
-  toast("这次是宿主的纯文本输出 —— 先切回「包输出」那一版给你看（终端还在，随时切回来）");
 }
 
 /* 这一页一露头就把终端起起来（**默认就是终端**，不用你去点开关）。
@@ -491,13 +494,13 @@ function termAutoStart(){
   const pane = $("#pane-console");
   if (!pane || !pane.offsetParent) return;      // 这一页还没露头，等下一次
   MOSS_TERM.autoTried = true;
-  termOpen();
+  termOpen(true);            // `V-367`：自己开的，起不来就悄悄退回 `<pre>`
 }
 
 function termEnsure(){
   if (MOSS_TERM.term) return true;
   if (typeof window.Terminal !== "function"){
-    toast("没加载到 xterm.js（vendor/xterm.js）—— 终端用不了", true);
+    toast("✗ 终端用不了：终端组件没加载上", true);      // `V-367`：别报库名和仓库路径
     return false;
   }
   const host = $("#termhost");
@@ -719,8 +722,9 @@ function termSubmitLine(line, kind){
       而且 `termHide()` 之后没有任何东西会把它拉回来 ⇒ **单向门**。
       现在点「运行」自己会把会话起起来、并把这一版切回来（见 `termRunPackage`）。 */
 function termWhyNot(){
-  if (!termApiReady()) return "宿主没有终端接口（term_start）";
-  if (typeof pywebview.api.term_run !== "function") return "宿主没有 term_run（界面和宿主不是一套？）";
+  // `V-367`：这几句会经 `termOpen` 弹给用户 ⇒ 只说"这个版本没有终端"，别报接口名
+  if (!termApiReady()) return "这个 moss 版本里没有终端功能";
+  if (typeof pywebview.api.term_run !== "function") return "这个 moss 版本里没有终端功能";
   if (!MOSS_TERM.started || !MOSS_TERM.mode) return "终端会话还没起来";
   return "";
 }
@@ -733,16 +737,19 @@ async function termRunPackage(p, args, cwd){
   // ② 接口在、会话没起 ⇒ 起（"点运行"本身就是"我要用终端"）
   if (!MOSS_TERM.started || !MOSS_TERM.mode){
     const r0 = await termEnsureSession();
-    if (!r0.ok){ toast("✗ 终端起不来（" + r0.why + "）—— 这次走老路子跑它", true); return false; }
+    // `V-367`：起不来就**悄悄退回老路**（那次跑照旧会发生，界面上那条"正在跑…/跑完了…"
+    //   才是用户该看到的话）。以前这里先报一句"✗ 终端起不来…—— 这次走老路子跑它"，
+    //   等于给一次**成功的**运行先扣一顶失败的帽子，一次点两个提示。
+    if (!r0.ok) return false;
   }
   // ③ 视图切回终端（他刚才可能在看「包输出」/ 刚从别的页过来）
-  if (!MOSS_TERM.on && !(await termOpen())) return false;
+  if (!MOSS_TERM.on && !(await termOpen(true))) return false;
   // ④ 把命令敲进去
   let r = null;
   try{ r = await pywebview.api.term_run(p.id, args || "", cwd || ""); }catch(e){ r = null; }
   if (!r || !r.ok){
     // 发不进去（终端刚死 / 宿主版本不对）⇒ 返回 false，让调用方**退回老的管道那条路**
-    toast("✗ 命令没敲进终端（" + ((r && r.msg) || "宿主没回话") + "）—— 这次走老路子跑它", true);
+    // `V-367`：同上 —— 退回是安静的，不报错、不解释（老路会照常给出运行反馈）
     return false;
   }
   // 管道后端没人替你回显（真终端由 cmd 自己回显）
@@ -807,7 +814,7 @@ async function termStop(id){
   let r;
   if (MOSS_TERM.mode === "conpty"){
     termWrite("\x03");
-    r = {ok: true, msg: "已把 Ctrl+C 发给它 —— 结果在终端里看"};
+    r = {ok: true, msg: "已发送 Ctrl+C，结果在终端里"};      // `V-367`：说结果，不说"往哪儿写了什么"
   }else{
     r = await pywebview.api.pkg_stop(id);
   }
@@ -826,8 +833,8 @@ async function termStop(id){
 function termEnsureSession(){
   if (MOSS_TERM.started && MOSS_TERM.mode) return Promise.resolve({ok: true, mode: MOSS_TERM.mode});
   if (MOSS_TERM.pending) return MOSS_TERM.pending;
-  if (!termApiReady()) return Promise.resolve({ok: false, why: "宿主没有终端接口（term_start）"});
-  if (!termEnsure()) return Promise.resolve({ok: false, why: "界面没加载到 xterm.js"});
+  if (!termApiReady()) return Promise.resolve({ok: false, why: "这个 moss 版本里没有终端功能"});
+  if (!termEnsure()) return Promise.resolve({ok: false, why: "终端组件没加载上"});
   const t = MOSS_TERM.term;
   MOSS_TERM.started = true;                    // 先占位，免得同时起两次
   MOSS_TERM.pending = new Promise(resolve => {
@@ -838,12 +845,14 @@ function termEnsureSession(){
     };
     try{
       pywebview.api.term_start(t.cols || 100, t.rows || 30).then(r => {
-        if (!r || !r.ok){ done({ok: false, why: (r && r.note) || "宿主没回话"}); return; }
+        if (!r || !r.ok){ done({ok: false, why: "终端没有响应"}); return; }
         MOSS_TERM.mode = r.mode || "";
         MOSS_TERM.alive = !!r.alive;
         if (r.history) termShow(r.history);
-        // ★ 降级原因**要让人看见**（家规：不许静默失败），但也别拿它挡着终端
-        if (r.note) toast("终端：" + r.note);
+        // `V-367`：宿主那条 `note`（"取不到 conpty 模块…"、"这个环境里 ConPTY 读不到子进程输出…"）
+        //   是**写代码的人看的**，不弹给用户；降级的事实下面那行提示已经说清了
+        //   （「管道模式 · 界面自己回显，↑↓ 有历史（没有 Tab 补全 / Ctrl+C）」）。
+        //   `note` 照样留在 payload 里（`term_state` / `--term-selftest` 还能查）。
         done({ok: true, mode: MOSS_TERM.mode});
       }).catch(e => done({ok: false, why: String(e)}));
     }catch(e){ done({ok: false, why: String(e)}); }
@@ -852,10 +861,14 @@ function termEnsureSession(){
 }
 
 /* 打开终端这一版（默认那条路，也从那颗开关走）。返回 Promise<boolean>。
-   ★ 起不来就**老实退回 `<pre>` 那套**（`on=false` + 去掉 `.term`）+ toast 一句 ——
-     宁可让你看见老的那块输出，也别给你一块黑屏。
-   ★ 但**不许判死**：`autoTried` 放回去，下次（点运行 / 切回这一页）还给它机会。 */
-async function termOpen(){
+   ★ 起不来就**老实退回 `<pre>` 那套**（`on=false` + 去掉 `.term`）—— 宁可让你看见老的那块
+     输出，也别给你一块黑屏。
+   ★ 但**不许判死**：`autoTried` 放回去，下次（点运行 / 切回这一页）还给它机会。
+   ★ `V-367`：`quiet` = 这次是**界面自己**要开终端（进页面自动开 / 点运行顺手开），
+     起不来就**悄悄退回老路**，不弹字 —— 用户没点过任何东西，不该收到一条失败通知
+     （"宿主没有终端接口（term_start）" 这种话本来是给写代码的人看的）。
+     只有用户**自己点了那颗开关**（`termToggle`）才说一句为什么。 */
+async function termOpen(quiet){
   if (MOSS_TERM.on && MOSS_TERM.started){ termPump(); return true; }
   const pane = $("#pane-console");
   MOSS_TERM.on = true;
@@ -870,7 +883,7 @@ async function termOpen(){
     MOSS_TERM.failAt = Date.now();         // 但别每帧都试（15 秒冷却）
     MOSS_TERM.fw = 0; MOSS_TERM.fh = 0;
     if (pane) pane.classList.remove("term");
-    toast("终端起不来：" + r.why, true);
+    if (!quiet) toast("终端起不来：" + r.why, true);
     paintConsole();
     return false;
   }

@@ -1810,7 +1810,7 @@ class Api:
         """回宿主问一次 payload。失败返回 None（调用方退回旧的），原因记在 `_payload_error`。"""
         self._payload_error = ""
         if not HOST:
-            self._payload_error = "没拿到宿主命令（界面得由 moss 自己拉起）"
+            self._payload_error = "没拿到宿主命令 —— 请从 moss 主程序打开界面"
             return None
         try:
             r = _run_capture_split(HOST + ["--ui-payload"])     # ★ stdout / stderr 分开
@@ -1830,7 +1830,7 @@ class Api:
                                    % ((" —— 宿主说：" + tail) if tail else ""))
             return None
         if not (isinstance(data, dict) and "packages" in data):
-            self._payload_error = "宿主回的 JSON 里没有 packages"
+            self._payload_error = "包表读回来是空的（格式不对）"
             return None
         return data
 
@@ -1953,7 +1953,7 @@ class Api:
                 return {"ok": True, "msg": "它已经结束了"}
             pid = r["pid"]
         _kill_tree(pid)
-        return {"ok": True, "msg": "已终止这次运行（连同它拉起的子进程）"}
+        return {"ok": True, "msg": "已终止这次运行（它起的进程也一起停了）"}
 
     # ------------------------------------------------ 常驻 DOS 终端（`V-348`）
     # 为什么另起一套，而不是继续往上面那三件里塞：`run_*` 是**"一个包一次运行"**的管子，
@@ -2204,7 +2204,7 @@ class Api:
             return {"ok": False, "msg": "这个包现在没在跑"}
         for p in pids:
             _kill_tree(p)
-        return {"ok": True, "msg": "已停掉这个包（%d 个进程，连同它们的子进程）" % len(pids)}
+        return {"ok": True, "msg": "已停掉这个包（%d 个进程，它起的子进程也一起停了）" % len(pids)}
 
     def pkg_hide(self, pid):
         """把它的窗口藏起来（不关、不杀，随时能再显示）。"""
@@ -2315,10 +2315,9 @@ class Api:
                             "api_key": str(p.get("api_key") or ""), "model": models[0] if models else "",
                             "models": models, "profile": obj.get("profile") or "",
                             "why": "" if models and p.get("base_url")
-                                   else "宿主那份配置里 base_url / model 没填全"})
+                                   else "AI 配置里接口地址 / 模型没填全"})
             else:
-                out["why"] = ("读不到宿主的 AI 配置（`moss --ai-config-reveal` 没回 JSON）—— "
-                              "先 `moss --ai-test` 看一眼，或者去「设置 → AI」配一组。")
+                out["why"] = "读不到 AI 配置 —— 去「设置 → AI」配一组（挑一家、把 key 填上）"
         _AI_CFG.update({"t0": now, "got": out})
         return out
 
@@ -2832,7 +2831,7 @@ class Api:
                 cur = M.find(path)
                 if cur is not None and cur.get("pending"):
                     M.allow_rm(path)                 # 这趟刚摆的"待允许"⇒ 收走（列表里本来不画它）
-                return {"ok": True, "msg": "已拒绝（清单里原来有的没动）",
+                return {"ok": True, "msg": "已拒绝 —— 这次不放行，原来的权限不变",
                         "summary": M.summary(self._ai_last_workdir())}
             if a == "rm":
                 got = M.allow_rm(path)
@@ -3280,7 +3279,7 @@ class Api:
             return plan
         if not confirm:
             return {"ok": False, "need_confirm": True, "plan": plan,
-                    "msg": "这是破坏性操作：先确认（界面把上面那些事实摆给用户看）"}
+                    "msg": "这一步会删记录、并把代码回退到那一刻 —— 请先确认"}
         try:
             R = self._ai_runs()
             import ai_snap as S                                        # noqa: PLC0415
@@ -3449,12 +3448,11 @@ class Api:
             except Exception:                                            # noqa: BLE001
                 pass
         if killed:
+            # `V-367`：说人话（去掉"顺手""连子孙""毫秒"这种开发口吻）
             return {"ok": True, "killed": killed, "ms": ms, "done": done,
-                    "msg": "已停止 —— 顺手杀掉了 %d 个它起的进程（连子孙，%s毫秒）"
-                           % (len(killed), ms)}
+                    "msg": "已停止（它起的 %d 个进程也一起停了）" % len(killed)}
         return {"ok": True, "killed": [], "done": done,
-                "msg": "已停止（立刻生效，没有等下一轮）" if done else
-                       "已请求停止 —— 它正在收尾（子进程已经杀掉；还活着的请求会被掐断）"}
+                "msg": "已停止" if done else "已请求停止 —— 它正在收尾"}
 
     def open_path(self, path):
         try:
@@ -4314,8 +4312,11 @@ class Api:
         pid = str(pid)
         if _float_win(pid) is None:
             return {"ok": True, "msg": "本来就没弹出"}
+        # ★ `V-367`：收回这**一个动作**只留一条提示 —— 上面 `_dock_float` 已经推了
+        #   `__mossFloatDock`（那一页会弹「已收回主窗口」），这里再回一句「已收回」
+        #   就是同一件事说两遍（两条不同措辞）。所以正常这条路**不回 msg**。
         _dock_float(pid, "点了收回")
-        return {"ok": True, "msg": "已收回"}
+        return {"ok": True}
 
     def ui_float_stop(self, pid):
         """浮动窗口里的「停止」：**停掉后端 + 关掉窗口** —— 和那颗 X 一个意思（`V-194`）。"""
@@ -4484,7 +4485,7 @@ class Api:
     def settings(self):
         """读当前设置：分组 + 每项的当前值 / 默认值 / 说明（都是宿主给的）。"""
         if not HOST:
-            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+            return {"ok": False, "msg": "没拿到宿主命令 —— 请从 moss 主程序打开界面"}
         r = _run_capture_split(HOST + ["--settings"])
         data = _json_from_host(r.get("out"))
         if not isinstance(data, dict) or not data.get("groups"):
@@ -4542,7 +4543,7 @@ class Api:
         """`--settings-set` / `--settings-check` 共用的那一半（叫宿主 + 解析回话）。"""
         empty = {"ok": False, "problems": [], "notes": {}, "live": "", "msg": ""}
         if not HOST:
-            empty["msg"] = "没拿到宿主命令（界面得由 moss 自己拉起）"
+            empty["msg"] = "没拿到宿主命令 —— 请从 moss 主程序打开界面"
             return empty
         if not isinstance(payload, dict) or (not payload and not with_notes):
             # 空调用：`set` 是"没改什么"；`check` 不一样 —— **空值也要问宿主**
@@ -4638,7 +4639,7 @@ class Api:
     def ai_config(self, name="", reveal=False):
         """读一组 AI 参数（`name` 空 = 当前那组）。**key 默认打码**，`reveal=True` 才给全文。"""
         if not HOST:
-            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+            return {"ok": False, "msg": "没拿到宿主命令 —— 请从 moss 主程序打开界面"}
         flag = "--ai-config-reveal" if reveal else "--ai-config"
         argv = HOST + [flag] + (["--profile=" + str(name)] if str(name or "").strip() else [])
         r = _run_capture_split(argv)
@@ -4663,7 +4664,7 @@ class Api:
           点一下把「名字 / 接口地址 / 模型」填进表单，用户只需要再粘一把 key。
         """
         if not HOST:
-            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+            return {"ok": False, "msg": "没拿到宿主命令 —— 请从 moss 主程序打开界面"}
         r = _run_capture_split(HOST + ["--ai-presets"])
         data = _json_from_host(r.get("out"))
         if not isinstance(data, dict) or not data.get("presets"):
@@ -4680,7 +4681,7 @@ class Api:
         回 `{"ok", "name", "msg"}`；`msg` 是宿主那句「已存：X（字段 …）」，直接显示。
         """
         if not HOST:
-            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+            return {"ok": False, "msg": "没拿到宿主命令 —— 请从 moss 主程序打开界面"}
         name = str(name or "").strip()
         if not name:
             return {"ok": False, "msg": "先给这一组起个名字"}
@@ -4697,7 +4698,7 @@ class Api:
     def ai_delete(self, name):
         """删一组（当前那组被删掉时，宿主会自动把当前挪到剩下的第一组）。"""
         if not HOST:
-            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+            return {"ok": False, "msg": "没拿到宿主命令 —— 请从 moss 主程序打开界面"}
         name = str(name or "").strip()
         if not name:
             return {"ok": False, "msg": "没说到底删哪一组"}
@@ -4711,7 +4712,7 @@ class Api:
           多一次明文往返、还容易把 key 弄丢（面板上只有打码那串）—— 宿主整块搬最稳。
         """
         if not HOST:
-            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+            return {"ok": False, "msg": "没拿到宿主命令 —— 请从 moss 主程序打开界面"}
         old, new = str(old or "").strip(), str(new or "").strip()
         if not old or not new:
             return {"ok": False, "msg": "没说清改哪一组 / 改成什么"}
@@ -4724,7 +4725,7 @@ class Api:
     def ai_set_active(self, name):
         """选当前用哪一组（就是「设为当前」，以后跑包注入的就是这一组）。"""
         if not HOST:
-            return {"ok": False, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+            return {"ok": False, "msg": "没拿到宿主命令 —— 请从 moss 主程序打开界面"}
         name = str(name or "").strip()
         if not name:
             return {"ok": False, "msg": "没说到底切哪一组"}
@@ -4738,7 +4739,7 @@ class Api:
           界面不该为了测一下就把明文 key 拿过来再自己发一遍（多一处明文、多一处出错）。
         """
         if not HOST:
-            return {"ok": False, "code": -1, "msg": "没拿到宿主命令（界面得由 moss 自己拉起）"}
+            return {"ok": False, "code": -1, "msg": "没拿到宿主命令 —— 请从 moss 主程序打开界面"}
         argv = HOST + ["--ai-test"] + ([str(name)] if str(name or "").strip() else [])
         # ★ `V-147`：面板可以把"表里现在的值"一起送过来 ⇒ **不用先保存也能测**。
         #   只是临时覆盖，一个字节都不落盘。

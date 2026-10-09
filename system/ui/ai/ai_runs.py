@@ -302,7 +302,7 @@ def messages(run_id, scope=None):
     return {"ok": bool(msgs), "messages": msgs, "task": rec.get("task") or "",
             "at": rec.get("started_text") or "", "model": rec.get("model") or "",
             "count": len(msgs), "bytes": len(blob.encode("utf-8")),
-            "note": "" if msgs else "这条记录里没有存对话（那时候还没做「接着聊」那一步）",
+            "note": "" if msgs else "这条是更早的记录 —— 那时候还没存对话，接不上",
             "workdir": rec.get("workdir") or "", "id": str(run_id or "")}
 
 

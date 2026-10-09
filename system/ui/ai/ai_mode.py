@@ -201,8 +201,9 @@ def allow_set(pth, read=None, write=None, why="", by="user", add=True, pending=N
             it["by"] = str(by)
     cur["allow"] = rows
     got = save(cur)
-    got["msg"] = "%s：读=%s 写=%s" % (it["path"], "开" if it.get("read") else "关",
-                                     "开" if it.get("write") else "关")
+    # `V-367`：以前是日志式的一串「路径：读=开 写=关」—— 界面上每拨一次勾就弹一次
+    got["msg"] = "权限已保存：%s（读 %s · 写 %s）" % (it["path"], "开" if it.get("read") else "关",
+                                                 "开" if it.get("write") else "关")
     got["item"] = dict(it)
     return got
 
@@ -447,12 +448,13 @@ def is_ai_tmp(path):
 
 
 #: 硬锁（勾了"任意路径"也进不去）。判据在 `protected()` 里，这里只是给人看的说明。
+#: `V-367`：这几句会**原样显示给用户**（他往清单里加这些路径时）⇒ 说人话，别报版本号 /
+#:   构建链 / "发行物本体"这类内部词。
 PROTECTED_WHY = (
-    ("core", "`core/**` 是**编进 moss.exe** 的（`K-10`）—— 改磁盘上的源码不重打包等于没改，"
-             "而且要改它得由人来做。"),
-    ("moss.exe", "`moss.exe` 是发行物本体，改写它 = 把程序砸了。"),
-    ("moss.py", "`moss.py` 是 exe 的源码入口，改它要重新打包才生效（由人来做）。"),
-    ("venv", "`venv/**` 是打包用的 Python 环境（构建链），不归 AI 动。"),
+    ("core", "这是程序本体，改了要重新打包才生效，而且只能由人来做。"),
+    ("moss.exe", "`moss.exe` 就是程序本身，改写它等于把程序砸了。"),
+    ("moss.py", "这是程序的源码入口，改了要重新打包才生效（只能由人来做）。"),
+    ("venv", "`venv/**` 是打包环境，不归 AI 动。"),
     (".git", "`.git/**` 是版本库，改它等于伪造历史。"),
 )
 
@@ -470,7 +472,7 @@ def protected(path):
     for f in ("moss.exe", "moss.py"):
         try:
             if os.path.realpath(str(p)) == os.path.realpath(str(home / f)):
-                return "[拒绝] 受保护路径（硬锁）：改它要重新打包才生效（这件事由人来做）。"
+                return "[拒绝] 受保护路径（硬锁）：这是程序本体，改它不生效（要重新打包，只能由人来做）。"
         except OSError:
             pass
     if _inside(p, E.user_data() / "backups"):

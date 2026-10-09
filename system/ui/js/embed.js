@@ -79,7 +79,7 @@ async function embedOpen(p, opts){
 async function embedStop(pid, quiet){
   if (!pid) return;
   const r = await pywebview.api.embed_stop(pid);
-  if (!quiet) toast(r && r.ok ? "已停掉这个包的内嵌进程" : ((r && r.msg) || "没在跑"), !(r && r.ok));
+  if (!quiet) toast(r && r.ok ? "已停掉这个包的界面" : ((r && r.msg) || "没在跑"), !(r && r.ok));
   const rec = EMB.alive[pid];
   if (rec && rec.frame) rec.frame.remove();     // 这一帧也撤掉（进程都停了，留着没意义）
   delete EMB.alive[pid];
@@ -121,7 +121,7 @@ window.__mossEmbedGone = function(pid, code){
     delete EMB.alive[pid];
     delete EMB.floated[pid];
     if (!Object.keys(EMB.alive).length) embedTick(false);
-    toast("这个包的内嵌进程结束了（退出码 " + code + "）", code !== 0);
+    toast("这个包的界面已经结束（退出码 " + code + "）", code !== 0);
     paintEmbedTab(); paintActions(selObj()); EMBR.rev++;
   }
 };
@@ -149,7 +149,9 @@ window.__mossFloatClosed = function(pid){
   if (!Object.keys(EMB.alive).length) embedTick(false);
   embedShow(Object.keys(EMB.alive)[0] || null);
   paintEmbedTab(); paintActions(selObj()); EMBR.rev++;
-  toast("这个包已经停了（关掉窗口 ＝ 结束）");
+  // `V-367`：括号里那句"关掉窗口 ＝ 结束"是**规则说明**（浮动窗口顶栏已经写着"点关闭就结束
+  //   这个包"），提示里只留事实
+  toast("这个包已经停了");
 };
 /* 帧里发过来的（垫片的请求 + ready）：靠 `ev.source` 认出是哪一帧 */
 window.addEventListener("message", async (ev) => {
@@ -225,7 +227,7 @@ const MossEmbed = {
       if (EMB.floated[p.id]) return "已经弹到窗口里去了（那边最小化就回来）";
       if (!embedRunning(p.id)) return "还没跑 —— 点右上角「运行」就起";
       const n = this.aliveN;
-      return "后端 " + PSYM + p.id + " 在内嵌运行 · 切走也不会停" +
+      return "这个包的界面正在这一页里运行 · 切走也不会停" +
              (n > 1 ? ("（另外还有 " + (n - 1) + " 个也在跑）") : "");
     },
   },
@@ -265,12 +267,13 @@ const MossEmbed = {
       await embedOpen(p, {keepTab: true});
       if (r && r.msg) toast(r.msg);
     },
-    /* 浮动窗口里的「停止」＝ 结束（和那颗 X 一个意思，`V-194`） */
+    /* 浮动窗口里的「停止」＝ 结束（和那颗 X 一个意思，`V-194`）。
+       ★ `V-367`：**这里不再 toast** —— 宿主紧接着会推 `__mossFloatClosed`，那一条才是
+         用户该看到的收尾（以前两条一起弹，说的都是"它停了"）。 */
     async floatStop(){
       const p = this.p;
       if (!p) return;
-      const r = await pywebview.api.ui_float_stop(p.id);
-      if (r && r.msg) toast(r.msg);
+      await pywebview.api.ui_float_stop(p.id);
     },
   },
   template: `
@@ -467,8 +470,11 @@ function finishRun(id, code, text){
   const stopped = !!run.stopped;
   maybeAutoSwitch(id, run, text);        // 跑得太快、第一轮就结束时也要按规则切一次
   // ★ 状态栏（`V-61`）留一句**说事实**的收尾：非 0 退出码不一律当故障（很多包这样是正常的）
-  setStatus((stopped ? "已停止 " : "跑完了 ") + run.cmd + " · 退出码 " + code,
-            code !== 0 && !stopped);
+  // ★ `V-367`：**用户按的停止**已经在点下去那一刻报过了（`stopRun`/`stopFromList` 的 toast，
+  //   toast 顺手就把状态栏写了）—— 这里再写一遍就是"一个动作两条不一样的话"（你报的那类）。
+  //   所以 stopped 时**不动状态栏**，退出码照旧进「命令行」那份输出。
+  if (!stopped)
+    setStatus("跑完了 " + run.cmd + " · 退出码 " + code, code !== 0);
   setConsole(id, "$ " + run.cmd + "\n\n" + (text || "(这个包没有输出)") + "\n" +
              runTail(code, text, stopped),
              // ★ 只说事实（退出码是多少），不判"故障" —— 非 0 在很多包里是正常现象

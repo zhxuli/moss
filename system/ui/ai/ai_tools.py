@@ -572,8 +572,8 @@ class Tools:
         #   要清就用 `snap_clean`（它只删 `by == "ai"` 的，结构上碰不到用户存的）。
         low = line.lower()
         if "--snap" in low and any(w in low for w in (" rm", " del", " delete", " drop", " gc")):
-            return ("[拒绝] 删快照不许用 run_moss —— 用 `snap_clean` 工具（它**只**删你自己存的，"
-                    "用户自己存的那些一律跳过）。这是设计好的闸，不是提示。")
+            return ("[拒绝] 删快照不许用 run_moss —— 用 `snap_clean` 工具"
+                    "（它只删 AI 自己存的那几条，用户存的一条都不碰）")
         # ★ `V-281` 的硬闸：**`:skill` 里那几个"要人点头"的动作不给走**。
         #   技能那一层的整个设计就是"人点一次允许"。要是它能 `run_moss(":skill allow --x")`，
         #   就等于自己给自己发通行证 —— 那道闸白设。`new` / `list` 这类不含"决定"的照旧随便用。
@@ -608,9 +608,9 @@ class Tools:
         if proc is None:
             # ★ 报错里必须带上**到底跑了什么命令、cwd 在不在**（`V-235` 就是靠这个查出来的：
             #   命令里那个方括号、和"exe 明明在却报找不到"这两条线索缺一不可）
-            return ("[跑不起来] %s\n  命令 = %r\n  cwd = %r\n  用的宿主 = %r\n"
-                    "  （提醒：`MOSS_HOST_CMD` 是 JSON 数组，不是命令行字符串；"
-                    "自己写探针时别用 shlex 拆它）"
+            # `V-367`：末尾那句"提醒：`MOSS_HOST_CMD` 是 JSON 数组…"是**写给写探针的人**的，
+            #   可它会跟着这段一起显示在步骤卡的「输出」里 ⇒ 删掉。
+            return ("[跑不起来] %s\n  命令 = %r\n  cwd = %r\n  用的宿主 = %r"
                     % (err, cmd, cwd, os.environ.get("MOSS_HOST_CMD") or "（没设，按安装根推）"))
         self.procs[int(proc.pid)] = proc
         # 读线程：把输出攒起来（主线程要一边轮询"要不要停"，不能自己去阻塞读管道）
