@@ -2525,7 +2525,7 @@ class Api:
             out["steps"] = len(st.get("steps") or [])
         return out
 
-    def ai_start(self, task="", workdir="", max_tokens=None, continue_id="", model=""):
+    def ai_start(self, task="", workdir="", max_tokens=None, continue_id="", model="", attachments=None):
         """开始一次任务（后台线程跑 loop，界面靠 `ai_poll` 拿步骤流）。
 
         `workdir`：这次在哪儿干活 —— 当前选中的包目录（`user_data/pkgs/<包>` 或
@@ -2543,8 +2543,43 @@ class Api:
         也一样），硬锁那几处照旧写不了。
         """
         task = str(task or "").strip()
+        # ★ 附件：界面只送轻量元数据；图片/文本的正文在这里截断保护，路径附件交给 loop 现读。
+        raw_atts = attachments if isinstance(attachments, list) else []
+        atts = []
+        for a in raw_atts[:20]:
+            if not isinstance(a, dict):
+                continue
+            kind = str(a.get("kind") or "").strip()
+            name = str(a.get("name") or "").strip()[:120] or "附件"
+            one = {"kind": kind, "name": name,
+                   "mime": str(a.get("mime") or "").strip()[:100]}
+            try:
+                one["size"] = int(a.get("size") or 0)
+            except (TypeError, ValueError):
+                one["size"] = 0
+            if kind == "path":
+                pth = str(a.get("path") or "").strip()
+                if not pth:
+                    continue
+                one["path"] = pth
+            elif kind == "text":
+                text = str(a.get("text") or "")
+                if not text:
+                    continue
+                one["text"] = text[:120000]
+                one["size"] = len(text)
+            elif kind == "data":
+                data_url = str(a.get("data_url") or "")
+                if not data_url or len(data_url) > 20 * 1024 * 1024:
+                    continue
+                one["data_url"] = data_url
+            else:
+                continue
+            atts.append(one)
+        if not task and atts:
+            task = "请分析我发来的附件。"
         if not task:
-            return {"ok": False, "msg": "先写一句你要它干什么。"}
+            return {"ok": False, "msg": "先写一句你要它干什么，或者加个附件。"}
         with AI_LOCK:
             if AI.get("thread") and AI["thread"].is_alive():
                 return {"ok": False, "msg": "已经在跑了 —— 等它完，或者按「停止」。"}
@@ -2628,6 +2663,8 @@ class Api:
             started = time.time()
             base = {
                 "id": run_id, "task": task, "workdir": wd,
+                "attachments": [{"name": a.get("name"), "kind": a.get("kind"),
+                                 "size": a.get("size") or 0} for a in atts],
                 "model": str(getattr(client, "model", "") or ""),
                 "max_tokens": cap, "started": started,
                 "started_text": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)),
@@ -2748,7 +2785,7 @@ class Api:
                 try:
                     if cont_note:
                         say(cont_note)
-                    got = loop.run(task, history=hist, from_id=cont_from)
+                    got = loop.run(task, history=hist, from_id=cont_from, attachments=atts)
                     # ★ `V-259`：这两条**跟着结果回界面**（界面把它显示在「用户指令」卡旁边）——
                     #   用户一眼就能看出"这次到底接着没有"，不用猜、也不用等出问题再查盘。
                     got["continue_note"] = cont_note
@@ -2875,6 +2912,7 @@ class Api:
                     # `V-316`：现在是不是放手（界面不再有"模式"这一格，但轮询里带着它，
                     # 让页面能显示"它现在能不能放手写"）
                     "wildcard": self._ai_wildcard(),
+                    "skills_rev": self._skills_rev(),
                     "seconds": round(time.time() - float(AI.get("t0") or time.time()), 1)}
 
     def ai_runs(self, limit=30, workdir=""):
@@ -3455,6 +3493,13 @@ class Api:
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e),
                     "skills": [], "from_pkgs": [], "broken": [], "dirs": {}}
+
+    def _skills_rev(self):
+        """技能状态小指纹（只读盘、轻量）—— `ai_poll` 带着它，界面状态一变就重读。"""
+        try:
+            return self._skill_lib().rev()
+        except Exception:                                                # noqa: BLE001
+            return ""
 
     def ai_skill_allow(self, sid="", yes=True):
         """允许 / 撤销一只技能（从样例抄来的也算你的，能撤销）。"""
@@ -4863,6 +4908,47 @@ class Api:
         return {"ok": r.get("code") == 0, "code": r.get("code"),
                 "msg": (r.get("out") or "").strip() or "（宿主没说什么）"}
 
+    def ai_models(self, name="", fields=None):
+        """**获取可用模型**：宿主 GET `{base_url}/models`，把清单回给设置面板。
+
+        ★ 和 `ai_test` 同一条路：key / URL 不拿到界面自己发，只做一次临时覆盖；
+          这样「还没保存就先点一下获取模型」也能用，而且明文 key 不出宿主。
+        """
+        if not HOST:
+            return {"ok": False, "msg": "没拿到宿主命令 —— 请从 moss 主程序打开界面"}
+        argv = HOST + ["--ai-models"] + ([str(name).strip()] if str(name or "").strip() else [])
+        for k in sorted(fields or {}):
+            v = (fields or {})[k]
+            if v not in (None, ""):
+                argv.append("%s=%s" % (k, _ai_arg(v)))
+        r = _run_capture_split(argv)
+        data = _json_from_host(r.get("out"))
+        if not isinstance(data, dict):
+            tail = (((r.get("err") or "").strip().splitlines() or [""])[-1]
+                    or ((r.get("out") or "").strip().splitlines() or [""])[-1])
+            return {"ok": False, "models": [],
+                    "msg": ("获取模型失败：退出码 %s%s"
+                            % (r.get("code"), (" —— " + tail) if tail else ""))}
+        return data
+
+    def ai_balance(self, name="", fields=None):
+        """**查询余额**：宿主按已知服务商接口去查，回一句人话 + 原始详情。"""
+        if not HOST:
+            return {"ok": False, "msg": "没拿到宿主命令 —— 请从 moss 主程序打开界面"}
+        argv = HOST + ["--ai-balance"] + ([str(name).strip()] if str(name or "").strip() else [])
+        for k in sorted(fields or {}):
+            v = (fields or {})[k]
+            if v not in (None, ""):
+                argv.append("%s=%s" % (k, _ai_arg(v)))
+        r = _run_capture_split(argv)
+        data = _json_from_host(r.get("out"))
+        if not isinstance(data, dict):
+            tail = (((r.get("err") or "").strip().splitlines() or [""])[-1]
+                    or ((r.get("out") or "").strip().splitlines() or [""])[-1])
+            return {"ok": False, "msg": ("查余额失败：退出码 %s%s"
+                                         % (r.get("code"), (" —— " + tail) if tail else ""))}
+        return data
+
     # ------------------------------------------------------------ 更名跟随（`V-355`）
     #   界面每 2.5 秒问一次："包表变了吗 / 谁改名了"。**纯读盘、不起进程** ——
     #   起一次 `moss.exe` 要 1 秒，这种轮询绝不能走那条路。
@@ -5427,7 +5513,8 @@ def _on_files_dropped(event):
     for f in files:
         try:
             raw.append({"name": f.get("name"), "hasPath": bool(f.get("pywebviewFullPath")),
-                        "path": f.get("pywebviewFullPath")})
+                        "path": f.get("pywebviewFullPath"),
+                        "type": f.get("type") or "", "size": f.get("size") or 0})
         except Exception:                                            # noqa: BLE001
             pass
     drop_log("host drop: %d 个 —— %s" % (len(files), json.dumps(raw, ensure_ascii=False)))
@@ -5443,9 +5530,18 @@ def _on_files_dropped(event):
             is_dir = os.path.isdir(p)
         except OSError:
             is_dir = False
-        items.append({"path": str(p), "isDir": bool(is_dir),
-                      "dir": str(p) if is_dir else os.path.dirname(str(p)),
-                      "name": os.path.basename(str(p))})
+        try:
+            _size = int(f.get("size") or 0)
+        except (TypeError, ValueError):
+            _size = 0
+        _name = os.path.basename(str(p))
+        _one = {"path": str(p), "isDir": bool(is_dir),
+                "dir": str(p) if is_dir else os.path.dirname(str(p)),
+                "name": _name}
+        if not is_dir:
+            _one["mime"] = str(f.get("type") or "")
+            _one["size"] = _size
+        items.append(_one)
     if not items:
         # ★ 这一段就是 `V-40` 的关键证据：WebView2 收到了 drop，但一个路径都没给
         drop_log("→ 一个真实路径都没拿到（WebView2 没给；文件夹尤其可能这样）")

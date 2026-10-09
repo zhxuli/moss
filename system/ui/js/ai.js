@@ -28,6 +28,7 @@ const AIR = Vue.reactive({
   maxMillions: 100,            // 界面上那一格是**百万为单位**（100 = 1 亿）
   model: "",                   // `V-252`：顶栏那个模型下拉选中的（空 = 用配置里第一个）
   diskNoted: "",               // `V-249`：已经通知过"盘上变了"的那一次（免得每轮轮询都刷一遍）
+  skillsRev: "",               // 技能状态指纹：一变就重读「技能」那一行（修 AI 改技能后界面还写已允许）
   snapNoted: "",               // `V-250`：已经通知过"快照存好了"的那一条（同上）
   /* ★ `V-251`：**会话**那三件 —— 你原话「怎么还是找不到历史会话记录，一旦重新打开 moss
      只能重新再来 …… 没法继续上一次的聊天继续沟通」。
@@ -94,7 +95,15 @@ const AIR = Vue.reactive({
        而 `toast()` 是**两处一起报**（浮出来的深色胶囊 + 底部状态栏留一行）—— 一个错看两遍。
        现在这一格的错**贴在它自己下面**（行内一句红的），一次都不喊 `toast()`。 */
   newPathErr: "",
+  /* ★ 附件：粘贴图片 / 拖入文件 / 大段文本转成附件。都是本机内存里的轻量元数据，
+     图片用 data_url、文本直接带原文，路径附件交给宿主去读。 */
+  attachments: [], pasteAsFile: true, inputDropHot: false, inputDropAt: 0,
 });
+
+/* 大段文本到多少字就转附件；图片/文件多大就别贴（避免把请求撑爆）。 */
+const ATTACH_TEXT_MIN = 1000;
+const ATTACH_FILE_MAX = 12 * 1024 * 1024;
+
 
 function aiPackage(){ return cur && cur.id ? cur : null; }
 
@@ -119,6 +128,37 @@ function cntok(n){
   if (a >= 100000000) return neg + cut(a / 100000000, 2) + "亿";
   if (a >= 10000) return neg + cut(a / 10000, 1) + "万";
   return neg + String(a);
+}
+
+/* 附件小工具：拖入 / 粘贴 / 大段文本共用同一份 AIR.attachments。 */
+function aiAddAttachment(a){
+  if (!a || !a.name) return null;
+  const mime = String(a.mime || "");
+  const key = a.kind === "path" ? ("p:" + String(a.path || ""))
+            : (a.kind === "text" ? ("t:" + String(a.name || "") + ":" + String(a.text || "").length)
+                                 : ("d:" + String(a.name || "") + ":" + mime + ":" +
+                                    String(a.data_url || "").slice(0, 80)));
+  if (AIR.attachments.some(x => x.key === key)) return null;
+  a.key = key;
+  a.mime = mime;
+  AIR.attachments.push(a);
+  AIR.rev++;
+  return a;
+}
+function aiAttachPaths(items){
+  let n = 0;
+  (items || []).forEach(it => {
+    if (!it || !it.path || it.isDir === true) return;
+    const name = it.name || String(it.path).replace(/^.*[\\/]/, "");
+    if (aiAddAttachment({kind: "path", name: name, path: String(it.path),
+                         mime: it.mime || "", size: Number(it.size || 0)})) n++;
+  });
+  return n;
+}
+function aiPasteName(text){
+  const first = String(text || "").trim().split(/\r?\n/)[0].slice(0, 28)
+    .replace(/[\\/:*?"<>|]/g, "_");
+  return (first || "粘贴文本") + ".txt";
 }
 
 /* 给探针/预览工具看的把手（`V-233`）：这一页的状态全在 `AIR` 里，
@@ -639,6 +679,13 @@ async function aiPollOnce(){
       aiLoadSkills();
       aiRefreshInfo(true);      // `V-319`：这一跑里它可能问过权限，跑完把清单重读一次
     }
+    // ★ 技能状态一变（AI 造了/改了、用户点了允许/撤销）立刻重读技能那一行 ——
+    //   不然它改完技能，界面上还写着「已允许」（用户报的这个 bug）。
+    const _skRev = String(got.skills_rev || "");
+    if (_skRev && _skRev !== AIR.skillsRev){
+      AIR.skillsRev = _skRev;
+      aiLoadSkills();
+    }
     AIR.steps = got.steps || [];
     // Poll payload is authoritative for the live turn: refresh the matching turn snapshot
     // so answered ask cards stop showing controls and remain readable in history.
@@ -721,8 +768,10 @@ async function aiPollOnce(){
 
 async function aiStart(){
   if (AIR.busy) return;
-  const task = (AIR.task || "").trim();
-  if (!task) { toast("先写一句你要它干什么。", true); return; }
+  const atts = (AIR.attachments || []).slice();
+  const typed = (AIR.task || "").trim();
+  const task = typed || (atts.length ? "请分析我发来的附件。" : "");
+  if (!task) { toast("先写一句你要它干什么，或者加个附件。", true); return; }
   const dir = aiWhereDir();
   if (!dir) { toast("先在左边选一个包（或者选「新建包」）。", true); return; }
   AIR.busy = true;
@@ -748,11 +797,11 @@ async function aiStart(){
   // ★ `V-258`：**新起一轮** —— 前面几轮原样留着（这样接着聊时还看得到上文）；
   //   输入框发出去就清空（照稿子的 `handleInput.value = ""`）。
   AIR.turns.push({key: "t" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1), task: task,
+                  attachments: atts.map(a => ({name: a.name, kind: a.kind, size: a.size})),
                   at: (cont ? "接着聊" : "新会话") + " · " +
                       new Date().toTimeString().slice(0, 8),
                   steps: [], result: null, folded: false, note: ""});
   AIR.cur = AIR.turns.length - 1;
-  AIR.task = "";
   AIR.diskNoted = "";            // `V-249`：新任务 = 允许再通知一次"盘上变了"
   AIR.snapNoted = "";            // `V-250`：新任务 = 允许再通知一次"快照存好了"
   /* ★ `V-259`：**接着哪条** —— 这是"一个会话一直聊"的关键，之前只有 `contId` 一个来源，
@@ -765,9 +814,11 @@ async function aiStart(){
   try {
     // ★ `V-237` 把 14 提到 24（读一个 395 行的文件就花了 11 步）；`V-238` 再按你的定夺改成
     //   **硬顶 200 + 每 50 步提醒一次**（都在上面那两格里，随手可改）。
-    const got = await window.pywebview.api.ai_start(task, dir, AIR.maxTokens, cont, AIR.model || "");
+    const got = await window.pywebview.api.ai_start(task, dir, AIR.maxTokens, cont, AIR.model || "", atts);
     if (!got || !got.ok) { toast((got && got.msg) || "起不来。", true); AIR.busy = false; return; }
     AIR.running = true;
+    AIR.task = "";
+    AIR.attachments = [];
     toast((cont ? "接着上次那条聊" : "开了一条新会话") +
           "（模型 " + (got.model || "?") + "）—— 步骤会实时出现在下面。");
   } catch (e) {
@@ -1571,7 +1622,9 @@ const MossAi = {
     /* ★ `V-253`：底部那颗「发送指令」—— 稿子里的行为是"空着点不给发 + 抖一下" */
     start(){
       const task = String(this.A.task || "").trim();
-      if (!task){ this.doShake(); toast("先写一句你要它干什么。", true); return; }
+      if (!task && !(this.A.attachments || []).length){
+        this.doShake(); toast("先写一句你要它干什么，或者加个附件。", true); return;
+      }
       if (this.A.busy) return;
       aiStart();
     },
@@ -1716,6 +1769,94 @@ const MossAi = {
         this.start();
       }
     },
+    attachmentIcon(a){
+      const mime = String((a && a.mime) || "").toLowerCase();
+      const name = String((a && a.name) || "").toLowerCase();
+      if (mime.indexOf("image/") === 0 ||
+          /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/.test(name)) return "file-image";
+      return "file-text";
+    },
+    attachmentSize(a){
+      const n = Number((a && a.size) || 0);
+      if (!n) return "";
+      if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+      if (n >= 1024) return (n / 1024).toFixed(1) + " KB";
+      return n + " B";
+    },
+    removeAttachment(i){
+      if (i < 0 || i >= AIR.attachments.length) return;
+      AIR.attachments.splice(i, 1);
+      AIR.rev++;
+    },
+    pasteAsText(a){
+      if (!a || !a.text) return;
+      const body = String(a.text);
+      AIR.task = (AIR.task ? (AIR.task.replace(/\s*$/, "") + "\n\n") : "") + body;
+      const i = AIR.attachments.indexOf(a);
+      if (i >= 0) AIR.attachments.splice(i, 1);
+      AIR.rev++;
+      this.$nextTick(() => this.autoGrow());
+    },
+    togglePasteAsFile(){
+      AIR.pasteAsFile = !AIR.pasteAsFile;
+      AIR.rev++;
+      toast(AIR.pasteAsFile ? "大段文本会收成附件" : "大段文本会直接粘进输入框");
+    },
+    onPaste(e){
+      if (AIR.running) return;
+      const dt = e && e.clipboardData;
+      if (!dt) return;
+      const files = [];
+      const items = dt.items || [];
+      for (let i = 0; i < items.length; i++){
+        const it = items[i] || {};
+        if (it.kind === "file"){
+          try { const f = it.getAsFile(); if (f) files.push(f); } catch(err){}
+        }
+      }
+      if (files.length){
+        e.preventDefault();
+        files.forEach(f => this.readClipboardFile(f));
+        return;
+      }
+      const text = dt.getData ? String(dt.getData("text/plain") || "") : "";
+      if (AIR.pasteAsFile && text.length >= ATTACH_TEXT_MIN){
+        e.preventDefault();
+        aiAddAttachment({kind: "text", source: "paste", name: aiPasteName(text),
+                         text: text, size: text.length});
+        toast("已把 " + text.length + " 字的大段文本收成附件");
+      }
+    },
+    readClipboardFile(f){
+      if (!f) return;
+      if (f.size > ATTACH_FILE_MAX){
+        toast("附件太大（超过 " + Math.round(ATTACH_FILE_MAX / 1048576) + " MB），先别贴进来了", true);
+        return;
+      }
+      const r = new FileReader();
+      r.onload = () => {
+        aiAddAttachment({kind: "data", name: f.name || ("粘贴图片." + ((f.type || "image/png").split("/")[1] || "png")),
+                         mime: f.type || "image/png", data_url: String(r.result || ""), size: f.size});
+        toast("已添加附件：" + (f.name || "图片"));
+      };
+      r.onerror = () => toast("这个附件读不出来", true);
+      r.readAsDataURL(f);
+    },
+    inputDragEnter(){
+      if (!AIR.inputDropHot){ AIR.inputDropHot = true; AIR.rev++; }
+    },
+    inputDragOver(){ this.inputDragEnter(); },
+    inputDragLeave(e){
+      const cur = e && e.currentTarget;
+      const to = e && e.relatedTarget;
+      if (cur && to && cur.contains(to)) return;
+      if (AIR.inputDropHot){ AIR.inputDropHot = false; AIR.rev++; }
+    },
+    inputDrop(){
+      // 不在事件里清输入框高亮：真实路径要等宿主回调 `__mossAiDrop` 才到。
+      // 另记一个时间戳，兜底 `dragleave` 比 `drop` 先到（那样 inputDropHot 会被清掉）。
+      AIR.inputDropAt = Date.now();
+    },
     /* `V-242`：把"现在在干什么"说清楚 —— 等模型回话可能要十几秒，不说清楚就像卡死了。 */
     phaseText(){
       this.A.rev;
@@ -1778,6 +1919,24 @@ const MossAi = {
     window.__mossAiDrop = (items) => {
       if (typeof tab !== "undefined" && tab !== "ai") return false;
       const list = items || [];
+      // ★ 拖到输入框上：文件当附件；文件夹不进输入框（提示一句，让它去空白处放行）。
+      const _inputHit = AIR.inputDropHot || (Date.now() - Number(AIR.inputDropAt || 0) < 2000);
+      if (_inputHit){
+        const files = list.filter(x => x && x.path && x.isDir !== true);
+        if (files.length){
+          const n = aiAttachPaths(files);
+          if (n) toast("已添加 " + n + " 个附件");
+          AIR.inputDropHot = false; AIR.inputDropAt = 0;
+          AIR.rev++;
+          return true;
+        }
+        if (list.some(x => x && x.path)){
+          toast("文件夹不能作为附件；想放行目录，请拖到页面空白处。", true);
+          AIR.inputDropHot = false; AIR.inputDropAt = 0;
+          AIR.rev++;
+          return true;
+        }
+      }
       const it = list.filter(x => x && x.path && x.isDir !== false)[0] ||
                  list.filter(x => x && x.path)[0];
       if (!it) return false;
@@ -1918,6 +2077,9 @@ const MossAi = {
               </div>
               <div class="ai-bub-t" @click="toggleTurn(ti)"
                    :title="t.folded ? '点一下展开这一轮' : '点一下折叠这一轮'">{{ t.task }}</div>
+              <div class="ai-bub-atts" v-if="(t.attachments || []).length">
+                <span v-for="a in t.attachments" :key="a.name">📎 {{ a.name }}</span>
+              </div>
             </div>
           </div>
 
@@ -2056,11 +2218,28 @@ const MossAi = {
              · 目录权限（粘路径 / 选目录 / 读·写开关 / 删）
            中间日志流因此拿回整幅宽度，整页只剩「聊天 + 一条输入工具栏」两层。 -->
       <footer class="bottom-area ai-foot ai-split">
-        <div class="chat-input-container ai-box ai-right" :class="{focused: focused, 'error-shake': shake}">
+        <div class="chat-input-container ai-box ai-right"
+             :class="{focused: focused, 'error-shake': shake, 'drop-hot': A.inputDropHot}"
+             @dragover.prevent="inputDragOver"
+             @dragenter.prevent="inputDragEnter"
+             @dragleave="inputDragLeave($event)"
+             @drop="inputDrop">
+          <div class="ai-atts" v-if="A.attachments.length">
+            <div class="ai-at" v-for="(a, i) in A.attachments" :key="a.key"
+                 :class="{img: attachmentIcon(a) === 'file-image'}">
+              <span class="ai-at-ic" v-html='ico(attachmentIcon(a), "i")'></span>
+              <span class="ai-at-n" :title="a.path || a.name">{{ a.name }}</span>
+              <span class="ai-at-s" v-if="a.size">{{ attachmentSize(a) }}</span>
+              <button class="ai-at-act" type="button" v-if="a.kind === 'text' && a.source === 'paste'"
+                      @click="pasteAsText(a)" title="把这段原文放回输入框，按普通粘贴发出去">粘贴原文至输入框</button>
+              <button class="ai-at-x" type="button" @click="removeAttachment(i)" title="移除附件"
+                      v-html='ico("x", "i")'></button>
+            </div>
+          </div>
           <div class="input-area">
             <textarea class="prompt-textarea ai-task" ref="ta" v-model="A.task" spellcheck="false"
               :disabled="A.running" @input="autoGrow" @focus="focused = true" @blur="focused = false"
-              @keydown="onKey"
+              @keydown="onKey" @paste="onPaste"
               placeholder="在此输入指令... (按 Enter 发送，Shift+Enter 换行)"></textarea>
           </div>
 
@@ -2081,6 +2260,10 @@ const MossAi = {
               <button class="trigger-btn ai-mini ai-messages-icon" @click="openMessages()"
                       title="查看这条会话的完整提示词历史"
                       v-html='ico("file-text", "i")'></button>
+              <button class="trigger-btn ai-mini ai-paste-file" :class="{active: A.pasteAsFile}"
+                      @click="togglePasteAsFile()"
+                      :title="A.pasteAsFile ? '大段文本粘贴：收成附件（点击改成直接粘进输入框）' : '大段文本粘贴：直接粘进输入框（点击改成收成附件）'"
+                      v-html='ico("clipboard-paste", "i")'></button>
 
               <!-- 历史会话（点开才出） -->
               <div class="popover-wrapper ai-hist-wrap">

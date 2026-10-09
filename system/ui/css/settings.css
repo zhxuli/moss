@@ -330,6 +330,15 @@
 .ai-keywrap.nokey .ai-eye{opacity:0;pointer-events:none}
 .ai-eye:hover{color:#52525b;background:#f4f4f5}
 .ai-eye svg{width:16px;height:16px}
+/* ★ 快捷操作：接口地址 / key 填了之后才出现。两颗图标按钮，点了不用先保存。 */
+.ai-query-btns{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ai-query-btn{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border-radius:8px;
+  border:1px solid #e4e4e7;background:#fafafa;color:#52525b;cursor:pointer;font:inherit;
+  font-size:13px;font-weight:500;transition:background .13s,color .13s,border-color .13s,transform .1s}
+.ai-query-btn:hover:not(:disabled){background:#f4f4f5;border-color:#d4d4d8;color:#18181b}
+.ai-query-btn:active:not(:disabled){transform:scale(.98)}
+.ai-query-btn:disabled{opacity:.5;cursor:default}
+.ai-query-btn svg.i{width:15px;height:15px;flex:none}
 input[type="password"]::-ms-reveal,
 input[type="password"]::-ms-clear{display:none}
 

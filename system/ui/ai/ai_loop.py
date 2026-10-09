@@ -214,6 +214,86 @@ def env_note(workdir=None, perm="", tmp="", allow=()):
     return out
 
 
+#: 附件正文上限：太长就截断，避免一个拖入文件把整次请求撑爆。
+ATTACH_TEXT_CAP = 120000
+ATTACH_IMAGE_CAP = 12 * 1024 * 1024
+
+
+def _read_attachment(a):
+    """把一条附件变成 `(kind, name, payload, mime)`。
+
+    `kind`：`image` = `payload` 是 data: URL；`text` = 正文；`note` = 只给模型一句说明。
+    ★ 路径附件在**工作线程里现读**，不放到界面进程；这样大文件读取不卡界面。
+    """
+    import base64
+    import mimetypes
+    kind = str((a or {}).get("kind") or "")
+    name = str((a or {}).get("name") or "附件")
+    mime = str((a or {}).get("mime") or "").lower()
+    if kind == "text":
+        text = str((a or {}).get("text") or "")
+        if len(text) > ATTACH_TEXT_CAP:
+            text = text[:ATTACH_TEXT_CAP] + "\n……（附件太长，截到 %d 字）" % ATTACH_TEXT_CAP
+        return "text", name, text, mime or "text/plain"
+    if kind == "data":
+        data_url = str((a or {}).get("data_url") or "")
+        if mime.startswith("image/") or data_url.startswith("data:image/"):
+            return "image", name, data_url, mime or "image/png"
+        return "note", name, "（附件 %s 是二进制数据，暂时只支持图片内嵌。）" % name, mime
+    if kind == "path":
+        p = Path(str((a or {}).get("path") or ""))
+        try:
+            if not p.is_file():
+                return "note", name, "（附件文件不存在：%s）" % p, mime
+            guess = (mimetypes.guess_type(str(p))[0] or mime or "").lower()
+            size = p.stat().st_size
+            if guess.startswith("image/"):
+                if size > ATTACH_IMAGE_CAP:
+                    return "note", name, "（图片太大，没有内嵌：%s）" % p, guess
+                b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+                return "image", name, "data:%s;base64,%s" % (guess, b64), guess
+            # 非图片：只读开头一段来判断/截断，别把几百 MB 的二进制整个读进内存。
+            blob_cap = ATTACH_TEXT_CAP * 4 + 8192
+            with p.open("rb") as fh:
+                raw = fh.read(blob_cap + 1)
+            truncated = len(raw) > blob_cap
+            if truncated:
+                raw = raw[:blob_cap]
+            looks_text = (guess.startswith("text/") or guess in
+                          ("application/json", "application/xml", "application/javascript")
+                          or b"\x00" not in raw[:4096])
+            if not looks_text:
+                return "note", name, "（二进制附件 %s，没有内嵌；需要时用工具读它：%s）" % (name, p), guess
+            text = raw.decode("utf-8", "replace")
+            if truncated or len(text) > ATTACH_TEXT_CAP:
+                text = text[:ATTACH_TEXT_CAP] + "\n……（附件太长，截到 %d 字）" % ATTACH_TEXT_CAP
+            return "text", name, text, guess or "text/plain"
+        except OSError as e:
+            return "note", name, "（附件读不出来：%s）" % e, mime
+    return "note", name, "（不认识的附件类型）", mime
+
+
+def build_user_content(task, env_text, attachments=None):
+    """任务 + 环境说明 + 附件 → OpenAI 兼容的 content（纯文本或图文数组）。"""
+    text_bits = [str(task or ""), str(env_text or "")]
+    images = []
+    for a in (attachments or []):
+        if not isinstance(a, dict):
+            continue
+        kind, name, payload, _mime = _read_attachment(a)
+        if kind == "image":
+            images.append({"type": "image_url", "image_url": {"url": payload}})
+            text_bits.append("【附件图片】%s" % name)
+        elif kind == "text":
+            text_bits.append("【附件：%s】\n%s" % (name, payload))
+        else:
+            text_bits.append("【附件：%s】%s" % (name, payload))
+    text = "\n\n".join([x for x in text_bits if x])
+    if images:
+        return [{"type": "text", "text": text}] + images
+    return text
+
+
 class Loop:
     """一个任务一次 loop。`client` 只要有 `.chat(messages, tools)` 这个方法就行（探针会塞假模型进来）。"""
 
@@ -325,7 +405,7 @@ class Loop:
         budget = self.retain_tokens
         while keep_from > 2:
             m = messages[keep_from - 1]
-            cost = B.est_tokens(m.get("content")) + 12          # 12 ≈ 每条消息的固定开销
+            cost = B.est_tokens(self._text_of(m.get("content"))) + 12  # 12 ≈ 每条消息的固定开销
             if budget - cost < 0 and keep_from < len(messages):
                 break
             budget -= cost
@@ -333,7 +413,7 @@ class Loop:
         cut = min(len(messages) - self.keep_recent, keep_from)   # 至少留 keep_recent 条兜底
         targets = []
         for m in messages[2:max(2, cut)]:
-            role, content = m.get("role"), str(m.get("content") or "")
+            role, content = m.get("role"), self._text_of(m.get("content"))
             if content.startswith("[早先") or content.startswith("【工具结果】[早先"):
                 continue
             if role == "tool" or (role == "user" and content.startswith("【工具结果】")):
@@ -341,7 +421,7 @@ class Loop:
         if len(targets) < self.compact_min:
             return 0
         for m in targets:
-            content = str(m.get("content") or "")
+            content = self._text_of(m.get("content"))
             head = content.strip().splitlines()[0][:80] if content.strip() else ""
             if m.get("role") == "tool":
                 m["content"] = "[早先的结果已折叠] " + head
@@ -350,8 +430,28 @@ class Loop:
         return len(targets)
 
     @staticmethod
+    def _text_of(content):
+        """把 OpenAI 的 content 压成一段纯文本（纯字符串 / 图文数组都认）—— 估算和压缩共用。
+
+        ★ 图文消息 list 里如果直接 `str()` 会变成 Python repr，既估不准 token，压缩时还会
+          把整个图片 part 的 base64 当正文（又长又没意义）。所以统一从这里取文字。
+        """
+        if isinstance(content, list):
+            bits = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "text":
+                    bits.append(str(part.get("text") or ""))
+                elif part.get("type") == "image_url":
+                    bits.append("[图片]")
+            return " ".join(bits)
+        return str(content or "")
+
+    @staticmethod
     def _est(text):
         """估一段文本多少 token（`ai_budget.est_tokens` 的薄包装，import 失败也不炸）。"""
+        text = Loop._text_of(text)
         try:
             import ai_budget as B                                        # noqa: PLC0415
             return B.est_tokens(text)
@@ -537,18 +637,18 @@ class Loop:
             self.say("（收摊：杀掉了 %d 个还在跑的子进程）" % got["killed"])
         return got
 
-    def run(self, task, extra_fragments=(), snapshot=True, history=None, from_id=""):
+    def run(self, task, extra_fragments=(), snapshot=True, history=None, from_id="", attachments=None):
         """跑一次任务（**外面这层只管收摊** —— 真正的活在同名的 `_run` 里）。
 
         `V-307`：不管它是正常收工、被停止、还是自己炸了，出来的时候**子进程一个不留**。
         """
         try:
             return self._run(task, extra_fragments=extra_fragments, snapshot=snapshot,
-                             history=history, from_id=from_id)
+                             history=history, from_id=from_id, attachments=attachments)
         finally:
             self.cleanup("跑完了 / 停了 / 出错了")
 
-    def _run(self, task, extra_fragments=(), snapshot=True, history=None, from_id=""):
+    def _run(self, task, extra_fragments=(), snapshot=True, history=None, from_id="", attachments=None):
         """跑一次任务。
 
         `history`（`V-251`）：**接着上次那条会话聊** —— 上一次跑完时留下的对话
@@ -569,10 +669,10 @@ class Loop:
                       if (it.get("read") or it.get("write")) and it.get("path") != "*"]
         except Exception:                                                # noqa: BLE001
             _perm, _allow = "", []
+        _env_text = env_note(self.tools.workdir, perm=_perm, tmp=self.tmp_dir, allow=_allow)
+        user_content = build_user_content(task, _env_text, attachments)
         messages = [{"role": "system", "content": sys_text}] + old + \
-                   [{"role": "user", "content": "%s\n\n%s" % (
-                       task, env_note(self.tools.workdir, perm=_perm,
-                                      tmp=self.tmp_dir, allow=_allow))}]
+                   [{"role": "user", "content": user_content}]
         # ★ `V-251`：这个列表就是"这条会话" —— 全程只 append/就地改（底下没有重新赋值），
         #   所以收尾时（`_finish`）把它原样交出去，界面存盘、下次接着聊。
         self.messages = messages

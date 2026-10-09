@@ -1325,3 +1325,43 @@
 /* ★ V-345：浮层不许横着出窗（兜底）——
    真正的位置由 `fitPop()` 算（把浮层往左挪 + 必要时缩窄），这一条只是最后一道保险。 */
 .aiwrap .popover-panel{max-width:calc(100vw - 20px)}
+
+/* ============================================================================
+   附件 / 拖入 / 大段文本粘贴（本轮新增）
+   ========================================================================== */
+.aiwrap .chat-input-container.drop-hot{
+  border-color:var(--aib-primary);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--aib-primary) 16%, transparent);
+}
+.aiwrap .ai-atts{
+  display:flex;flex-wrap:wrap;gap:8px;padding:12px 14px 0;
+}
+.aiwrap .ai-at{
+  display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;
+  padding:6px 8px;border:1px solid var(--aib-border-color);border-radius:8px;
+  background:#F8FAFC;color:var(--aib-text-main);font-size:12px;
+}
+.aiwrap .ai-at.img{border-color:#BFDBFE;background:#EFF6FF}
+.aiwrap .ai-at-ic{display:flex;flex:none;color:var(--aib-text-muted)}
+.aiwrap .ai-at-ic svg.i{width:14px;height:14px}
+.aiwrap .ai-at-n{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aiwrap .ai-at-s{color:var(--aib-text-light);flex:none}
+.aiwrap .ai-at-act{
+  border:0;background:transparent;color:var(--aib-primary);cursor:pointer;
+  font:inherit;font-size:11px;padding:0 2px;white-space:nowrap;
+}
+.aiwrap .ai-at-act:hover{text-decoration:underline}
+.aiwrap .ai-at-x{
+  display:flex;align-items:center;justify-content:center;width:18px;height:18px;
+  padding:0;border:0;border-radius:5px;background:transparent;color:var(--aib-text-muted);
+  cursor:pointer;flex:none;
+}
+.aiwrap .ai-at-x:hover{background:#E2E8F0;color:var(--aib-text-main)}
+.aiwrap .ai-at-x svg.i{width:12px;height:12px}
+.aiwrap .ai-paste-file.active{color:var(--aib-primary);background:color-mix(in srgb, var(--aib-primary) 10%, transparent)}
+.aiwrap .ai-bub-atts{display:flex;flex-wrap:wrap;gap:6px;margin-top:5px}
+.aiwrap .ai-bub-atts span{
+  display:inline-flex;align-items:center;max-width:100%;padding:2px 7px;border-radius:6px;
+  background:rgba(37,99,235,.08);color:var(--aib-text-muted);font-size:11.5px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}

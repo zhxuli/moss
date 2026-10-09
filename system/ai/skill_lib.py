@@ -1067,6 +1067,36 @@ def doc(sid, roots_in=None):
             "has_agent_md": (d / "AGENT.md").is_file()}
 
 
+def rev():
+    """技能状态的小指纹（`ai_poll` 每 700ms 拿它判断要不要重读界面那一行）。
+
+    ★ 修用户报的：AI 先造技能、用户点允许，然后 AI 又改了它 —— 授权按指纹自动作废，
+      宿主盘上的状态已经是"待批准"，但 AI 页那行还写着"已允许"（界面没重读）。
+      指纹把每只技能的 `fp + allowed + why_allow` 都算进去，改一个字就变。
+    """
+    h = hashlib.sha1()
+    try:
+        for sid, it in sorted(list_skills().items()):
+            h.update(str(sid).encode("utf-8", "replace"))
+            h.update(b"\0")
+            h.update(str(it.get("fp") or "").encode("utf-8", "replace"))
+            h.update(b"\0")
+            h.update(b"1" if it.get("allowed") else b"0")
+            h.update(str(it.get("why_allow") or "").encode("utf-8", "replace"))
+            h.update(b"\0")
+    except Exception:                                                    # noqa: BLE001
+        pass
+    try:
+        ap = allow_path()
+        if ap.is_file():
+            st = ap.stat()
+            h.update(str(st.st_mtime_ns).encode("ascii", "replace"))
+            h.update(str(st.st_size).encode("ascii", "replace"))
+    except Exception:                                                    # noqa: BLE001
+        pass
+    return h.hexdigest()[:16]
+
+
 def summary():
     """`:skill` 那一页要的全部数据（图标墙 + 详情都在里面；宿主 AI 页那一行也用它）。
 

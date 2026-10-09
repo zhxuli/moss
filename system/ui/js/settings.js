@@ -172,6 +172,22 @@ const MossSettings = {
                 </div>
               </div>
 
+              <div class="ai-fgroup ai-query" data-ai="query" v-if="aiCanQuery()">
+                <label class="ai-flabel">快捷操作</label>
+                <div class="ai-query-btns">
+                  <button class="ai-query-btn" id="ai-fetch-models" type="button"
+                          :disabled="ai.busy" @click="aiFetchModels"
+                          title="从接口的 /models 获取可用模型，自动填入下面的列表（不用先保存）">
+                    <span v-html="icon('refresh-cw')"></span><span>获取可用模型</span>
+                  </button>
+                  <button class="ai-query-btn" id="ai-fetch-balance" type="button"
+                          :disabled="ai.busy" @click="aiFetchBalance"
+                          title="查询这个接口的账户余额（DeepSeek / Kimi / OpenRouter / 硅基流动等已知接口）">
+                    <span v-html="icon('gauge')"></span><span>查询余额</span>
+                  </button>
+                </div>
+              </div>
+
               <div class="ai-fgroup" data-ai="model">
                 <label class="ai-flabel" for="ai-in-models"
                        title="一行一个，第一个当默认；跑包时注入 MOSS_AI_MODEL / MOSS_AI_MODELS。">可用模型列表 (换行分割)</label>
@@ -800,6 +816,64 @@ const MossSettings = {
       // 原始报文只在跟前那句"不一样"的时候才给「详情」（免得重复一遍废话）
       this.ai.detail = (raw && raw !== this.ai.status) ? raw : "";
       this.ai.open = false;
+    },
+    aiCanQuery(){
+      const base = String(this.aiVal("base_url") || "").trim();
+      if (!base) return false;
+      const k = String(this.aiVal("api_key") || "").trim();
+      if (k) return true;
+      if (!this.ai.creating && (((this.ai.summary || {})[this.ai.name] || {}).has_key)) return true;
+      return /^(https?:\/\/)?(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(base);
+    },
+    aiQueryFields(){
+      const f = {base_url: String(this.aiVal("base_url") || "").trim()};
+      const k = String(this.aiVal("api_key") || "").trim();
+      if (k) f.api_key = k;
+      return f;
+    },
+    aiQueryDone(r){
+      const ok = !!(r && r.ok);
+      this.ai.busy = false;
+      this.ai.statusOk = ok;
+      this.ai.status = (r && r.msg) || (ok ? "完成" : "没成");
+      this.ai.detail = (r && r.detail) || "";
+      this.ai.open = false;
+      return r;
+    },
+    async aiFetchModels(){
+      if (this.ai.busy) return;
+      this.ai.busy = true;
+      this.ai.status = "正在获取模型…";
+      this.ai.statusOk = false;
+      this.ai.detail = "";
+      let r = null;
+      try {
+        r = await pywebview.api.ai_models(this.ai.name || "", this.aiQueryFields());
+      } catch(e){ r = {ok: false, msg: "获取模型失败：" + (e && e.message ? e.message : e)}; }
+      this.aiQueryDone(r);
+      const models = (r && r.models) || [];
+      if (r && r.ok && models.length){
+        this.aiSet("model", models.join("\n"));
+        this.ai.status = "已获取 " + models.length + " 个模型，已填入列表";
+        this.ai.statusOk = true;
+      } else if (r && r.ok) {
+        this.ai.status = "接口通了，但没拿到模型名";
+        this.ai.statusOk = false;
+      }
+      this.$forceUpdate();
+    },
+    async aiFetchBalance(){
+      if (this.ai.busy) return;
+      this.ai.busy = true;
+      this.ai.status = "正在查询余额…";
+      this.ai.statusOk = false;
+      this.ai.detail = "";
+      let r = null;
+      try {
+        r = await pywebview.api.ai_balance(this.ai.name || "", this.aiQueryFields());
+      } catch(e){ r = {ok: false, msg: "查余额失败：" + (e && e.message ? e.message : e)}; }
+      this.aiQueryDone(r);
+      this.$forceUpdate();
     },
     // 把宿主那一行文本变成人话：成功 = 「连接成功（HTTP 200 · 模型 xxx）」；
     // 失败 = 「连接失败：<原因>」。原始报文另存（上面那个 detail）。

@@ -54,6 +54,8 @@ USAGE = """moss —— 多语言启动器
   moss --ai-active <组>         选当前用哪一组          moss --ai-profile-del <组>  删一组
   moss --ai-rename <旧> <新>    给一组改名（整块搬，key 不用再读一遍）
   moss --ai-test [组]           **测试连接**：流式发一个最小请求，报状态码和第一个增量
+  moss --ai-models [组]          **获取可用模型**：GET `{base_url}/models`，回一份模型清单
+  moss --ai-balance [组]         **查询余额**：DeepSeek / Kimi / OpenRouter / 硅基流动等已知接口
   moss --ai-import-legacy       把旧的 user_data/state/ai/config.json 导成一组
   moss --snap …                版本快照（备份 / 恢复 / 导出 / 差异）—— 给人和 AI 用；
                                `moss --snap --help` 看全部子命令（会动磁盘的要 --yes）
@@ -937,6 +939,192 @@ def cmd_ai_presets():
     return 0
 
 
+def _ai_profile_from_argv(argv):
+    """从 `[组名] [k=v...]` 拿一组（含临时覆盖）—— `--ai-models` / `--ai-balance` 共用。"""
+    profs = config.ai_profiles()
+    name, over = "", {}
+    for tok in (argv or []):
+        if "=" in tok:
+            k, _, v = tok.partition("=")
+            k = k.strip()
+            if k in config.AI_FIELDS:
+                over[k] = v
+        elif not name:
+            name = tok
+    name = name or config.ai_active_name()
+    p = dict(profs.get(name) or {})
+    for k, v in over.items():
+        if k == "model":
+            p["model"] = [x.strip() for x in str(v).replace("\\n", ",").split(",") if x.strip()]
+        else:
+            p[k] = v
+    return name, p
+
+
+def _ai_http_get(url, api_key=""):
+    """GET 一个 JSON 地址（只给 AI 模型 / 余额这两条内部用）。"""
+    import urllib.request
+    req = urllib.request.Request(url)
+    req.add_header("Accept", "application/json")
+    if api_key:
+        req.add_header("Authorization", "Bearer " + str(api_key))
+    with urllib.request.urlopen(req, timeout=45) as r:
+        return r.status, r.read().decode("utf-8", "replace")
+
+
+def _json_dumps(obj):
+    import json as _json
+    try:
+        return _json.dumps(obj, ensure_ascii=False, indent=2)
+    except Exception:                                                    # noqa: BLE001
+        return str(obj)[:2000]
+
+
+def _ai_models_from_json(raw):
+    """把 OpenAI 兼容的 `/models` 回来的东西拉成模型名列表（宽容多种形状）。"""
+    import json as _json
+    data = _json.loads(raw)
+    arr = []
+    if isinstance(data, list):
+        arr = data
+    elif isinstance(data, dict):
+        for key in ("data", "models", "result"):
+            if isinstance(data.get(key), list):
+                arr = data[key]
+                break
+    out = []
+    for it in arr:
+        if isinstance(it, str):
+            mid = it
+        elif isinstance(it, dict):
+            mid = it.get("id") or it.get("name") or it.get("model")
+        else:
+            mid = ""
+        mid = str(mid or "").strip()
+        if mid and mid not in out:
+            out.append(mid)
+    return out
+
+
+def _ai_balance_text(obj):
+    """把不同家的余额返回包压成一句人话 + 一段原始详情。"""
+    if not isinstance(obj, dict):
+        return "", str(obj)[:500]
+    # DeepSeek：{is_available, balance_infos:[{currency,total_balance,granted_balance,topped_up_balance}]}
+    infos = obj.get("balance_infos")
+    if isinstance(infos, list) and infos:
+        bits = []
+        for it in infos:
+            if not isinstance(it, dict):
+                continue
+            cur = str(it.get("currency") or "CNY")
+            total = it.get("total_balance", it.get("balance", ""))
+            extra = []
+            if it.get("topped_up_balance") not in (None, ""):
+                extra.append("充值 %s" % it.get("topped_up_balance"))
+            if it.get("granted_balance") not in (None, ""):
+                extra.append("赠送 %s" % it.get("granted_balance"))
+            bits.append(("%s %s" % (cur, total)).strip() +
+                        ("（%s）" % " / ".join(extra) if extra else ""))
+        avail = obj.get("is_available")
+        text = "余额：" + "；".join(bits)
+        if avail is not None:
+            text += " · 账户" + ("可用" if avail else "不可用")
+        return text, _json_dumps(obj)
+    data = obj.get("data") if isinstance(obj.get("data"), dict) else obj
+    if isinstance(data, dict):
+        for key in ("total_balance", "available_balance", "balance", "credit", "credits",
+                    "remaining", "remain", "amount", "cash_balance", "voucher_balance"):
+            if data.get(key) not in (None, ""):
+                cur = data.get("currency") or data.get("unit") or ""
+                return "余额：%s%s" % (("%s " % cur) if cur else "", data.get(key)), _json_dumps(obj)
+    return "", _json_dumps(obj)
+
+
+def cmd_ai_models(argv):
+    """`--ai-models [组名] [k=v...]` —— GET `{base_url}/models`，回一份模型清单。
+
+    ★ 为什么要有：设置面板里输入接口地址 + key 之后，不想让人手打模型名；
+      点一下拿回来、自动填进「可用模型列表」。临时覆盖也认，所以**不用先保存**。
+    """
+    import json as _json
+    name, p = _ai_profile_from_argv(argv)
+    base = str(p.get("base_url") or "").rstrip("/")
+    if not base:
+        print(_json.dumps({"ok": False, "msg": "还没有接口地址，先填 Base URL。"}, ensure_ascii=False))
+        return 1
+    url = base + "/models"
+    try:
+        code, raw = _ai_http_get(url, p.get("api_key") or "")
+        models = _ai_models_from_json(raw)
+        if not models:
+            print(_json.dumps({"ok": False, "msg": "接口通了，但没从返回里认出模型列表。",
+                               "detail": raw[:2000]}, ensure_ascii=False))
+            return 4
+        print(_json.dumps({"ok": True, "models": models, "count": len(models),
+                           "msg": "获取到 %d 个模型" % len(models)}, ensure_ascii=False))
+        return 0
+    except Exception as e:                                               # noqa: BLE001
+        detail = ""
+        try:
+            import urllib.error
+            if isinstance(e, urllib.error.HTTPError):
+                detail = e.read(1000).decode("utf-8", "replace")
+        except Exception:                                                # noqa: BLE001
+            pass
+        print(_json.dumps({"ok": False, "msg": "获取模型失败：%s" % e, "detail": detail},
+                          ensure_ascii=False))
+        return 4
+
+
+def _ai_balance_urls(base):
+    """常见服务商的余额地址（只放**真的存在**的那些；猜不到就回空）。"""
+    import urllib.parse
+    u = urllib.parse.urlsplit(base)
+    root = "%s://%s" % (u.scheme, u.netloc)
+    host = (u.hostname or "").lower()
+    out = []
+    if "deepseek" in host:
+        out.append(root + "/user/balance")
+    if "moonshot" in host:
+        out.append(root + "/v1/users/me/balance")
+        out.append(base + "/users/me/balance")
+    if "openrouter" in host:
+        out.append(root + "/api/v1/credits")
+    if "siliconflow" in host:
+        out.append(base + "/user/info")
+    return out
+
+
+def cmd_ai_balance(argv):
+    """`--ai-balance [组名] [k=v...]` —— 查接口余额；没有通用接口的会如实说。"""
+    import json as _json
+    name, p = _ai_profile_from_argv(argv)
+    base = str(p.get("base_url") or "").rstrip("/")
+    if not base:
+        print(_json.dumps({"ok": False, "msg": "还没有接口地址，先填 Base URL。"}, ensure_ascii=False))
+        return 1
+    urls = _ai_balance_urls(base)
+    if not urls:
+        print(_json.dumps({"ok": False, "msg": "这家还没有已知的余额查询接口（DeepSeek / Kimi / "
+                                                "OpenRouter / 硅基流动有）。"}, ensure_ascii=False))
+        return 4
+    last = ""
+    for url in urls:
+        try:
+            _code, raw = _ai_http_get(url, p.get("api_key") or "")
+            obj = _json.loads(raw)
+            text, detail = _ai_balance_text(obj)
+            if text:
+                print(_json.dumps({"ok": True, "msg": text, "detail": detail}, ensure_ascii=False))
+                return 0
+            last = "接口通了，但这家的返回格式不认识：%s" % raw[:300]
+        except Exception as e:                                           # noqa: BLE001
+            last = str(e)
+    print(_json.dumps({"ok": False, "msg": "查余额失败：%s" % last}, ensure_ascii=False))
+    return 4
+
+
 def cmd_ai_profile_set(argv):
     """`--ai-profile-set <组名> k=v …` —— 加/改组（明文写 config.toml）。
 
@@ -1480,6 +1668,10 @@ def main(argv):
         return cmd_ai_rename(rest)
     if first == "--ai-test":
         return cmd_ai_test(rest)
+    if first == "--ai-models":
+        return cmd_ai_models(rest)
+    if first == "--ai-balance":
+        return cmd_ai_balance(rest)
     if first == "--ai-import-legacy":
         nm = config.ai_import_legacy()
         out.print_cyan(("导进来了，组名 %s" % nm) if nm else "没找到旧的 state/ai/config.json")
