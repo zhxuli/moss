@@ -30,10 +30,10 @@ user_data/pkgs   用户自己装的、自己写的         ← 打包时整体�
 **要界面就写成网页**，在 `pkg.json` 里声明 `"ui": {"embed": "ui/index.html"}` —— 同一份界面
 既能内嵌进 moss 的「界面」选项卡、也能 `moss :<id>` 自己开窗口。
 
-- **样板**：`bmi/`（Vue 3 + Python 后端，一份代码两种跑法）—— 新包照它抄
+- **样板**：`skill/`（Vue 3 + Python 后端，一份代码两种跑法）—— 新包照它抄
 - **规范**：`system/spec/插件契约.md` §1.0 与 §4.2（或 `moss --spec`）
 - **三个坑**：JS 桥的方法要收得下那一个参数；别把 `window` 挂成 `js_api` 的属性；
-  想证明"是 Python 在干活"就 `print`（详见 `bmi/AGENT.md`）
+  想证明"是 Python 在干活"就 `print`（详见 `skill/AGENT.md`）
 
 ## 关于编译型语言的包
 

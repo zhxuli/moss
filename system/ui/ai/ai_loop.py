@@ -189,13 +189,13 @@ def env_note(workdir=None, perm="", tmp="", allow=()):
 
     ★ `V-248`：真机上它把同级的别的包（`ask`/`dazi`/`unwx`）全翻了一遍，用户的原话是
       "我选的干活的地方是 calc，它怎么疯狂的读取一堆其他的内容" —— 所以这里**把目标写进句子里**，
-      并明说"样板看 `system/pkgs/bmi`，别翻别的包"（读守卫也会拦）。
+      并明说"样板看 `system/pkgs/skill`，别翻别的包"（读守卫也会拦）。
     ★ `V-316`：权限那一段现在是**用户勾出来的清单**（`ai_mode.perm_note`）—— 直接贴进来，
       它才知道哪几处能写、写不了该用 `allow_path` 问谁。
     """
     tgt = str(workdir or E.write_root())
     out = ("【环境】moss 安装根 = %s；**这次干活的地方 = %s**。"
-           "只看这个目录（加上契约和 `system/pkgs/bmi` 那个样板）—— **别去翻别的包**。"
+           "只看这个目录（加上契约和 `system/pkgs/skill` 那个出厂插件样板）—— **别去翻别的包**。"
            "跑包用 run_moss（等价于用户在终端敲 moss）；"
            "契约按需读**相关那一节**就够（`spec(\"关键词\")`），别通读。契约文件 = %s"
            % (E.HOME, tgt, T.spec_path()))

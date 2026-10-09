@@ -21,7 +21,7 @@
   "entry": {
     "file": "main.py"
   },
-  "_uiWhy": "V-222：界面向 moss 内嵌（ui.embed），和 path / bmi 一个路子 —— 同一份页面两种跑法：内嵌时宿主用 MOSS_UI_EMBED=1 把它起成后端进程（embed.py，stdio 上的 JSON 行），独立窗口时还是 pywebview（gui_web.py）。页面里的桥只有 ui/src/api.js 一处，走 ui/moss-embed.js 垫片分流。",
+  "_uiWhy": "V-222：界面向 moss 内嵌（ui.embed），和 path 一个路子 —— 同一份页面两种跑法：内嵌时宿主用 MOSS_UI_EMBED=1 把它起成后端进程（embed.py，stdio 上的 JSON 行），独立窗口时还是 pywebview（gui_web.py）。页面里的桥只有 ui/src/api.js 一处，走 ui/moss-embed.js 垫片分流。",
   "ui": {
     "embed": "ui/index.html",
     "title": {

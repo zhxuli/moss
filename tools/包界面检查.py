@@ -9,7 +9,7 @@
 
 用法：
     .\\venv\\Scripts\\python.exe tools\\包界面检查.py              # 所有带 ui.embed 的包
-    .\\venv\\Scripts\\python.exe tools\\包界面检查.py path bmi      # 只看这几个
+    .\\venv\\Scripts\\python.exe tools\\包界面检查.py path md5      # 只看这几个
 
 ★ 桩只保证"页面能跑起来"：`moss.call(...)` 一律回 `{ok:true}` 之类的空壳 —— 所以它**不验业务**
   （业务归各包自己的探针 / 真机手点）。它验的是"这一页渲染得出来、而且没有报错"。
@@ -81,8 +81,7 @@ STUB = """<script>
     state: PSTATES(),
     backup_list: {ok:true, items:[], state:PSTATES()},
     backup_preview: {ok:true, add:[], remove:[], paths:[], msg:""},
-    now: {text:"00:00:00"}, subscribe: {subscribed:[]},
-    bmi: {ok:true, bmi:22.5, level:"正常", advice:"（桩）", who:"（桩）", at:{text:"00:00:00"}}
+    now: {text:"00:00:00"}, subscribe: {subscribed:[]}
   };
 
   // ---- exec（V-222）：ESM 页面，第一件事就是 bootstrap ----

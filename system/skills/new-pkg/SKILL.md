@@ -12,7 +12,8 @@ description: 写一个新插件包时读它（下手的顺序、pkg.json 要点�
    * 要**能收拖入**就必须 `spec("拖放")` —— 那张六道关的表，漏一道的症状
      就是"拖进来没反应 / 提示不消失"。
 3. 骨架优先：`run_moss("--new <id>")` 能生成一个能跑的包（`pkg.json` + `run.py` + `AGENT.md`），
-   比从零写稳。要界面就照 `system/pkgs/bmi/` 抄（`main.py` 两种模式 + `ui/` 三个文件）。
+   比从零写稳。要界面 / 拿不准就照出厂插件 `system/pkgs/skill/` 抄
+   （`pkg.json` + `main.py`/`embed.py` 两种跑法 + `ui/` 一整套，完整真插件）。
 4. 改完 → `run_moss(":<id> <示例参数>")` → **退出码 0** → 再 `done`。
 5. `done` 里写：包 id、文件清单、验收用的那条命令 + 它的结果、以及没验到的部分。
 

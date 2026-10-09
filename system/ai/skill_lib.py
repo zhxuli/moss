@@ -827,7 +827,7 @@ def rm(sid, confirm=False, roots_in=None):
 
     出厂件删不得（哪怕带了 confirm）；**插件行也不许从这儿删** —— 技能这一层只管
     `user_data/state/skill/` 里那些；一个插件的去留是 `moss --remove`（宿主那套确认流程）的事。
-    （这一条是排查"`system/pkgs/bmi` 怎么没了"时顺手加的闸：不给技能层留"删到插件"的口子。）
+    （这一条是排查"一只出厂包怎么从技能层被删掉"时顺手加的闸：不给技能层留"删到插件"的口子。）
     """
     got = list_skills(roots_in).get(str(sid or "").strip())
     if not got:

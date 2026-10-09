@@ -13,7 +13,7 @@
     `system/pkgs/<包>`，`V-347`）不在清单里也**默认读写都开**（算出来的，见 `_scope_allows`）；
     「放手」= 把 `*`（任意路径）那一行的**写**打开（那时危险操作也不再问）。
   硬锁（勾了 `*` 也写不了）：`core/`、`moss.exe`、`moss.py`、`venv/`、`.git/`、`backups/`。
-  读不设"当前包"以外的特权（要读 `system/pkgs/bmi` 当样板、要读契约），但读也框了范围。
+  读不设"当前包"以外的特权（要读 `system/pkgs/skill` 当样板、要读契约），但读也框了范围。
 """
 import os
 import sys
@@ -96,7 +96,7 @@ def read_roots():
             tool_root(),                                     # user_data/state/skill/**（它自己造的手）
             M.tmp_root(),                                    # user_data/ai/tmp/**（全局桶）
             HOME / "system" / "spec",                        # 契约（唯一真相）
-            HOME / "system" / "pkgs"] + M.readable_extra()   # 样板包（照 bmi 抄）+ 清单里勾了读的
+            HOME / "system" / "pkgs"] + M.readable_extra()   # 样板包（照 skill 抄）+ 清单里勾了读的
 
 
 def check_readable(path, scope=None):
@@ -125,7 +125,7 @@ def check_readable(path, scope=None):
         # 只在"路径确实落在 user_data/pkgs 下面、但不在 scope 里"时拦 —— 别的地方交给下面的规则
         if inside(path, root) and not inside(path, sc):
             return ("[拒绝] 这次干活的地方是 `%s` —— **只在这个包下面看**。"
-                    "`%s` 是**别的包**，不归这次任务管（样板请看 `system/pkgs/bmi`，那是留给你抄的）。"
+                    "`%s` 是**别的包**，不归这次任务管（样板请看 `system/pkgs/skill`，那是留给你抄的）。"
                     % (sc, path))
     # ★ `V-316`：**清单说了算**（勾了「读」的目录才给看）
     #   ★ `V-343`：再加上"这次干活的那个包"—— 它默认就能看，不用清单里有一条。

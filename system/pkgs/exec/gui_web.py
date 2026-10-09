@@ -168,7 +168,7 @@ class Api:
       独立窗口是 `fn(params)`，内嵌是把 `{id, method, params}` 送进后端进程。
       以前这里是位置参数（`cmd_save(item, original_alias)`），只有"页面直接调
       `pywebview.api.xxx(...)`"那条路能用；一内嵌就走不通了。改成 dict 之后
-      一份 Api 两种跑法都吃（`path` / `bmi` 那两个包也是这个约定）。
+      一份 Api 两种跑法都吃（`path` 那个包也是这个约定）。
     """
 
     def __init__(self):

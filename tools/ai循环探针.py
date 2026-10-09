@@ -322,8 +322,8 @@ def main():
     got = t.call("list_dir", {"path": str(home)})
     chk("F list_dir 仓库根也被拒（不在清单里；省 token 的第一道闸）",
         ("只允许读" in got or "读权限没开" in got), got.replace("\n", " ")[:60])
-    got = t.call("read_file", {"path": str(home / "system" / "pkgs" / "bmi" / "main.py")})
-    chk("F 样板包（system/pkgs/bmi）仍然读得到 —— 别把该读的也拦了",
+    got = t.call("read_file", {"path": str(home / "system" / "pkgs" / "skill" / "main.py")})
+    chk("F 样板包（system/pkgs/skill）仍然读得到 —— 别把该读的也拦了",
         "只允许读" not in got and len(got) > 20, got.splitlines()[0][:60])
     got = t.call("grep", {"pattern": "def main", "path": str(home / "core")})
     chk("F grep 也守同一条线", ("只允许读" in got or "读权限没开" in got), got.replace("\n", " ")[:60])
@@ -898,7 +898,7 @@ def main():
     got_parent = tn.call("list_dir", {"path": str(pkgs)})
     chk("N ★ 连父目录（= 一堆别的包）也不给列",
         "拒绝" in got_parent, got_parent[:60])
-    got_sample = tn.call("read_file", {"path": str(home / "system" / "pkgs" / "bmi" / "AGENT.md")})
+    got_sample = tn.call("read_file", {"path": str(home / "system" / "pkgs" / "skill" / "AGENT.md")})
     chk("N 但 system/pkgs 的样板照读（写包要靠它抄）",
         "拒绝" not in got_sample and "共" in got_sample, got_sample.splitlines()[0][:40])
     got_spec = tn.call("read_file", {"path": str(home / "system" / "spec" / "插件契约.md")})
@@ -1253,19 +1253,19 @@ def main():
     # ★ `V-347`：出厂包**也算"当前这个包"** —— 用户要的是"打开哪个包点 AI 就是要改它"，
     #   别再拿"出厂件默认改不了"挡路（`D-24` 早就定了 `system/` 可编辑、只提示不拦截）。
     chk("S ★★ `system/pkgs/<一个包>` 也算当前这个包 ⇒ 出厂包默认就能改（用户要的\"自由 DIY\"）",
-        M.can_write(E.HOME / "system" / "pkgs" / "bmi" / "main.py",
-                    scope=E.HOME / "system" / "pkgs" / "bmi") is None, "")
+        M.can_write(E.HOME / "system" / "pkgs" / "skill" / "main.py",
+                    scope=E.HOME / "system" / "pkgs" / "skill") is None, "")
     chk("S ★★ 但两个 `pkgs` 的**根本身**不算包（放开它 = 放开所有包）",
-        M.can_write(E.HOME / "system" / "pkgs" / "bmi" / "main.py",
+        M.can_write(E.HOME / "system" / "pkgs" / "skill" / "main.py",
                     scope=E.HOME / "system" / "pkgs") is not None
         and M.can_write(E.user_data() / "pkgs" / "zz" / "run.py",
                         scope=E.user_data() / "pkgs") is not None, "")
     chk("S ★ `_current_row` 认得出出厂包（带 `factory` 标记 ⇒ 界面才能说\"出厂件\"）",
-        bool((M._current_row(str(E.HOME / "system" / "pkgs" / "bmi")) or {}).get("factory"))
+        bool((M._current_row(str(E.HOME / "system" / "pkgs" / "skill")) or {}).get("factory"))
         and M._current_row(str(_fresh)) is not None
         and not (M._current_row(str(_fresh)) or {}).get("factory"), "")
     # ★ `V-347`：出厂包**也存得了"动手前"的快照** —— 既然放开让它改，就得给它退路
-    _sg = S.snapshot_before("探针：出厂包也要有退路", E.HOME / "system" / "pkgs" / "bmi")
+    _sg = S.snapshot_before("探针：出厂包也要有退路", E.HOME / "system" / "pkgs" / "skill")
     chk("S ★★ 出厂包也存得了「动手前」的快照（改之前有退路）",
         _sg.get("ok") is True, str(_sg.get("msg"))[:80])
     if _pkgs_row:

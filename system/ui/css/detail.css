@@ -188,7 +188,7 @@ button.dp-primary svg{width:17px;height:17px}
 .dp-split-menu{position:absolute;top:calc(100% + 8px);right:0;background:var(--dp-bg-card);
   border:1px solid var(--dp-border);border-radius:8px;
   box-shadow:0 10px 25px -5px rgba(0,0,0,.2),0 8px 10px -6px rgba(0,0,0,.1);
-  min-width:170px;padding:6px;opacity:0;visibility:hidden;transform:translateY(-8px);
+  padding:6px;opacity:0;visibility:hidden;transform:translateY(-8px);
   transition:opacity .18s cubic-bezier(.4,0,.2,1),transform .18s cubic-bezier(.4,0,.2,1),
              visibility .18s;z-index:50}
 .dp-split-menu.show{opacity:1;visibility:visible;transform:translateY(0)}

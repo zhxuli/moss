@@ -673,7 +673,7 @@ function renderDetailHTML(){
         '<div class="dp-split-menu" id="run-split-menu">' +
           '<button class="dp-split-item" id="btn-run-newwin"' +
             ' title="新窗口运行：后台把包自己的界面开起来，不等它">' +
-            ico("app-window", "i") + '<span>新窗口运行</span></button>' +
+            ico("app-window", "i") + '<span>独立运行</span></button>' +
         '</div>' +
       '</div>' +
     '</div>' +

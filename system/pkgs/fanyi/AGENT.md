@@ -1,6 +1,6 @@
 # fanyi · 给 AI 看的说明
 
-> 这一版（v2.0）把原来的 Tk 单窗口改成了**网页界面、两种跑法**（照 `system/pkgs/bmi/` 的样板）。
+> 这一版（v2.0）把原来的 Tk 单窗口改成了**网页界面、两种跑法**（照 `system/pkgs/skill/` 的样板）。
 > 功能代码从老项目 `QuickTools/pa_soft/bin/soft/fanyi` 移植，但**依赖全换成标准库**。
 
 ## 干什么

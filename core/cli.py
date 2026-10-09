@@ -708,7 +708,7 @@ def cmd_new(pid, kind="task"):
     # ★ 这一行是给"要界面的包"看的（`V-58` ✅）：默认方案是**网页界面 + ui.embed**，
     #   不是每个包自己 webview.create_window 开窗口 —— 写在这儿，因为"刚新建一个包"
     #   正是最该看到它的时候（给人看，也给 AI 看）。
-    print("     4) 要界面？**别自己开窗口** —— 照 system/pkgs/bmi/ 抄一份网页界面，"
+    print("     4) 要界面？**别自己开窗口** —— 照 system/pkgs/skill/ 抄一份网页界面，"
           "在 pkg.json 里声明")
     print("        \"ui\": {\"embed\": \"ui/index.html\"}：既能在 moss 的「界面」选项卡里"
           "内嵌跑，也能 moss :%s 自己开窗口" % pid)

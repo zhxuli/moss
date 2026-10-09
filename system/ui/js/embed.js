@@ -5,7 +5,7 @@
    改在 stdio 上说 JSON 行）。
 
    三件事在这里合上：
-     · iframe 里 `moss.call("bmi", {...})` → 包的垫片 postMessage 给我 → 我转给宿主
+     · iframe 里 `moss.call("方法名", {...})` → 包的垫片 postMessage 给我 → 我转给宿主
        （`embed_send`）→ 宿主原样写进那个进程的 stdin；
      · 进程回的行（`{` 开头的才是消息）→ 宿主 `evaluate_js` 调 `__mossEmbedFromBackend`
        → 我 postMessage 回**那个** iframe → 垫片 resolve 那个 Promise；

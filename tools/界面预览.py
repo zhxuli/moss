@@ -199,7 +199,6 @@ def mock_data():
 
     fs = {}
     samples = [("system/pkgs/md5", ROOT / "system/pkgs/md5"),
-               ("system/pkgs/bmi", ROOT / "system/pkgs/bmi"),
                ("user", ROOT / "user_data"),
                ("abs/D:/python/wwwroot/ZeEn", Path(r"D:\python\wwwroot\ZeEn"))]
     # ★ 用户层每个包的目录也当样本（改名 / 对齐目录名那两个场景要在里面找文件）。
@@ -969,19 +968,12 @@ MOCK_JS = r"""
       else if (req.method === "scan") reply(IMG_SCAN);
       else if (req.method === "take_drop") reply({ok: true, pending: false});
       else if (req.method === "push_drop") reply({ok: true});
-      // ---- bmi 那个包
+      // ---- 时间（path / 老包共用）
       else if (req.method === "now") reply({text: d.toTimeString().slice(0, 8),
         date: d.toISOString().slice(0, 10), week: "一二三四五六日"[d.getDay()],
         who: "(预览) 假后端"});
       else if (req.method === "subscribe") reply({subscribed: ["time"]});
-      else if (req.method === "bmi") {
-        const h = (req.params.height || 0) / 100, w = req.params.weight || 0;
-        const v = Math.round((w / (h * h)) * 100) / 100;
-        const lv = v < 18.5 ? ["偏瘦", "多吃点，别熬夜。"] : v < 24 ? ["正常", "保持住。"]
-                 : v < 28 ? ["超重", "少喝奶茶，多走路。"] : ["肥胖", "认真考虑一下运动和饮食吧。"];
-        reply({ok: true, bmi: v, level: lv[0], advice: lv[1],
-               who: "(预览) 假后端", at: {text: d.toTimeString().slice(0, 8)}});
-      } else reply(null);
+      else reply(null);
       return {ok: true};
     },
     embed_stop: async () => { if (M.embed && M.embed.t) clearInterval(M.embed.t);
@@ -1822,7 +1814,7 @@ MOCK_JS = r"""
       //        `webkitGetAsEntry()`，跟真拖动一样能看出是文件还是文件夹）
       //     ② 松手那半：直接调落地口 `window.__mossDrop([...])`
       //        （真机上由宿主从 WebView2 取到真实路径后调用它）
-      // ★ 内嵌界面（`V-48`）：拿**真包的页面**（`ui.embed` 指到 system/pkgs/bmi/ui/index.html）
+      // ★ 内嵌界面（`V-48`）：拿**真包的页面**（payload 里哪个带 `ui.embed` 就用哪个）
       //   走一遍完整回路 —— Vue3 应用 + 垫片 + postMessage + 壳的转发 + （假）后端。
       //   验的正是"标题栏多出第四个选项卡、里面真的能算、切走再回来还在"。
       if (h === "embed"){
@@ -3590,7 +3582,7 @@ MOCK_JS = r"""
       // ★ 边栏跟着"当前选中的对象"走（`V-91`）：换包 = 换一组快照；删整组只动那一组
       if (h === "backup-groups"){
         const pA = state.packages.find(x => x.id === "md5") || state.packages[0];
-        const pB = state.packages.find(x => x.id === "bmi") || state.packages[1] || pA;
+        const pB = state.packages.find(x => x.id === "path") || state.packages[1] || pA;
         // A 存一个
         select(pA.id);
         setTab("file");
@@ -3797,7 +3789,7 @@ MOCK_JS = r"""
       }
 
       // ★ `V-370`：**包和包之间的「命令行」要隔离** —— 你报的现场：
-      //   「我运行了 BMI，点 IP查询（没运行），再点命令行 —— 里面是 BMI 的运行日志，没隔离」。
+      //   「我运行了 md5，点 IP查询（没运行），再点命令行 —— 里面是 md5 的运行日志，没隔离」。
       //   根因：常驻终端只有**一条 shell**，而那块屏以前"终端开着就显示终端" ⇒ 切包只换了顶栏那行字。
       //   这一场**当场把假终端装上**（别的场景没有 term_*，走的是 `<pre>` 那条老路 ⇒ 互不影响），
       //   验的就是"终端这条路上切包换屏"。
@@ -3836,7 +3828,7 @@ MOCK_JS = r"""
         pywebview.api.pkg_states = async () => ({ok: true, running: false, states: {}});
         await clickRun(A);                              // 跑 A（走终端那条路）
         const startsAfterRun = M.term.starts;
-        // 跑起来之后：A 就**一直在跑**了（用户的现场就是"BMI 还在跑，我去点了别的包"）
+        // 跑起来之后：A 就**一直在跑**了（用户的现场就是"md5 还在跑，我去点了别的包"）
         pywebview.api.pkg_states = async () => ({ok: true, running: true,
                                                  states: {[A.id]: {running: true, pids: 1}}});
         // 等假终端那一段输出被泵进来（`term_poll` 是 45~220ms 一轮）
@@ -4027,11 +4019,11 @@ MOCK_JS = r"""
         const idsTxt = listIds();
         const imgOut = idsTxt.indexOf("img") < 0;
         const md5In = idsTxt.indexOf("md5") >= 0;
-        // ★ `V-186`：只收文件夹的包（tree / mark / sync / path）在不收拖入的包（bmi）
+        // ★ `V-186`：只收文件夹的包（tree / mark / sync / path）在不收拖入的包（ip）
         //   都不该出现在"拖文件"的列表里 —— 这是这次收紧的回归测试
         const onlyDir = ["tree", "mark", "sync", "path"];
         const noDirOnly = onlyDir.every(id => idsTxt.indexOf(id) < 0);
-        const noBmi = idsTxt.indexOf("bmi") < 0;
+        const noIp = idsTxt.indexOf("ip") < 0;
         const barTxt = ((document.querySelector("#dragbar") || {}).textContent || "")
                          .replace(/\s+/g, " ");
         // ★ 说清"为什么"的那句话只在**一个都没收**时才出现；拖 .txt 时 md5/open 是收的，
@@ -4094,7 +4086,7 @@ MOCK_JS = r"""
         const idsLate = listIds();                   // 补读到 .py → 该筛干净
         const lateOk = idsLate.indexOf("md5") >= 0 && idsLate.indexOf("open") >= 0 &&
                        idsLate.indexOf("img") < 0 &&
-                       onlyDir.concat(["bmi"]).every(id => idsLate.indexOf(id) < 0);
+                       onlyDir.concat(["ip"]).every(id => idsLate.indexOf(id) < 0);
         dragEnd();
         await sleep(200);
         // ⑦ `V-189`：**真机探针实录的形状** —— 只有 kind + type，名字/entry/File 全空
@@ -4112,7 +4104,7 @@ MOCK_JS = r"""
         const idsMime = listIds();
         const mimeOk = idsMime.indexOf("md5") >= 0 && idsMime.indexOf("open") >= 0 &&
                        idsMime.indexOf("img") < 0 &&
-                       onlyDir.concat(["bmi"]).every(id => idsMime.indexOf(id) < 0);
+                       onlyDir.concat(["ip"]).every(id => idsMime.indexOf(id) < 0);
         dragEnd();
         await sleep(200);
         // ⑧ 同一个形状、但类型是图片：img 该回来（别把正常路也堵死）
@@ -4132,7 +4124,7 @@ MOCK_JS = r"""
         dragEnd();
         await sleep(200);
         const ok = hasExt && imgOut && md5In && barOk && saidWhy && imgIn && upperOk && dirIn &&
-                   noRun && toastSaid && ranOk && noDirOnly && noBmi && lateOk &&
+                   noRun && toastSaid && ranOk && noDirOnly && noIp && lateOk &&
                    mimeOk && mimeImgOk && blankOk;
         const diag = "DIAG " + (ok ? "OK" : "FAIL") +
           "\nimg 声明    = " + JSON.stringify(imgExt.ext || []) +
@@ -4140,7 +4132,7 @@ MOCK_JS = r"""
           "\n   img 藏起来=" + imgOut + "   md5 还在=" + md5In +
           "   提示说了原因=" + saidWhy +
           "\n   只收文件夹的包都没出现=" + noDirOnly + "（" + onlyDir.join("/") + "）" +
-          "   不收拖入的 bmi 也没出现=" + noBmi +
+          "   不收拖入的 ip 也没出现=" + noIp +
           "\n   提示原文  = " + barTxt.slice(0, 90) +
           "\n② .PNG 后 img 出现=" + imgIn + "   大小写/无扩展名判定=" + upperOk +
           "\n③ 文件夹「我 的.照片」img 还收=" + dirIn +
@@ -4184,28 +4176,31 @@ MOCK_JS = r"""
         document.body.classList.remove("float");
         await sleep(150);
         // ② 正常模式：界面那一页有「弹出为窗口」那颗按钮
-        select("bmi");
+        // ★ 不写死某个包：挑**当前 payload 里第一个带 `ui.embed` 的**（哪个在都能跑）
+        const fp = state.packages.find(x => x.ui && x.ui.embed) || null;
+        if (!fp){ document.title = "FLOAT-NO-EMBED"; return; }
+        select(fp.id);
         setTab("embed");
         await sleep(400);
         const floatBtn = !!document.querySelector("#btn-embed-window");
         // ③ 弹出：先拆帧、再叫宿主开窗（`M.floats` 记下来了）
-        await embedOpen(state.packages.find(x => x.id === "bmi"));
+        await embedOpen(fp);
         await sleep(300);
         const before = Object.keys(EMB.alive).length;
         const comp = (document.querySelector("#pane-embed").__vue__ || {});   // 拿不到就只验状态
-        EMB.floated["bmi"] = true; EMBR.rev++;
+        EMB.floated[fp.id] = true; EMBR.rev++;
         await sleep(200);
         const placeholder = !!document.querySelector("#embed-floated");
         // ④ 宿主喊"收回"（＝用户点了最小化）：帧要建回来、占位要消失
-        window.__mossFloatDock("bmi");
+        window.__mossFloatDock(fp.id);
         await sleep(500);
-        const docked = !EMB.floated["bmi"] && !!EMB.alive["bmi"] &&
+        const docked = !EMB.floated[fp.id] && !!EMB.alive[fp.id] &&
                        !document.querySelector("#embed-floated");
         // ⑤ 宿主喊"关了"（＝结束）：帧和状态都要清干净
-        EMB.floated["bmi"] = true; EMBR.rev++;
-        window.__mossFloatClosed("bmi");
+        EMB.floated[fp.id] = true; EMBR.rev++;
+        window.__mossFloatClosed(fp.id);
         await sleep(300);
-        const closed = !EMB.floated["bmi"] && !EMB.alive["bmi"] &&
+        const closed = !EMB.floated[fp.id] && !EMB.alive[fp.id] &&
                        !document.querySelector("#embed-floated");
         const ok = allHidden && floatBtn && placeholder && docked && closed && iconOk;
         document.querySelector("#out").textContent =

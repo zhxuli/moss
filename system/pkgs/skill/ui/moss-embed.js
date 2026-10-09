@@ -4,7 +4,7 @@
 
    它在页面里提供一套统一的东西给界面用：
 
-     await moss.call('bmi', {height: 175, weight: 70})   → 调后端的一个方法
+     await moss.call('do_it', {text: '…'})   → 调后端的一个方法
      moss.on('time', d => { ... })                       → 接后端主动推过来的事件
      moss.on('ready', fn) / moss.on('invoke', fn) ...    → 接宿主发来的事件（见 §事件）
      moss.env                                            → {embedded, pid?...}

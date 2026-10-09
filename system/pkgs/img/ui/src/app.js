@@ -1044,7 +1044,7 @@ function bindDrop() {
      拿得到）—— 罩子一盖上来，这一帧立刻会收到一次 `dragleave`（鼠标底下的元素被换掉了），
      那是**假**的"拖走了"。信了它，提示会被白白收掉；而罩子把 drop 接走之后页面又再也
      收不到 `drop` —— 两头一凑，就是"松手之后提示一直挂在那儿"。
-     规矩（和 `path` / `bmi` 两份垫片同一个口径）：
+     规矩（和 `path` 那份垫片同一个口径）：
        captured 到 dragend 之间：不认 `dragleave`；
        dragend（宿主说拖完了）/ 我们自己收到 drop：把提示收掉。 */
   let captured = false;

@@ -10,7 +10,7 @@
     (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
 </script>
 <!-- 全部是本地 vendor（不引 CDN：冷启动拉外网赶不上首帧，离线就整块失效）：
-     Vue 用**全局版**（自带模板编译器 ⇒ 页面里能直接写 `template`），跟 `bmi` / `path` 一致。
+     Vue 用**全局版**（自带模板编译器 ⇒ 页面里能直接写 `template`），跟 `path` 一致。
      图标也**不用图标字体**（参考稿引的是 FontAwesome 的 CDN）——
      形状统一手画成内联 svg，见 `src/icons.js`。 -->
 <script src="vendor/vue.global.prod.js"></script>
@@ -31,7 +31,7 @@
 </head>
 <body>
 
-<!-- ★ 模板就写在挂载点 `#app` **里面**（照 moss 主界面和 `bmi` / `path` 那几个包的写法：
+<!-- ★ 模板就写在挂载点 `#app` **里面**（照 moss 主界面和 `path` 那几个包的写法：
      `vue.global.prod.js` 自带编译器，Vue 挂载时把 `#app` 的 innerHTML 当模板编译，
      编译结果再替换掉它自己）。`v-cloak` 挡住编译前那一瞬。
      ★★ 为什么不用 `script[type=text/x-template]`（`V-289` 试过，两个坑）：
