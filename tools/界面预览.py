@@ -5764,11 +5764,11 @@ MOCK_JS = r"""
         M.skillCalls = [];
         await aiLoadSkills();
         await sleep(300);
-        const strip = document.querySelector("#pane-ai .ai-selft-h");
+        const strip = document.querySelector("#pane-ai .ai-skill-head");
         const stripTxt = ((strip && strip.textContent) || "").replace(/\s+/g, " ").trim();
-        const yellow = !!strip && strip.classList.contains("bad");
-        const rows = Array.from(document.querySelectorAll("#pane-ai .ai-selft-i"));
-        const ids = rows.map(r => ((r.querySelector("code") || {}).textContent || "").trim());
+        const yellow = !!document.querySelector("#pane-ai .ai-skill-alert");
+        const rows = Array.from(document.querySelectorAll("#pane-ai .ai-skill-row"));
+        const ids = rows.map(r => ((r.querySelector(".ai-skill-name") || {}).textContent || "").trim());
         const firstRow = rows[0] || null;
         const btnOf = r => r ? Array.from(r.querySelectorAll("button")).map(b => b.textContent.trim()) : [];
         const firstBtns = btnOf(firstRow);
@@ -5777,15 +5777,15 @@ MOCK_JS = r"""
         // 顺序 = 待批准 → 已允许 → 写坏了（精确比，别用子串）
         const idOk = ids.join(",") === "dom_snap,shot,bad_one";
         // ② `V-284`：**插件那一行不许出现在这儿**（技能这一层只列技能）
-        const noPkgRow = !rows.some(r => /^md5$/.test((r.querySelector("code") || {}).textContent || ""));
+        const noPkgRow = !rows.some(r => /^md5$/.test((r.querySelector(".ai-skill-name") || {}).textContent || ""));
         // ③ 写坏了的那只**不该有「允许」**（它进不了表，允许了也没用）—— 只有「看一眼 / 删除」
-        const badRow = rows.filter(r => /^bad_one$/.test((r.querySelector("code") || {}).textContent || ""))[0];
+        const badRow = rows.filter(r => /^bad_one$/.test((r.querySelector(".ai-skill-name") || {}).textContent || ""))[0];
         const badBtns = btnOf(badRow);
         // ④ 看一眼：内容真摊开了（pkg.json 和 run.py 两段都在）
-        const lookBtn = firstRow ? Array.from(firstRow.querySelectorAll("button")).filter(b => /看一眼/.test(b.textContent))[0] : null;
+        const lookBtn = firstRow ? Array.from(firstRow.querySelectorAll("button")).filter(b => /审查/.test(b.textContent))[0] : null;
         if (lookBtn) lookBtn.click();
         await sleep(400);
-        const pre = document.querySelector("#pane-ai .ai-selft-pre");
+        const pre = document.querySelector("#pane-ai .ai-skill-pre");
         const preTxt = (pre && pre.textContent) || "";
         const looked = /=== pkg.json ===/.test(preTxt) && /DOM-快照-假脚本/.test(preTxt);
         // ⑤ 允许：走宿主那个口子，参数是**带 `--` 的 id**
@@ -5794,7 +5794,7 @@ MOCK_JS = r"""
         await sleep(500);
         const allowed = (M.skillCalls || []).some(c => c[0] === "allow" && c[1] === "dom_snap" && c[2] === true);
         // ⑥ 删除：先弹确认，确认了才真删（`confirm=true`）
-        const delBtn = firstRow ? Array.from(firstRow.querySelectorAll("button")).filter(b => /删除/.test(b.textContent))[0] : null;
+        const delBtn = firstRow ? firstRow.querySelector('button[title="删除"]') : null;
         if (delBtn) delBtn.click();
         await sleep(400);
         const modalOn = document.querySelector("#modal").classList.contains("on");
@@ -5810,25 +5810,28 @@ MOCK_JS = r"""
                           ui: {embed: state.home + "\\system\\pkgs\\skill\\ui\\index.html"},
                           dir: state.home + "\\system\\pkgs\\skill"};
         if (!state.packages.some(x => x.id === "skill")) state.packages.push(skillPkg);
-        const manageBtn = document.querySelector("#pane-ai .ai-selft-b .btn");
+        const manageBtn = document.querySelector('#pane-ai .ai-skill-actions button[title="管理技能"]');
         const manageLabel = manageBtn ? (manageBtn.textContent || "").trim() : "";
         // ★ 这里**只验那颗按钮在**：它点下去要起 `:skill` 那个包（预览的假 state.packages
         //   每轮轮询会重建，注入的包活不到点击那一刻 —— 点了只会弹"找不到管理器"，
         //   截图里挂一条误导的提示）。那个包能不能跑、内嵌协议通不通，由宿主探针 I-θ 钉住。
-        const managed = !!manageBtn && /管理技能/.test(manageLabel);
+        const managed = !!manageBtn;
 
         // ⑧ 一只技能都没有 ⇒ 这一块整个不出现（用户不该被这层占视线）
         M.skillEmpty = true;
         await aiLoadSkills();
         await sleep(300);
-        const gone = !document.querySelector("#pane-ai .ai-selft");
+        const gone = !document.querySelector("#pane-ai .ai-skill-widget");
         // 收尾把"有技能"那个样子摆回来 —— 截图（人看的那张）要的是有内容的样子
         M.skillEmpty = false;
         await aiLoadSkills();
         await sleep(300);
-        const ok = !!strip && yellow && /技能 · 2/.test(stripTxt) && /1 只等你允许/.test(stripTxt) &&
-                   /1 只写坏了/.test(stripTxt) && rows.length === 3 && idOk &&
-                   firstBtns.length === 3 && /待批准/.test(firstTxt) &&
+        const alertTxt = ((document.querySelector("#pane-ai .ai-skill-alert") || {}).textContent || "")
+          .replace(/\s+/g, " ").trim();
+        const headOk = !!strip && /待批准/.test(stripTxt) && /已启用/.test(stripTxt);
+        const alertOk = yellow && /1 只技能/.test(alertTxt);
+        const firstOk = firstBtns.length === 3 && /自身生成/.test(firstTxt);
+        const ok = headOk && alertOk && rows.length === 3 && idOk && firstOk &&
                    noPkgRow &&
                    badBtns.length === 2 && !badBtns.some(b => /允许/.test(b)) &&
                    looked && allowed && modalOn && noRmYet && rmDone && managed && gone &&

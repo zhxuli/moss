@@ -60,7 +60,7 @@ const AIR = Vue.reactive({
       · `selfOpen`  那个小块展开没有（有"待批准"的时候自动展开一次，好让你看见）
       · `selfWho` / `selfText`  「看一眼」展开的是哪只、内容是什么 */
   selfSkills: {skills: [], from_pkgs: [], broken: []},
-  selfOpen: false, selfWho: "", selfText: "",
+  selfOpen: false, selfWho: "", selfText: "", selfTab: "pending",
   /* ★ `V-316`：**权限 = 一份清单**（每行一对「读 / 写」勾选）—— 不再有"模式"那种第二个开关。
       · `allow`    —— 清单（后端保证含 `*` 那一行 = 任意路径）
       · `wild`     —— `*` 那一行勾了写没有（= 放手）
@@ -525,7 +525,7 @@ async function aiLoadSkills(){
     if (!got || !got.ok) return;
     AIR.selfSkills = got;
     // 有待批准的：**自动展开一次**（好让你看见），别指望你自己去点开
-    if (skillPend(got).length) AIR.selfOpen = true;
+    if (skillPend(got).length) { AIR.selfOpen = true; AIR.selfTab = "pending"; }
     AIR.rev++;
   }catch(e){ /* 读不到就不显示那一块，不吵人 */ }
 }
@@ -859,6 +859,13 @@ const MossAi = {
     selfPend(){ this.A.rev; return skillPend(this.A.selfSkills).length; },
     selfBroken(){ this.A.rev;
       return skillAll(this.A.selfSkills).filter(w => (w.problems || []).length).map(w => w.id); },
+    selfPendList(){ this.A.rev; return skillPend(this.A.selfSkills || {}); },
+    selfOkList(){ this.A.rev; return skillOk(this.A.selfSkills || {}); },
+    selfBrokenList(){ this.A.rev;
+      return skillAll(this.A.selfSkills).filter(w => (w.problems || []).length); },
+    selfBrokenNames(){ this.A.rev; return this.selfBrokenList.map(w => w.id).join("、"); },
+    selfTotal(){ this.A.rev;
+      return this.selfPendList.length + this.selfOkList.length + this.selfBrokenList.length; },
     /* 正在用的那几只的名字（步骤卡上"用自制工具"那个标签靠它认人） */
     selfNames(){
       this.A.rev;
@@ -1588,6 +1595,14 @@ const MossAi = {
     forgetRun(id){ aiForgetRun(id); },
     /* ★ `V-280`：那个折叠块的三颗按钮 */
     selfToggle(){ AIR.selfOpen = !AIR.selfOpen; AIR.rev++; },
+    setSelfTab(t){ AIR.selfTab = t; AIR.rev++; },
+    async refreshSkills(){ await aiLoadSkills(); toast("技能列表已刷新"); },
+    skillOrigin(w){
+      if (!w) return "";
+      if (w.kind === "pkg") return "【插件】";
+      if (w.origin === "seed" || w.layer === "system") return "【⚙️ 出厂样例】";
+      return "【✨ 自身生成】";
+    },
     lookTool(w){ aiSkillLook(w); },
     allowTool(w){ aiSkillAllow(w, !w.allowed); },
     rmTool(w){ aiSkillRm(w); },
@@ -1998,42 +2013,99 @@ const MossAi = {
            :skill 插件的数据目录里（user_data/state/skill/）。第一次要你点「允许」，
            而且允许绑指纹 —— 它事后改了 pkg.json / 入口 / 图标就自动退回待批准。
            「管理技能」把 :skill 那个界面嵌出来（图标墙 / 详情 / 转为插件 / 删除都在那边）。 -->
-      <section class="ai-selft" v-if="selfN || selfPend || selfBroken.length">
-        <div class="ai-selft-h" :class="{bad: selfPend > 0}" @click="selfToggle()"
-             title="它给自己造的小工具（不在插件页里）">
-          <span v-html='ico("sparkles", "i")'></span>
-          <span>技能 · {{ selfN }}</span>
-          <span v-if="selfPend">· {{ selfPend }} 只等你允许</span>
-          <span v-if="selfBroken.length">· {{ selfBroken.length }} 只写坏了</span>
-          <span class="ai-selft-x">{{ A.selfOpen ? "收起" : "展开" }}</span>
-        </div>
-        <div class="ai-selft-b" v-if="A.selfOpen">
-          <p class="ai-warn" v-if="selfPend">
-            ⚠ 它给自己造了 {{ selfPend }} 只技能，<b>你点「允许」它下一次跑才能用</b>
-            （不放心就先点「看一眼」，看它到底写了什么）。
-          </p>
-          <div class="ai-selft-i" v-for="w in selfList" :key="w.id">
-            <code>{{ w.id }}</code>
-            <span class="ai-selft-d" :title="w.desc || w.why">{{ w.desc || w.why || "（没写说明）" }}</span>
-            <span class="ai-selft-t">
-              {{ w.kind === "pkg" ? "插件" : (w.origin === "seed" ? "出厂样例" : "它自己造的") }} ·
-              {{ w.problems.length ? w.problems.join("；") : (w.allowed ? "已允许" : "待批准") }}
-            </span>
-            <span class="ai-selft-a">
-              <button @click="lookTool(w)">{{ A.selfWho === w.id ? "收起" : "看一眼" }}</button>
-              <button v-if="w.layer !== 'system' && !w.problems.length"
-                      @click="allowTool(w)">{{ w.allowed ? "撤销" : "允许" }}</button>
-              <button v-if="w.layer !== 'system'" class="danger" @click="rmTool(w)">删除</button>
-            </span>
-            <pre class="ai-selft-pre" v-if="A.selfWho === w.id">{{ A.selfText }}</pre>
+      <section class="ai-skill-widget" v-if="selfTotal">
+        <div class="ai-skill-head">
+          <div class="ai-skill-tabs">
+            <button class="ai-skill-tab" :class="{active: A.selfTab === 'pending'}"
+                    type="button" @click="setSelfTab('pending')">
+              待批准
+              <span class="ai-skill-badge" v-if="selfPendList.length">{{ selfPendList.length }}</span>
+            </button>
+            <button class="ai-skill-tab" :class="{active: A.selfTab === 'active'}"
+                    type="button" @click="setSelfTab('active')">
+              已启用
+              <span class="ai-skill-count">({{ selfOkList.length }})</span>
+            </button>
           </div>
-          <p class="ai-selft-p" v-if="selfBroken.length">
-            这几只进不了工具表（先修好再说）：{{ selfBroken.join("、") }}
-          </p>
-          <p class="ai-selft-p">
-            <button class="btn btn-outline" @click="manageSkills()"
-                    title="图标墙 / 详情 / 文件列表 / 转为插件 / 删除 —— 都在技能界面里">管理技能…</button>
-          </p>
+          <div class="ai-skill-actions">
+            <button class="ai-skill-iconbtn" type="button" title="管理技能"
+                    @click="manageSkills()" v-html='ico("settings", "i")'></button>
+            <button class="ai-skill-iconbtn" type="button" title="刷新列表"
+                    @click="refreshSkills()" v-html='ico("refresh-cw", "i")'></button>
+          </div>
+        </div>
+
+        <div class="ai-skill-list" v-show="A.selfTab === 'pending'">
+          <div class="ai-skill-alert" v-if="selfPendList.length">
+            <span v-html='ico("alert-triangle", "i")'></span>
+            <span>它给自己造了 <strong>{{ selfPendList.length }} 只技能</strong>，你点「允许」它下一次跑才能用。</span>
+          </div>
+          <div class="ai-skill-row" v-for="w in selfPendList" :key="w.id">
+            <div class="ai-skill-info">
+              <span class="ai-skill-name">{{ w.id }}</span>
+              <span class="ai-skill-desc" :title="w.desc || w.why">
+                {{ skillOrigin(w) }} {{ w.desc || w.why || "（没写说明）" }}
+              </span>
+            </div>
+            <div class="ai-skill-rowacts">
+              <button class="ai-skill-btn primary" type="button"
+                      v-if="w.layer !== 'system' && !(w.problems || []).length"
+                      @click="allowTool(w)">
+                <span v-html='ico("check", "i")'></span><span class="txt">允许</span>
+              </button>
+              <button class="ai-skill-btn" type="button" @click="lookTool(w)">
+                <span v-html='ico("eye", "i")'></span><span class="txt">{{ A.selfWho === w.id ? "收起" : "审查" }}</span>
+              </button>
+              <button class="ai-skill-iconbtn danger" type="button" title="删除"
+                      v-if="w.layer !== 'system'" @click="rmTool(w)"
+                      v-html='ico("trash-2", "i")'></button>
+            </div>
+            <pre class="ai-skill-pre" v-if="A.selfWho === w.id">{{ A.selfText }}</pre>
+          </div>
+          <div class="ai-skill-empty" v-if="!selfPendList.length">没有待批准的技能。</div>
+        </div>
+
+        <div class="ai-skill-list" v-show="A.selfTab === 'active'">
+          <div class="ai-skill-row" v-for="w in selfOkList" :key="w.id">
+            <div class="ai-skill-info">
+              <span class="ai-skill-name">{{ w.id }}</span>
+              <span class="ai-skill-desc" :title="w.desc || w.why">
+                {{ skillOrigin(w) }} {{ w.desc || w.why || "（没写说明）" }}
+              </span>
+            </div>
+            <div class="ai-skill-rowacts">
+              <button class="ai-skill-btn" type="button"
+                      v-if="w.layer !== 'system'" @click="allowTool(w)">
+                <span v-html='ico("corner-up-left", "i")'></span><span class="txt">撤销</span>
+              </button>
+              <button class="ai-skill-iconbtn danger" type="button" title="删除"
+                      v-if="w.layer !== 'system'" @click="rmTool(w)"
+                      v-html='ico("trash-2", "i")'></button>
+            </div>
+          </div>
+          <div class="ai-skill-row" v-for="w in selfBrokenList" :key="'b' + w.id">
+            <div class="ai-skill-info">
+              <span class="ai-skill-name">{{ w.id }}</span>
+              <span class="ai-skill-desc" :title="w.desc || w.why">
+                {{ skillOrigin(w) }} {{ w.desc || w.why || "（没写说明）" }}
+                · {{ (w.problems || []).join("；") }}
+              </span>
+            </div>
+            <div class="ai-skill-rowacts">
+              <button class="ai-skill-btn" type="button" @click="lookTool(w)">
+                <span v-html='ico("eye", "i")'></span><span class="txt">{{ A.selfWho === w.id ? "收起" : "审查" }}</span>
+              </button>
+              <button class="ai-skill-iconbtn danger" type="button" title="删除"
+                      v-if="w.layer !== 'system'" @click="rmTool(w)"
+                      v-html='ico("trash-2", "i")'></button>
+            </div>
+            <pre class="ai-skill-pre" v-if="A.selfWho === w.id">{{ A.selfText }}</pre>
+          </div>
+          <div class="ai-skill-broken" v-if="selfBrokenList.length">
+            <span v-html='ico("alert-triangle", "i")'></span>
+            这几只进不了工具表（先修好再说）：{{ selfBrokenNames }}
+          </div>
+          <div class="ai-skill-empty" v-if="!selfOkList.length && !selfBrokenList.length">还没有已启用的技能。</div>
         </div>
       </section>
 
