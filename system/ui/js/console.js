@@ -42,25 +42,23 @@ function paintConsole(){
   // 门面：原来的调用点（`setTab` / `setConsole` / `init` …）照旧调它
   CONSOLER.flash = "";                   // 上一次"已复制 N 个字符"这类临时话，重画就抹掉
   CONSOLER.rev++;
-  // 切了"看哪一份" ⇒ 给终端重新对一次基线（只打一句招呼，**不重印历史** —— 重印就是刷屏）
+  // 切了"看哪一份" ⇒ 给终端重新对一次基线（只对基线，**不往屏上打任何字**）
   const k = consolePaneKey();
   if (k !== MOSS_TERM.mirrorKey){
     MOSS_TERM.mirrorKey = k;
-    const raw = consoleBuf(k).raw || "";
-    MOSS_TERM.mirror[k] = raw;
-    if (MOSS_TERM.on && MOSS_TERM.started && raw && k !== "__host__"){
-      termShow("\r\n[moss] 现在看的是「" + consoleTitle(k) + "」的输出\r\n");
-    }
+    MOSS_TERM.mirror[k] = consoleBuf(k).raw || "";
   }
-  // `V-348`：这一页一露头就把终端起起来（**默认就是终端**，不用你去点开关）；
+  // `V-348`：这一页一露头就把终端起起来（会话先热着，不用你去点开关）；
   //          顺带重量一次尺寸（切回来 / 窗口变了，列数可能是旧的）
   termAutoStart();
-  // ★ 每帧自查两件事，都是被用户报出来的"看着没了"：
-  //   ① `.term` 类还在不在 —— 它一丢，终端就从画面上消失（而 xterm 其实还挂在那个节点上，
-  //      画面看着就是"被清掉"），这一类最难查，所以自己焊回去；
+  // ★★ `V-370`：**这一版显示的是终端还是那个包自己的输出，全看 `termViewing()`** ——
+  //   看着别的包的输出时终端会话照旧活着（`on` 不动），只是不摆出来（屏上不留别人的日志）。
+  //   下面两件都是被用户报出来的"看着没了"，所以自己焊：
+  //   ① `.term` 类要跟着上面的判断**加也去** —— 它一丢，终端就从画面上消失
+  //      （而 xterm 其实还挂在那个节点上，画面看着就是"被清掉"）；
   //   ② 尺寸**变了才**重量 —— 原来每 200ms 都 fit 一次，而 xterm 往下缩时会真丢行。
-  if (MOSS_TERM.on && MOSS_TERM.term){
-    const pane = $("#pane-console");
+  const pane = $("#pane-console");
+  if (termViewing() && MOSS_TERM.term){
     if (pane && !pane.classList.contains("term")) pane.classList.add("term");
     if (pane){
       const vis = !!pane.offsetParent;
@@ -69,6 +67,11 @@ function paintConsole(){
       MOSS_TERM.vis = vis;
     }
     termFitSoon();
+  }else{
+    if (pane && pane.classList.contains("term")) pane.classList.remove("term");   // 让位给 `#out`
+    // 没在显示终端 ⇒ 把"露过头"的记号清掉：下次切回它那份时**重新给一次焦点**
+    // （`V-348` 那条"打开命令行就能直接敲"，切包回来也要成立）
+    MOSS_TERM.vis = false;
   }
 }
 /* 跑起来 / 跑完了各喊一声（`embed.js` 的两处）。★ `V-348`：**跑完要让 shell 再打一次提示符** ——
@@ -82,21 +85,29 @@ function paintInbar(key){
   const live = !!RUNS[k];
   const was = !!TERMLIVE[k];
   TERMLIVE[k] = live;
-  if (MOSS_TERM.on && MOSS_TERM.term){
+  if (termViewing() && k === consolePaneKey() && MOSS_TERM.term){
     // ★ 起跑 / 收工都把焦点还给终端：`embed.js` 那边是去 focus 底下那根 `#stdin`
     //   （终端模式里它是 `display:none`，focus 等于没做）⇒ 我点了「运行」之后一敲键盘
     //   谁也没收到，看着就像"敲不进去了"。
+    // ★ `V-370`：只在"**这块屏正显示这个包的终端**"时才抢焦点 —— 屏上是别人/自己那份
+    //   `<pre>` 的时候抢焦点，等于把光标从下面那根 input 上拽走。
     MOSS_TERM.term.focus();
     MOSS_TERM.hotUntil = Date.now() + 3000;
   }
   // 跑完了：让 shell 再打一次提示符，"接着敲"这件事才是看得见的
-  if (was && !live && MOSS_TERM.on && MOSS_TERM.started) termWrite("\r");
+  // ★ `V-370`：只在这个包**就是这块屏的主人**（= 它确实跑在这条 shell 里）时才写这个回车 ——
+  //   不然就是往"别人正在跑的东西"里塞了一个回车。
+  if (was && !live && MOSS_TERM.on && MOSS_TERM.started && MOSS_TERM.owner === k) termWrite("\r");
 }
 function consolePaneKey(){ return consoleKey || "__host__"; }
-/* 输入行那句占位话（`V-43`）：没在跑 / 跑完了 → 换一句，省得你以为发了没反应。 */
+/* 输入行那句占位话（`V-43`）：没在跑 / 跑完了 → 换一句，省得你以为发了没反应。
+   ★ `V-370`：跑在**终端**里的包，答案得在终端里敲（这根 input 走的是 `run_input`，
+     它认的是 `run_start` 那条管子）—— 现在屏上要是显示的是这个包自己的输出（你把终端
+     切走了），这句就得说清"去哪儿回答"。 */
 function consoleInbarPlaceholder(key){
-  if (RUNS[key]) return "包在等你的回答就敲在这里，回车发送（比如 1 / 2 / 3）";
-  // `V-367`：别用"没有输入这回事"这种自述口吻 —— 说清"这里为什么敲不了"
+  if (RUNS[key]) return RUNS[key].term
+    ? "这个包跑在终端里 —— 切到 DOS 终端去回答它"
+    : "包在等你的回答就敲在这里，回车发送（比如 1 / 2 / 3）";
   return key === "__host__" ? "这是 moss 自己的输出，不接受输入"
                             : "这个包现在没在跑 —— 先在「详情」里点运行";
 }
@@ -118,16 +129,21 @@ const MossConsole = {
       this.R.rev;
       if (this.R.flash) return this.R.flash;
       // `V-348`：看着终端的时候，那行字得说终端的事（是"谁的输出"在这里没意义）
-      if (MOSS_TERM.on) return "DOS 终端（常驻） · " + termHintText();
+      // ★ `V-370`：判据从"终端开着"改成"**现在显示的是终端**" —— 切到别的包时屏上是
+      //   那个包自己的输出，这行字就得说清是**谁的**（不然又是一句没用的"DOS 终端"）
+      if (termViewing()) return "DOS 终端（常驻） · " + termHintText();
       return consoleTitle(this.key) + " · " + (this.buf.info || "");
     },
     live(){ this.R.rev; return !!RUNS[this.key]; },
     ph(){ this.R.rev; return consoleInbarPlaceholder(this.key); },
     // `V-348`：现在看的是不是那个常驻终端（`MOSS_TERM` 不是响应式对象，所以照旧登记 `R.rev`）
-    term(){ this.R.rev; return !!MOSS_TERM.on; },
+    // ★ `V-370`：`term()` 的语义 = "**这块屏是终端**"（而不是"终端开着"）—— 按钮的高亮、
+    //   顶栏那句话、下面 `#out`/`#termhost` 谁露头，全认这一个判据。
+    term(){ this.R.rev; return termViewing(); },
     termHint(){ this.R.rev;
-      return MOSS_TERM.on ? termHintText()
-                          : "切回 DOS 终端（现在看的是这个包的纯文本输出）"; },
+      return termViewing()
+        ? ("切回这个包自己的输出（现在是 DOS 终端 · " + termHintText() + "）")
+        : "切到 DOS 终端"; },
   },
   mounted(){ this.autoscroll(); },
   updated(){ this.autoscroll(); },
@@ -142,7 +158,7 @@ const MossConsole = {
       this._sig = sig;
       el.scrollTop = el.scrollHeight;
     },
-    clearOut(){ if (MOSS_TERM.on) return termClear(); setConsole(this.key, "", "还没跑过"); },
+    clearOut(){ if (termViewing()) return termClear(); setConsole(this.key, "", "还没跑过"); },
     copyOut(){ copyOut(); },
     rerun(){ rerunLast(); },
     send(){ sendStdin(); },
@@ -181,6 +197,10 @@ async function sendStdin(){
   if (!inp || inp.disabled) return;
   const run = RUNS[key];
   if (!run){ toast("这个包现在没在跑", true); return; }
+  // `V-370`：跑在**终端**里的包，这根 input 送不到它（终端那条路没有 `rid`，`run_input`
+  //   只会回一句"没有这次运行"）—— 如实说一句，别让这行字发出去就没了
+  //   （顶栏占位话这时也会写明"去 DOS 终端回答"）。
+  if (run.term){ toast("它跑在终端里 —— 切到 DOS 终端敲这一行", true); return; }
   const line = inp.value;
   inp.value = "";
   const b = consoleBuf(key);
@@ -203,7 +223,8 @@ function out(text, info){ setConsole(consoleKey || "__host__", text, info); }
    而且等于绕开 Vue 去改它管的东西。走 `CONSOLER.flash` 这条路，行为一样、不打架。 */
 async function copyOut(){
   // `V-348`：看着终端的时候，复制的就是终端里那些东西（而不是"这个包那份输出"）
-  const text = MOSS_TERM.on ? (MOSS_TERM.text || "")
+  // `V-370`：判据同上 —— 只有**屏上真是终端**时才复制终端那份（不然复制的是眼前这块）
+  const text = termViewing() ? (MOSS_TERM.text || "")
                             : ($("#out") ? $("#out").textContent : "");
   let ok = false;
   try { await navigator.clipboard.writeText(text); ok = true; } catch(e){ ok = false; }
@@ -420,7 +441,19 @@ const MOSS_TERM = {
   hotUntil: 0,        // 刚有过输出 / 按键 ⇒ 这段时间轮询勤一点（要跟手）
   mirror: {},         // key -> 这个包的输出"已经倒进终端多少"（增量，绝不重印）
   mirrorKey: "",      // 上一刻在看哪一份（切包时只打个招呼，不重印历史）
+  // ★★ `V-370`：**这块终端屏现在算谁的**（key）；`""` = 空屏（谁都没在里面跑过 / 刚清过）。
+  //   ★ 你报的现场：「我运行了 BMI，点 IP查询（没运行），再点命令行 —— 里面是 BMI 的运行日志，
+  //     他们之间没做好隔离」。根因：常驻终端只有**一条 shell**（`V-348`/`V-352` 的设计），
+  //     而这块屏以前是"终端开着就显示终端" ⇒ 切成 ip 之后屏上留着的还是 BMI 那屏。
+  //     现在：**屏归谁，就只在看谁的时候显示终端**；切到别的包 ⇒ 显示那个包自己那份输出
+  //     （一份一份的，`CONSOLE[key]`）。终端会话不动、照旧在后台跑/攒输出，一键切回去。
+  owner: "",
 };
+/* `V-370`：现在这块屏**是不是**终端（不是"终端开着没有"）。
+   ★ 为什么不直接看 `MOSS_TERM.on`：`on` 是"会话活着、还在攒输出"，跟"要不要显示"是两件事。 */
+function termViewing(){
+  return !!MOSS_TERM.on && (MOSS_TERM.owner || "") === consolePaneKey();
+}
 
 /* 终端这几个接口在不在（宿主版本对不对）。
    ★ 预览工具里的假后端**没有** term_* 这几个方法 —— 不先问一句，一个 TypeError
@@ -468,7 +501,10 @@ function termMirror(key, raw){
   // 接得上就补尾巴；接不上（长度对但内容重排过）也只补"多出来的那截"
   // ★ 任何情况下都不会把已经显示过的内容再显示一遍（重印就是刷屏）
   const out = raw.slice(prev.length);
-  if (MOSS_TERM.on && MOSS_TERM.term && out) termShow(out);
+  // `V-348`：倒进终端只在"**屏上正是终端**"的时候做（`V-370`）—— 屏上摆着别的包的输出时，
+  //   再往里倒就等于"把 A 的日志倒进 B 那块屏"，切回 B 就看见了（又成了串台）。
+  //   没倒的那些一个字都不丢：它就在 `CONSOLE[k]` 那份缓冲里，切过来照样看得见。
+  if (termViewing() && MOSS_TERM.term && out) termShow(out);
 }
 
 /* 真终端模式下，**宿主的纯文本输出**（自检 / 历史 / 宿主命令那几条路）在这块屏上没地方放
@@ -479,6 +515,9 @@ function termMirror(key, raw){
 function termNeedPlainView(k){
   const run = RUNS[k];
   if (run && run.term) return;            // 在终端里跑的：输出本来就在终端里，不许动
+  // `V-370`：屏上本来就不是终端（在别人的/自己的那份 `<pre>` 上）⇒ 没什么可切的，
+  //   别顺手把会话的显示关掉（关了就轮到"下次进这一页看不到终端"那个老毛病）
+  if (!termViewing()) return;
   termHide();
 }
 
@@ -563,6 +602,18 @@ function termShow(text){
   MOSS_TERM.hotUntil = Date.now() + 2500;
   t.write(text);
   MOSS_TERM.text = (MOSS_TERM.text + text).slice(-200000);
+  // ★★ `V-370`：**跑在这块屏里的那个包，它的输出也留一份到它自己那份缓冲里** ——
+  //   跑在终端里的包原来只"活在屏上"：切走再切回来（或跑完以后）就只剩"这块屏碰巧还剩什么"，
+  //   甚至显示成「还没有输出」。留了底之后，每个包的「命令行」都是**它自己那一份**，
+  //   终端只是"跑在它里面的那块屏"（`#out` 那份是等价的只读副本，`stripAnsi` 过）。
+  const o = MOSS_TERM.owner;
+  if (o && RUNS[o] && RUNS[o].term){
+    const c = consoleBuf(o);
+    c.raw = (c.raw || "") + text;
+    c.text = stripAnsi(c.raw);
+    // 正看着这一份、而屏上摆的是它自己那块 `<pre>`（把终端切走了）⇒ 得让它跟着长
+    if ((consoleKey || "__host__") === o && !termViewing()) CONSOLER.rev++;
+  }
 }
 function termClear(){
   if (MOSS_TERM.term) MOSS_TERM.term.reset();
@@ -570,6 +621,9 @@ function termClear(){
   MOSS_TERM.typed = "";
   // 屏都清了，镜像基线也跟着重来 —— 不然下一段输出会被当成"接着上次流"而丢掉前半截
   MOSS_TERM.mirror = {};
+  // `V-370`：屏空了 ⇒ 这块屏**归当前在看的这一份**（清掉之后屏上没有任何人的日志了，
+  //   留着"归上一个包"的记号只会让下一个包的输出没法显示在这里）
+  MOSS_TERM.owner = consolePaneKey();
 }
 function termWrite(text){
   if (!termApiReady()) return;
@@ -758,6 +812,12 @@ async function termRunPackage(p, args, cwd){
   consoleKey = p.id;
   RUNS[p.id] = {term: true, cmd: r.cmd || "", t0: Date.now(), stopped: false,
                 switched: true, tabAtStart: tab};
+  // ★★ `V-370`：命令已经敲进这块屏了 ⇒ **这块屏从此归这个包**（哪怕原来是别的包的日志：
+  //   新的一跑就接管，屏上从这一行往下都是它的）。这样"选回这个包"就能直接看到它跑，
+  //   而切到别的包时屏上是那个包自己的输出（隔离）。
+  //   ★ 顺序：`RUNS` 先落下再重画 —— `paintConsole()` 会让 Vue 重算 `live`/顶栏那行字。
+  MOSS_TERM.owner = p.id;
+  paintConsole();
   setStatus("正在跑 " + (RUNS[p.id].cmd || ""));      // 状态栏（`V-61`）
   // 从「详情」点的「运行」⇒ 把你带到「命令行」看它跑（`U-16` 那个"别把人拽走"照旧：
   // 已经在别处看东西的话不动你）。包现在跑在终端里，"看它跑"和"跟它对话"是同一件事。
@@ -867,14 +927,27 @@ function termEnsureSession(){
    ★ `V-367`：`quiet` = 这次是**界面自己**要开终端（进页面自动开 / 点运行顺手开），
      起不来就**悄悄退回老路**，不弹字 —— 用户没点过任何东西，不该收到一条失败通知
      （"宿主没有终端接口（term_start）" 这种话本来是给写代码的人看的）。
-     只有用户**自己点了那颗开关**（`termToggle`）才说一句为什么。 */
-async function termOpen(quiet){
-  if (MOSS_TERM.on && MOSS_TERM.started){ termPump(); return true; }
+     只有用户**自己点了那颗开关**（`termToggle`）才说一句为什么。
+   ★★ `V-370`：多一个 `claim` = "**用户自己点的**，这块屏就归当前这个 key"。界面自己开的
+     不许抢：终端上要是还留着**别的包**的日志（`owner` 是别人），就只把会话热着、不摆出来
+     （屏上摆那个包自己的输出）—— 这就是"包和包之间没隔离"那条的修法。 */
+async function termOpen(quiet, claim){
   const pane = $("#pane-console");
+  const key = consolePaneKey();
+  // 会话已经活着：剩下的只是"这块屏归谁"（不用再起一次）
+  if (MOSS_TERM.on && MOSS_TERM.started){
+    if (claim) MOSS_TERM.owner = key;           // 用户点的：认领
+    paintConsole();
+    if (termViewing()) termPump();
+    return true;
+  }
   MOSS_TERM.on = true;
   MOSS_TERM.autoTried = true;
+  // 空屏（谁都没在里面跑过 / 刚清过）谁来都能用 ⇒ 认下当前这个（保住 `V-348` 的
+  // "进这一页就是终端"）；屏上留着别人的日志时**不认**（`claim` 除外）
+  if (claim || !MOSS_TERM.owner || MOSS_TERM.owner === key) MOSS_TERM.owner = key;
   MOSS_TERM.fw = 0; MOSS_TERM.fh = 0;      // 重新露头了：尺寸要重新量
-  if (pane) pane.classList.add("term");
+  if (pane && termViewing()) pane.classList.add("term");
   CONSOLER.rev++;                  // ★ 别走 paintConsole：它又会去喊 termAutoStart
   const r = await termEnsureSession();
   if (!r.ok){
@@ -889,12 +962,14 @@ async function termOpen(quiet){
   }
   paintConsole();
   termFitSoon();
-  if (MOSS_TERM.term) MOSS_TERM.term.focus();
+  if (termViewing() && MOSS_TERM.term) MOSS_TERM.term.focus();
   termPump();
   return true;
 }
 function termToggle(){
-  if (MOSS_TERM.on) termHide(); else termOpen();
+  // `V-370`：判据是"**这块屏现在是不是终端**" —— 屏上是别的包的日志时，这里是"切过去"，
+  //   而且这一次是用户自己点的 ⇒ 认领这块屏（`claim`）。
+  if (termViewing()) termHide(); else termOpen(false, true);
 }
 function termHide(){
   MOSS_TERM.on = false;

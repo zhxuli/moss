@@ -93,7 +93,7 @@ BROWSERS = [
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "btn-detail", "err-path", "args-clear", "pkg-auto", "backup", "backup-restore", "backup-sync", "backup-export", "backup-groups",
-          "drop-hot", "drop-dir", "drop-file", "drop-ext", "console-input", "embed", "pane-resize",
+          "drop-hot", "drop-dir", "drop-file", "drop-ext", "console-input", "term-iso", "embed", "pane-resize",
           "list-order", "list-drag", "list-drag-filter", "list-drag-top", "vis-clean",
           "flat-buttons", "backup-diff", "refresh-keep-ctx", "compare", "hist-snap", "modal-kinds", "snap-modal",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
@@ -3729,6 +3729,95 @@ MOCK_JS = r"""
           " 在跑时可用=" + liveOk + " 发出=" + (sent.line === "3" ? 1 : 0) +
           " 回显=" + echoed + " 清空=" + cleared + " 跑完禁用=" + afterDisabled;
         document.title = ok ? "READY" : "STDIN-FAIL";
+      }
+
+      // ★ `V-370`：**包和包之间的「命令行」要隔离** —— 你报的现场：
+      //   「我运行了 BMI，点 IP查询（没运行），再点命令行 —— 里面是 BMI 的运行日志，没隔离」。
+      //   根因：常驻终端只有**一条 shell**，而那块屏以前"终端开着就显示终端" ⇒ 切包只换了顶栏那行字。
+      //   这一场**当场把假终端装上**（别的场景没有 term_*，走的是 `<pre>` 那条老路 ⇒ 互不影响），
+      //   验的就是"终端这条路上切包换屏"。
+      if (h === "term-iso"){
+        M.term = {buf: "", runs: [], starts: 0};
+        pywebview.api.term_start = async () => {
+          M.term.starts++;
+          return {ok: true, mode: "pipe", alive: true, note: "", fresh: true, history: ""};
+        };
+        pywebview.api.term_poll = async () => {
+          const s = M.term.buf; M.term.buf = "";
+          return {ok: true, out: s, alive: true, mode: "pipe"};
+        };
+        pywebview.api.term_write = async () => ({ok: true});
+        pywebview.api.term_resize = async () => ({ok: true});
+        pywebview.api.term_run = async (id, args) => {
+          M.term.runs.push(id);
+          M.term.buf += "C:\\x>moss :" + id + (args ? " " + args : "") + "\r\n" +
+                        "（" + id + " 自己的输出）\r\n";
+          return {ok: true, cmd: "moss :" + id + (args ? " " + args : "")};
+        };
+        const A = state.packages.find(x => x.id === "md5") || state.packages[0];
+        const B = state.packages.find(x => x.id !== A.id && !(x.ui && x.ui.embed)) || state.packages[1];
+        const pane = () => document.querySelector("#pane-console");
+        const hostShown = () => {
+          const h = document.querySelector("#termhost");
+          return !!h && getComputedStyle(h).display !== "none";
+        };
+        const info = () => ((document.querySelector("#outinfo") || {}).textContent || "");
+        // ★ 先跑起来（**跑之前**别让假后端说它已经在跑 —— `clickRun` 看到"在跑"会当成"停止"）
+        delete RUNS[A.id]; delete PST[A.id];
+        select(A.id);
+        setTab("detail");
+        await sleep(250);
+        const pkgStates = pywebview.api.pkg_states;
+        pywebview.api.pkg_states = async () => ({ok: true, running: false, states: {}});
+        await clickRun(A);                              // 跑 A（走终端那条路）
+        const startsAfterRun = M.term.starts;
+        // 跑起来之后：A 就**一直在跑**了（用户的现场就是"BMI 还在跑，我去点了别的包"）
+        pywebview.api.pkg_states = async () => ({ok: true, running: true,
+                                                 states: {[A.id]: {running: true, pids: 1}}});
+        // 等假终端那一段输出被泵进来（`term_poll` 是 45~220ms 一轮）
+        for (let i = 0; i < 30 && !/自己的输出/.test(consoleBuf(A.id).text || ""); i++) await sleep(60);
+        const aShowsTerm = hostShown() && pane().classList.contains("term");
+        const aBuf = consoleBuf(A.id).text || "";        // A 那份**留底**（`V-370` 的捕获）
+        const aCaptured = /自己的输出/.test(aBuf);
+        // ② 切成 B（B 没运行）—— 这块屏得换成 B 自己那份，**不许**还摆着 A 的终端
+        select(B.id);
+        setTab("console");
+        await sleep(350);
+        const bHostShown = hostShown();
+        const bTerm = pane().classList.contains("term");
+        const bOut = (document.querySelector("#out") || {}).textContent || "";
+        const bInfo = info();
+        const bLeak = /md5/.test(bOut) || /自己的输出/.test(bOut) || /DOS 终端/.test(bInfo);
+        // ③ 切回 A —— 它那块终端得回来（会话一直活着，不许重起）
+        select(A.id);
+        await sleep(350);
+        const backTerm = hostShown() && pane().classList.contains("term");
+        const starts1 = M.term.starts;
+        // ④ 用户自己点终端图标（B 那边）⇒ 认领这块屏，能看终端
+        select(B.id);
+        await sleep(250);
+        (document.querySelector("#btn-term") || {click(){}}).click();
+        await sleep(300);
+        const claimShown = hostShown();
+        const starts2 = M.term.starts;
+        pywebview.api.pkg_states = pkgStates;
+        const ok = startsAfterRun === 1 && aShowsTerm && aCaptured &&
+                   !bHostShown && !bTerm && !bLeak &&
+                   backTerm && claimShown && starts1 === 1 && starts2 === 1 &&
+                   !(window.__errors || []).length;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") +
+          "\nA 起会话次数 = " + startsAfterRun + "（要 1 —— 说明真的走了终端那条路）" +
+          "\nA 在跑时是终端 = " + aShowsTerm + "（A 那份留底 = " + aCaptured +
+            "：" + JSON.stringify(aBuf.replace(/\s+/g, " ").slice(0, 40)) + "）" +
+          "\n切到 B（没跑）还是终端吗 = " + bHostShown + " / class=" + bTerm +
+            "（要 false；顶栏 = " + JSON.stringify(bInfo.slice(0, 26)) + "）" +
+          "\nB 那块屏上有 A 的日志吗 = " + bLeak + "（要 false：" +
+            JSON.stringify(bOut.replace(/\s+/g, " ").slice(0, 40)) + "）" +
+          "\n切回 A 终端回来了 = " + backTerm +
+          "\n自己点终端图标 = " + claimShown + "（起会话次数 = " + starts1 + " / " + starts2 + "，要都是 1）" +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY" : "TERM-ISO-FAIL";
       }
 
       if (h === "drop-hot"){
