@@ -93,7 +93,7 @@ BROWSERS = [
 SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "btn-detail", "err-path", "args-clear", "pkg-auto", "backup", "backup-restore", "backup-sync", "backup-export", "backup-groups",
-          "drop-hot", "drop-dir", "drop-file", "drop-ext", "console-input", "term-iso", "embed", "pane-resize",
+          "drop-hot", "drop-dir", "drop-file", "drop-ext", "console-input", "term-line", "term-iso", "embed", "pane-resize",
           "list-order", "list-drag", "list-drag-filter", "list-drag-top", "vis-clean",
           "flat-buttons", "backup-diff", "refresh-keep-ctx", "compare", "hist-snap", "modal-kinds", "snap-modal",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
@@ -3694,7 +3694,9 @@ MOCK_JS = r"""
         setTab("console");
         await sleep(300);
         const inp = document.querySelector("#stdin"), btn = document.querySelector("#btn-send");
-        const beforeDisabled = inp.disabled;
+        // ★ `V-371`：**没在跑的时候这一行也能敲**（用户要的"像普通命令行那样"）——
+        //   以前这里是断言的"没跑时禁用"，现在反过来。
+        const idleUsable = !!inp && !inp.disabled;
         // 造一个"正在跑"：直接塞进 RUNS 再刷一下（预览的假 run_poll 会立刻结束）
         RUNS[p0.id] = {rid: "r1", cmd: "moss :" + p0.id, timer: null,
                               stopped: false, switched: false, tabAtStart: "console"};
@@ -3708,13 +3710,13 @@ MOCK_JS = r"""
         const sent = (M.inputs || [])[0] || {};
         const echoed = (document.querySelector("#out").textContent || "").includes("3");
         const cleared = inp.value === "";
-        // 跑完了 → 输入行该禁用
+        // 跑完了 → 这一行**照样能敲**（`V-371`：接着就能敲下一条命令）
         delete RUNS[p0.id];
         paintInbar(p0.id);
         await sleep(150);
-        const afterDisabled = inp.disabled;
-        const ok = beforeDisabled && liveOk && sent.line === "3" && sent.rid === "r1" &&
-                   echoed && cleared && afterDisabled;
+        const stillUsable = !inp.disabled;
+        const ok = idleUsable && liveOk && sent.line === "3" && sent.rid === "r1" &&
+                   echoed && cleared && stillUsable;
         // ★ 截图要拍的是"活着"那一眼：把在跑的状态摆回去（问题 + 我答的那行都在），
         //   判定结果放顶栏（短），别用诊断文字盖住要看的东西。
         RUNS[p0.id] = {rid: "r1", cmd: "moss :" + p0.id, timer: null,
@@ -3725,10 +3727,73 @@ MOCK_JS = r"""
           "   3) 新文件夹 —— 输出到 compressed_output\\，原图不动\n3\n", "运行中");
         await sleep(250);
         document.querySelector("#meta").textContent =
-          "DIAG " + (ok ? "OK" : "FAIL") + " 没跑时禁用=" + beforeDisabled +
+          "DIAG " + (ok ? "OK" : "FAIL") + " 没跑时能敲=" + idleUsable +
           " 在跑时可用=" + liveOk + " 发出=" + (sent.line === "3" ? 1 : 0) +
-          " 回显=" + echoed + " 清空=" + cleared + " 跑完禁用=" + afterDisabled;
+          " 回显=" + echoed + " 清空=" + cleared + " 跑完还能敲=" + stillUsable;
         document.title = ok ? "READY" : "STDIN-FAIL";
+      }
+
+      // ★ `V-371`：**没在跑的时候，底下那行也能像普通命令行那样直接用** ——
+      //   你报的：「点 md5计算，再点 ip查询的命令行 …… 它也没法在这里直接操作这个命令行，
+      //   它提示 这个包现在没在跑 -- 先在详情里点运行」。现在：这一行交给宿主起一个
+      //   **一次性进程**在这个对象自己的目录里跑（`cmd_start`；`cd` 只换这一份的当前目录）。
+      //   ★ 为什么不直接塞给那条常驻 shell：它只有一条，正跑着别的包时那等于往那个包的
+      //     stdin 里塞命令（`V-365` 那类串台）。这一场就是钉这条。
+      if (h === "term-line"){
+        M.cmds = [];
+        pywebview.api.cmd_start = async (cwd, line) => {
+          M.cmds.push({cwd: String(cwd || ""), line: String(line || "")});
+          if (/^cd(\s|$)/i.test(String(line || ""))) return {ok: true, cd: "D:\\x\\up", cmd: line};
+          return {ok: true, run_id: "c" + M.cmds.length, pid: 4242, cmd: line};
+        };
+        const A = state.packages.find(x => x.id === "md5") || state.packages[0];
+        const B = state.packages.find(x => x.id !== A.id && !(x.ui && x.ui.embed)) || state.packages[1];
+        delete RUNS[A.id]; delete PST[A.id];
+        select(A.id);
+        setTab("console");
+        await sleep(300);
+        const inp = document.querySelector("#stdin"), btn = document.querySelector("#btn-send");
+        const usable = !!inp && !inp.disabled && !!btn && !btn.disabled;
+        const ph = (inp ? (inp.placeholder || "") : "");
+        const saysType = /敲命令/.test(ph);                  // 占位话得说"在这儿敲命令"
+        inp.value = "dir /b";
+        btn.click();
+        await sleep(400);
+        const c1 = M.cmds[0] || {};
+        const inPkgDir = c1.cwd === String(A.dir || "");
+        const ranIt = c1.line === "dir /b";
+        const echoed = /dir \/b/.test((document.querySelector("#out") || {}).textContent || "");
+        const clearedIn = inp.value === "";
+        // ② `cd ..` 只换**这一份**的当前目录（下次跑就在新目录里）
+        inp.value = "cd ..";
+        btn.click();
+        await sleep(300);
+        const cdGot = (M.cmds[1] || {}).line === "cd ..";
+        inp.value = "echo hi";
+        btn.click();
+        await sleep(350);
+        const c3 = M.cmds[2] || {};
+        const cwdFollowed = c3.cwd === "D:\\x\\up";
+        // ③ 另一份命令行一个字都没沾上（还是各一份）
+        select(B.id);
+        await sleep(300);
+        const bOut = (document.querySelector("#out") || {}).textContent || "";
+        const notLeaked = !/dir \/b|echo hi|D:\\x\\up/.test(bOut);
+        const ok = usable && saysType && inPkgDir && ranIt && echoed && clearedIn &&
+                   cdGot && cwdFollowed && notLeaked &&
+                   !(window.__errors || []).length;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n没在跑也能敲 = " + usable + "（占位话 = " + JSON.stringify(ph.slice(0, 30)) + "）" +
+          "\n① dir /b 那次 = " + JSON.stringify([c1.cwd, c1.line]) +
+          "（在这个包的目录里 = " + inPkgDir + "；回显在这份屏上 = " + echoed +
+          "；框清空 = " + clearedIn + "）" +
+          "\n② cd .. 只换这一份 = " + cdGot + " · 下一条用的是新目录 = " + cwdFollowed +
+          "（" + JSON.stringify(c3.cwd) + "）" +
+          "\n③ 换成别的包那份：没沾上 = " + notLeaked +
+          "（" + JSON.stringify(bOut.replace(/\s+/g, " ").slice(0, 40)) + "）" +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY" : "TERM-LINE-FAIL";
       }
 
       // ★ `V-370`：**包和包之间的「命令行」要隔离** —— 你报的现场：
@@ -4389,7 +4454,7 @@ MOCK_JS = r"""
           //    以及**有没有哪块横向溢出**（稿子的卡片是横向排布，最容易在这儿溢出）。
           // ★ `V-360`（像素级还原）：另外量两个"稿子的数"——
           //    ① 参数框要吃满命令栏剩下的地方（稿子 `.cmd-input{flex:1}`）：量它右边界
-          //       到主动作按钮左边界之间那点缝（稿子 `.dp-primary{margin-left:8px}`）；
+          //       到主动作按钮（分离式按钮组）左边界之间那点缝（`.dp-cmdbar .dp-split{margin-left:8px}`）；
           //    ② 属性区两格之间的间距（稿子 `.props-grid{gap:40px}`）。
           // ★ 溢出怎么量：**只看布局**——某个直接子元素的右边界有没有捅出容器。
           //   ⚠️ 不能用 `scrollWidth > clientWidth`：提示气泡（`.dp-tip::after`）是
@@ -4403,7 +4468,7 @@ MOCK_JS = r"""
           };
           const boxes = [].slice.call(card.querySelectorAll(".dp-card,.dp-cmdbar,.dp-props"));
           const cmdInp = card.querySelector("#args,#hargs");
-          const cmdBtn = card.querySelector(".dp-cmdbar .dp-primary");
+          const cmdBtn = card.querySelector(".dp-cmdbar .dp-split, .dp-cmdbar .dp-primary");
           const barGap = (cmdInp && cmdBtn)
             ? Math.round(cmdBtn.getBoundingClientRect().left - cmdInp.getBoundingClientRect().right)
             : -1;
@@ -5877,7 +5942,7 @@ MOCK_JS = r"""
         select(oldId);
         await sleep(400);
         M.host = [];
-        const dead = ["btn-run", "btn-vis", "btn-openui", "btn-rename", "btn-remove"]
+        const dead = ["btn-run", "btn-vis", "btn-runsplit", "btn-split-arrow", "btn-run-newwin", "btn-rename", "btn-remove"]
           .filter(i => { const el = document.getElementById(i);
                          return !el || typeof el.onclick !== "function"; });
         // 更名：点真按钮 → 弹窗里填新 id → 确定

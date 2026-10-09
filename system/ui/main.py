@@ -1323,6 +1323,38 @@ def _pump_embed(pid, proc):
             pass
 
 
+def _oem_encoding():
+    """cmd 那些**内建命令**（`dir` / `echo` / `ping`）按**控制台代码页**吐字节（中文 Windows
+    = cp936）。★ `V-371`：拿 UTF-8 去读它们 ⇒ 用户敲个 `dir` 回来全是乱码替换符
+    （`tools\\命令行探针.py` 第 ⑥ 段当场验的）。取不到就退回 UTF-8。"""
+    try:
+        import ctypes                                                    # noqa: PLC0415
+        return "cp%d" % int(ctypes.windll.kernel32.GetOEMCP())
+    except Exception:                                                    # noqa: BLE001
+        return "utf-8"
+
+
+def _cmd_new_cwd(base, arg):
+    """`cd <arg>` 算出来的新目录（`V-371`）。算不出来（不存在 / 非法）回 `None`。
+
+    `arg` 空 = 原地（界面会把它当"把当前目录打出来看看"）；`D:` = 那个盘的根；
+    别的按"相对当前目录"算（`..` 也在内）—— 跟 cmd 里一个口径。
+    """
+    a = str(arg or "").strip().strip('"')
+    if not a:
+        return str(base or "")
+    try:
+        if re.match(r"(?i)^[a-z]:$", a):
+            a += "\\"
+        p = Path(a)
+        if not p.is_absolute() and base:
+            p = Path(base) / a
+        p = Path(os.path.normpath(str(p)))
+        return str(p) if p.is_dir() else None
+    except OSError:
+        return None
+
+
 def _pump_output(rid):
     """读线程：把子进程的输出攒进 `RUNS[rid]['lines']`。
 
@@ -1380,6 +1412,13 @@ def _pump_output(rid):
                 r["code"] = proc.returncode
 
     threading.Thread(target=watcher, daemon=True).start()
+    # ★ `V-371`：**这一段按哪种编码解，不能写死** —— 包（`PYTHONIOENCODING=utf-8`）是 UTF-8，
+    #   而 cmd 那些内建命令按**控制台代码页**吐字节，那个代码页在不同环境里还不一样
+    #   （实测：界面自己的子进程 = 936〔GBK〕；我在一个代码页 65001 的终端里跑同样的命令
+    #   就变成 UTF-8，连 `ping` 的中英文都会跟着变）。所以 `dec == "auto"` 的那些
+    #   **先严格试 UTF-8，不像才按控制台代码页**；定下来这一跑就照它（逐段判会抖）。
+    _auto = (r.get("dec") == "auto")
+    _picked = None
     dec = codecs.getincrementaldecoder("utf-8")("replace")
     try:
         fd = proc.stdout.fileno()
@@ -1387,7 +1426,16 @@ def _pump_output(rid):
             buf = os.read(fd, 4096)
             if not buf:
                 break
-            text = dec.decode(buf)
+            if _auto and _picked is None:
+                try:
+                    buf.decode("utf-8")
+                    _picked = "utf-8"
+                except UnicodeDecodeError:
+                    _picked = _oem_encoding()
+            if _auto and _picked != "utf-8":
+                text = buf.decode(_picked, "replace")
+            else:
+                text = dec.decode(buf)
             if not text:
                 continue
             with RUNS_LOCK:
@@ -1886,6 +1934,70 @@ class Api:
         threading.Thread(target=_pump_output, args=(rid,), daemon=True).start()
         return {"ok": True, "run_id": rid, "pid": proc.pid}
 
+    def cmd_start(self, cwd, line, pid=""):
+        """在 `cwd` 里跑**界面「命令行」那根输入行敲的一行**（`V-371`）。
+
+        为什么需要它：那个对象**没在跑**的时候，那一行原来是死的（"这个包现在没在跑"）。
+        你要的是"像普通命令行那样直接敲" —— 但常驻终端只有**一条 shell**（`V-348`/`V-352`），
+        把 A 的包目录 `cd` 过去再敲 A 的命令，等于**打断正跑在里面那个包**（那条 shell 的
+        stdin 就是它的）。所以这里**另起一个一次性进程**：
+          · `cd ...` 这种改目录的**不起进程** —— 算好新目录回给界面（每一份「命令行」自己记 cwd）；
+          · 以「跑包符号」开头的交给 **moss 自己**（cmd.exe 里没有你 PowerShell 那个包装函数，
+            所以不能原样丢给 cmd）；
+          · 别的就是 `cmd.exe /d /s /c <line>`（= 你在自己终端里敲一条命令）。
+        输出 / 停止 / 回话都走现成的 `run_poll` / `run_stop` / `run_input`（同一套管子）。
+        """
+        text = str(line or "").strip()
+        if not text:
+            return {"ok": False, "msg": "空命令"}
+        base = str(cwd or "")
+        m = re.match(r"(?i)^cd(?:\s+(.*))?$", text)
+        if m:
+            arg = (m.group(1) or "").strip().strip('"')
+            new = _cmd_new_cwd(base, arg)
+            if new is None:
+                return {"ok": False, "msg": "没有这个目录：%s" % arg}
+            return {"ok": True, "cd": new, "cmd": text}
+        sym = str((DATA.get("symbols") or {}).get("plugin") or ":")
+        if sym and text.startswith(sym):
+            argv = HOST + _split(text)
+            # moss 自己（以及它拉起的包）那边宿主摆了 `PYTHONIOENCODING=utf-8` ⇒ 按 UTF-8 读
+            dec = "utf-8"
+        else:
+            # ★ `V-371`：cmd 那条**不知道**会吐哪种编码（控制台代码页随环境变）⇒ 让读线程
+            #   自己判（先严格试 UTF-8、不像再按控制台代码页）。★ 别用 `chcp 65001` 去"统一"：
+            #   试过 —— 同一行里改代码页会把这一行里的中文**输入**搅烂。
+            argv = ["cmd.exe", "/d", "/s", "/c", text]
+            dec = "auto"
+        workdir = None
+        if base:
+            try:
+                if Path(base).is_dir():
+                    workdir = base
+            except OSError:
+                workdir = None
+        # 和 `run_start` 一个道理：告诉它"有人在听"（界面给了 stdin 管子，下面那根输入行能回话）
+        env = dict(os.environ)
+        env["MOSS_INTERACTIVE"] = "1"
+        try:
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.PIPE, env=env,
+                                    text=True, encoding="utf-8", errors="replace",
+                                    bufsize=1, creationflags=NO_WINDOW, cwd=workdir)
+        except OSError as e:
+            return {"ok": False, "msg": "跑不起来：%s" % e}
+        rid = uuid.uuid4().hex[:10]
+        with RUNS_LOCK:
+            RUNS[rid] = {"proc": proc, "lines": [], "code": None, "t0": time.time(),
+                         "pid": proc.pid, "cmd": text, "cwd": workdir or "",
+                         "manual": True, "dec": dec}
+            if len(RUNS) > RUNS_KEEP:                    # 只留最近这些，别越攒越多
+                for old in sorted(RUNS, key=lambda k: RUNS[k]["t0"])[:-RUNS_KEEP]:
+                    if RUNS[old]["code"] is not None:
+                        RUNS.pop(old, None)
+        threading.Thread(target=_pump_output, args=(rid,), daemon=True).start()
+        return {"ok": True, "run_id": rid, "pid": proc.pid, "cmd": text}
+
     def run_input(self, run_id, text=""):
         """往正在跑的那个进程的 **stdin 写一行**（`V-43` ✅）。
 
@@ -2210,7 +2322,7 @@ class Api:
         """把它的窗口藏起来（不关、不杀，随时能再显示）。"""
         ws = _pkg_windows(pid)
         if not ws:
-            return {"ok": False, "msg": "没找到它的窗口 —— 先「打开界面」或「运行」一次"}
+            return {"ok": False, "msg": "没找到它的窗口 —— 先「运行」或「新窗口运行」一次"}
         vis = [w for w in ws if w["visible"]]      # ★ 只碰**当前可见**的，辅助窗本来就没显示
         if not vis:
             return {"ok": True, "msg": "它的窗口本来就是隐藏的"}
@@ -2225,7 +2337,7 @@ class Api:
         if not hs:
             ws = _pkg_windows(pid)
             if not ws:
-                return {"ok": False, "msg": "没找到它的窗口 —— 先「打开界面」或「运行」一次"}
+                return {"ok": False, "msg": "没找到它的窗口 —— 先「运行」或「新窗口运行」一次"}
             hs = [w["hwnd"] for w in ws]            # 不是这里藏的（比如被最小化过）→ 全放出来
         n = sum(1 for h in hs if _show_window(h, True))
         if n:

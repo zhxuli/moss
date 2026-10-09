@@ -660,9 +660,22 @@ function renderDetailHTML(){
         '<button class="argclear" id="btn-args-clear" title="清空参数" hidden>' +
           ico("x", "i") + '</button>' +
       '</span>' +
-      '<button class="dp-primary" id="btn-openui"' +
-        ' title="打开这个包自己的界面（后台运行，不等它）· 运行 / 停止在右上角">' +
-        ico("play", "i") + '<span>打开界面</span></button>' +
+      // ★ 主动作那颗改成**分离式下拉按钮**（照用户给的那份稿子）：
+      //   主按钮 = 运行 / 停止（和右上角那颗同一个状态），不常用的「新窗口运行」
+      //   收进右边箭头的下拉里。用户原话：「大多数情况下，还是运行用的多，新窗口用的少」。
+      '<div class="dp-split" id="run-split">' +
+        '<button class="dp-split-main" id="btn-runsplit"' +
+          ' title="运行这个包，输出进「命令行」">' +
+          ico("play", "i") + '<span>运行</span></button>' +
+        '<span class="dp-split-divider"></span>' +
+        '<button class="dp-split-arrow" id="btn-split-arrow" title="更多运行方式">' +
+          ico("chevron-down", "i") + '</button>' +
+        '<div class="dp-split-menu" id="run-split-menu">' +
+          '<button class="dp-split-item" id="btn-run-newwin"' +
+            ' title="新窗口运行：后台把包自己的界面开起来，不等它">' +
+            ico("app-window", "i") + '<span>新窗口运行</span></button>' +
+        '</div>' +
+      '</div>' +
     '</div>' +
     // 稿子这条命令栏本身就是"命令预览"，所以这里只在 DOM 里留一个不占地方的钩子
     '<span hidden id="preview"></span>';
@@ -713,6 +726,29 @@ function renderDetailHTML(){
   return html;
 }
 
+/* ---------------------------------------------------------------- 详情页：那颗"运行 / 新窗口运行"
+   分离式下拉按钮（照用户给的那份稿子）。主按钮是**常用**的运行/停止，右边箭头里收着
+   不常用的「新窗口运行」。用户原话：「大多数情况下，还是运行用的多，新窗口用的少」。
+   ★ 菜单是绝对定位 + 显隐 class（和稿子一样），重画时 DOM 会整个换掉 ⇒ 默认就是收着的。 */
+function runSplitMenu(show){
+  const menu = $("#run-split-menu"), grp = $("#run-split");
+  if (!menu || !grp) return;
+  const want = (show === undefined) ? !menu.classList.contains("show") : !!show;
+  menu.classList.toggle("show", want);
+  grp.classList.toggle("open", want);
+}
+function runSplitClose(){ runSplitMenu(false); }
+/* 点空白处 / 按 Esc 收起：**只装一次**（wireDetail 每次重画都会跑，不能在那儿挂） */
+if (!window.__mossRunSplitBound){
+  window.__mossRunSplitBound = true;
+  document.addEventListener("click", (e) => {
+    const grp = $("#run-split");
+    if (grp && !grp.contains(e.target)) runSplitClose();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") runSplitClose();
+  });
+}
 /* 详情页的接线（把那些 id 找出来绑处理器）—— 每次重画之后跑一遍，
    内容与改造前**逐行一致**，只是不再依赖那个局部 box 变量。 */
 function wireDetail(){
@@ -722,7 +758,7 @@ function wireDetail(){
   const p = cur;
   // ★ `V-81` 修：详情页搬进组件的时候，原来那个局部变量 `box` 被弄丢了 —— 下面找
   //   `.chip` 那一行会抛 `ReferenceError: box is not defined`，**它后面那一串按钮就全都
-  //   没绑上**（运行 / 停止 / 打开界面 / 更名 / 卸载，一个都点不动）。
+  //   没绑上**（运行 / 停止 / 新窗口运行 / 更名 / 卸载，一个都点不动）。
   //   而 Vue 默认把组件里的异常只写进控制台（这个界面没有控制台）⇒ 界面上一个字都不报，
   //   看着就是"更名和卸载坏了"。（同一条根因现在会走 `reportError` 报出来。）
   const box = $("#pane-detail");
@@ -759,7 +795,14 @@ function wireDetail(){
   $("#btn-run").onclick = () => clickRun(p);
   $("#btn-vis").onclick = () => toggleVis(p);
   refreshPkgState(p);
-  $("#btn-openui").onclick = async () => {    const r = await pywebview.api.open_ui(p.id, $("#args").value);
+  // ★ 分离式按钮：主按钮 = 运行 / 停止（走右上角那颗同一套逻辑），
+  //   箭头展开下拉，里面是**不常用**的「新窗口运行」（原来的 open_ui）。
+  $("#btn-runsplit").onclick = () => { runSplitClose(); clickRun(p); };
+  $("#btn-split-arrow").onclick = (ev) => { ev.stopPropagation(); runSplitMenu(); };
+  $("#btn-run-newwin").onclick = async () => {
+    runSplitClose();
+    const r = await pywebview.api.open_ui(p.id, $("#args").value);
+    if (r && r.ok === false) toast(r.msg || "启动失败", true);
     // 不切选项卡：带界面的包本来就没有命令行输出，停在详情更合理
     paintRowStats();
     setTimeout(() => refreshPkgState(p), 1500);

@@ -101,15 +101,35 @@ function paintInbar(key){
 }
 function consolePaneKey(){ return consoleKey || "__host__"; }
 /* 输入行那句占位话（`V-43`）：没在跑 / 跑完了 → 换一句，省得你以为发了没反应。
-   ★ `V-370`：跑在**终端**里的包，答案得在终端里敲（这根 input 走的是 `run_input`，
-     它认的是 `run_start` 那条管子）—— 现在屏上要是显示的是这个包自己的输出（你把终端
-     切走了），这句就得说清"去哪儿回答"。 */
+   ★ `V-367`：别用"没有输入这回事"这种自述口吻 —— 说清"这里为什么敲不了"。
+   ★ `V-371`：**没在跑的时候这一行照样能用**（用户要的"像普通命令行那样直接敲"）——
+     所以这时候的占位话是"在这儿敲命令"，不是"点运行去"。 */
 function consoleInbarPlaceholder(key){
   if (RUNS[key]) return RUNS[key].term
-    ? "这个包跑在终端里 —— 切到 DOS 终端去回答它"
+    ? "这个包跑在终端里 —— 就在那块终端里敲"
     : "包在等你的回答就敲在这里，回车发送（比如 1 / 2 / 3）";
-  return key === "__host__" ? "这是 moss 自己的输出，不接受输入"
-                            : "这个包现在没在跑 —— 先在「详情」里点运行";
+  if (key === "__host__") return "在这儿敲命令，回车执行（像普通命令行那样）";
+  return consoleCwd(key)
+    ? ("在这儿敲命令，回车就在" + consoleCwdLabel(key) + "里跑")
+    : "在这儿敲命令，回车执行（像普通命令行那样）";
+}
+/* `V-371`：这一份"命令行"该从哪个目录起步 —— 它自己 `cd` 过就听它自己的；
+   否则包 = 那个包的目录、历史 = 那次调用当初的目录；moss 自己那份没有目录这回事（回空串）。 */
+function consoleCwd(key){
+  if (!key || key === "__host__") return "";
+  const b = consoleBuf(key);
+  if (b.cwd) return String(b.cwd);                    // 这一份自己 cd 过（`V-371`）
+  const p = ((typeof DATA !== "undefined" && DATA && DATA.packages) || [])
+              .find(x => x.id === key);
+  if (p && p.dir) return String(p.dir);
+  const it = ((typeof HIST !== "undefined" && HIST) || [])
+               .find(x => (typeof histKey === "function") && histKey(x) === key);
+  return (it && it.cwd) ? String(it.cwd) : "";
+}
+function consoleCwdLabel(key){
+  const isPkg = ((typeof DATA !== "undefined" && DATA && DATA.packages) || [])
+                  .some(x => x.id === key);
+  return isPkg ? "这个包的目录" : "那次调用当初的目录";
 }
 
 const MossConsole = {
@@ -134,7 +154,12 @@ const MossConsole = {
       if (termViewing()) return "DOS 终端（常驻） · " + termHintText();
       return consoleTitle(this.key) + " · " + (this.buf.info || "");
     },
-    live(){ this.R.rev; return !!RUNS[this.key]; },
+    live(){
+      this.R.rev;
+      // `V-371`：**没在跑也让它能敲** —— 这一行现在"像普通命令行那样"能直接执行
+      //   （终端那一版显示着的时候下面这根是藏着的，值不影响）
+      return !!RUNS[this.key] || !this.term;
+    },
     ph(){ this.R.rev; return consoleInbarPlaceholder(this.key); },
     // `V-348`：现在看的是不是那个常驻终端（`MOSS_TERM` 不是响应式对象，所以照旧登记 `R.rev`）
     // ★ `V-370`：`term()` 的语义 = "**这块屏是终端**"（而不是"终端开着"）—— 按钮的高亮、
@@ -161,7 +186,7 @@ const MossConsole = {
     clearOut(){ if (termViewing()) return termClear(); setConsole(this.key, "", "还没跑过"); },
     copyOut(){ copyOut(); },
     rerun(){ rerunLast(); },
-    send(){ sendStdin(); },
+    send(){ sendConsoleLine(); },
     toggleTerm(){ termToggle(); },
   },
   // ★ `<pre>` 那一行**必须写在同一行**：换个行，模板里的空白就会进到输出里（`pre` 不折叠空白）。
@@ -196,17 +221,62 @@ async function sendStdin(){
   const inp = $("#stdin");
   if (!inp || inp.disabled) return;
   const run = RUNS[key];
-  if (!run){ toast("这个包现在没在跑", true); return; }
-  // `V-370`：跑在**终端**里的包，这根 input 送不到它（终端那条路没有 `rid`，`run_input`
-  //   只会回一句"没有这次运行"）—— 如实说一句，别让这行字发出去就没了
-  //   （顶栏占位话这时也会写明"去 DOS 终端回答"）。
-  if (run.term){ toast("它跑在终端里 —— 切到 DOS 终端敲这一行", true); return; }
+  // 只有"**管道里的包**在等回答"才走这儿（终端里跑的 / 没在跑的都归 `sendConsoleLine` 分流）
+  if (!run || run.term) return;
   const line = inp.value;
   inp.value = "";
   const b = consoleBuf(key);
   setConsole(key, (b.text || "").replace(/\n?$/, "\n") + line + "\n", b.info);
   const r = await pywebview.api.run_input(run.rid, line);
   if (!r || !r.ok) toast("✗ " + ((r && r.msg) || "发不出去"), true);
+}
+
+/* 输入行回车（`V-371`）：**这一行什么时候都能用**（用户要的"像普通命令行那样直接敲"）。
+   · 管道里的包在等回答 ⇒ 老路：这一行发给它（`sendStdin`）；
+   · 这个包跑在终端里 ⇒ 这一行敲进那块终端（等于在那块屏上敲，包自己收得到）；
+   · 没在跑 ⇒ **在这一份自己的目录里跑这一行**（宿主另起一个一次性进程，见 `cmd_start`：
+     `cd xxx` 只换这一份的当前目录；输出进这一份缓冲 —— 这样**不会**把命令塞进
+     "别的包正跑着的那条共享 shell" 的 stdin 里）。 */
+async function sendConsoleLine(){
+  const key = consolePaneKey();
+  const inp = $("#stdin");
+  if (!inp) return;
+  const run = RUNS[key];
+  if (run && !run.term){ await sendStdin(); return; }
+  const line = String(inp.value || "");
+  if (!line.trim()) return;
+  inp.value = "";
+  // ① 跑在终端里的：还是"把这一行敲进那块终端"（那是它的 stdin）
+  if (run && run.term){
+    MOSS_TERM.owner = key;
+    if (!(await termOpen(false, true))) return;
+    const echo0 = MOSS_TERM.mode !== "conpty";
+    if (echo0) termShow(line + "\r\n");
+    termSubmitLine(line, "shell");
+    MOSS_TERM.hotUntil = Date.now() + 3000;
+    return;
+  }
+  // ② 没在跑：这一份自己的目录里跑这一行
+  let r = null;
+  try{ r = await pywebview.api.cmd_start(consoleCwd(key), line, key); }catch(e){ r = null; }
+  const b = consoleBuf(key);
+  if (!r || !r.ok){
+    setConsole(key, (b.text || "") + (b.text ? "\n" : "") +
+                    "✗ " + ((r && r.msg) || "跑不起来") + "\n", "失败");
+    return;
+  }
+  if (r.cd !== undefined && r.cd !== null){
+    b.cwd = String(r.cd || "");                       // 这一份「命令行」从此在这儿干活
+    setConsole(key, (b.text || "") + (b.text ? "\n" : "") + "$ cd\n" + b.cwd + "\n", "就绪");
+    return;
+  }
+  RUNS[key] = {rid: r.run_id, cmd: r.cmd || line, manual: true, stopped: false,
+               switched: true, tabAtStart: tab};
+  setConsole(key, "$ " + (r.cmd || line) + "\n", "运行中");
+  paintInbar(key);
+  paintRowStats();
+  paintActions(selObj());
+  pollRun(key);                                       // 和跑包同一个轮询：输出流进这一份缓冲
 }
 function setConsole(key, text, info){
   const b = consoleBuf(key);
@@ -397,6 +467,18 @@ function paintActions(p){
                : (running ? ("停掉它（连同它拉起的子进程）" + runningHint(p.id))
                           : "运行这个包，输出进「命令行」");
   b.classList.toggle("warn", running);
+  // ★ 详情命令栏那颗**分离式主按钮**（`#btn-runsplit`）：和右上角那颗「运行/停止」
+  //   同一个状态、同一个动作。运行常用 ⇒ 它就该显眼；不常用的「新窗口运行」在下拉里。
+  const m = $("#btn-runsplit");
+  if (m){
+    m.disabled = !p;
+    m.innerHTML = ico(running ? "square" : "play", running ? "i ic-run" : "i") +
+                  '<span>' + (running ? "停止" : "运行") + '</span>';
+    m.title = !p ? "先在左边选一个包"
+                 : (running ? ("停掉它（连同它拉起的子进程）" + runningHint(p.id))
+                            : "运行这个包，输出进「命令行」");
+    m.classList.toggle("warn", running);
+  }
   // ★ `V-303`：**没有开着的窗口就不显示这颗「显示」**（原来只是变灰，还是占着地方）
   v.hidden = !p || !st.windows;
   v.disabled = !p || !st.windows;
@@ -404,7 +486,7 @@ function paintActions(p){
                 '<span>' + (st.visible ? "隐藏" : "显示") + '</span>';
   v.title = !p ? "先在左边选一个包或一条历史"
                : (!st.windows
-                  ? "这个包现在没有开着的窗口（先「运行」或「打开界面」）"
+                  ? "这个包现在没有开着的窗口（先「运行」或「新窗口运行」）"
                   : (st.visible ? "隐藏它的窗口（不关掉，随时能再显示出来）"
                                 : "把它的窗口显示出来并叫到前面"));
 }

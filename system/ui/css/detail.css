@@ -149,7 +149,7 @@ button.dp-path-btn.ok{color:#10b981}
 #pane-detail .dp-cmdbar > .argbox > #hargs::placeholder{
   font-family:'Inter',-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
   color:var(--dp-text-light)}
-.dp-cmdbar .dp-primary{margin-left:8px}
+.dp-cmdbar .dp-primary,.dp-cmdbar .dp-split{margin-left:8px}
 
 /* ---------------------------------------------------------------- 按钮（稿子 .btn-primary / .btn-ghost / .btn-danger） */
 button.dp-primary{padding:10px 24px;background:var(--dp-primary);color:#fff;border:none;
@@ -160,6 +160,45 @@ button.dp-primary:hover{background:var(--dp-primary-hover);transform:translateY(
   box-shadow:var(--dp-shadow-md)}
 button.dp-primary:disabled{opacity:.5;cursor:default;transform:none;box-shadow:none}
 button.dp-primary svg{width:17px;height:17px}
+
+/* --- 卡 2 主动作那颗：**分离式下拉按钮**（运行 + 新窗口运行）----------------
+   照稿子的 .split-btn-group/.split-btn-main/.split-btn-arrow/.split-dropdown-menu
+   搬几何和动效；颜色换成详情页那套变量（亮 / 深色都跟着走）。运行常用 ⇒ 放大按钮；
+   新窗口不常用 ⇒ 收进右边箭头的下拉里。用户原话：「还是运行用的多，新窗口用的少」。 */
+.dp-split{position:relative;display:inline-flex;align-items:stretch;flex:none;
+  border-radius:6px;box-shadow:var(--dp-shadow-sm)}
+.dp-split-main{padding:10px 20px;background:var(--dp-primary);color:#fff;border:none;
+  border-radius:6px 0 0 6px;font-size:14px;font-weight:500;cursor:pointer;
+  transition:var(--dp-transition);display:flex;align-items:center;gap:8px;
+  white-space:nowrap;font-family:inherit}
+.dp-split-divider{width:1px;background:rgba(255,255,255,.25);z-index:1}
+.dp-split-arrow{padding:10px;background:var(--dp-primary);color:#fff;border:none;
+  border-radius:0 6px 6px 0;cursor:pointer;display:flex;align-items:center;
+  justify-content:center;transition:var(--dp-transition)}
+.dp-split-main:hover,.dp-split-arrow:hover{background:var(--dp-primary-hover)}
+.dp-split-main:active,.dp-split-arrow:active{filter:brightness(.94)}
+.dp-split-main:disabled{opacity:.5;cursor:default}
+.dp-split-main svg{width:17px;height:17px}
+.dp-split-arrow svg{width:16px;height:16px;transition:transform .2s ease}
+.dp-split.open .dp-split-arrow svg{transform:rotate(180deg)}
+/* 运行中：主按钮变红、显示「停止」——和右上角那颗同一个意思 */
+.dp-split-main.warn{background:var(--dp-danger)}
+.dp-split-main.warn:hover{background:var(--dp-danger);filter:brightness(.94)}
+/* 下拉菜单：位置 / 动效照稿子；底色 / 描边 / 字色用详情页变量 */
+.dp-split-menu{position:absolute;top:calc(100% + 8px);right:0;background:var(--dp-bg-card);
+  border:1px solid var(--dp-border);border-radius:8px;
+  box-shadow:0 10px 25px -5px rgba(0,0,0,.2),0 8px 10px -6px rgba(0,0,0,.1);
+  min-width:170px;padding:6px;opacity:0;visibility:hidden;transform:translateY(-8px);
+  transition:opacity .18s cubic-bezier(.4,0,.2,1),transform .18s cubic-bezier(.4,0,.2,1),
+             visibility .18s;z-index:50}
+.dp-split-menu.show{opacity:1;visibility:visible;transform:translateY(0)}
+.dp-split-item{display:flex;align-items:center;gap:10px;width:100%;padding:10px 14px;
+  border:none;background:transparent;color:var(--dp-text-main);font-size:14px;
+  font-weight:500;border-radius:6px;cursor:pointer;text-align:left;font-family:inherit;
+  white-space:nowrap;transition:background .15s,color .15s}
+.dp-split-item svg{width:16px;height:16px;color:var(--dp-text-light);transition:color .15s}
+.dp-split-item:hover{background:var(--dp-bg-body)}
+.dp-split-item:hover svg{color:var(--dp-primary)}
 
 button.dp-ghost{padding:8px 16px;background:transparent;border:1px solid var(--dp-border);
   border-radius:var(--dp-radius-md);color:var(--dp-text-main);font-size:13px;cursor:pointer;
