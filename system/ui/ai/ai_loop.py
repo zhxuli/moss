@@ -738,6 +738,13 @@ class Loop:
             except C.AiError as e:
                 return self._finish(False, "模型那边出错：%s" % e, used, missing)
             self._add_usage(resp.get("usage"), messages, resp)
+            # ★ 思考过程：有就原样记一条**可折叠**的步骤卡（只给人看，不回灌给模型）。
+            #   默认卡片只显示第一行，点开「眼睛」才摊开全文 —— 思考完自动保持折叠。
+            _reason = str(resp.get("reasoning") or "").strip()
+            if _reason:
+                _rlines = _reason.splitlines()
+                _rfirst = (_rlines[0].strip() if _rlines else "")[:80]
+                self._step(n, "(思考)", _rfirst or "思考过程", "思考过程", out=_reason)
             native = bool(resp.get("native"))
             calls = resp.get("tool_calls") or []
             print("[AI-DIAG] step=%s calls=%s" % (n, ",".join(str(c.get("name")) for c in calls)), file=sys.stderr, flush=True)

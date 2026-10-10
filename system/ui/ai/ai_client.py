@@ -283,6 +283,12 @@ class Client:
             raise AiError("模型没回内容：%s" % (err or json.dumps(obj, ensure_ascii=False)[:300]))
         msg = choices[0].get("message") or {}
         text = msg.get("content") or ""
+        # ★ 思考过程：DeepSeek Reasoner 等 OpenAI 兼容网关把思维链放在
+        #   `message.reasoning_content`（也有网关叫 `reasoning`）。这里只收集，不参与工具循环。
+        reasoning = (msg.get("reasoning_content") or msg.get("reasoning")
+                     or choices[0].get("reasoning_content") or choices[0].get("reasoning") or "")
+        if not isinstance(reasoning, str):
+            reasoning = str(reasoning)
         calls = []
         for c in (msg.get("tool_calls") or []):
             fn = c.get("function") or {}
@@ -300,7 +306,8 @@ class Client:
                               "name": name, "args": args})
         if not calls:
             calls = parse_text_actions(text)
-        return {"text": text, "tool_calls": calls, "usage": obj.get("usage") or {},
+        return {"text": text, "reasoning": reasoning, "tool_calls": calls,
+                "usage": obj.get("usage") or {},
                 "native": bool(msg.get("tool_calls")), "message": msg, "raw": obj}
 
 

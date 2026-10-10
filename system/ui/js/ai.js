@@ -1530,6 +1530,7 @@ const MossAi = {
       if (t === "spec") return "spec";
       if (t === "done") return "done";
       if (t === "snap_clean") return "snap";
+      if (t === "(思考)") return "think";
       return "misc";
     },
     toolIcon(t){
@@ -1561,7 +1562,8 @@ const MossAi = {
       if (this.selfNames[t]) return "moss-plus";
       return {list_dir: "folder-search", read_file: "file-text", grep: "search",
               edit_file: "file-code", write_file: "file-code", run_moss: "play",
-              spec: "book-open", done: "check", snap_clean: "moss-camera"}[t] || "code";
+              spec: "book-open", done: "check", snap_clean: "moss-camera",
+              "(思考)": "lightbulb"}[t] || "code";
     },
     runLine(r){
       const t = (r.started_text || "").slice(11, 19);
@@ -1702,7 +1704,8 @@ const MossAi = {
       if (why) return why;
       const zh = {list_dir: "读目录", read_file: "读文件", grep: "搜内容", edit_file: "改文件",
                   write_file: "写文件", run_moss: "跑一遍", spec: "查契约", done: "收尾",
-                  snap_clean: "清快照", ask: "问了你一句", allow_path: "请求放行目录"};
+                  snap_clean: "清快照", ask: "问了你一句", allow_path: "请求放行目录",
+                  "(思考)": "思考过程"};
       const name = (s && s.tool) || "";
       if (zh[name]) return zh[name];
       // ★ `V-280`：它自己造的手 —— 认出来就明说，别混进"其它"
@@ -1725,6 +1728,7 @@ const MossAi = {
       const k = this.toolKind(t);
       if (k === "write") return "var(--aib-success)";
       if (k === "run") return "var(--aib-warning)";
+      if (k === "think") return "#8b5cf6";
       return "var(--aib-primary)";
     },
     /* 步骤卡第二行：**给人看的那一行**。
@@ -2221,7 +2225,7 @@ const MossAi = {
               <div class="step-card ai-step" v-else
                    :class="'k-' + toolKind(c.tool)" :data-tool="c.tool || ''"
                    @click="openStep(c)"
-                   :title="'点一下看这一步的原始参数与输出（工具：' + (c.tool || '?') + '）'">
+                   :title="c.tool === '(思考)' ? '点一下展开思考过程（默认折叠）' : ('点一下看这一步的原始参数与输出（工具：' + (c.tool || '?') + '）')">
                 <div class="step-icon" v-html='ico(c.icon, "i")'></div>
                 <div class="step-content">
                   <div class="step-header">
@@ -2231,7 +2235,7 @@ const MossAi = {
                   <span class="code-path" v-if="c.path">{{ c.path }}</span>
                 </div>
                 <span class="ai-step-x" v-html='ico("eye", "i")'
-                      title="点一下看这一步的原始参数与输出"></span>
+                      :title="c.tool === '(思考)' ? '展开思考过程' : '点一下看这一步的原始参数与输出'"></span>
               </div>
             </template>
 
@@ -2468,14 +2472,14 @@ const MossAi = {
         </div>
         <div class="ai-msgs-b">
           <p class="ai-detail-w" v-if="A.stepOpen.why">它说这一步是为了：{{ A.stepOpen.why }}</p>
-          <div class="ai-msg r-assistant">
+          <div class="ai-msg r-assistant" v-if="A.stepOpen.tool !== '(思考)'">
             <div class="ai-msg-h"><b>参数</b><span class="dim">它填给这个工具的（完整 JSON）</span></div>
             <pre class="ai-msg-t">{{ A.stepOpen.args || "（这一步没有参数）" }}</pre>
           </div>
           <div class="ai-msg r-tool">
-            <div class="ai-msg-h"><b>输出</b>
-              <span class="dim">它当时看到的那一份结果（太长会截断，完整内容看顶上那颗「提示词」）</span></div>
-            <pre class="ai-msg-t">{{ A.stepOpen.out || "（这一步没有输出）" }}</pre>
+            <div class="ai-msg-h"><b>{{ A.stepOpen.tool === "(思考)" ? "思考过程" : "输出" }}</b>
+              <span class="dim">{{ A.stepOpen.tool === "(思考)" ? "模型返回的原始思考过程（默认折叠在这里，想看我随时展开）" : "它当时看到的那一份结果（太长会截断，完整内容看顶上那颗「提示词」）" }}</span></div>
+            <pre class="ai-msg-t">{{ A.stepOpen.out || (A.stepOpen.tool === "(思考)" ? "（这次没有思考过程）" : "（这一步没有输出）") }}</pre>
           </div>
         </div>
       </div>
