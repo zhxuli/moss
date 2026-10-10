@@ -15,6 +15,7 @@
   硬锁（勾了 `*` 也写不了）：`core/`、`moss.exe`、`moss.py`、`venv/`、`.git/`、`backups/`。
   读不设"当前包"以外的特权（要读 `system/pkgs/skill` 当样板、要读契约），但读也框了范围。
 """
+import json
 import os
 import sys
 from pathlib import Path
@@ -166,6 +167,31 @@ def _crlf(raw):
     return b"\r\n" in raw
 
 
+
+def _pkg_id_guard(path, old_text, new_text):
+    """禁止 AI 直接改 `pkg.json` 的 `id` —— 那会把包目录 / 数据目录 / AI 会话拆开。
+
+    改名只有一条正路：`run_moss("--rename <旧id> <新id>")`。
+    只改 `name` / `aliases` 是可以的（不碰身份，不动目录）。
+    """
+    try:
+        if Path(path).name.lower() != "pkg.json":
+            return ""
+        old = json.loads(str(old_text or ""))
+        new = json.loads(str(new_text or ""))
+        if not isinstance(old, dict) or not isinstance(new, dict):
+            return ""
+        oid = str(old.get("id") or "").strip()
+        nid = str(new.get("id") or "").strip()
+        if oid and nid and oid != nid:
+            return ("不许直接改 `pkg.json` 的 `id`（%s → %s）—— 手改不会搬包目录，"
+                    "也不会搬 `state/<旧id>/` 里的数据，AI 会话会看起来消失。"
+                    "改名请用 run_moss(`--rename %s %s`)；只改显示名就改 `name` / `aliases`，不要动 `id`。"
+                    % (oid, nid, oid, nid))
+    except Exception:                                                # noqa: BLE001
+        return ""
+    return ""
+
 def apply_edit(path, find, replace, replace_all=False, scope=None):
     """把 `find` 换成 `replace`。回 `{ok, replaced, error, hint}`。
 
@@ -198,6 +224,9 @@ def apply_edit(path, find, replace, replace_all=False, scope=None):
                          "（带上前后文到唯一），要么显式给 replace_all=true。" % n,
                 "hint": "候选行号：%s" % (lines[:12] or "（按首行没定位到，建议多带几行上下文）")}
     new = text.replace(find, replace) if replace_all else text.replace(find, replace, 1)
+    bad = _pkg_id_guard(p, text, new)
+    if bad:
+        return {"ok": False, "replaced": 0, "error": bad}
     try:
         # 原来的换行风格照旧（Windows 上编辑过的文件常是 CRLF，别整文件翻新）
         if _crlf(raw):
@@ -225,6 +254,14 @@ def write_new(path, content, overwrite=False, scope=None):
                 "文件已经在了：%s\n"
                 "· 改几行 ⇒ 用 `edit_file`（精确替换，最稳）；\n"
                 "· 要**整篇重写** ⇒ 再调一次 `write_file`，并显式带上 `overwrite=true`。" % p}
+    if p.name.lower() == "pkg.json" and p.exists():
+        try:
+            old_text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            old_text = ""
+        bad = _pkg_id_guard(p, old_text, str(content or ""))
+        if bad:
+            return {"ok": False, "error": bad}
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(str(content or "").encode("utf-8"))
