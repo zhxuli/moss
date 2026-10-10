@@ -11,13 +11,28 @@ r"""moss 入口。
  打包命令（留在这里一份，方便直接看、直接粘）
 ════════════════════════════════════════════════════════════════════════
 
-    venv\Scripts\python.exe -m nuitka --onefile --lto=yes --remove-output --assume-yes-for-downloads --onefile-tempdir-spec="{CACHE_DIR}/moss_build/{TIME}" --windows-icon-from-ico=system/icon/moss.ico --windows-console-mode=hide --include-package=core -o moss moss.py
+    venv\Scripts\python.exe -m nuitka --onefile --lto=yes --remove-output --assume-yes-for-downloads --onefile-tempdir-spec="{CACHE_DIR}/moss_build/moss-<stamp>" --onefile-cache-mode=cached --windows-icon-from-ico=system/icon/moss.ico --windows-console-mode=hide --include-package=core -o moss moss.py
+
+    （懒得敲就在仓库根目录敲  build.cmd  —— 它 cd 到自己那个目录再调上面这条；
+      `build.py` 自己不依赖 cwd，所以从哪个目录敲都一样。）
 
 ★ 上面这一行和 `tools\build.py` 里实际执行的是**同一条命令**。
   `build.py` 每次开工前会**自动核对这一行**：对不上就直接报错停下，
   不会照着一条过期的命令去撞墙。所以这里可以放心留一份。
 
   要改命令，两处一起改（build.py 会把对不上的地方指出来）。
+
+★ 那个 `<stamp>` 是 `build.py` 自己算出来的**构建指纹**（`moss.py` + `core/**` + 图标 +
+  固定参数的内容哈希 **+ 构建时刻**，8 位十六进制），核对的时候按占位符比 —— 注释里写不出
+  具体值。**每次打包一个新目录**，旧的打包时清掉（清不掉的跳过：那份正被运行中的 moss 占着）。
+  为什么不是 `{TIME}`：nuitka 把 `{TIME}` 当成"每次**运行**都会变"，于是**每次启动都重新解包
+  23 MB**（实测 1.2 秒，只该 0.3 秒），而且一声不响、解包目录还会堆（实测堆到 95 个 /
+  2.1 GB）。`--onefile-cache-mode=cached` 是保险：以后谁再把 `{TIME}` 塞回来，**打包当场
+  报错**。细节见 `tools/build.py` 的 `source_stamp()`。
+
+★ 打包时如果旧的 `moss.exe` 正被占着（界面开着），`build.py` 会**把产物打成 `moss.exe.exe`**
+  （你定的名字：仍然是 `.exe`、能直接双击运行）—— 正在跑的那个 `moss.exe` 一个字节都不动。
+  关掉 moss 之后再打一次，就会正常替换 `moss.exe`（并顺手清掉那个 `moss.exe.exe`）。
 
 每个参数为什么必须有
 --------------------
