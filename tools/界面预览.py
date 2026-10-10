@@ -4863,13 +4863,13 @@ MOCK_JS = r"""
         const step0 = allSteps[allSteps.length - 1];
         step0 && step0.click();
         for (let i = 0; i < 12 && !document.querySelector("#pane-ai .ai-detail"); i++) await sleep(200);
-        const det = document.querySelector("#pane-ai .ai-detail");
+        const det = document.querySelector("#pane-ai .ai-modal-overlay .ai-modal-box");
         const detTxt = (det ? det.textContent : "").replace(/\s+/g, " ");
-        const detPre = [].slice.call(document.querySelectorAll("#pane-ai .ai-detail .ai-msg-t"))
+        const detPre = [].slice.call(document.querySelectorAll("#pane-ai .ai-modal-overlay .ai-msg-t"))
                               .map(x => x.textContent);
         const detOk = !!det && /参数/.test(detTxt) && /输出/.test(detTxt) &&
                       detPre.some(x => /"summary"/.test(x)) && detPre.some(x => /收到/.test(x));
-        const closeDet = [].slice.call(document.querySelectorAll("#pane-ai .ai-detail .btn"))
+        const closeDet = [].slice.call(document.querySelectorAll("#pane-ai .ai-modal-overlay .ai-modal-btn"))
                                 .filter(b => /关闭/.test(b.textContent))[0];
         closeDet && closeDet.click();
         await sleep(150);

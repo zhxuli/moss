@@ -1456,3 +1456,68 @@
   .aiwrap .ai-skill-desc{font-size:12px}
   .aiwrap .ai-skill-alert{font-size:12px;padding:8px 10px}
 }
+
+/* ============================================================================
+   详情 / 思考过程 / 提示词历史 —— 模态框重设计
+   参考用户给的「思考过程 - 模态框设计」：遮罩 + 居中卡片 + 头/身/脚。
+   ========================================================================== */
+.aiwrap .ai-modal-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.45);backdrop-filter:blur(3px);
+  display:flex;justify-content:center;align-items:center;z-index:9999;
+}
+.aiwrap .ai-modal-box{
+  background:#fff;width:90%;max-width:680px;max-height:82vh;border-radius:10px;
+  box-shadow:0 10px 30px rgba(0,0,0,.15);overflow:hidden;display:flex;flex-direction:column;
+}
+.aiwrap .ai-modal-header{
+  padding:16px 24px;border-bottom:1px solid #ebeef5;display:flex;justify-content:space-between;
+  align-items:center;gap:12px;flex:none;
+}
+.aiwrap .ai-modal-title-group{display:flex;align-items:center;gap:12px;min-width:0;flex-wrap:wrap}
+.aiwrap .ai-modal-title{
+  font-size:16px;font-weight:600;color:#303133;margin:0;display:flex;align-items:center;gap:6px;
+  min-width:0;
+}
+.aiwrap .ai-modal-title svg.i{width:18px;height:18px;color:#409eff;flex:none}
+.aiwrap .ai-modal-meta{font-size:12px;color:#909399;font-weight:400}
+.aiwrap .ai-modal-close{
+  background:transparent;border:none;font-size:22px;color:#909399;cursor:pointer;padding:0;
+  line-height:1;transition:color .2s,background .2s;width:24px;height:24px;display:flex;
+  align-items:center;justify-content:center;border-radius:4px;flex:none;
+}
+.aiwrap .ai-modal-close:hover{color:#f56c6c;background:#fef0f0}
+.aiwrap .ai-modal-body{
+  padding:24px;font-size:14px;color:#606266;line-height:1.6;max-height:60vh;overflow-y:auto;
+}
+.aiwrap .ai-modal-body .ai-msg-t{
+  margin:0;font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;
+  line-height:1.55;white-space:pre-wrap;word-break:break-word;color:#303133;
+}
+.aiwrap .ai-thought-content{
+  background:#fafafa;border-left:4px solid #e6a23c;padding:16px;border-radius:0 6px 6px 0;
+}
+.aiwrap .ai-thought-hint{font-size:12px;color:#909399;margin-bottom:8px;display:block}
+.aiwrap .ai-thought-text{color:#303133;margin:0;white-space:pre-wrap;word-break:break-word}
+.aiwrap .ai-modal-sec{margin-bottom:16px}
+.aiwrap .ai-modal-sec:last-child{margin-bottom:0}
+.aiwrap .ai-modal-sec h4{
+  margin:0 0 8px;font-size:13px;font-weight:600;color:#303133;display:flex;align-items:center;gap:6px;
+}
+.aiwrap .ai-modal-sec h4::before{
+  content:"";width:3px;height:14px;border-radius:2px;background:#409eff;display:inline-block;
+}
+.aiwrap .ai-modal-footer{
+  padding:16px 24px;border-top:1px solid #ebeef5;display:flex;justify-content:flex-end;
+  gap:12px;background:#fbfbfc;flex:none;
+}
+.aiwrap .ai-modal-btn{
+  padding:8px 18px;font-size:13px;border-radius:6px;cursor:pointer;border:1px solid #dcdfe6;
+  background:#fff;color:#606266;transition:all .2s;
+}
+.aiwrap .ai-modal-btn:hover{color:#409eff;border-color:#c6e2ff;background:#ecf5ff}
+.aiwrap .ai-modal-btn.primary{background:#409eff;color:#fff;border-color:#409eff}
+.aiwrap .ai-modal-btn.primary:hover{background:#66b1ff;border-color:#66b1ff;color:#fff}
+@media (max-width:600px){
+  .aiwrap .ai-modal-box{width:94%;max-height:88vh}
+  .aiwrap .ai-modal-header,.aiwrap .ai-modal-body,.aiwrap .ai-modal-footer{padding-left:16px;padding-right:16px}
+}

@@ -321,7 +321,9 @@ async function aiAnswer(choice, text, qid){
 async function aiOpenMessages(id){
   const rid = String(id || AIR.pickId || AIR.lastId || "");
   if (!rid){ toast("先选一条会话（左边那个下拉）", true); return; }
-  AIR.msgBusy = true; AIR.msgOpen = true; AIR.msgWho = rid; AIR.msgData = null; AIR.rev++;
+  AIR.msgBusy = true; AIR.msgOpen = true; AIR.msgWho = rid; AIR.msgData = null;
+  document.body.style.overflow = "hidden";
+  AIR.rev++;
   try{
     const got = await window.pywebview.api.ai_session_messages(rid);
     AIR.msgData = got || {ok: false, messages: [], msg: "读不到"};
@@ -1501,6 +1503,17 @@ const MossAi = {
       const s = (c && (c.step || c)) || null;
       if (!s) return;
       AIR.stepOpen = s;
+      document.body.style.overflow = "hidden";
+      AIR.rev++;
+    },
+    closeStep(){
+      AIR.stepOpen = null;
+      document.body.style.overflow = "";
+      AIR.rev++;
+    },
+    closeMessages(){
+      AIR.msgOpen = false;
+      document.body.style.overflow = "";
       AIR.rev++;
     },
     stepHead(s){
@@ -2468,55 +2481,81 @@ const MossAi = {
         </div>
       </footer>
 
-      <!-- ★ V-315：**点开某一步看原始细节**（参数 + 输出）—— 你原话："它的动作 产出的日志 或者文本
-           我希望我能点击查看 … 它不应该是黑箱操作 应该让我有办法或者工具观察每个细枝末节"。 -->
-      <div class="ai-msgs ai-detail" v-if="A.stepOpen">
-        <div class="ai-msgs-h">
-          <span v-html='ico("search", "i")'></span>
-          <b>第 {{ A.stepOpen.n }} 步 · {{ A.stepOpen.tool }}</b>
-          <span class="dim">{{ stepHead(A.stepOpen) }}</span>
-          <span class="sp"></span>
-          <button class="btn btn-outline" @click="copyStep()" title="把这一步的原文复制走">复制</button>
-          <button class="btn btn-outline" @click="A.stepOpen = null">关闭</button>
-        </div>
-        <div class="ai-msgs-b">
-          <p class="ai-detail-w" v-if="A.stepOpen.why">它说这一步是为了：{{ A.stepOpen.why }}</p>
-          <div class="ai-msg r-assistant" v-if="A.stepOpen.tool !== '(思考)'">
-            <div class="ai-msg-h"><b>参数</b><span class="dim">它填给这个工具的（完整 JSON）</span></div>
-            <pre class="ai-msg-t">{{ A.stepOpen.args || "（这一步没有参数）" }}</pre>
+      <!-- ★ V-315 / 重设计：点开某一步看原始细节 —— 思考过程用独立模态框排版。 -->
+      <div class="ai-modal-overlay" v-if="A.stepOpen" @click.self="closeStep()">
+        <div class="ai-modal-box">
+          <div class="ai-modal-header">
+            <div class="ai-modal-title-group">
+              <h3 class="ai-modal-title">
+                <span v-html='ico(A.stepOpen.tool === "(思考)" ? "lightbulb" : "search", "i")'></span>
+                {{ A.stepOpen.tool === "(思考)" ? "模型思考过程" : ("第 " + A.stepOpen.n + " 步 · " + A.stepOpen.tool) }}
+              </h3>
+              <span class="ai-modal-meta">{{ stepHead(A.stepOpen) }}</span>
+            </div>
+            <button class="ai-modal-close" type="button" title="关闭"
+                    @click="closeStep()">&times;</button>
           </div>
-          <div class="ai-msg r-tool">
-            <div class="ai-msg-h"><b>{{ A.stepOpen.tool === "(思考)" ? "思考过程" : "输出" }}</b>
-              <span class="dim">{{ A.stepOpen.tool === "(思考)" ? "模型返回的原始思考过程（默认折叠在这里，想看我随时展开）" : "它当时看到的那一份结果（太长会截断，完整内容看顶上那颗「提示词」）" }}</span></div>
-            <pre class="ai-msg-t">{{ A.stepOpen.out || (A.stepOpen.tool === "(思考)" ? "（这次没有思考过程）" : "（这一步没有输出）") }}</pre>
+          <div class="ai-modal-body">
+            <template v-if="A.stepOpen.tool === '(思考)'">
+              <div class="ai-thought-content">
+                <span class="ai-thought-hint">原始思考记录（展开）：</span>
+                <p class="ai-thought-text">{{ A.stepOpen.out || "（这次没有思考过程）" }}</p>
+              </div>
+            </template>
+            <template v-else>
+              <p class="ai-detail-w" v-if="A.stepOpen.why">它说这一步是为了：{{ A.stepOpen.why }}</p>
+              <div class="ai-modal-sec">
+                <h4>参数</h4>
+                <pre class="ai-msg-t">{{ A.stepOpen.args || "（这一步没有参数）" }}</pre>
+              </div>
+              <div class="ai-modal-sec">
+                <h4>输出</h4>
+                <pre class="ai-msg-t">{{ A.stepOpen.out || "（这一步没有输出）" }}</pre>
+              </div>
+            </template>
+          </div>
+          <div class="ai-modal-footer">
+            <button class="ai-modal-btn" type="button" @click="copyStep()">复制</button>
+            <button class="ai-modal-btn primary" type="button" @click="closeStep()">关闭</button>
           </div>
         </div>
       </div>
 
       <!-- ★ V-307：**看这条会话喂给它的完整提示词**（系统提示 + 每一问 + 每一答 + 工具结果）。
-           放在这一层而不是宿主别的页面：它只跟"这条会话"有关。 -->
-      <div class="ai-msgs" v-if="A.msgOpen">
-        <div class="ai-msgs-h">
-          <span v-html='ico("file-text", "i")'></span>
-          <b>它这次收到的全部内容（提示词历史）</b>
-          <span class="dim" v-if="A.msgData">
-            {{ A.msgData.count || 0 }} 条 · {{ (A.msgData.bytes || 0) }} 字节
-            <template v-if="A.msgData.model"> · 模型 {{ A.msgData.model }}</template>
-          </span>
-          <span class="sp"></span>
-          <button class="btn btn-outline" @click="copyMessages()" title="把整份复制到剪贴板">复制</button>
-          <button class="btn btn-outline" @click="A.msgOpen = false">关闭</button>
-        </div>
-        <p class="ai-msgs-note dim" v-if="A.msgBusy">正在读…</p>
-        <p class="ai-msgs-note" v-else-if="A.msgData && !A.msgData.ok">{{ A.msgData.msg || A.msgData.note }}</p>
-        <div class="ai-msgs-b" v-else>
-          <div class="ai-msg" v-for="(m, i) in ((A.msgData && A.msgData.messages) || [])" :key="i"
-               :class="'r-' + (m.role || '?')">
-            <div class="ai-msg-h">
-              <b>{{ roleName(m.role) }}</b>
-              <span class="dim">{{ msgHead(m) }}</span>
+           同样收进模态框，长内容不再把聊天区挤变形。 -->
+      <div class="ai-modal-overlay" v-if="A.msgOpen" @click.self="closeMessages()">
+        <div class="ai-modal-box">
+          <div class="ai-modal-header">
+            <div class="ai-modal-title-group">
+              <h3 class="ai-modal-title">
+                <span v-html='ico("file-text", "i")'></span>
+                完整提示词历史
+              </h3>
+              <span class="ai-modal-meta" v-if="A.msgData">
+                {{ A.msgData.count || 0 }} 条 · {{ A.msgData.bytes || 0 }} 字节
+                <template v-if="A.msgData.model"> · 模型 {{ A.msgData.model }}</template>
+              </span>
             </div>
-            <pre class="ai-msg-t">{{ msgText(m) }}</pre>
+            <button class="ai-modal-close" type="button" title="关闭"
+                    @click="closeMessages()">&times;</button>
+          </div>
+          <div class="ai-modal-body">
+            <p class="ai-msgs-note dim" v-if="A.msgBusy">正在读…</p>
+            <p class="ai-msgs-note" v-else-if="A.msgData && !A.msgData.ok">{{ A.msgData.msg || A.msgData.note }}</p>
+            <div class="ai-msgs-b" v-else>
+              <div class="ai-msg" v-for="(m, i) in ((A.msgData && A.msgData.messages) || [])" :key="i"
+                   :class="'r-' + (m.role || '?')">
+                <div class="ai-msg-h">
+                  <b>{{ roleName(m.role) }}</b>
+                  <span class="dim">{{ msgHead(m) }}</span>
+                </div>
+                <pre class="ai-msg-t">{{ msgText(m) }}</pre>
+              </div>
+            </div>
+          </div>
+          <div class="ai-modal-footer">
+            <button class="ai-modal-btn" type="button" @click="copyMessages()">复制</button>
+            <button class="ai-modal-btn primary" type="button" @click="closeMessages()">关闭</button>
           </div>
         </div>
       </div>
