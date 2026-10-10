@@ -991,7 +991,7 @@ const MossAi = {
                 color: "var(--aib-primary)", action: "用户指令", tool: "",
                 meta: t.at || "", path: t.task || ""});
       (this.visSteps(t.steps)).forEach((s, i) => {
-        out.push({key: "s" + (s.n || i), kind: "step", icon: this.stepIcon(s.tool),
+        out.push({key: "s" + i, kind: "step", icon: this.stepIcon(s.tool),
                   color: this.kindColor(s.tool), action: this.stepTitle(s), tool: s.tool,
                   meta: this.stepMeta(s), path: this.stepPath(s)});
       });
@@ -1479,7 +1479,7 @@ const MossAi = {
         const answered = !!s.done || (!!ta.qid && this.A.answeredQids.includes(ta.qid));
         if (isTalk) return {key: "s" + (s.n || i), type: "talk", tool: s.tool,
                             step: Object.assign({}, s, {done: answered}), ta};
-        return {key: "s" + (s.n || i), type: "step",
+        return {key: "s" + i, type: "step",
                 icon: this.stepIcon(s.tool), color: this.kindColor(s.tool),
                 action: this.stepTitle(s), tool: s.tool, meta: this.stepMeta(s),
                 path: this.stepPath(s), step: s};
