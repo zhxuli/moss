@@ -1566,3 +1566,29 @@
   color:#047857;background:#ecfdf5;border-color:#a7f3d0;
 }
 .aiwrap .ai-fullperm.active:hover{background:#d1fae5;border-color:#6ee7b7;color:#065f46}
+
+/* ---- 工具栏右侧浮层：历史 / 权限都贴右展开，防止右侧出屏 ---- */
+.aiwrap .ai-hist-wrap .ai-hist-list,
+.aiwrap .ai-perm-wrap .ai-perm-body{
+  left:auto; right:0; transform-origin:bottom right;
+}
+.aiwrap .ai-perm-wrap .ai-perm-body{
+  width:min(680px,92vw); min-width:0; max-width:calc(100vw - 24px);
+}
+.aiwrap .ai-hist-wrap .ai-hist-list{width:min(440px,92vw)}
+
+/* ---- 权限清单里的「完全权限」开关 ---- */
+.aiwrap .ai-perm-full{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:10px 12px; margin-bottom:12px; border:1px solid #FDE68A; background:#FFFBEB;
+  border-radius:8px;
+}
+.aiwrap .ai-perm-full-info{display:flex; flex-direction:column; gap:2px; min-width:0}
+.aiwrap .ai-perm-full-info b{
+  font-size:13px; color:#92400E; display:flex; align-items:center; gap:6px;
+}
+.aiwrap .ai-perm-full-sub{
+  font-size:11px; font-weight:500; color:#B45309; background:#FEF3C7;
+  border:1px solid #FDE68A; border-radius:999px; padding:1px 6px; white-space:nowrap;
+}
+.aiwrap .ai-perm-full-info > span{font-size:12px; color:#B45309}

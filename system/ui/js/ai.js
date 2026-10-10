@@ -922,7 +922,7 @@ async function aiStop(){
 
 const MossAi = {
   name: "moss-ai",
-  data(){ return { A: AIR, focused: false, shake: false }; },
+  data(){ return { A: AIR, focused: false, shake: false, stopHover: false }; },
   computed: {
     pkg(){ this.A.rev; return aiPackage(); },
     /* ★ `V-280`：它自己造的工具（折叠那一块用）。
@@ -1319,11 +1319,18 @@ const MossAi = {
       this._fitKeys[which] = key;
       const pad = 10;
       panel.style.left = "";
+      panel.style.right = "";
       panel.style.width = "";
       const avail = Math.max(260, vw - pad * 2);
       let w = panel.offsetWidth || 0;
       if (w > avail){ w = avail; panel.style.width = w + "px"; }
       const hr = host.getBoundingClientRect();
+      if (which === "perm" || which === "hist"){
+        // ★ 权限 / 历史浮层都挂在工具栏右侧：**贴右边缘、向左展开**，不再死定 left:0 往右出屏。
+        panel.style.right = "0px";
+        panel.style.left = "auto";
+        return;
+      }
       let left = 0;                                     // 相对 .popover-wrapper
       if (hr.left + w > vw - pad) left = (vw - pad) - (hr.left + w);   // 往左挪
       if (hr.left + left < pad) left = pad - hr.left;   // 左边也夹住
@@ -2477,6 +2484,18 @@ const MossAi = {
 
           <div class="toolbar">
             <div class="toolbar-left">
+              <!-- 提示词：只留图标 -->
+              <button class="trigger-btn ai-mini ai-messages-icon" @click="openMessages()"
+                      title="查看这条会话的完整提示词历史"
+                      v-html='ico("file-text", "i")'></button>
+              <button class="trigger-btn ai-mini ai-paste-file" :class="{active: A.pasteAsFile}"
+                      @click="togglePasteAsFile()"
+                      :title="A.pasteAsFile ? '大段文本粘贴：收成附件（点击改成直接粘进输入框）' : '大段文本粘贴：直接粘进输入框（点击改成收成附件）'"
+                      v-html='ico("clipboard-paste", "i")'></button>
+
+            </div>
+
+            <div class="toolbar-right ai-actions">
               <!-- Token：消耗 / 上限（单位一律"百万"），进度条当背景；上限数字可直接改 -->
               <span class="tool-text ai-bud token-pill" role="progressbar"
                     :aria-valuenow="tokenPct" aria-valuemin="0" aria-valuemax="100"
@@ -2488,15 +2507,15 @@ const MossAi = {
                          title="token 上限（单位：百万）：这次任务最多烧多少 token。烧到 80% 时劝它收尾，到顶就停手。" aria-label="token 上限（百万）"> 百万</span>
               </span>
 
-              <!-- 提示词：只留图标 -->
-              <button class="trigger-btn ai-mini ai-messages-icon" @click="openMessages()"
-                      title="查看这条会话的完整提示词历史"
-                      v-html='ico("file-text", "i")'></button>
-              <button class="trigger-btn ai-mini ai-paste-file" :class="{active: A.pasteAsFile}"
-                      @click="togglePasteAsFile()"
-                      :title="A.pasteAsFile ? '大段文本粘贴：收成附件（点击改成直接粘进输入框）' : '大段文本粘贴：直接粘进输入框（点击改成收成附件）'"
-                      v-html='ico("clipboard-paste", "i")'></button>
-
+              <div class="custom-select select-model btn-model" @click="openSel($event)"
+                   :title="'这次用哪个模型。这家配了 ' + models.length + ' 个；换模型连带换上下文窗口。'">
+                <span v-html='ico("sparkles", "i")'></span>
+                <select class="ai-model" v-model="A.model" :disabled="A.running || !models.length"
+                        @change="pickModel()">
+                  <option v-for="m in models" :key="m" :value="m">{{ m }}</option>
+                  <option v-if="!models.length" value="">（还没配 AI）</option>
+                </select>
+              </div>
               <!-- 历史会话（点开才出） -->
               <div class="popover-wrapper ai-hist-wrap">
                 <button ref="histBtn" class="trigger-btn ai-hist" :class="{active: A.histOpen}" @click.stop="toggleHist()"
@@ -2524,25 +2543,25 @@ const MossAi = {
                   </div>
                 </div>
               </div>
-
-              <!-- 完全权限（无人值守）：一键把「任意路径」读写都打开，不再弹权限 /
-                   危险操作 / 覆盖确认。关掉就恢复成按清单来。 -->
-              <button class="trigger-btn ai-mini ai-fullperm" :class="{active: A.wild}"
-                      type="button" @click="toggleFullAccess()"
-                      :title="A.wild ? '完全权限已开启：无人值守，不再弹权限 / 覆盖确认。点一下关掉。'
-                                     : '开启完全权限：任意路径可读写，危险操作 / 覆盖也不再问。'">
-                <span v-html='ico(A.wild ? "shield-check" : "shield", "i")'></span>
-                {{ A.wild ? "完全权限 · 开" : "完全权限" }}
-              </button>
               <!-- 目录权限（点开才出） -->
               <div class="popover-wrapper ai-perm-wrap ai-perm" :class="{folded: !A.permPop}">
                 <button ref="permBtn" class="trigger-btn ai-perm-fold" :class="{active: A.permPop}" @click.stop="togglePermPop()"
                         title="管理它读写哪些目录（点开看清单）">
-                  <span v-html='ico("file-lock", "i")'></span> 目录权限控制
+                  <span v-html='ico("file-lock", "i")'></span> 权限控制
                   <span class="badge ai-perm-badge">{{ permBadge }}</span>
                   <span class="dim ai-perm-foldw" v-if="A.perm">· 它想用「{{ permPendingLabel }}」</span>
                 </button>
                 <div ref="permPanel" class="popover-panel ai-perm-body" :class="{show: A.permPop}" v-if="A.permPop" @click.stop>
+                  <div class="ai-perm-full">
+                    <div class="ai-perm-full-info">
+                      <b>完全权限 <span class="ai-perm-full-sub">无人值守</span></b>
+                      <span>任意路径可读写；危险操作 / 覆盖不再弹确认</span>
+                    </div>
+                    <label class="switch-group ai-sw" :title="A.wild ? '关掉：恢复按权限清单来' : '打开：不再弹权限 / 覆盖确认'">
+                      <span class="switch"><input type="checkbox" :checked="!!A.wild"
+                        @change="toggleFullAccess()"><span class="slider"></span></span>
+                    </label>
+                  </div>
                   <div class="popover-header ai-perm-add" :class="{hot: A.dropHot, bad: addPathBad || !!A.newPathErr}">
                     <input v-model="A.newPath" spellcheck="false"
                            placeholder="粘一个目录路径（或把文件夹拖到这一页）"
@@ -2596,28 +2615,17 @@ const MossAi = {
                   </div>
                 </div>
               </div>
-            </div>
-
-            <div class="toolbar-right ai-actions">
-              <div class="custom-select select-model btn-model" @click="openSel($event)"
-                   :title="'这次用哪个模型。这家配了 ' + models.length + ' 个；换模型连带换上下文窗口。'">
-                <span v-html='ico("sparkles", "i")'></span>
-                <select class="ai-model" v-model="A.model" :disabled="A.running || !models.length"
-                        @change="pickModel()">
-                  <option v-for="m in models" :key="m" :value="m">{{ m }}</option>
-                  <option v-if="!models.length" value="">（还没配 AI）</option>
-                </select>
-              </div>
-              <button class="btn btn-outline" v-if="A.running" @click="stop"
-                      v-html='ico("square", "i") + " 停止"'></button>
               <div class="action-group">
                 <button class="action-group-btn btn-new-chat" @click="pickNewChat()"
                         title="新建空白会话（下一条不带之前的对话）"
                         v-html='ico("moss-plus", "i")'></button>
                 <button class="action-group-btn btn-send-main btn primary"
-                        :disabled="A.running || A.busy || !ready" @click="start"
-                        title="发送 (Enter)"
-                        v-html='A.running ? ico("loader-2", "i spin") : ico("send", "i")'></button>
+                        :disabled="!A.running && (A.busy || !ready)"
+                        @click="A.running ? stop() : start()"
+                        @mouseenter="stopHover = !!A.running"
+                        @mouseleave="stopHover = false"
+                        :title="A.running ? '停止' : '发送 (Enter)'"
+                        v-html='A.running ? (stopHover ? ico("square", "i") : ico("loader-2", "i spin")) : ico("send", "i")'></button>
               </div>
             </div>
           </div>

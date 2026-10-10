@@ -4758,7 +4758,7 @@ MOCK_JS = r"""
         const foldTxt = (foldBar ? foldBar.textContent : "").replace(/\s+/g, " ").trim();
         const folded0 = !!permPanel0 && permPanel0.classList.contains("folded") &&
                         !document.querySelector("#pane-ai .ai-perm-i") &&
-                        /目录权限控制/.test(foldTxt) && /可写 1 处/.test(foldTxt);
+                        /(权限控制|目录权限控制)/.test(foldTxt) && /可写 1 处/.test(foldTxt);
         // 上下结构：权限卡在输入区**上面**（同一列）
         const footEl = document.querySelector("#pane-ai .ai-foot");
         const permTop = document.querySelector("#pane-ai .ai-foot .ai-perm");
