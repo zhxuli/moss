@@ -86,7 +86,7 @@ const AIR = Vue.reactive({
   /* ★ `V-307`：**看这一条会话喂给它的完整提示词**（点「看提示词」开的那块） */
   msgOpen: false, msgWho: "", msgData: null, msgBusy: false,
   /* ★ `V-315`：**点开某一步看原始细节**（参数 + 输出）—— 不做黑箱 */
-  stepOpen: null,
+  stepOpen: null, modalTab: "detail",
   /* ★ `V-307`：聊天区**跟不跟着滚**。你往上翻的时候它不许把你拽回底部
      （你的原话："当我向上滑动聊天记录的时候 它总是自动弹回到最下面去"）。 */
   stick: true,
@@ -159,6 +159,72 @@ function aiPasteName(text){
   const first = String(text || "").trim().split(/\r?\n/)[0].slice(0, 28)
     .replace(/[\\/:*?"<>|]/g, "_");
   return (first || "粘贴文本") + ".txt";
+}
+
+/* ---- JSON 源码视图（思考过程 / 工具调用 / 对话的「查看源码」页）----------------
+   参考 ZeEn JsonFormatter 的配色；长字符串/二进制默认折叠，点 summary 才展开。 */
+function jsonDecodeText(v){
+  let t = String(v == null ? "" : v);
+  if (/\u[0-9a-fA-F]{4}/.test(t) || /%[0-9a-fA-F]{2}/.test(t)){
+    try { t = JSON.parse('"' + t.replace(/"/g, '\\"') + '"'); } catch(e){}
+    try { t = decodeURIComponent(t); } catch(e){}
+  }
+  return t;
+}
+function jsonDecodeDeep(v){
+  if (typeof v === "string") return jsonDecodeText(v);
+  if (Array.isArray(v)) return v.map(jsonDecodeDeep);
+  if (v && typeof v === "object"){
+    const out = {};
+    Object.keys(v).forEach(k => { out[k] = jsonDecodeDeep(v[k]); });
+    return out;
+  }
+  return v;
+}
+function jsonIsLongString(v){
+  const t = String(v || "");
+  return t.length > 1200 ||
+         /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(t) ||
+         /base64,[A-Za-z0-9+/=]{200,}/.test(t);
+}
+function jsonTreeHtml(v, key, depth, forceOpen){
+  depth = Number(depth || 0);
+  const k = (key === undefined || key === null || key === "") ? "" :
+    '<span class="j-key">"' + esc(jsonDecodeText(String(key))) + '"</span><span class="j-punc">: </span>';
+  if (v === null || v === undefined) return k + '<span class="j-null">null</span>';
+  if (typeof v === "boolean") return k + '<span class="j-bool">' + (v ? "true" : "false") + '</span>';
+  if (typeof v === "number") return k + '<span class="j-num">' + esc(v) + '</span>';
+  if (typeof v === "string"){
+    const text = jsonDecodeText(v);
+    if (!forceOpen && jsonIsLongString(text)){
+      const head = text.slice(0, 200).replace(/\s+/g, " ");
+      return '<details class="j-node j-long"><summary>' + k +
+             '<span class="j-str">"' + esc(head) + '…"</span>' +
+             '<span class="j-dim">（' + text.length + ' 字，点击展开）</span></summary>' +
+             '<pre class="j-pre">' + esc(text) + '</pre></details>';
+    }
+    return k + '<span class="j-str">"' + esc(text) + '"</span>';
+  }
+  if (Array.isArray(v)){
+    if (!v.length) return k + '<span class="j-punc">[]</span>';
+    const open = forceOpen || (depth < 2 && v.length <= 12) ? " open" : "";
+    const inner = v.map(function(x){ return '<div class="j-row">' + jsonTreeHtml(x, undefined, depth + 1, false) + '</div>'; }).join("");
+    return k + '<details class="j-node"' + open + '><summary><span class="j-punc">[</span> ' +
+           '<span class="j-dim">' + v.length + ' 项</span><span class="j-punc">]</span></summary>' +
+           '<div class="j-children">' + inner + '</div></details>';
+  }
+  if (typeof v === "object"){
+    const keys = Object.keys(v);
+    if (!keys.length) return k + '<span class="j-punc">{}</span>';
+    const open = forceOpen || (depth < 2 && keys.length <= 10) ? " open" : "";
+    const inner = keys.map(function(key){
+      return '<div class="j-row">' + jsonTreeHtml(v[key], key, depth + 1, false) + '</div>';
+    }).join("");
+    return k + '<details class="j-node"' + open + '><summary><span class="j-punc">{</span> ' +
+           '<span class="j-dim">' + keys.length + ' 键</span><span class="j-punc">}</span></summary>' +
+           '<div class="j-children">' + inner + '</div></details>';
+  }
+  return k + '<span class="j-dim">' + esc(String(v)) + '</span>';
 }
 
 /* 给探针/预览工具看的把手（`V-233`）：这一页的状态全在 `AIR` 里，
@@ -1503,19 +1569,44 @@ const MossAi = {
       const s = (c && (c.step || c)) || null;
       if (!s) return;
       AIR.stepOpen = s;
+      AIR.modalTab = "detail";
       document.body.style.overflow = "hidden";
       AIR.rev++;
     },
-    closeStep(){
-      AIR.stepOpen = null;
-      document.body.style.overflow = "";
+    openTurn(t, ti){
+      if (!t) return;
+      AIR.stepOpen = {
+        n: Number(ti || 0) + 1,
+        tool: "(对话)",
+        brief: String(t.task || ""),
+        note: String(t.note || ""),
+        at: String(t.at || ""),
+        why: "",
+        turn: {
+          task: String(t.task || ""),
+          at: String(t.at || ""),
+          note: String(t.note || ""),
+          attachments: t.attachments || [],
+          steps: t.steps || [],
+          result: t.result || null,
+        },
+      };
+      AIR.modalTab = "detail";
+      document.body.style.overflow = "hidden";
       AIR.rev++;
     },
-    closeMessages(){
+    setModalTab(tab){
+      AIR.modalTab = String(tab || "detail");
+      AIR.rev++;
+    },
+    closeModal(){
+      AIR.stepOpen = null;
       AIR.msgOpen = false;
       document.body.style.overflow = "";
       AIR.rev++;
     },
+    closeStep(){ this.closeModal(); },
+    closeMessages(){ this.closeModal(); },
     stepHead(s){
       const bits = [];
       if (s && s.at) bits.push(s.at);
@@ -1526,12 +1617,33 @@ const MossAi = {
     },
     async copyStep(){
       const s = AIR.stepOpen || {};
-      const text = "第 " + s.n + " 步 · " + s.tool + "\n目的：" + (s.why || "") +
-                   "\n\n【参数】\n" + (s.args || "") + "\n\n【输出】\n" + (s.out || "");
+      const asText = v => (typeof v === "string") ? v : JSON.stringify(v, null, 2);
+      let text = "";
+      if (s.tool === "(对话)"){
+        const t = s.turn || {};
+        text = "第 " + s.n + " 轮 · 对话\n" + (t.task || "") +
+               "\n\n【结果】\n" + JSON.stringify(t.result || {}, null, 2);
+      } else {
+        text = "第 " + s.n + " 步 · " + s.tool + "\n目的：" + (s.why || "") +
+               "\n\n【参数】\n" + asText(s.args || "") +
+               "\n\n【输出】\n" + asText(s.out || "");
+      }
       try{
         await navigator.clipboard.writeText(text);
         toast("复制了这一步的原文");
       }catch(e){ toast("复制失败：" + (e && e.message ? e.message : e), true); }
+    },
+    modalSource(){ return jsonDecodeDeep(AIR.stepOpen || {}); },
+    modalSourceHtml(){ return jsonTreeHtml(this.modalSource(), undefined, 0, true); },
+    async copyModal(){
+      if (AIR.modalTab === "source"){
+        try{
+          await navigator.clipboard.writeText(JSON.stringify(this.modalSource(), null, 2));
+          toast("复制了源码 JSON");
+        }catch(e){ toast("复制失败：" + (e && e.message ? e.message : e), true); }
+        return;
+      }
+      await this.copyStep();
     },
     doShake(){
       this.shake = false;
@@ -2165,11 +2277,15 @@ const MossAi = {
                       :class="{bad: /接不上/.test(t.note || '')}"
                       >{{ t.folded ? ("已折叠 · " + (t.note || "点一下展开")) : (t.note || t.at || "") }}</span>
                 <!-- ★ V-279：这一轮的「改」和「删」（带 @click.stop，不然会顺手折叠掉） -->
-                <span class="ai-th-x" v-if="t.id && !A.running">
-                  <button @click.stop="editTurn(t)"
-                          title="改这一轮：回到它开工前的快照（撤销它改的东西），并把这句话填回输入框 —— 改好再发一次">编辑</button>
-                  <button class="danger" @click.stop="delTurn(t)"
-                          title="删这一轮：从这一轮到会话末尾的记录一起删掉，并按快照回退">删除</button>
+                <span class="ai-th-x">
+                  <button @click.stop="openTurn(t, ti)"
+                          title="查看这一轮的详情，或看它和 AI 交互的完整源码 JSON">源码</button>
+                  <template v-if="t.id && !A.running">
+                    <button @click.stop="editTurn(t)"
+                            title="改这一轮：回到它开工前的快照（撤销它改的东西），并把这句话填回输入框 —— 改好再发一次">编辑</button>
+                    <button class="danger" @click.stop="delTurn(t)"
+                            title="删这一轮：从这一轮到会话末尾的记录一起删掉，并按快照回退">删除</button>
+                  </template>
                 </span>
               </div>
               <div class="ai-bub-t" @click="toggleTurn(ti)"
@@ -2481,41 +2597,71 @@ const MossAi = {
         </div>
       </footer>
 
-      <!-- ★ V-315 / 重设计：点开某一步看原始细节 —— 思考过程用独立模态框排版。 -->
+      <!-- ★ V-315 / 重设计：点开某一步看原始细节 —— 思考过程/工具/对话都有「详情 + 源码」两个页签。 -->
       <div class="ai-modal-overlay" v-if="A.stepOpen" @click.self="closeStep()">
         <div class="ai-modal-box">
           <div class="ai-modal-header">
             <div class="ai-modal-title-group">
               <h3 class="ai-modal-title">
-                <span v-html='ico(A.stepOpen.tool === "(思考)" ? "lightbulb" : "search", "i")'></span>
-                {{ A.stepOpen.tool === "(思考)" ? "模型思考过程" : ("第 " + A.stepOpen.n + " 步 · " + A.stepOpen.tool) }}
+                <span v-html='ico(A.stepOpen.tool === "(思考)" ? "lightbulb" : (A.stepOpen.tool === "(对话)" ? "message-square" : "search"), "i")'></span>
+                {{ A.stepOpen.tool === "(思考)" ? "模型思考过程" : (A.stepOpen.tool === "(对话)" ? ("第 " + A.stepOpen.n + " 轮 · 对话") : ("第 " + A.stepOpen.n + " 步 · " + A.stepOpen.tool)) }}
               </h3>
               <span class="ai-modal-meta">{{ stepHead(A.stepOpen) }}</span>
             </div>
             <button class="ai-modal-close" type="button" title="关闭"
                     @click="closeStep()">&times;</button>
           </div>
+          <div class="ai-modal-tabs">
+            <button class="ai-modal-tab" type="button"
+                    :class="{active: A.modalTab === 'detail'}"
+                    @click="setModalTab('detail')">查看详情</button>
+            <button class="ai-modal-tab" type="button"
+                    :class="{active: A.modalTab === 'source'}"
+                    @click="setModalTab('source')">查看源码</button>
+          </div>
           <div class="ai-modal-body">
-            <template v-if="A.stepOpen.tool === '(思考)'">
-              <div class="ai-thought-content">
-                <span class="ai-thought-hint">原始思考记录（展开）：</span>
-                <p class="ai-thought-text">{{ A.stepOpen.out || "（这次没有思考过程）" }}</p>
-              </div>
+            <template v-if="A.modalTab === 'detail'">
+              <template v-if="A.stepOpen.tool === '(思考)'">
+                <div class="ai-thought-content">
+                  <span class="ai-thought-hint">原始思考记录（展开）：</span>
+                  <p class="ai-thought-text">{{ A.stepOpen.out || "（这次没有思考过程）" }}</p>
+                </div>
+              </template>
+              <template v-else-if="A.stepOpen.tool === '(对话)'">
+                <div class="ai-modal-sec">
+                  <h4>用户指令</h4>
+                  <p class="ai-thought-text">{{ (A.stepOpen.turn || {}).task || "（空）" }}</p>
+                </div>
+                <div class="ai-modal-sec" v-if="((A.stepOpen.turn || {}).attachments || []).length">
+                  <h4>附件</h4>
+                  <p class="ai-thought-text">共 {{ ((A.stepOpen.turn || {}).attachments || []).length }} 个附件</p>
+                </div>
+                <div class="ai-modal-sec">
+                  <h4>中间过程</h4>
+                  <p class="ai-thought-text">共 {{ (((A.stepOpen.turn || {}).steps) || []).length }} 个步骤</p>
+                </div>
+                <div class="ai-modal-sec" v-if="(A.stepOpen.turn || {}).result">
+                  <h4>最终结果</h4>
+                  <p class="ai-thought-text">{{ ((A.stepOpen.turn || {}).result || {}).summary || (((A.stepOpen.turn || {}).result || {}).reason || "（没写总结）") }}</p>
+                </div>
+              </template>
+              <template v-else>
+                <p class="ai-detail-w" v-if="A.stepOpen.why">它说这一步是为了：{{ A.stepOpen.why }}</p>
+                <div class="ai-modal-sec">
+                  <h4>参数</h4>
+                  <pre class="ai-msg-t">{{ A.stepOpen.args || "（这一步没有参数）" }}</pre>
+                </div>
+                <div class="ai-modal-sec">
+                  <h4>输出</h4>
+                  <pre class="ai-msg-t">{{ A.stepOpen.out || "（这一步没有输出）" }}</pre>
+                </div>
+              </template>
             </template>
-            <template v-else>
-              <p class="ai-detail-w" v-if="A.stepOpen.why">它说这一步是为了：{{ A.stepOpen.why }}</p>
-              <div class="ai-modal-sec">
-                <h4>参数</h4>
-                <pre class="ai-msg-t">{{ A.stepOpen.args || "（这一步没有参数）" }}</pre>
-              </div>
-              <div class="ai-modal-sec">
-                <h4>输出</h4>
-                <pre class="ai-msg-t">{{ A.stepOpen.out || "（这一步没有输出）" }}</pre>
-              </div>
-            </template>
+            <div class="ai-json-view" v-show="A.modalTab === 'source'"
+                 v-html="modalSourceHtml()"></div>
           </div>
           <div class="ai-modal-footer">
-            <button class="ai-modal-btn" type="button" @click="copyStep()">复制</button>
+            <button class="ai-modal-btn" type="button" @click="copyModal()">复制</button>
             <button class="ai-modal-btn primary" type="button" @click="closeStep()">关闭</button>
           </div>
         </div>

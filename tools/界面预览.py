@@ -4869,6 +4869,16 @@ MOCK_JS = r"""
                               .map(x => x.textContent);
         const detOk = !!det && /参数/.test(detTxt) && /输出/.test(detTxt) &&
                       detPre.some(x => /"summary"/.test(x)) && detPre.some(x => /收到/.test(x));
+        // ★ 新页签：切到「查看源码」应能看到高亮 JSON 树（键 / 折叠节点）。
+        const srcTab = [].slice.call(document.querySelectorAll("#pane-ai .ai-modal-tab"))
+                              .filter(b => /查看源码/.test(b.textContent))[0];
+        let jsonOk = false;
+        if (srcTab){
+          srcTab.click();
+          await sleep(160);
+          const jv = document.querySelector("#pane-ai .ai-json-view");
+          jsonOk = !!jv && !!jv.querySelector(".j-key") && !!jv.querySelector(".j-node");
+        }
         const closeDet = [].slice.call(document.querySelectorAll("#pane-ai .ai-modal-overlay .ai-modal-btn"))
                                 .filter(b => /关闭/.test(b.textContent))[0];
         closeDet && closeDet.click();
@@ -4895,7 +4905,7 @@ MOCK_JS = r"""
                    !!started && /dry-run/.test(startArgs) && stepsOk && resOk && filesOk && tokOk &&
                    snapOk && frameOk && sessOk && mdlOk && followOk &&
                    permOk && permChgOk && facOk && histOk && permLean && whyOk && msgOk &&
-                   budOk && detOk && noErr;
+                   budOk && detOk && jsonOk && noErr;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") +
           "\n「AI」选项卡在 = " + tabShown + "、这一页显示出来了 = " + paneOn +
@@ -4924,7 +4934,7 @@ MOCK_JS = r"""
           "\n★ V-316 顶栏只剩历史图标 = " + histOk + "（下拉里的会话：" + histTxt.slice(0, 40) + "）" +
           "\n★ V-315 token 上限那格 = " + budOk + "（文字「" + budTxt + "」/ title 有 token 上限 = " +
           /token 上限/.test(budTitle) + "）" +
-          "\n★ V-315 点开某一步 = " + detOk + "  参数/输出都在" +
+          "\n★ V-315 点开某一步 = " + detOk + "  参数/输出都在 · 源码高亮 = " + jsonOk +
           "\n★ V-307/315 每步写目的 + 时间点 = " + whyOk + "  " + whyTxt.slice(0, 50) + " / " + metaTxt.slice(0, 40) +
           "\n★ V-318 左栏只留清单（没有临时空间/硬锁那两行）= " + permLean +
           "\n★ V-307 看提示词那一层 = " + msgOk +

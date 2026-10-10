@@ -1521,3 +1521,42 @@
   .aiwrap .ai-modal-box{width:94%;max-height:88vh}
   .aiwrap .ai-modal-header,.aiwrap .ai-modal-body,.aiwrap .ai-modal-footer{padding-left:16px;padding-right:16px}
 }
+
+/* ---- 模态框里的「查看详情 / 查看源码」页签 + JSON 高亮树 ---- */
+.aiwrap .ai-modal-tabs{
+  display:flex;gap:2px;padding:0 24px;background:#fafafa;border-bottom:1px solid #ebeef5;
+  flex:none;
+}
+.aiwrap .ai-modal-tab{
+  padding:10px 14px;font-size:13px;font-weight:600;border:none;background:transparent;
+  color:#909399;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;
+  transition:color .2s,border-color .2s,background .2s;
+}
+.aiwrap .ai-modal-tab:hover{color:#606266}
+.aiwrap .ai-modal-tab.active{color:#409eff;border-bottom-color:#409eff;background:#fff}
+.aiwrap .ai-json-view{
+  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;line-height:1.65;
+  background:#282c34;color:#abb2bf;border-radius:6px;padding:14px;max-height:60vh;overflow:auto;
+}
+.aiwrap .ai-json-view details.j-node{margin-left:14px}
+.aiwrap .ai-json-view > details.j-node:first-child{margin-left:0}
+.aiwrap .ai-json-view summary{cursor:pointer;list-style:none;user-select:none}
+.aiwrap .ai-json-view summary::-webkit-details-marker{display:none}
+.aiwrap .ai-json-view summary:hover{color:#e5c07b}
+.aiwrap .ai-json-view .j-children{border-left:1px dashed #3e4451;margin-left:7px;padding-left:10px}
+.aiwrap .ai-json-view .j-row{white-space:pre-wrap;word-break:break-word;padding:1px 0}
+.aiwrap .ai-json-view .j-key{color:#e5c07b}
+.aiwrap .ai-json-view .j-str{color:#98c379;white-space:pre-wrap;word-break:break-word}
+.aiwrap .ai-json-view .j-num{color:#d19a66}
+.aiwrap .ai-json-view .j-bool{color:#c678dd}
+.aiwrap .ai-json-view .j-null{color:#e06c75}
+.aiwrap .ai-json-view .j-punc{color:#56b6c2}
+.aiwrap .ai-json-view .j-dim{color:#5c6370}
+.aiwrap .ai-json-view .j-long summary{color:#abb2bf}
+.aiwrap .ai-json-view .j-pre{
+  margin:8px 0 4px;padding:10px;white-space:pre-wrap;word-break:break-word;background:#21252b;
+  border-radius:4px;color:#abb2bf;max-height:45vh;overflow:auto;
+}
+@media (max-width:600px){
+  .aiwrap .ai-modal-tabs{padding-left:16px;padding-right:16px}
+}
