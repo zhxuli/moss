@@ -874,10 +874,16 @@ async function cmdRenamePkg(p){
     newId = String(newId || "").trim().toLowerCase();
     if (!newId || newId === p.id) return;
     const oldRel = pkgRel(p);            // 改名前它那个目录（文件管理缓存里记的就是它）
+    // ★ `V-378`：**旧 id 也必须在交给宿主之前先记下来**（和 `oldRel` 一个道理）——
+    //   宿主那条 `--rename` 跑完，手里这个包对象可能已经不是旧 id 了（预览那个假宿主就是
+    //   当场 `p.id = 新 id`；真宿主这边 `refreshPkgs` 也会换掉包表）。
+    //   不记的话，下面那句 `pkgFollowId(p.id, newId)` 会变成"新→新"，被它自己那句
+    //   `oldId === newId` 挡掉，**一声不响地什么都不搬**。
+    const oldId = String(p.id);
     consoleKey = "__host__";
-    const cmd = "moss --rename " + p.id + " " + newId;
+    const cmd = "moss --rename " + oldId + " " + newId;
     setConsole("__host__", "$ " + cmd, "运行中");
-    const r = await pywebview.api.run_host("--rename " + p.id + " " + newId);
+    const r = await pywebview.api.run_host("--rename " + oldId + " " + newId);
     setConsole("__host__", "$ " + cmd + "\n\n" + (r.out || "(没有输出)"),
                r.code === 0 ? "完成" : ("退出码 " + r.code));
     if (r.code !== 0){
@@ -885,6 +891,9 @@ async function cmdRenamePkg(p){
       setTab("console");
       return;
     }
+    // ★ `V-378`：**按 id 记的那几样跟着搬**（参数框的字 / 运行缓冲 / 命令行那块屏的主人 /
+    //   自动运行那份名单）—— 和"别的进程改名被轮询到"那条路共用同一个函数，见 `pkgFollowId`。
+    await pkgFollowId(oldId, newId);
     // ★ `V-367`：这里以前先弹一句「已改名为 x」，函数末尾又弹一句（带"显示名里的旧名字
     //   也一起换了"）—— 一个动作两颗胶囊，说的还是同一件事。**只在末尾说一次**。
     // ★ `V-89`：备份库里那个**分组文件夹**跟着改名（不然"改个 id 就一起改"这件事
@@ -916,6 +925,21 @@ async function cmdRenamePkg(p){
    重新起起来 —— 也就是你要的"自动无感刷新"。
    ★ 为什么由界面自己轮询（2.5 秒一次）：改名是**别的进程**干的（AI 工作台那条 `run_moss`、
    你在终端里敲的 `moss --rename`），界面这边没有任何回调可听。 */
+/* ★ `V-378`：改名时要跟着搬的**那些按 id 记的东西** + 自动运行那份名单。
+   ★ 为什么收成一个函数、**两条改名路都调它**：改名有两条路 ——
+     ① 界面上点「更名」（`cmdRenamePkg`）；② 别的进程改名、2.5 秒轮询到（`pkgWatchTick` → `followRename`）。
+     以前只有 ② 搬了 `ARGS` / `RUNS` / `consoleKey` ⇒ **在界面里改名**那几样全留在旧 id 上
+     （详情页参数框里刚敲的字没了、命令行那块屏认不出主人、正在跑的包状态也对不上）；
+     而**自动运行那份名单两条路都没搬** ⇒ 那个包改完名之后开机跑不起来（只报"找不到这个包"）、
+     详情页又看不见它（那一块按 id 找 ⇒ 显示"还没加入"），只能删掉重加。放一处，两条路一起对。 */
+async function pkgFollowId(oldId, newId){
+  if (!oldId || !newId || oldId === newId) return;
+  if (ARGS[oldId] !== undefined){ ARGS[newId] = ARGS[oldId]; delete ARGS[oldId]; }
+  if (RUNS[oldId]){ RUNS[newId] = RUNS[oldId]; delete RUNS[oldId]; }
+  if (consoleKey === oldId) consoleKey = newId;
+  try{ await autoRename(oldId, newId); }catch(e){ /* 搬不动也不该拦住改名这条路 */ }
+}
+
 let renameTimer = null;
 let renameTickBusy = false;
 
@@ -944,10 +968,8 @@ async function followRename(oldId, newId, how, oldDir){
   if (!oldId || !newId || oldId === newId) return;
   const wasOpen = !!(cur && cur.id === oldId);
   const oldRel = relOfDir(oldDir) || (wasOpen ? pkgRel(cur) : null);
-  // 详情页那个参数框是**按 id** 记的（`ARGS[id]`）、命令行缓冲也是按 id 记的
-  if (ARGS[oldId] !== undefined){ ARGS[newId] = ARGS[oldId]; delete ARGS[oldId]; }
-  if (RUNS[oldId]){ RUNS[newId] = RUNS[oldId]; delete RUNS[oldId]; }
-  if (consoleKey === oldId) consoleKey = newId;
+  // 按 id 记的那几样（参数框 / 运行缓冲 / 命令行那块屏 / 自动运行名单）统一在 `pkgFollowId` 里搬
+  await pkgFollowId(oldId, newId);
   // 内嵌界面的后端是**按旧 id** 起的：目录都搬走了 ⇒ 停掉，改完名按新 id 再起起来
   const hadEmbed = (typeof embedRunning === "function") && embedRunning(oldId);
   if (hadEmbed) await embedStop(oldId, true);

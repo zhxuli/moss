@@ -93,6 +93,28 @@ function autoMake(kind, id, opts, f){
           name: String(o.name || ""), on: true};
 }
 
+/* ★ `V-378`：改名跟随 —— 把名单里 `kind === "pkg"` 且 id 是**旧 id** 的那条改成新 id。
+   （**只动 id 一个字段**，`args` / `cwd` / `on` 一个字不改；历史那几条的 id 是目标文件的
+   绝对路径、跟包 id 没关系，一律不碰。）
+   ★ 为什么非要有它：这份名单是**按包 id** 记的，而 `moss --rename` 只搬包目录和数据目录 ——
+   不改这一条的话，那个包改完名之后：开机时它**跑不起来**（只报一句"找不到这个包"），
+   界面上又**看不见**（详情页那一块是按 id 找的，新名字下显示"还没加入"），只能删掉重加。
+   ★ 为什么先 `autoLoad(true)`：`AUTO.items` 是**懒加载**的（没打开过详情页就还是空表），
+   不先读回来就成了"搬了个空"。
+   ★ 存回去**不带提示**：改名那句「已跟随改名：…」由 `followRename` 统一说（一次动作一条提示）；
+   只有真没存上时 `autoPersist` 才会自己报一句。回"搬了几条"。 */
+async function autoRename(oldId, newId){
+  if (!oldId || !newId || String(oldId) === String(newId)) return 0;
+  await autoLoad(true);
+  let n = 0;
+  (AUTO.items || []).forEach(x => {
+    if (x.kind === "pkg" && String(x.id) === String(oldId)){ x.id = String(newId); n++; }
+  });
+  if (n) await autoPersist();
+  autoPaintMarks();                      // 列表上那条「自动运行」竖线跟着挪到新名字
+  return n;
+}
+
 /* ---------------------------------------------------------------- 详情页那一块
    `kind` = "pkg" | "hist"；`id` = 包 id / 历史的目标路径；`opts` 给 hist 的 cwd+name。
    同步返回 HTML（详情页是"重画一遍"的写法，所以这里不 await —— 缓存里没有就先画"未启用"，

@@ -1633,6 +1633,16 @@ MOCK_JS = r"""
           p0 = state.packages.find(x => x.id === "first") || state.packages[0];
         }
         select(p0.id);
+        // ★ `V-378`：先给它摆一条"自动运行"记录（按**旧 id** 记的），改完名再验它跟没跟着搬。
+        //   这份名单的存在形式是 `user_data/state/_ui_autostart.json`，预览里假后端存 `M.auto`。
+        //   ★ 旧 id 必须**先存成字符串**：假宿主那条 `--rename` 是**就地改** `p0.id` 的
+        //     （真宿主不这么干，但断言不能靠这个假设），拿 `p0.id` 去比就成"新 vs 新"了。
+        const autoOldId = String(p0.id);
+        M.auto = {items: [{kind: "pkg", id: autoOldId, args: "--auto 1", cwd: "",
+                           name: "", on: true}]};
+        M.autoSaved = null;
+        await autoLoad(true);
+        const autoHad = autoPkgIds().has(autoOldId);
         setTab("file");
         await sleep(400);
         const want = h === "pkg-align-file" ? p0.id : "first2";
@@ -1654,7 +1664,35 @@ MOCK_JS = r"""
         if (target) await fmOpenPage(target);
         await sleep(300);
         const t = fmActiveTab();
-        const ok = !!(t && t.rel === target) && !M.readFail;
+        // ★ `V-378`：自动运行那条记录跟没跟着改名走 —— 判据三条：
+        //   ① 改名前它在名单里（`autoHad`）② 改完名名单里是**新 id**那条（`args` / `kind` 一字未动）
+        //   ③ 旧 id 那条不在了，而且**真的存进了宿主**（看假后端收到的 `M.autoSaved`，不是只看内存）。
+        //   `pkg-align-file` 那条路只改目录名、id 不变，所以不判（它本来就不该搬）。
+        const autoRows = ((M.autoSaved || {}).items) || [];
+        const autoNow = autoRows.filter(x => String(x.id) === String(want));
+        const autoOldRows = autoRows.filter(x => String(x.id) === autoOldId);
+        const autoOk = (h === "pkg-align-file") ? true
+          : (autoHad && autoNow.length === 1 && autoOldRows.length === 0 &&
+             autoNow[0].kind === "pkg" && autoNow[0].args === "--auto 1" && autoNow[0].on === true);
+        // ★ 场景原本那两条（"开着的那一页还是不是改名后那个文件"）**必须在下面那轮改名之前判** ——
+        //   不然 `followRename` 顺手把这一页也搬到 first3，`t.rel` 就不再是 target，自己把自己判红。
+        const tabRel0 = (t && t.rel) || "-";
+        const okBase = !!(t && t.rel === target) && !M.readFail;
+        // ★ `V-378` 第二条路：**别的进程改名**（AI 工作台 / 你在终端里敲 `moss --rename`）——
+        //   界面 2.5 秒轮询到之后走的是 `followRename`。预览里没有 `pkg_watch` 那个假接口，
+        //   所以这里直接调一次，把这条路的"搬 id"也钉住（不然两条路只测了一条）。
+        let autoOk2 = true, autoIds2 = [];
+        if (h === "pkg-renamed-file"){
+          const dirOf = (x) => String(p0.dir || "").replace(/[\\/][^\\/]*$/, "\\" + x);
+          state.packages.push(Object.assign({}, p0, {id: "first3", dir: dirOf("first3")}));
+          await followRename(want, "first3", "指纹一致", dirOf(want));
+          const rows2 = ((M.autoSaved || {}).items) || [];
+          autoIds2 = rows2.map(x => x.id);
+          autoOk2 = rows2.filter(x => String(x.id) === "first3").length === 1 &&
+                    rows2.filter(x => String(x.id) === String(want)).length === 0 &&
+                    rows2.filter(x => x.args === "--auto 1").length === 1;
+        }
+        const ok = okBase && autoOk && autoOk2;
         const relOld = /odd-dirname/.test(String((s && s.rel) || ""));
         const entOld = rels.some(r => /odd-dirname/.test(String(r)));
         const short = x => String(x).replace("user/pkgs/", "").replace("system/pkgs/", "sys/");
@@ -1663,14 +1701,19 @@ MOCK_JS = r"""
           "\nentries  = " + JSON.stringify(rels) +
           "\nhist     = " + JSON.stringify((s && s.hist) || []) +
           "\ntarget   = " + (target || "-") +
-          "\ntab      = " + ((t && t.rel) || "-") +
+          "\ntab      = " + tabRel0 +
           "\nreadFail = " + (M.readFail || "无") +
           "\nstale    = " + (s && s.stale ? "1" : "0") +
+          "\n自动运行 = 旧 id 有 = " + autoHad + " / 存进宿主的那份 = " +
+            JSON.stringify(autoRows) + " / 判定 = " + autoOk + "（want=" + want + "）" +
+          "\n自动运行(轮询那条路) = " + JSON.stringify(autoIds2) + " / 判定 = " + autoOk2 +
           "\nfs_list  = " + (M.ls || []).map(short).join(" > ");
         // 顶栏那点宽度只能放一句短的；完整那份写进下面的大白区（截图看得清）
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " rO=" + (relOld ? 1 : 0) + " eO=" + (entOld ? 1 : 0) +
-          " n=" + rels.length + " rf=" + (M.readFail ? 1 : 0);
+          " n=" + rels.length + " rf=" + (M.readFail ? 1 : 0) + " auto=" + (autoOk ? 1 : 0) +
+          " auto2=" + (autoOk2 ? 1 : 0) +
+          " ids=" + JSON.stringify(autoRows.map(x => x.id)) + JSON.stringify(autoIds2);
         document.querySelector("#fm-body").innerHTML =
           '<pre style="padding:18px 22px;font-size:13px;line-height:1.7;white-space:pre-wrap">' +
           diag.replace(/&/g, "&amp;").replace(/</g, "&lt;") + '</pre>';
