@@ -330,7 +330,7 @@ class Loop:
         self.tools = T.Tools(workdir=workdir, before_write=self._before_first_write,
                              self_tools=self.self_tools,
                              stop_check=stop_check, asker=asker, mode_fn=self.mode_fn,
-                             run_id=self.run_id, perm_gate=perm_gate)
+                             run_id=self.run_id, perm_gate=perm_gate, client=client)
         #: 现在在干什么（`V-242`：界面上显示"等模型回话 12s / 执行工具"，
         #  免得"模型在想"看起来像"卡死了"）
         self.on_phase = on_phase

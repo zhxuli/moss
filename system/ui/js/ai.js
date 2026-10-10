@@ -1664,6 +1664,7 @@ const MossAi = {
       if (t === "done") return "done";
       if (t === "snap_clean") return "snap";
       if (t === "(思考)") return "think";
+      if (["web_search", "web_fetch", "github_api"].indexOf(t) >= 0) return "web";
       return "misc";
     },
     toolIcon(t){
@@ -1696,6 +1697,7 @@ const MossAi = {
       return {list_dir: "folder-search", read_file: "file-text", grep: "search",
               edit_file: "file-code", write_file: "file-code", run_moss: "play",
               spec: "book-open", done: "check", snap_clean: "moss-camera",
+              web_search: "search", web_fetch: "globe", github_api: "git-branch",
               "(思考)": "lightbulb"}[t] || "code";
     },
     runLine(r){
@@ -1838,6 +1840,7 @@ const MossAi = {
       const zh = {list_dir: "读目录", read_file: "读文件", grep: "搜内容", edit_file: "改文件",
                   write_file: "写文件", run_moss: "跑一遍", spec: "查契约", done: "收尾",
                   snap_clean: "清快照", ask: "问了你一句", allow_path: "请求放行目录",
+                  web_search: "搜网页", web_fetch: "抓网页", github_api: "访问 GitHub",
                   "(思考)": "思考过程"};
       const name = (s && s.tool) || "";
       if (zh[name]) return zh[name];
@@ -1862,6 +1865,7 @@ const MossAi = {
       if (k === "write") return "var(--aib-success)";
       if (k === "run") return "var(--aib-warning)";
       if (k === "think") return "#8b5cf6";
+      if (k === "web") return "#0891b2";
       return "var(--aib-primary)";
     },
     /* 步骤卡第二行：**给人看的那一行**。
