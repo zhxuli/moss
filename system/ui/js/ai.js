@@ -1737,6 +1737,17 @@ const MossAi = {
     selfToggle(){ AIR.selfOpen = !AIR.selfOpen; AIR.rev++; },
     setSelfTab(t){ AIR.selfTab = t; AIR.rev++; },
     async refreshSkills(){ await aiLoadSkills(); toast("技能列表已刷新"); },
+    async toggleFullAccess(){
+      const want = !this.A.wild;
+      try{
+        const got = await window.pywebview.api.ai_allow("*", !!want, !!want,
+          want ? "完全权限（无人值守）" : "", "set");
+        if (!got || !got.ok){ toast((got && got.msg) || "切不了完全权限", true); return; }
+        toast(want ? "完全权限已开启：无人值守，不再弹权限 / 覆盖确认"
+                   : "完全权限已关闭：恢复按清单来");
+      }catch(e){ toast("切不了完全权限：" + (e && e.message ? e.message : e), true); }
+      await aiRefreshInfo(true);
+    },
     skillOrigin(w){
       if (!w) return "";
       if (w.kind === "pkg") return "【插件】";
@@ -2514,6 +2525,15 @@ const MossAi = {
                 </div>
               </div>
 
+              <!-- 完全权限（无人值守）：一键把「任意路径」读写都打开，不再弹权限 /
+                   危险操作 / 覆盖确认。关掉就恢复成按清单来。 -->
+              <button class="trigger-btn ai-mini ai-fullperm" :class="{active: A.wild}"
+                      type="button" @click="toggleFullAccess()"
+                      :title="A.wild ? '完全权限已开启：无人值守，不再弹权限 / 覆盖确认。点一下关掉。'
+                                     : '开启完全权限：任意路径可读写，危险操作 / 覆盖也不再问。'">
+                <span v-html='ico(A.wild ? "shield-check" : "shield", "i")'></span>
+                {{ A.wild ? "完全权限 · 开" : "完全权限" }}
+              </button>
               <!-- 目录权限（点开才出） -->
               <div class="popover-wrapper ai-perm-wrap ai-perm" :class="{folded: !A.permPop}">
                 <button ref="permBtn" class="trigger-btn ai-perm-fold" :class="{active: A.permPop}" @click.stop="togglePermPop()"

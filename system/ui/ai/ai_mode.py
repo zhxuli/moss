@@ -588,8 +588,6 @@ def danger_of(tool, args):
                 return "这条命令看起来会**动盘 / 动系统**：`moss %s`（命中「%s」）" % (
                     str(a.get("args") or "")[:60], w.strip())
         return None
-    if name == "write_file" and a.get("overwrite"):
-        return "**整篇覆盖**一个已经存在的文件（改几行的话 `edit_file` 更安全）"
     if name == "snap_clean":
         return "清掉你自己存的版本快照（回退用的退路）"
     return None

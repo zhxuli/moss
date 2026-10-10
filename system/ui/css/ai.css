@@ -1560,3 +1560,9 @@
 @media (max-width:600px){
   .aiwrap .ai-modal-tabs{padding-left:16px;padding-right:16px}
 }
+
+/* 完全权限（无人值守）开关：关=灰，开=绿 */
+.aiwrap .ai-fullperm.active{
+  color:#047857;background:#ecfdf5;border-color:#a7f3d0;
+}
+.aiwrap .ai-fullperm.active:hover{background:#d1fae5;border-color:#6ee7b7;color:#065f46}
