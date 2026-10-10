@@ -425,7 +425,8 @@ async function aiOpenThread(id, quiet){
       //   要拿它去问宿主"删这一轮会删掉什么、回退到哪条镜像"。
       id: t.id || "",
       task: t.task || "", at: (t.at || "").slice(5, 16),
-      steps: t.steps || [], result: t.result || null, folded: false,
+      steps: t.steps || [], result: t.result || null,
+      folded: !!t.result, autoFolded: !!t.result,
       note: (t.result && t.result.continue_note) || "",
     }));
     AIR.cur = -1;
@@ -491,7 +492,8 @@ async function aiOpenRun(id, quiet){
     //   `V-279`：`id` 照样带上（翻历史时抬头那两颗按钮也能用）
     AIR.turns = [{key: "v" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1), id: r.id || "", task: r.task || "",
                   at: (r.started_text || "").slice(5, 16) || "历史记录",
-                  steps: AIR.steps, result: AIR.result, folded: false}];
+                  steps: AIR.steps, result: AIR.result,
+                  folded: !!AIR.result, autoFolded: !!AIR.result}];
     AIR.cur = 0;
     AIR.rev++;
   }catch(e){ if (!quiet) toast("读不到这条记录：" + (e && e.message ? e.message : e), true); }
@@ -728,6 +730,12 @@ async function aiPollOnce(){
         cur.result = got.result;
         // ★ `V-259`：这一次到底**接着没有** —— 宿主把话说清楚，界面照实显示在那一轮上
         cur.note = got.result.continue_note || "";
+        // ★ 用户要的 DSH 手感：跑的过程中步骤/思考全展开；**最终结果一到，中间过程自动折起来**。
+        //   `autoFolded` 只自动折一次 —— 之后用户自己展开，轮询不会又给折回去。
+        if (!got.running && !cur.autoFolded){
+          cur.folded = true;
+          cur.autoFolded = true;
+        }
       }
     }
     // ★ `V-249`：它干完活了、而且盘上真有文件变了 ⇒ 让「文件管理」那份缓存作废
@@ -800,7 +808,7 @@ async function aiStart(){
                   attachments: atts.map(a => ({name: a.name, kind: a.kind, size: a.size})),
                   at: (cont ? "接着聊" : "新会话") + " · " +
                       new Date().toTimeString().slice(0, 8),
-                  steps: [], result: null, folded: false, note: ""});
+                  steps: [], result: null, folded: false, autoFolded: false, note: ""});
   AIR.cur = AIR.turns.length - 1;
   AIR.diskNoted = "";            // `V-249`：新任务 = 允许再通知一次"盘上变了"
   AIR.snapNoted = "";            // `V-250`：新任务 = 允许再通知一次"快照存好了"
@@ -2142,7 +2150,7 @@ const MossAi = {
                 <b class="ai-th-n">#{{ ti + 1 }}</b>
                 <span class="ai-th-a" :title="t.note || t.at"
                       :class="{bad: /接不上/.test(t.note || '')}"
-                      >{{ t.folded ? "已折叠 · 点一下展开" : (t.note || t.at || "") }}</span>
+                      >{{ t.folded ? ("已折叠 · " + (t.note || "点一下展开")) : (t.note || t.at || "") }}</span>
                 <!-- ★ V-279：这一轮的「改」和「删」（带 @click.stop，不然会顺手折叠掉） -->
                 <span class="ai-th-x" v-if="t.id && !A.running">
                   <button @click.stop="editTurn(t)"
@@ -2152,7 +2160,7 @@ const MossAi = {
                 </span>
               </div>
               <div class="ai-bub-t" @click="toggleTurn(ti)"
-                   :title="t.folded ? '点一下展开这一轮' : '点一下折叠这一轮'">{{ t.task }}</div>
+                   :title="t.folded ? '点一下展开中间过程' : '点一下折叠中间过程'">{{ t.task }}</div>
               <div class="ai-bub-atts" v-if="(t.attachments || []).length">
                 <span v-for="a in t.attachments" :key="a.name">📎 {{ a.name }}</span>
               </div>
@@ -2239,6 +2247,8 @@ const MossAi = {
               </div>
             </template>
 
+          </template>
+
             <!-- ③ 它说的（结论）：左边白气泡 -->
             <div class="ai-bub ai" v-if="t.result">
               <span class="ai-bub-ic" v-html='ico("sparkles", "i")'></span>
@@ -2263,7 +2273,6 @@ const MossAi = {
                 </div>
               </div>
             </div>
-          </template>
         </div>
 
         <p class="ai-empty" v-if="!A.turns.length">

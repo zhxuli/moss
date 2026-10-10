@@ -4711,13 +4711,13 @@ MOCK_JS = r"""
         // ★ `V-251`：这一页进来会**自动认领上次那条会话**（结果卡一开始就有一个旧的），
         //   所以不能"看到结果卡就当我这次跑完了" —— 等这次的**步骤流**里有编辑那一步、
         //   而且**已经不在跑**了为止（两个条件都要，否则会抢在跑完之前就去断言）。
-        for (let i = 0; i < 25; i++){
-          const t = [].slice.call(document.querySelectorAll("#pane-ai .ai-step b"))
-                            .map(x => x.textContent);
-          if (!(window.__AIR || {}).running && t.indexOf("edit_file") >= 0 &&
-              document.querySelector("#pane-ai .ai-result")) break;
-          await sleep(400);
-        }
+        // 等这次任务真的开跑、再跑完（旧历史结果卡不算，不能用它当信号）。
+        for (let i = 0; i < 15 && !(window.__AIR || {}).running; i++) await sleep(200);
+        for (let i = 0; i < 40 && (window.__AIR || {}).running; i++) await sleep(300);
+        await sleep(200);
+        // ★ 新行为：结果一到中间过程会自动折叠；这条场景要先展开，才能验步骤流/详情。
+        (window.__AIR.turns || []).forEach(t => { t.folded = false; t.autoFolded = true; });
+        window.__AIR.rev++;
         await sleep(200);
         const started = M.aiRun || null;
         const startArgs = started ? (started.task + "|" + started.maxSteps) : "";
@@ -4846,6 +4846,10 @@ MOCK_JS = r"""
         const budOk = !!budEl && /百万/.test(budTxt) && /token 上限/.test(budTitle) &&
                       budCs.borderTopColor.replace(/\s/g, "") !== "rgb(203,213,225)" &&
                       (budCs.backgroundColor === "rgba(0, 0, 0, 0)" || budCs.backgroundColor === "transparent");
+        // ★ 新行为：有最终结果后中间过程会自动折叠；为了验步骤内容/详情，这条场景先展开。
+        (window.__AIR.turns || []).forEach(t => { t.folded = false; t.autoFolded = true; });
+        window.__AIR.rev++;
+        await sleep(250);
         const whyTxt = [].slice.call(document.querySelectorAll("#pane-ai .ai-step .step-action"))
                               .map(x => x.textContent).join(" | ");
         const metaTxt = [].slice.call(document.querySelectorAll("#pane-ai .ai-step .step-meta"))
@@ -5210,6 +5214,10 @@ MOCK_JS = r"""
         (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
         await sleep(1200);                       // 等 mounted 那一轮 aiLoadRuns + 认领
         const dbg = window.__AIR || {};
+        // ★ 新行为：认领回来的历史轮次默认折叠；为了验「上次那条里的步骤」，先展开。
+        (window.__AIR.turns || []).forEach(t => { t.folded = false; t.autoFolded = true; });
+        window.__AIR.rev++;
+        await sleep(250);
         const rows = document.querySelectorAll("#pane-ai .ai-step");
         const stepsTxt = [].slice.call(rows).map(r => (r.querySelector("b") || {}).textContent).join(",");
         const card = document.querySelector("#pane-ai .ai-result");
