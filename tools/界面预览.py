@@ -5435,7 +5435,7 @@ MOCK_JS = r"""
         if (!t || !ta || !code){ document.title = "HLWIN-ERR 没有编辑器"; return; }
         const text = t.text || "";
         const nLines = text.split("\n").length;
-        // ★ `V-373`：**刚打开这一刻**三层就得对齐（用户报的"点一下光标不上不下、一删删掉的
+        // ★ `V-376`：**刚打开这一刻**三层就得对齐（用户报的"点一下光标不上不下、一删删掉的
         //   是下面十来行的内容"就是这里）。`：value="t.text"` 按 HTML 规矩会把选区丢到文本
         //   末尾，`focus()` 再为"让光标可见"把 textarea 滚到底 —— 而高亮层还停在顶上。
         //   判据三条：① 输入层和高亮层的 scrollTop 相等 ② 光标在开头 ③ 行号槽也跟上。

@@ -644,7 +644,7 @@ const MossFilePage = {
     "t.text"(){ this.scheduleHl(); },
     /* ★ `V-272`：这一页从"藏着"变成"显示"时补画一次 —— 藏着的时候量不到视口高度
        （`clientHeight = 0`），窗口会算成"从第一行开始的一小段"。
-       ★ `V-373`：补画那一下顺带 `syncScroll()`（见 `paintHl`）—— 藏着的时候三层都不能写
+       ★ `V-376`：补画那一下顺带 `syncScroll()`（见 `paintHl`）—— 藏着的时候三层都不能写
        scrollTop（会被夹成 0），所以"切回来"这一刻必须重新对一次。 */
     active(v){ if (v) this.scheduleHl(); },
   },
@@ -661,7 +661,7 @@ const MossFilePage = {
     },
   },
   mounted(){
-    // ★ `V-373`：打开一个文件时**先把光标放回开头**，再画高亮 —— 不然光标会"漂"。
+    // ★ `V-376`：打开一个文件时**先把光标放回开头**，再画高亮 —— 不然光标会"漂"。
     //   两层是叠在一起的两个视图：`:value="t.text"` 是按属性写进 textarea 的，而 HTML
     //   规定"**没聚焦**时设 value ⇒ 选区折叠到文本**末尾**"；紧接着 `fmOpenPage` 的
     //   `fmFocusActiveSoon()` 一 `focus()`，浏览器为了"让光标可见"又把 textarea
@@ -707,7 +707,7 @@ const MossFilePage = {
       window.__hlWin = this.hlWindow();          // 探针的把手：这次用的是哪个窗口
       paintHl(this.t, code, window.__hlWin);
       this.paintGutter();                        // 行号跟高亮层一起重画
-      // ★ `V-373`：画完再对一次滚动。第一次画会把 `code` 清空一次（`paintHl` 里建那三个
+      // ★ `V-376`：画完再对一次滚动。第一次画会把 `code` 清空一次（`paintHl` 里建那三个
       //   节点那段），内容一空 `pre.scrollTop` 就被夹成 0；外面换了内容（AI 改盘上的文件、
       //   恢复快照 ⇒ `fmReloadPages`）也是这条。少了这一下，两层就永远差着那一段。
       this.syncScroll();
@@ -732,10 +732,10 @@ const MossFilePage = {
       const g = this.$refs.gutter, ta = this.$refs.ta;
       if (g && ta) g.scrollTop = ta.scrollTop || 0;
     },
-    /* ★ `V-373`：高亮层跟输入层对齐 —— 输入层 / 高亮层 / 行号槽是**同一次滚动的三个视图**，
+    /* ★ `V-376`：高亮层跟输入层对齐 —— 输入层 / 高亮层 / 行号槽是**同一次滚动的三个视图**，
        谁滚都得让另外两个跟上。
        ★ 藏在别的选项卡里时**不写**：`display:none` ⇒ `clientHeight = 0`，写进去会被浏览器
-       夹成 0，等你切回来正好成了"光标在上面、字在下面"（`V-373` 那条）。 */
+       夹成 0，等你切回来正好成了"光标在上面、字在下面"（`V-376` 那条）。 */
     syncScroll(){
       const ta = this.$refs.ta, pre = this.$refs.pre;
       if (!ta || !pre || !ta.clientHeight) return;
