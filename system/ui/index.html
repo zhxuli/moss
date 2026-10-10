@@ -269,6 +269,10 @@
 <!-- ★ `V-358`：自动启动（详情页那一块 + 开机跑一次）—— 排在 `list.js` 前面：
      详情页重画时会调它的 `autoSectionHTML`，虽然那时只是"函数声明"，但早加载少一类意外。 -->
 <script src="js/autostart.js"></script>
+<!-- ★ `V-379`：**寄生模式**（点它就运行、切走就停）—— 和 `autostart.js` 一个路子
+     （每个插件一个开关，存在 `user_data/state/_ui_parasite.json`），同样排在 `list.js` 前面：
+     详情页重画要调它的 `parasiteSectionHTML`、你点左边列表要调它的 `parasiteOnPick`。 -->
+<script src="js/parasite.js"></script>
 <script src="js/panels.js"></script>
 <script src="js/console.js"></script>
 <script src="js/drop.js"></script>

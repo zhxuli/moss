@@ -430,6 +430,17 @@ function runningHint(id){
          "\n· " + String(p.cmd || "").slice(0, 120) + more;
 }
 
+/* ★ `V-379`：这个包**在跑吗**？三个来源缺一不可（并到一处，别在别处再抄一遍）：
+     · `RUNS[id]`        —— 界面自己起的那一次（管道 / 终端那条路）
+     · 内嵌界面          —— 包的界面开着（那也是一个进程）
+     · `PST[id].running` —— 宿主报的（终端里跑的 / 更早留下的孤儿）
+   寄生模式要判"在不在跑"（决定点不点那颗按钮），所以从 `paintActions` 里抽出来当**唯一判据**。 */
+function pkgRunning(p){
+  if (!p) return false;
+  return !!(RUNS[p.id] || (embedSupported(p) && embedRunning(p.id)) ||
+            ((PST[p.id] || {}).running));
+}
+
 /* 状态灯 + 运行/停止 + 显示/隐藏：**一个控件**（灯就在按钮里）。
    钉在选项卡那一行的最右边，所以不用先点开「详情」也能操作。 */
 function paintActions(p){
@@ -456,9 +467,7 @@ function paintActions(p){
     return;
   }
   const st = (p && PST[p.id]) || {running: false, windows: 0, visible: false};
-  const mine = !!(p && RUNS[p.id]);
-  const embedded = !!(p && embedSupported(p) && embedRunning(p.id));
-  const running = mine || embedded || !!st.running;
+  const running = pkgRunning(p);         // ★ `V-379`：判据收在 `pkgRunning` 一处
   b.disabled = !p;
   // ★ 颜色只在"运行中"时给（绿色停止图标）；不再按"上次是否非 0"染红/黄 —— 误报太多
   b.innerHTML = ico(running ? "square" : "play", running ? "i ic-run" : "i") +

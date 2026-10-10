@@ -104,7 +104,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "fanyi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
           "ai-turn-edit", "ai-self-tools", "ai-ask",
-          "hl-window", "set-debounce"]
+          "hl-window", "set-debounce", "parasite"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
 #: 是场景（或它的假数据）跟不上 —— 待办记在账本 `V-203`。
@@ -421,6 +421,15 @@ MOCK_JS = r"""
       M.auto = {items: rows};
       M.autoSaved = {items: rows};
       return {ok: true, items: rows};
+    },
+    // `V-379`：**寄生模式**（点它就运行、切走就停；真宿主存 `user_data/state/_ui_parasite.json`）
+    //   —— 假后端存 `M.parasite`，并且**真的改它**：开关 / 改名跟随 / 编排都在预览里能断言。
+    parasite_get: async () => ({ok: true, ids: (((M.parasite || {}).ids) || []).slice()}),
+    parasite_set: async (ids) => {
+      const rows = (ids || []).map(x => String(x));
+      M.parasite = {ids: rows};
+      M.parasiteSaved = {ids: rows};
+      return {ok: true, ids: rows};
     },
     hist_list: async () => ({ok: true, items: HIST}),
     hist_forget: async () => ({ok: true, msg: "(预览) 已删掉这条记录"}),
@@ -793,7 +802,14 @@ MOCK_JS = r"""
       ? {ok: true, running: true, code: 0, out: "[执行] md5\n[目录] " + state.home + "\n\n(预览) 还在跑\n"}
       : {ok: true, running: false, code: 0,
          out: "[执行] md5\n[目录] " + state.home + "\n\n900150983cd24fb0d6963f7d28e17f72\n"}),
-    run_stop: async () => ({ok: true, msg: "(预览) 已停止"}),
+    run_stop: async (rid) => {
+      // `V-379`：记一笔 —— 寄生模式"离开就停"要证明**真的走了停止那条路**（不是只把内存清了）。
+      // ★ 顺手把 `keepRun` 关掉：真宿主一杀进程，下一次 `run_poll` 就回 `running:false`、
+      //   `finishRun` 才把 `RUNS[id]` 收走。留着 true 就成了"永远停不下来"的假后端。
+      (M.stops = M.stops || []).push(String(rid || ""));
+      M.keepRun = false;
+      return {ok: true, msg: "(预览) 已停止"};
+    },
     // ---- 内嵌界面（`V-48`）那四个接口。预览里"包的后端"是假的：就地回几条，
     //      协议跟真的一模一样（真后端是那个包的进程，在 stdio 上说 JSON 行）----
     embed_start: async (pid) => {
@@ -1641,6 +1657,8 @@ MOCK_JS = r"""
         M.auto = {items: [{kind: "pkg", id: autoOldId, args: "--auto 1", cwd: "",
                            name: "", on: true}]};
         M.autoSaved = null;
+        M.parasite = {ids: [autoOldId]};        // `V-379`：寄生模式名单也按 id 记 ⇒ 一起搬
+        M.parasiteSaved = null;
         await autoLoad(true);
         const autoHad = autoPkgIds().has(autoOldId);
         setTab("file");
@@ -1674,6 +1692,11 @@ MOCK_JS = r"""
         const autoOk = (h === "pkg-align-file") ? true
           : (autoHad && autoNow.length === 1 && autoOldRows.length === 0 &&
              autoNow[0].kind === "pkg" && autoNow[0].args === "--auto 1" && autoNow[0].on === true);
+        // ★ `V-379`：**寄生模式名单**同样按包 id 记 ⇒ 改名也得跟着搬（`parasiteRename`）。
+        //   同一份数据在两条改名路上都要对，所以和上面那条一样**在下面那轮改名之前**判。
+        const paraIds = (((M.parasiteSaved || {}).ids) || []).map(String);
+        const paraOk = (h === "pkg-align-file") ? true
+          : (paraIds.length === 1 && paraIds[0] === String(want));
         // ★ 场景原本那两条（"开着的那一页还是不是改名后那个文件"）**必须在下面那轮改名之前判** ——
         //   不然 `followRename` 顺手把这一页也搬到 first3，`t.rel` 就不再是 target，自己把自己判红。
         const tabRel0 = (t && t.rel) || "-";
@@ -1692,7 +1715,7 @@ MOCK_JS = r"""
                     rows2.filter(x => String(x.id) === String(want)).length === 0 &&
                     rows2.filter(x => x.args === "--auto 1").length === 1;
         }
-        const ok = okBase && autoOk && autoOk2;
+        const ok = okBase && autoOk && autoOk2 && paraOk;
         const relOld = /odd-dirname/.test(String((s && s.rel) || ""));
         const entOld = rels.some(r => /odd-dirname/.test(String(r)));
         const short = x => String(x).replace("user/pkgs/", "").replace("system/pkgs/", "sys/");
@@ -1707,6 +1730,7 @@ MOCK_JS = r"""
           "\n自动运行 = 旧 id 有 = " + autoHad + " / 存进宿主的那份 = " +
             JSON.stringify(autoRows) + " / 判定 = " + autoOk + "（want=" + want + "）" +
           "\n自动运行(轮询那条路) = " + JSON.stringify(autoIds2) + " / 判定 = " + autoOk2 +
+          "\n寄生模式名单 = " + JSON.stringify(paraIds) + "（要 [" + want + "]）/ 判定 = " + paraOk +
           "\nfs_list  = " + (M.ls || []).map(short).join(" > ");
         // 顶栏那点宽度只能放一句短的；完整那份写进下面的大白区（截图看得清）
         document.querySelector("#meta").textContent =
@@ -2604,6 +2628,85 @@ MOCK_JS = r"""
                                " 拖=" + dropFlag + "/" + cwdDropped +
                                " 禁用后=" + afterOff + "/" + boxHidden1 + "/" + btnText1 +
                                " 胶囊=" + pillOff + " 提示=" + hintOff);
+      }
+      // ★ `V-379`：**寄生模式**（你 2026-10-10 定的名字）——"点它就运行、切到别的插件它自动停"。
+      //   六条断言：① 没开寄生时点它**不会**跑（反向控制）② 详情页那一行画出来了（图标 + 那句大白话）
+      //   ③ 拨开关 ⇒ 假宿主真收到 ④ 点别的包再点回来 ⇒ 它**跑起来**了
+      //   ⑤ 再点别的包 ⇒ 它**停**了，而且**走的是"停止"那条路**（看假后端收到的 `run_stop`）
+      //   ⑥ 你手动按了「停止」之后，它不许自己又爬起来。
+      if (h === "parasite"){
+        document.title = "PARA-ERR 没跑完";
+        try{
+          M.keepRun = true;                    // 让"跑起来"一直成立（`run_poll` 回 running:true）
+          M.runs = []; M.stops = []; M.embedStarts = [];
+          M.parasite = {ids: []}; M.parasiteSaved = null;
+          const rowOf = (id) => document.querySelector('#list .item[data-id="' + id + '"]');
+          const runningMd5 = () => !!(typeof RUNS !== "undefined" && RUNS["md5"]);
+          select("path");                      // 先站在别的包上，好让"进 md5"是一次真的换包
+          await sleep(400);
+
+          // ① 还没开寄生：点它不该跑
+          if (rowOf("md5")) rowOf("md5").click();
+          await sleep(700);
+          const noRunBefore = (M.runs || []).length === 0;
+
+          // ② 详情页那一行
+          const sec = document.querySelector("#para-sec");
+          const secIco = !!(sec && sec.querySelector("svg"));
+          const secText = (((sec || {}).querySelector ? sec.querySelector("p") : null) || {})
+                            .textContent || "";
+          const sw0 = document.querySelector("#para-sw");
+          const label0 = sw0 ? (sw0.textContent || "").trim() : "?";
+          // ③ 拨开关 ⇒ 宿主收到
+          if (sw0) sw0.click();
+          await sleep(600);
+          const savedIds = ((((M.parasiteSaved || {}).ids) || [])).join(",");
+          const sw1 = document.querySelector("#para-sw");
+          const label1 = sw1 ? (sw1.textContent || "").trim() : "?";
+          const checked1 = sw1 ? String(sw1.getAttribute("aria-checked")) : "?";
+
+          // ④ 走开 → 回来：它该跑起来
+          if (rowOf("path")) rowOf("path").click();
+          await sleep(700);
+          const runsAfterLeave = (M.runs || []).map(x => x.pid).join(",");
+          if (rowOf("md5")) rowOf("md5").click();
+          await sleep(900);
+          const ranOk = (M.runs || []).some(x => x.pid === "md5") && runningMd5();
+
+          // ⑤ 再走开：它该停，且真的调了 `run_stop`
+          if (rowOf("path")) rowOf("path").click();
+          await sleep(900);
+          const stopCalls = (M.stops || []).length;
+          const stopOk = !runningMd5() && stopCalls >= 1;
+
+          // ⑥ 手动按「停止」之后不许自己爬起来
+          if (rowOf("md5")) rowOf("md5").click();
+          await sleep(900);
+          const runsBeforeStop = (M.runs || []).length;
+          const rb = document.querySelector("#btn-run");
+          const btnWasStop = rb ? /停止/.test(rb.textContent || "") : false;
+          if (rb) rb.click();
+          await sleep(1400);
+          const manualOk = (M.runs || []).length === runsBeforeStop && !runningMd5();
+
+          const ok = noRunBefore && secIco && /点它就运行/.test(secText) &&
+                     label0 === "启用" && savedIds === "md5" && label1 === "禁用" &&
+                     checked1 === "true" && ranOk && stopOk && btnWasStop && manualOk;
+          document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+            "\n① 没开寄生时点它不跑 = " + noRunBefore +
+            "\n② 详情那一行 = 图标 " + secIco + " · 说明[" + secText + "]" +
+            "\n③ 拨开关：按钮 " + label0 + "→" + label1 + " · aria=" + checked1 +
+            " · 宿主收到[" + savedIds + "]" +
+            "\n④ 走开→回来：runs=" + runsAfterLeave + " → md5 在跑 = " + ranOk +
+            "\n⑤ 再走开：停在跑吗 = " + !runningMd5() + " · run_stop 次数 = " + stopCalls +
+            "\n⑥ 手动停止后自己又起 = " + !manualOk + "（按钮当时是「停止」= " + btnWasStop + "）";
+          document.title = ok ? "READY"
+            : ("PARA-FAIL ①" + (noRunBefore ? 1 : 0) + " ②" + (secIco ? 1 : 0) +
+               " ③" + (savedIds === "md5" ? 1 : 0) + "/" + label1 + "/" + checked1 +
+               " ④" + (ranOk ? 1 : 0) + "(" + runsAfterLeave + ")" +
+               " ⑤" + (stopOk ? 1 : 0) + "/" + stopCalls +
+               " ⑥" + (manualOk ? 1 : 0));
+        }catch(e){ document.title = "PARA-ERR " + ((e && e.message) || e); }
       }
       // ★ `V-305`：插件列表行**不显示简介**了，第二行是「符号 + id」（符号来自设置，别硬编码 `:`）
       if (h === "sym-list"){

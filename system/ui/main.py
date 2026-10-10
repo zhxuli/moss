@@ -1803,6 +1803,31 @@ AUTOSTART_FILE = USER_DATA / "state" / "_ui_autostart.json"
 #: 最多几条（再多也不是"自动启动"了，是把界面当开机脚本用）
 AUTOSTART_MAX = 20
 
+#: 寄生模式名单（`V-379`）：`user_data/state/_ui_parasite.json`，形状 `{"ids": ["md5", "path"]}`。
+#: ★ 这里存的是一份**名单**（不像自动启动那种"带参数的条目"），所以照 `_ui_order.json` 那个形状。
+#: ★ 为什么不写进 `pkg.json`：那是**你的用法选择**，不是包的属性 —— 清单会被升级整体替换掉，
+#:   AI 也不该能替你打开它。`D-22`"磁盘是真相"在这里分两层：包归包，你的偏好归 `state/`。
+PARASITE_FILE = USER_DATA / "state" / "_ui_parasite.json"
+
+
+def _parasite_read():
+    """读寄生模式名单，回**id 列表**（去空、去重、保序）。
+
+    文件不在 / 读坏了 = 空名单（**绝不许因此起不来界面**，也不许崩在详情页上）。
+    """
+    try:
+        data = json.loads(PARASITE_FILE.read_text(encoding="utf-8"))
+    except Exception:                                                  # noqa: BLE001
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    out = []
+    for i in (data.get("ids") or []):
+        s = str(i or "").strip()
+        if s and s[:400] not in out:
+            out.append(s[:400])
+    return out
+
 
 def _autostart_read():
     """读自动启动那份配置，回**条目表** `[{kind, id, args, cwd, name, on}, …]`。
@@ -5003,6 +5028,34 @@ class Api:
         except Exception as e:                                         # noqa: BLE001
             return {"ok": False, "msg": "存不了：%s" % e}
         return {"ok": True, "items": rows}
+
+    # ------------------------------------------------------------ 寄生模式（`V-379`）
+    def parasite_get(self):
+        """「详情」页那一行要的数据：**名单**（哪些包开着寄生模式）。
+
+        ★ 名单是"你的用法选择"（存 `user_data/state/_ui_parasite.json`），不是包的属性。
+        """
+        return {"ok": True, "ids": _parasite_read()}
+
+    def parasite_set(self, ids=None):
+        """整表存回寄生模式名单（原子写，和 `autostart_set` 一个路子）。
+
+        ★ 界面上就一下（拨开关）⇒ 改内存里那一份 → 整表存回来；没有"保存按钮漏掉一半"这种事。
+        """
+        rows = []
+        for i in (ids or []):
+            s = str(i or "").strip()
+            if s and s[:400] not in rows:
+                rows.append(s[:400])
+        try:
+            PARASITE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = PARASITE_FILE.with_name(PARASITE_FILE.name + ".tmp")
+            tmp.write_text(json.dumps({"ids": rows}, ensure_ascii=False, indent=1),
+                           encoding="utf-8")
+            os.replace(str(tmp), str(PARASITE_FILE))
+        except Exception as e:                                         # noqa: BLE001
+            return {"ok": False, "msg": "存不了：%s" % e}
+        return {"ok": True, "ids": rows}
 
     def quit(self):
         window.destroy()

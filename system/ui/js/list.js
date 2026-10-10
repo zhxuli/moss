@@ -711,6 +711,9 @@ function renderDetailHTML(){
       // ★ `V-358`：**自动启动**（你定的：这一块放"详情"里，不放设置里）——
       //   加入 / 看状态 / 改参数 / 删除都在这儿，见 `js/autostart.js`。
       autoSectionHTML("pkg", p.id, {}) +
+      // ★ `V-379`：**寄生模式**（你 2026-10-10 定的名字）—— 点它就运行、切到别的插件自动停。
+      //   和上面「自动运行」同一张卡、同一套壳，见 `js/parasite.js`。
+      parasiteSectionHTML(p.id) +
       '<div class="dp-item">' +
         '<div class="dp-item-info">' +
           '<span class="dp-item-ico danger">' + ico("trash-2", "i") + '</span>' +
@@ -820,6 +823,7 @@ function wireDetail(){
     toast(r.msg || (r.ok ? "已打开" : "打不开"), !r.ok);
   };
   autoWire("pkg", p.id, {});          // ★ `V-358`：自动启动那一块（见 js/autostart.js）
+  parasiteWire(p.id);                 // ★ `V-379`：寄生模式那一行（见 js/parasite.js）
 }
 
 /* 复制一条路径到剪贴板（`V-359`，稿子里路径栏那颗按钮）。
@@ -938,6 +942,8 @@ async function pkgFollowId(oldId, newId){
   if (RUNS[oldId]){ RUNS[newId] = RUNS[oldId]; delete RUNS[oldId]; }
   if (consoleKey === oldId) consoleKey = newId;
   try{ await autoRename(oldId, newId); }catch(e){ /* 搬不动也不该拦住改名这条路 */ }
+  // ★ `V-379`：**寄生模式那份名单也是按包 id 记的** —— 一起搬（`js/parasite.js`）。
+  try{ await parasiteRename(oldId, newId); }catch(e){ /* 同上 */ }
 }
 
 let renameTimer = null;
@@ -1231,7 +1237,15 @@ const MossList = {
           '<div class="ds">' + esc(PSYM + p.id) + '</div></div>' +
         '<span class="rowstat"></span>';
     },
-    pick(id){ if (_listDragging) return; select(id); },   // 刚拖完那一下别误选中
+    pick(id){
+      if (_listDragging) return;
+      // ★ `V-379`：**寄生模式**要在"你亲手点左边列表"这一刻编排 —— 先抓 `prev`（下面那句
+      //   `select()` 会把 `cur` 换成新的），再照旧**同步** `select`（原来多快还是多快），
+      //   最后把编排丢到后台（它自己 await 宿主，不该拖住选择那一下）。
+      const prev = cur && cur.id;
+      select(id);
+      parasiteOnPick(id, prev);
+    },   // 刚拖完那一下别误选中
   },
   template: `
     <template v-if="R.ready">
