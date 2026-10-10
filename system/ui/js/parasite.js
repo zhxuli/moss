@@ -75,10 +75,10 @@ function parasiteSectionHTML(id){
         '<span class="dp-item-ico">' + ico("plug", "i") + '</span>' +
         '<div class="dp-item-text">' +
           '<h4>寄生模式' +
-            '<span class="dp-tip dp-tip-ico" data-tip="点它就运行、切到别的插件它自动停">' +
+            '<span class="dp-tip dp-tip-ico" data-tip="与moss合体，点它自动运行、切到别的插件它自动停">' +
               ico("info", "i") + '</span>' +
           '</h4>' +
-          '<p>点它就运行，切到别的插件自动停</p>' +
+          '<p>与系统结合更加紧密</p>' +
         '</div>' +
       '</div>' +
       '<div class="dp-item-acts">' +

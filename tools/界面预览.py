@@ -2653,8 +2653,11 @@ MOCK_JS = r"""
           // ② 详情页那一行
           const sec = document.querySelector("#para-sec");
           const secIco = !!(sec && sec.querySelector("svg"));
-          const secText = (((sec || {}).querySelector ? sec.querySelector("p") : null) || {})
-                            .textContent || "";
+          // ★ `V-379`/`V-380`：那一行**在不在**、有没有图标、有没有一句提示 —— 但**不钉具体措辞**
+          //   （文案是你随时会改的东西：你当天就把 `<p>` 改成了「与系统结合更加紧密」）。
+          const secText = String((((sec || {}).querySelector ? sec.querySelector("p") : null) || {})
+                            .textContent || "").trim();
+          const secOk = secIco && !!secText;
           const sw0 = document.querySelector("#para-sw");
           const label0 = sw0 ? (sw0.textContent || "").trim() : "?";
           // ③ 拨开关 ⇒ 宿主收到
@@ -2689,19 +2692,19 @@ MOCK_JS = r"""
           await sleep(1400);
           const manualOk = (M.runs || []).length === runsBeforeStop && !runningMd5();
 
-          const ok = noRunBefore && secIco && /点它就运行/.test(secText) &&
+          const ok = noRunBefore && secOk &&
                      label0 === "启用" && savedIds === "md5" && label1 === "禁用" &&
                      checked1 === "true" && ranOk && stopOk && btnWasStop && manualOk;
           document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
             "\n① 没开寄生时点它不跑 = " + noRunBefore +
-            "\n② 详情那一行 = 图标 " + secIco + " · 说明[" + secText + "]" +
+            "\n② 详情那一行 = 图标 " + secIco + " · 有提示话 = " + !!secText + "[" + secText + "]" +
             "\n③ 拨开关：按钮 " + label0 + "→" + label1 + " · aria=" + checked1 +
             " · 宿主收到[" + savedIds + "]" +
             "\n④ 走开→回来：runs=" + runsAfterLeave + " → md5 在跑 = " + ranOk +
             "\n⑤ 再走开：停在跑吗 = " + !runningMd5() + " · run_stop 次数 = " + stopCalls +
             "\n⑥ 手动停止后自己又起 = " + !manualOk + "（按钮当时是「停止」= " + btnWasStop + "）";
           document.title = ok ? "READY"
-            : ("PARA-FAIL ①" + (noRunBefore ? 1 : 0) + " ②" + (secIco ? 1 : 0) +
+            : ("PARA-FAIL ①" + (noRunBefore ? 1 : 0) + " ②" + (secOk ? 1 : 0) +
                " ③" + (savedIds === "md5" ? 1 : 0) + "/" + label1 + "/" + checked1 +
                " ④" + (ranOk ? 1 : 0) + "(" + runsAfterLeave + ")" +
                " ⑤" + (stopOk ? 1 : 0) + "/" + stopCalls +
