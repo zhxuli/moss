@@ -136,6 +136,17 @@ html[data-theme="dark"] .seg button[aria-selected="true"] { background: var(--su
   overflow: auto; overflow-wrap: normal; word-break: normal;
 }
 .editor > pre { pointer-events: none; color: var(--text); background: transparent; }
+/* ★ 高亮层里的 `<code>` 必须**跟着编辑器走**（主界面 `system/ui/css/files.css` 里
+   是 `V-29` 那条修复，插件这边原来漏了，所以"光标偏移"又犯了一次）：
+   `code` 有自己的 UA 规则 `code{font-family:monospace}` —— 那是**元素自己的**声明，
+   会盖过从 `pre` 继承下来的 `--font-mono`（"SF Mono"/ui-monospace/"Cascadia Code"
+   一个都不生效，落到默认等宽字体）⇒ 两层字宽不一样，越往右越偏。
+   实测（无头 Edge，同一行 172 字）：
+     · 原样  : pre/textarea = "SF Mono",ui-monospace,"Cascadia Code"…，而 code = monospace
+                ⇒ code 量到 1228px、textarea 1280px，**行尾差 -52px**；
+     · 补这条: 三层同一串字体 ⇒ 差 +0.5px（只是 `scrollWidth` 取整的零头）。
+   `font: inherit` 一次把字号/行高/字族都拉回来；`letter-spacing` / `tab-size` 同理。 */
+.editor > pre code { font: inherit; letter-spacing: inherit; tab-size: inherit; }
 .editor > textarea {
   background: transparent; color: transparent; caret-color: var(--text);
   resize: none; outline: none; user-select: text;

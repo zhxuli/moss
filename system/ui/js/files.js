@@ -643,7 +643,9 @@ const MossFilePage = {
        所以改成盯住 `t.text`：不管谁改的，都会重画。 */
     "t.text"(){ this.scheduleHl(); },
     /* ★ `V-272`：这一页从"藏着"变成"显示"时补画一次 —— 藏着的时候量不到视口高度
-       （`clientHeight = 0`），窗口会算成"从第一行开始的一小段"。 */
+       （`clientHeight = 0`），窗口会算成"从第一行开始的一小段"。
+       ★ `V-373`：补画那一下顺带 `syncScroll()`（见 `paintHl`）—— 藏着的时候三层都不能写
+       scrollTop（会被夹成 0），所以"切回来"这一刻必须重新对一次。 */
     active(v){ if (v) this.scheduleHl(); },
   },
   computed: {
@@ -659,8 +661,16 @@ const MossFilePage = {
     },
   },
   mounted(){
-    // 组件刚挂上时 `t.text` 还没进过 textarea 的高亮层，画一遍（这时可能还藏着，
-    // 靠 `active` 那个 watcher 在真正显示时补一次 —— 见 `V-272`）
+    // ★ `V-373`：打开一个文件时**先把光标放回开头**，再画高亮 —— 不然光标会"漂"。
+    //   两层是叠在一起的两个视图：`:value="t.text"` 是按属性写进 textarea 的，而 HTML
+    //   规定"**没聚焦**时设 value ⇒ 选区折叠到文本**末尾**"；紧接着 `fmOpenPage` 的
+    //   `fmFocusActiveSoon()` 一 `focus()`，浏览器为了"让光标可见"又把 textarea
+    //   **滚到最底**，可高亮层那个 `pre` 还停在顶上（第一次画高亮还会把 `code` 清空一次、
+    //   顺手把 `pre.scrollTop` 夹回 0）⇒ **你看到的字**和**光标逻辑上所在的位置**差着好几屏：
+    //   点一下光标不上不下（两种情况的行线刚好错开半行），一按删除删掉的是别处的内容。
+    //   实测（`bench/big.js`，2774 行）：打开后 `ta.scrollTop=55370 / pre.scrollTop=0`；
+    //   随便滚一下 `onScroll` 又把它对齐了 —— 所以这个 bug 只在"刚打开"那一会儿看得见。
+    this.homeScroll();
     this.scheduleHl();
     // 双击一个**已经开着**的文件也会走到这儿吗？不会 —— 那种情况组件早就挂着了，
     // 光标由 `fmFocusActiveSoon()` 负责（和原来的行为一致）。
@@ -697,6 +707,10 @@ const MossFilePage = {
       window.__hlWin = this.hlWindow();          // 探针的把手：这次用的是哪个窗口
       paintHl(this.t, code, window.__hlWin);
       this.paintGutter();                        // 行号跟高亮层一起重画
+      // ★ `V-373`：画完再对一次滚动。第一次画会把 `code` 清空一次（`paintHl` 里建那三个
+      //   节点那段），内容一空 `pre.scrollTop` 就被夹成 0；外面换了内容（AI 改盘上的文件、
+      //   恢复快照 ⇒ `fmReloadPages`）也是这条。少了这一下，两层就永远差着那一段。
+      this.syncScroll();
     },
     /* 左侧行号：行数 = 文本的行数（`wrap="off"` ⇒ 逻辑行 = 视觉行，1:1 对齐）。
        只在行数变了才重铺；铺完立刻跟 textarea 对一次滚动位置。 */
@@ -718,15 +732,31 @@ const MossFilePage = {
       const g = this.$refs.gutter, ta = this.$refs.ta;
       if (g && ta) g.scrollTop = ta.scrollTop || 0;
     },
+    /* ★ `V-373`：高亮层跟输入层对齐 —— 输入层 / 高亮层 / 行号槽是**同一次滚动的三个视图**，
+       谁滚都得让另外两个跟上。
+       ★ 藏在别的选项卡里时**不写**：`display:none` ⇒ `clientHeight = 0`，写进去会被浏览器
+       夹成 0，等你切回来正好成了"光标在上面、字在下面"（`V-373` 那条）。 */
+    syncScroll(){
+      const ta = this.$refs.ta, pre = this.$refs.pre;
+      if (!ta || !pre || !ta.clientHeight) return;
+      pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft;
+      this.syncGutter();
+    },
+    /* 光标回开头 + 三层一起回左上角（打开一个文件时用，见 `mounted`） */
+    homeScroll(){
+      const ta = this.$refs.ta;
+      if (!ta) return;
+      if (!ta.readOnly) ta.setSelectionRange(0, 0);
+      ta.scrollTop = 0; ta.scrollLeft = 0;
+      this.syncScroll();
+    },
     onInput(ev){
       this.t.text = ev.target.value;
       this.scheduleHl();
     },
     onScroll(){
-      // 高亮层和输入层是**两张叠在一起的层**，滚动得手动同步（原来也这样）
-      const pre = this.$refs.pre, ta = this.$refs.ta;
-      pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft;
-      this.syncGutter();                              // 行号立刻跟上，别等下一帧
+      // 三层（输入层 / 高亮层 / 行号槽）是同一次滚动的三个视图，立刻对齐，别等下一帧
+      this.syncScroll();
       // ★ `V-272`：窗口只画了"视口 ± 60 行" —— 滚出去了得把那几行补上色（按帧合并）
       this.scheduleHl();
     },

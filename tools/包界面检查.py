@@ -178,12 +178,35 @@ STUB = """<script>
       return Promise.resolve(v || ok());
     }
   };
+  /* ★ 高亮层对齐自检（这一类 bug 已经犯过两次：主界面 `V-29`、exec 插件）。
+     "透明 textarea 叠在 `pre>code` 上"那一套，两层的**字号/行高/字族/字距/制表位**
+     必须逐项相等，差一点就是"光标跟字形分家"，而且越往右越偏。
+     ★ 为什么是**渲染出来量**而不是读 CSS 文本：`<code>` 会被 UA 样式表那条
+       `code{font-family:monospace}` 命中（**元素自己的规则**，盖过从 `pre` 继承下来的字体），
+       这跟作者 CSS 里有没有写 `code` 一点关系都没有 —— 只有真渲染出来比计算值才看得见。
+     没找到 `.editor` 的包算"没这一套"，不判失败（`n/a`）。 */
+  function alignCheck(){
+    var ed = document.querySelector(".editor");
+    if (!ed) return "";                                     // 这个包没有那块编辑器
+    var pre = ed.querySelector("pre"), ta = ed.querySelector("textarea");
+    var code = pre && pre.querySelector("code");
+    if (!pre || !ta || !code) return "";                     // 不是"高亮层 + 输入层"那一套
+    var f = function(el){
+      var s = getComputedStyle(el);
+      return [s.fontFamily, s.fontSize, s.lineHeight, s.fontWeight,
+              s.fontStyle, s.letterSpacing, s.tabSize].join("|");
+    };
+    var a = f(pre), b = f(code), c = f(ta);
+    if (a === b && b === c) return "";                       // 三层一致 ⇒ 没话说
+    return "ALIGN-FAIL pre[" + a + "] code[" + b + "] textarea[" + c + "]";
+  }
   setTimeout(function(){
+    var mis = alignCheck();
     document.title = window.__perr.length
       ? ("PERR " + window.__perr.length + " " + window.__perr[0].slice(0, 80))
       : (window.__reported.length
          ? ("BOOT-ERR " + window.__reported[0].slice(0, 80))
-         : "RENDER-OK");
+         : (mis ? mis.slice(0, 240) : "RENDER-OK"));
   }, 1500);
 })();
 </script>"""
@@ -272,18 +295,25 @@ def main():
             visible = re.sub(r"\s+", " ", re.sub(r"(?s)<[^>]+>", " ", inner)).strip()
             # ★ 判"真画出来了"要三条一起：① 没有报错（标题 RENDER-OK）② 有可见文字
             #   ③ 有若干带 class 的元素 —— 只判"DOM 够长"会把"空壳页面"也放过去（假绿）。
+            #   ④ 高亮层那套（有 `.editor` 的包）三层字体必须一致 —— 差一点就是"光标偏移"，
+            #      而它**渲染是正常的**、页面里也一个字不少，上面三条一条都拦不住。
+            bad_align = title.startswith("ALIGN-FAIL")
             ok = title == "RENDER-OK" and len(visible) >= 30 and inner.count('class="') >= 3
             print("  %-10s %s  %s  文字 %d 字  元素 %d 个  标题=%s"
                   % (pid, "OK  " if ok else "FAIL", "%d KB" % (len(dom) // 1024),
                      len(visible), inner.count('class="'), title[:60] or "（读不到）"))
             if not ok:
                 bad += 1
+                if bad_align:
+                    print("             ★ 高亮层没对齐（高亮层 `pre>code` 和输入层 `textarea` 的"
+                          "字体/字号/行高必须逐项相同，否则光标跟字形分家）")
                 print("             可见文字片段：%s" % visible[:160])
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
     print("=" * 64)
     print("结论：%s" % ("✅ 全部渲染正常（真渲染，模板/计算属性出错都会在这拦下）" if not bad
-                        else "✗ %d 个包的页面没渲染出来" % bad))
+                        else "✗ %d 个包的页面有问题（渲染报错 / 空壳 / 高亮层没对齐，上面逐条写了）"
+                             % bad))
     return 1 if bad else 0
 
 

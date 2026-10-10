@@ -5435,6 +5435,15 @@ MOCK_JS = r"""
         if (!t || !ta || !code){ document.title = "HLWIN-ERR 没有编辑器"; return; }
         const text = t.text || "";
         const nLines = text.split("\n").length;
+        // ★ `V-373`：**刚打开这一刻**三层就得对齐（用户报的"点一下光标不上不下、一删删掉的
+        //   是下面十来行的内容"就是这里）。`：value="t.text"` 按 HTML 规矩会把选区丢到文本
+        //   末尾，`focus()` 再为"让光标可见"把 textarea 滚到底 —— 而高亮层还停在顶上。
+        //   判据三条：① 输入层和高亮层的 scrollTop 相等 ② 光标在开头 ③ 行号槽也跟上。
+        const pre0 = document.querySelector(".editor > pre");
+        const gut0 = document.querySelector(".editor > .gutter");
+        const openHome = (ta.selectionStart === 0 && ta.selectionEnd === 0);
+        const openSync = ta.scrollTop === pre0.scrollTop &&
+                         (gut0 ? gut0.scrollTop === ta.scrollTop : true);
         const same = () => code.textContent === text + "\n";
         const same0 = same();                                   // 挂载时那一遍
         const win = paintHl(t, code, {first: 400, last: 430});  // 一屏（中段）
@@ -5477,6 +5486,7 @@ MOCK_JS = r"""
                    win.mode === "window" && win.painted < nLines &&
                    whole.painted === nLines && paintedAfterScroll < nLines &&
                    winSpans * 3 < wholeSpans && splitOk && scrolled &&
+                   openHome && openSync &&
                    !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n文件 = bench/big.js（" + nLines + " 行 / " + text.length + " 字符）" +
@@ -5487,12 +5497,17 @@ MOCK_JS = r"""
           " ⇒ 只干了 " + (winSpans * 100 / Math.max(1, wholeSpans)).toFixed(1) + "% 的活" +
           "\n④ 跨行 span 接着开 = " + splitOk + " · ⑤ 滚动后窗口跟着走 = " + scrolled +
           "（预览里 rAF 跑了 " + rafN + " 次）" +
+          "\n⑥ 打开那一刻：光标在开头 = " + openHome + " · 三层的 scrollTop = " +
+          [ta.scrollTop, pre0.scrollTop, gut0 ? gut0.scrollTop : "-"].join("/") +
+          "（要相等）" +
           "\n页内错误 = " + (window.__errors || []).length;
         document.querySelector("#meta").className = "meta";
         document.title = ok ? "READY"
           : ("HLWIN-FAIL 文字=" + [same0, same1, same2, same3, same4].join("/") +
              " 窗=" + win.painted + "/" + nLines + " 块=" + winSpans + "/" + wholeSpans +
-             " 切=" + (splitOk ? 1 : 0) + " 滚=" + (scrolled ? 1 : 0));
+             " 切=" + (splitOk ? 1 : 0) + " 滚=" + (scrolled ? 1 : 0) +
+             " 开头=" + (openHome ? 1 : 0) + " 对齐=" + (openSync ? 1 : 0) +
+             " 三层=" + [ta.scrollTop, pre0.scrollTop, gut0 ? gut0.scrollTop : "-"].join("/"));
         }catch(_e){ document.title = "HLWIN-ERR " + ((_e && _e.message) || _e); }
       }
       // ★ `V-269`：**纯问答**那一轮的结论卡措辞 —— 你问「你是哪个大模型?」那次，
