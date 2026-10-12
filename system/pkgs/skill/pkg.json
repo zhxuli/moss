@@ -23,7 +23,7 @@
     "file": "main.py"
   },
   "_uiWhy": "跟 exec 一个路子（V-222）：ui.embed 一份页面两种跑法 —— 内嵌时宿主用 MOSS_UI_EMBED=1 把它起成后端进程（embed.py，stdio 上的 JSON 行），独立窗口时 pywebview。界面跟后端说话全走 ui/moss-embed.js 垫片。",
-  "_whatWhy": "技能本体不在这个目录里：它们是**这个插件的数据目录**（user_data/state/skill/<--名字>/，跟 exec 把命令放 state/exec/cmds 一个道理），每个技能是一个**目录**（pkg.json + 入口 + icon.svg），不是把代码塞进 JSON。规矩（扫描 / 校验 / 指纹 / 授权 / 跑 / 转插件）住在 system/ai/skill_lib.py，**宿主 AI 工作台和管理器共用同一份**。",
+  "_whatWhy": "技能本体分两层：用户层在 user_data/state/skill/<id>/，预制层在 system/pkgs/skill/builtin/<id>/；每个技能是一个目录（pkg.json + 入口 + icon.svg）。规矩住在 system/ai/skill_lib.py，宿主 AI 工作台和管理器共用同一份。",
   "ui": {
     "embed": "ui/index.html",
     "title": {

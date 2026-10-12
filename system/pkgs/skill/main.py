@@ -12,9 +12,12 @@
   moss :skill promote <id> [新id] 真的转成插件（去掉 `--` 搬进 user_data/pkgs）
   moss :skill run <id>           在这儿试跑一次
 
-技能本体在**这个插件的数据目录**里（`user_data/state/skill/<--名字>/`，跟 exec 把命令放
-`state/exec/cmds/` 一个道理）；每个技能是一个目录（`pkg.json` + 入口 + `icon.svg`）——
-就是插件那种多文件结构，所以技能和插件能互相搬。规矩在 `system/ai/skill_lib.py`。
+技能本体分两层：
+  · user_data/state/skill/<id>/       用户层：AI 自己造的技能，要用户允许。
+  · system/pkgs/skill/builtin/<id>/   预制层：随发行版打包的出厂技能，默认已允许；
+                                  同名 user 技能会覆盖它。
+每个技能是一个目录（pkg.json + 入口 + icon.svg）—— 就是插件那种多文件结构，所以技能和插件能互相搬。
+规矩在 system/ai/skill_lib.py。
 """
 import os
 import sys

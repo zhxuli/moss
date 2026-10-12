@@ -11,6 +11,7 @@
 ```
 system/pkgs/skill/              ← 管理器本身（就是本插件，跟 :exec 并排）
 system/pkgs/skill/seed/shot/    ← 出厂样例；**只留作"照它抄"的样板**（不会再自己长进数据目录）
+system/pkgs/skill/builtin/<id>/   ← 预制技能：随发行版打包，出厂默认已允许；同名 user 技能覆盖它
 user_data/state/skill/shot/     ← **技能本体**：一个目录 = pkg.json + 入口 + icon.svg + AGENT.md
 user_data/ai/skills_allow.json  ← **你的授权**（AI 写不到这个文件）
 user_data/ai/skill_stats.json   ← **调用统计**：每只被调了几次 + 最近一次调用时间（`V-295` 加）
@@ -26,9 +27,10 @@ user_data/pkgs/<id>/            ← 点「转为插件」搬过去之后，它�
 ★ **想要样例就自己复制一份**（`system/pkgs/skill/seed/shot/` → `user_data/state/skill/<名字>/`）——
 「补回出厂样例」那个功能（按钮 / `moss :skill seed` / 自动回填）**已经删干净了**（`V-288`/`V-289`）。
 
-技能本体住**本插件的数据目录**（`MOSS_PLUGIN_DATA_DIR`，跟 `exec` 把命令放
-`state/exec/cmds/` 一个道理）。**区别只有一处**：exec 把代码内联在 json 里（`"code"` 字段），
-技能是**一个目录**——就是插件那种多文件结构。
+技能本体分两层：用户自己造的住**本插件的数据目录**（MOSS_PLUGIN_DATA_DIR，跟 exec 把命令放
+state/exec/cmds 一个道理）；预制技能住 system/pkgs/skill/builtin/<id>/，随发行版走、默认已允许，
+同名 user 技能覆盖它。**区别只有一处**：exec 把代码内联在 json 里（"code" 字段），技能是**一
+个目录**——就是插件那种多文件结构。
 
 ## 两条规矩（代码拦的，不是提示词劝的）
 

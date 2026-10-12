@@ -1,0 +1,80 @@
+{
+  "spec": 1,
+  "id": "pkglib",
+  "kind": "task",
+  "version": "1.0.0",
+  "name": {
+    "zh-CN": "给插件装依赖"
+  },
+  "desc": {
+    "zh-CN": "宿主运行时里没有的第三方库，用 pip 装进某个插件自己的 packages/ 目录，并生成 deps.py 垫片（插件入口 import deps 即可正常导包）"
+  },
+  "tags": [
+    "依赖",
+    "pip",
+    "packages",
+    "python"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "run.py"
+  },
+  "params": [
+    {
+      "name": "pkg",
+      "type": "string",
+      "required": false,
+      "desc": "要装的库（多个用空格或逗号分隔，如 \"fastapi uvicorn\"）"
+    },
+    {
+      "name": "into",
+      "type": "string",
+      "required": false,
+      "desc": "装到哪个插件目录：绝对路径，或 user_data/pkgs/<id> 里的包 id（库会落到它下面的 packages/）"
+    },
+    {
+      "name": "mode",
+      "type": "string",
+      "required": false,
+      "default": "install",
+      "desc": "install=装库（默认） / probe=看环境（哪个解释器有 pip、能不能联网） / list=看已装了什么"
+    },
+    {
+      "name": "index",
+      "type": "string",
+      "required": false,
+      "desc": "pip 源（默认清华镜像，国内快；要官方源就填 https://pypi.org/simple）"
+    },
+    {
+      "name": "python",
+      "type": "string",
+      "required": false,
+      "desc": "指定用哪个解释器装（默认自己挑一个带 pip 的，先用宿主运行时）"
+    }
+  ],
+  "ai": {
+    "expose": true,
+    "risk": "medium",
+    "timeout": 300,
+    "why": "宿主自带运行时是隔离的，装不了第三方库（fastapi、flask 这类用不了）。这只手解决的就是它：把库落进目标插件自己的 packages/ 目录，让插件下次启动时用它，插件仍然是自包含的、不污染宿主环境。",
+    "examples": [
+      {
+        "args": {
+          "mode": "probe"
+        }
+      },
+      {
+        "args": {
+          "pkg": "fastapi uvicorn",
+          "into": "my-first"
+        }
+      },
+      {
+        "args": {
+          "mode": "list",
+          "into": "my-first"
+        }
+      }
+    ]
+  }
+}

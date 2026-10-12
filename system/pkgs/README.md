@@ -13,6 +13,12 @@
 | 用户自己写的东西 | `user_data/pkgs/` |
 | 临时试手 / 演示用的包 | 也放 `user_data/pkgs/`，不要了就 `moss --remove <id>` |
 
+## 预制技能（AI 的手）
+
+这不是插件，不要直接放 system/pkgs/<id>/。预制技能放 system/pkgs/skill/builtin/<id>/
+（一个目录 = pkg.json + 入口 + icon.svg + AGENT.md），随发行版打包、出厂默认就允许；
+用户 user_data/state/skill/<id>/ 同名会覆盖它。
+
 ## 两层的关系（优先级从低到高）
 
 ```

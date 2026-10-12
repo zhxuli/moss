@@ -20,6 +20,7 @@
 ```
 system/pkgs/skill/            管理器插件本身（跟 :exec 并排；出厂）
 system/pkgs/skill/seed/shot/  出厂样例（**只留作"照它抄"的样板**：不会再自己长进数据目录，`V-288`/`V-289`）
+system/pkgs/skill/builtin/<id>/  预制技能（随发行版打包，出厂即可用；同名 user 技能覆盖它）
 user_data/state/skill/shot/   **技能本体**：一个目录（pkg.json + 入口 + icon.svg + 任意文件）
 user_data/ai/skills_allow.json  **你的授权**（AI 写不到这儿 —— 见下面「声明 ≠ 授权」）
 user_data/pkgs/<id>/            「转为插件」搬过去之后，它就是普通插件（插件页里看得见）
@@ -125,18 +126,18 @@ def skill_dir():
 #:   想要样例就自己复制一份成 `user_data/state/skill/<名字>/` —— 这个常量只是告诉你样板在哪。
 SEED_DIR = HOME / "system" / "pkgs" / "skill" / "seed"
 
+#: 预制技能（随发行版一起打包、出厂即可用、无需用户允许）：`system/pkgs/skill/builtin/<id>/`。
+#: 用户 `user_data/state/skill/<id>/` 里的同名技能会覆盖它（`roots()` 先 system 后 user）。
+BUILTIN_DIR = HOME / "system" / "pkgs" / "skill" / "builtin"
+
 
 def roots():
-    """`[(目录, 层, 种类)]` —— **只有技能这一处**。
+    """技能扫描根：system 预制技能 + user_data 用户技能（同名 user 覆盖 system）。
 
-    ★ `V-284`（你 2026-10-05 定的）：**插件不再自动进 AI 的工具表**。
-      技能是"AI 自己的手"（工具表里带参数类型、`moss :skill` 管）；插件是"用户的"，
-      AI 想用就走它一直就有的那条路 —— `run_moss(":包名 …")`（跟你在终端里敲一模一样）。
-      所以这里没有 `pkg` 根：`技能` 和 `插件` 两个圈子**不互相出现**。
-      （账本 §16.3 那条"只有 `ai.expose: true` 的插件才出现在工具列表里"**留到商店/权限那轮**
-       再做 —— 那轮会有正经的授权界面；现在只留字段，不做工具面。）
+    技能和插件仍然不混：这里没有插件根，插件走 run_moss 的包调用那条路。
     """
-    return [(skill_dir(), "user", "skill")]
+    return [(BUILTIN_DIR, "system", "skill"),
+            (skill_dir(), "user", "skill")]
 
 
 def allow_path():

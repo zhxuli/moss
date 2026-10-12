@@ -48,7 +48,7 @@ HELP = """技能（AI 给自己造的能力）—— 用法
   moss :skill promote <名字> [新id]  真转成插件（搬进 user_data/pkgs，从此是普通插件）
 
 说明
-  · 技能本体在 user_data/state/skill/<名字>/（一个目录 = pkg.json + 入口 + icon.svg）。
+  · 技能本体分两层：user_data/state/skill/<名字>/（用户层，要允许）+ system/pkgs/skill/builtin/<名字>/（预制层，出厂即用；同名 user 覆盖）。
   · **批准那几下（allow / revoke / rm / promote）必须人来做** —— AI 拿 run_moss 调会被拒。
   · 不带参数时：界面里点「运行」→ 开窗口；命令行 / AI 调 → 只打这一份用法（对 AI 友好）。
 """

@@ -33,6 +33,8 @@ user_data/state/skill/<名字>/run.py       ← 入口（pkg.json 的 entry.file
 user_data/state/skill/<名字>/icon.svg     ← 图标（列表里那个彩色图标；不写就一个默认的）
 user_data/state/skill/<名字>/AGENT.md     ← **这只技能自己的说明书**（`moss :skill doc <名字>` 打它）
 （同目录还能放别的文件，入口里能 import 它们）
+
+★ 预制/出厂技能：要随 moss 发行版一起打包、出厂默认就允许，写到 system/pkgs/skill/builtin/<名字>/（同名 user_data 技能会覆盖它）。AI 自己现造的手仍然写 user_data/state/skill/<名字>/。
 ```
 
 ## pkg.json 的最小样子
