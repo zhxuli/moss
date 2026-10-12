@@ -23,3 +23,5 @@ description: 写一个新插件包时读它（下手的顺序、pkg.json 要点�
 * 数据写 `MOSS_PLUGIN_DATA_DIR`，别写包目录；
 * 参数从 `MOSS_PKG_PARAMS`（JSON）读，别人肉切 `sys.argv`；
 * 实测：`moss :<id>` 和带参数两种用法都要能跑（这是"一个包两种用法"的约定）。
+* 第三方库：不要因为宿主没预装就放弃。缺少的库用 pkglib 技能装到当前包自己的 packages/，入口最前面 import deps；pkglib 没授权就先让用户允许。
+* 默认 id：my-first 只是临时名，需求明确后要主动用 ask 问用户是否改名，给 2 到 4 个候选 id 和中文名；用户同意后用 run_moss 执行 --rename 旧id 新id。绝不能直接改文件夹名或 pkg.json 的 id。

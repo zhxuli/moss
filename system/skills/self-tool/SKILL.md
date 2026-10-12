@@ -95,7 +95,8 @@ print("收到：%s" % json.dumps(args, ensure_ascii=False))
 5. 别拿它当"绕开写权限"的后门：这只手能碰的文件，跟你在这次任务里能碰的**一样多**
    （你自己的包 + `user_data/state/skill/**`）。要动出厂件 / 宿主，那**必须由人来做**。
 6. 依赖：自带运行时里已经有的库可以直接用（`PIL` / `pyautogui` / `requests` / `numpy` …）。
-   **装不了新库**，也别假设有网络。
+   缺少的库不要直接判定不能用：用 pkglib 技能装到目标包自己的 packages/，入口最前面 import deps；pkglib 还没进工具表就让用户先允许。
+   不要往宿主运行时或 venv 里 pip install；第三方库必须跟目标包走。
 7. **别用 `run_moss` 调 `:skill allow / rm / promote`** —— 那几个动词是**用户决定**的事，
    宿主会直接拒掉（这是设计好的闸，不是提示）。
 8. 相关命令（**都不会开窗口**，随便调）：`":skill"` 用法+列表、`":skill show <名字>"`、
