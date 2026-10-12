@@ -5,8 +5,28 @@
 
 ## 干什么
 
-Google 翻译，带本地缓存：把文字粘进来（或从剪贴板读），选目标语言，翻完一键复制回剪贴板。
+多免费接口自动切换（Google 主入口 / Google clients5 / 有道 Demo / MyMemory），带本地缓存：把文字粘进来（或从剪贴板读），选目标语言，翻完一键复制回剪贴板。
 界面里还能看/清缓存、点历史记录回填。
+
+## 历史记录（2026-10-12 加的）
+
+**历史就是本地缓存** —— 右侧那份历史列表，每一条就是缓存里的一行。
+所以「删历史」= 真删缓存，重启不会冒回来；「关掉保留历史」= 新翻译完全不落盘（连缓存也不写），
+每次重新联网翻（也不再命中缓存）。这个取舍是用户当面定的（方案 A）。
+
+| 想干什么 | 界面上怎么点 |
+|---|---|
+| 删某一条 | 鼠标移到那条上 → 右上角出现 `×` → 点它 |
+| 全清 | 历史栏标题右边「清空」→ **点两次**（第一次只是上膛变红，3 秒内再点一次才真删） |
+| 保留 / 不保留 | 右上角「保留历史」开关（绿=保留，灰=不保留），状态存 `settings.json`，重启还在 |
+
+- 后端方法：`history_remove{src,target}` / `cache_clear` / `keep_history{on}`，
+  三个都**回一份和 `cache_info` 一样的现成载荷**（带 `ok / count / keep / history`），
+  界面拿到就直接重画，不用自己拼状态。两种跑法（内嵌 `Embedded` / 独立窗口 `Api`）两边同名。
+- 「不保留历史」期间的翻译：照旧翻、照旧回填剪贴板，只是不落盘也不进历史（界面会说明一句）。
+- 删单条是按 `(原文, 目标语言)` 定位的 —— 跟缓存 key 一致；缓存文件整体重写（数据量小，最稳）。
+- 开关状态存 `MOSS_PLUGIN_DATA_DIR/settings.json`（`{"keep_history": true}`）。
+- 「清空」故意不用 `confirm()`：内嵌 iframe 里可能被挡，点了没反应（改成"再点一次确认"）。
 
 ## 怎么调
 
@@ -29,7 +49,7 @@ moss ui → 选它 → 运行     # 内嵌进 moss 的「界面」选项卡里�
 | | v1 | v2 |
 |---|---|---|
 | 界面 | Tk 窗口 | 网页（原生 JS，Mac 风格 Pro 界面），内嵌 / 独立窗口两跑法 |
-| 翻译 | `googletrans`（三方） | `urllib` 调 Google 免费接口 `translate.googleapis.com` |
+| 翻译 | `googletrans`（三方） | 多免费接口（Google 主入口 / Google clients5 / 有道 Demo / MyMemory）自动切换 |
 | 剪贴板 | `pyperclip`（三方） | `ctypes` 调 Windows 剪贴板 API |
 | 触发 | **双击 Ctrl 全局热键**（`pynput`，三方） | **双击 Ctrl 全局热键**（`ctypes` 低级键盘钩子，等价） |
 | 缓存 | `MOSS_PLUGIN_DATA_DIR/translation_cache.txt` | `MOSS_PLUGIN_DATA_DIR/cache/translation_cache.jsonl` |
@@ -62,9 +82,9 @@ moss ui → 选它 → 运行     # 内嵌进 moss 的「界面」选项卡里�
 
 ## 副作用
 
-- 声明能力：`{"run": ["python"], "net": ["translate.googleapis.com"], "clipboard": ["read", "write"]}`
+- 声明能力：`{"run": ["python"], "net": ["translate.googleapis.com", "clients5.google.com", "aidemo.youdao.com", "api.mymemory.translated.net"], "clipboard": ["read", "write"]}`
 - 写文件：只写 `MOSS_PLUGIN_DATA_DIR`（`cache/`）下，不写包目录
-- 上网：翻缓存没命中时才请求 Google 免费接口
+- 上网：翻缓存没命中时，优先请求上次成功的通道，然后 Google、Google clients5、有道 Demo、MyMemory 依次兜底；最后成功的通道记在 MOSS_PLUGIN_DATA_DIR/provider.json。
 
 ## 后端两种模式（`main.py`）
 
@@ -78,10 +98,11 @@ moss ui → 选它 → 运行     # 内嵌进 moss 的「界面」选项卡里�
 ## 界面上会调的方法（`Embedded` 与 `run_window().Api` 两边同名）
 
 `translate` / `read_clipboard` / `copy` / `cache_info` / `cache_clear` / `history` /
-`targets` / `info` / `hotkey_start` / `hotkey_stop` / `hotkey_status`
+`history_remove` / `keep_history` / `targets` / `info` / `hotkey_start` / `hotkey_stop` /
+`hotkey_status`
 
-当前这一版页面用到的是 `hotkey_status` / `hotkey_start` / `hotkey_stop` / `cache_info`
-（点历史项时再用 `copy`）；其余方法留着备用。
+当前这一版页面用到的是 `hotkey_status` / `hotkey_start` / `hotkey_stop` / `cache_info` /
+`history_remove` / `cache_clear` / `keep_history`（点历史项时再用 `copy`）；其余方法留着备用。
 
 热键触发的进度/结果由后端**主动推**事件 `{"event":"hotkey","data":{...}}`：
 `phase` = `state` / `step`（带 `step` 1~4、`source_text`、`translated`）/ `done`（带 `result`）/ `fail`。
@@ -89,7 +110,10 @@ moss ui → 选它 → 运行     # 内嵌进 moss 的「界面」选项卡里�
 
 ## 还没验的
 
-- 端到端手点没跑过（用户会测）。缓存/剪贴板/翻译的真机行为以实际为准。
+- 真机上**手点**没跑过（用户会测）。缓存/剪贴板/翻译/热键的真机行为以实际为准。
+- 已自动验过的（2026-10-12）：后端逻辑（写过缓存→删单条→重启不复活→关开关不落盘→
+  开着开关照旧命中缓存→清空后文件被删）与界面交互（真 Edge 里点 `×`、连点两次清空、
+  切开关，看它真的调了对应方法、列表/条数/开关跟着变、无 JS 报错）。
 
 ## 来历
 

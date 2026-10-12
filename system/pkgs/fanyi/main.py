@@ -20,6 +20,7 @@
 **数组样子的行**，界面那侧只认 `{` 开头的行，两边不会串。
 """
 import ctypes
+import html
 import json
 import os
 import queue
@@ -27,6 +28,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from datetime import datetime
 
@@ -43,7 +45,12 @@ CACHE_DIR = os.environ.get('MOSS_PLUGIN_CACHE_DIR') or os.path.join(DATA_DIR, 'c
 CACHE_FILE = os.path.join(CACHE_DIR, 'translation_cache.jsonl')
 HISTORY_LIMIT = 200
 
-GT_URL = 'https://translate.googleapis.com/translate_a/single'
+# 「保留历史记录」开关（界面右上角那个开关）：持久化在 SETTINGS_FILE。
+#   开 = 照旧：翻译完写缓存、历史里能看到，下次同样的句子直接命中缓存；
+#   关 = 新翻译**不落盘**（连缓存也不写），每次重新联网翻；已有的历史还在，可手动删。
+SETTINGS_FILE = os.path.join(DATA_DIR, 'settings.json')
+_keep_history = True
+
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) moss:fanyi'
 
 #: 界面下拉里能选的目标语言（值 = Google 用的代码）
@@ -83,17 +90,30 @@ LEGACY_CACHE = os.path.join(DATA_DIR, 'translation_cache.txt')
 
 
 def _guess_lang(text):
-    """粗猜一段文字是什么语言（只给**导入旧缓存**推 target 用，不当主流程的检测）。"""
+    """粗判语种：优先假名（日语）、谚文（韩语）、西里尔（俄语），最后才认汉字。
+
+    ★ 现在它也用于 `auto` 目标（中文→英文 / 其他→中文），所以必须**扫完再下结论**：
+      日语文本常夹大量汉字，按首字符判会把「日本語」当成中文。
+    """
+    has_kana = has_hangul = has_cjk = has_cyrillic = False
     for ch in text:
         o = ord(ch)
-        if 0xAC00 <= o <= 0xD7A3 or 0x1100 <= o <= 0x11FF:
-            return 'ko'
         if 0x3040 <= o <= 0x30FF:
-            return 'ja'
-        if 0x4E00 <= o <= 0x9FFF:
-            return 'zh-CN'
-        if 0x0400 <= o <= 0x04FF:
-            return 'ru'
+            has_kana = True
+        elif 0xAC00 <= o <= 0xD7A3 or 0x1100 <= o <= 0x11FF:
+            has_hangul = True
+        elif 0x4E00 <= o <= 0x9FFF:
+            has_cjk = True
+        elif 0x0400 <= o <= 0x04FF:
+            has_cyrillic = True
+    if has_kana:
+        return 'ja'
+    if has_hangul:
+        return 'ko'
+    if has_cyrillic:
+        return 'ru'
+    if has_cjk:
+        return 'zh-CN'
     return 'en'
 
 
@@ -127,6 +147,8 @@ def cache_load():
     global _cache, _history
     _cache, _history = {}, []
     if not os.path.isfile(CACHE_FILE):
+        if not _keep_history:                 # 关了「保留历史」就别把旧缓存导进来
+            return 0
         return _import_legacy()               # 首次运行：旧版缓存顺手导过来
     n = 0
     try:
@@ -158,6 +180,8 @@ def cache_load():
 def cache_store(original, target, translated, source):
     rec = {'original': original, 'target': target, 'translated': translated,
            'source': source or '', 'at': _now()}
+    if not _keep_history:
+        return rec            # 不保留历史：这次结果照用，但不落盘、也不进历史
     _cache[_key(original, target)] = rec
     _history.insert(0, {'src': original, 'dst': translated, 'target': target,
                         'at': rec['at']})
@@ -181,6 +205,89 @@ def cache_clear():
     except Exception as e:                                              # noqa: BLE001
         print('[fanyi] 删缓存失败：%s' % e, flush=True)
     return n
+
+
+def cache_save():
+    """把内存里的缓存整体写回文件（删单条 / 清空之后用）。返回写了几条。
+
+    ★ 为什么不"从文件里删那一行"：文件是 JSON 行追加出来的，同一个 key 可能有多行，
+    按行删容易漏；整篇重写最稳（数据量本来就小）。
+    """
+    global _cache
+    recs = list(_cache.values())
+    try:
+        if not recs:
+            if os.path.isfile(CACHE_FILE):
+                os.remove(CACHE_FILE)
+            return 0
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        tmp = CACHE_FILE + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            for rec in recs:
+                f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+        os.replace(tmp, CACHE_FILE)
+    except Exception as e:                                              # noqa: BLE001
+        print('[fanyi] 写缓存失败：%s' % e, flush=True)
+    return len(recs)
+
+
+def history_remove(src, target=''):
+    """删掉一条历史记录（连带删掉它的缓存，重启不会回来）。返回删了几条。
+
+    按 (原文, 目标语言) 定位 —— 和缓存的 key 一致，所以删历史 = 真把缓存删了。
+    """
+    global _history
+    src = (src or '').strip()
+    target = (target or '').strip()
+    if not src:
+        return 0
+    if target:
+        keys = [_key(src, target)]
+    else:
+        keys = [k for k in list(_cache) if k.startswith(src + '\x1f')]
+    n = 0
+    for k in keys:
+        if _cache.pop(k, None) is not None:
+            n += 1
+    _history = [h for h in _history
+                if not ((h.get('src') or '') == src
+                        and (not target or (h.get('target') or '') == target))]
+    if n:
+        cache_save()
+    return n
+
+
+# ---------------------------------------------------------------- 设置（保留历史开关）
+def _settings_load():
+    """读设置（现在只有「保留历史」）。文件不在 / 读坏 → 默认开。"""
+    global _keep_history
+    try:
+        with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        _keep_history = bool(data.get('keep_history', True))
+    except Exception:                                                   # noqa: BLE001
+        _keep_history = True
+
+
+def _settings_save():
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = SETTINGS_FILE + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump({'keep_history': _keep_history, 'updated': _now()}, f,
+                      ensure_ascii=False, indent=2)
+        os.replace(tmp, SETTINGS_FILE)
+    except Exception as e:                                              # noqa: BLE001
+        print('[fanyi] 记设置失败：%s' % e, flush=True)
+
+
+def set_keep_history(on):
+    """切换「保留历史记录」并落盘。返回切换后的状态。"""
+    global _keep_history
+    _keep_history = bool(on)
+    _settings_save()
+    print('[fanyi] 保留历史记录：%s' % ('开' if _keep_history else '关'), flush=True)
+    return _keep_history
 
 
 # ---------------------------------------------------------------- 剪贴板（ctypes / Windows）
@@ -278,13 +385,99 @@ def clipboard_set(text):
         u.CloseClipboard()
 
 
-# ---------------------------------------------------------------- 翻译（Google 免费接口）
-def _gt_raw(text, target, source='auto'):
-    params = {'client': 'gtx', 'sl': source, 'tl': target, 'dt': 't', 'q': text}
-    url = GT_URL + '?' + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, headers={'User-Agent': UA})
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        return json.loads(resp.read().decode('utf-8'))
+# ---------------------------------------------------------------- 翻译（多免费接口 + 自动切换）
+# Google 公共免费接口 `translate.googleapis.com/translate_a/single` 现在对同一出口 IP
+# 限流很严，经常直接 429。以前只有这一条通道，429 就等于整个快捷翻译不可用。
+# 现在：一条不行换下一条；并把**最后一次成功的通道**写盘，下次优先用它。
+#   google      : 质量最好，默认优先
+#   google_c5   : Google 老入口 clients5.google.com，和主接口不是同一个域名
+#   youdao      : 有道免密 Demo 接口，适合中文/英文方向兜底
+#   mymemory    : MyMemory 免费接口，无 key，支持语言较多，放最后兜底
+# 公共接口都有速率限制，不能保证 100%；但多个一起上，偶发 429 不会直接瘫痪。
+GT_URL = 'https://translate.googleapis.com/translate_a/single'
+GT_C5_URL = 'https://clients5.google.com/translate_a/t'
+YDL_URL = 'https://aidemo.youdao.com/trans'
+MYM_URL = 'https://api.mymemory.translated.net/get'
+
+#: 有道语言代码和常用代码的映射
+YD_LANG = {
+    'zh': 'zh-CHS', 'zh-CN': 'zh-CHS', 'zh-TW': 'zh-CHT',
+    'en': 'en', 'ja': 'ja', 'ko': 'ko', 'fr': 'fr', 'de': 'de',
+    'es': 'es', 'ru': 'ru',
+}
+
+PROVIDER_ORDER = ('google', 'google_c5', 'youdao', 'mymemory')
+PROVIDERS = {
+    'google': {'name': 'Google', 'fn': None},
+    'google_c5': {'name': 'Google 备用', 'fn': None},
+    'youdao': {'name': '有道翻译', 'fn': None},
+    'mymemory': {'name': 'MyMemory', 'fn': None},
+}
+PROVIDER_FILE = os.path.join(DATA_DIR, 'provider.json')
+_PROVIDER = {'loaded': False, 'preferred': ''}
+
+
+def _fetch_json(url, params=None, payload=None, timeout=15):
+    """请求并解析一个 JSON 接口；标准库 urllib 就够。"""
+    if params:
+        sep = '&' if '?' in url else '?'
+        url = url + sep + urllib.parse.urlencode(params)
+    headers = {'User-Agent': UA}
+    data = None
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        headers['Content-Type'] = 'application/json'
+    req = urllib.request.Request(url, data=data, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read()
+    return json.loads(raw.decode('utf-8', 'replace'))
+
+
+def _err_text(exc):
+    """异常压成一句话，别把一整页 HTML 塞进日志。"""
+    if isinstance(exc, urllib.error.HTTPError):
+        return 'HTTP %s %s' % (exc.code, exc.reason)
+    return (str(exc) or exc.__class__.__name__).replace('\n', ' ')[:160]
+
+
+def _provider_load():
+    """读上次成功的通道；文件不在/读坏/通道已删都退回第一顺位。"""
+    if _PROVIDER['loaded']:
+        return
+    _PROVIDER['loaded'] = True
+    try:
+        with open(PROVIDER_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        key = str(data.get('preferred') or '')
+        if key in PROVIDERS:
+            _PROVIDER['preferred'] = key
+    except Exception:                                                   # noqa: BLE001
+        pass
+
+
+def _provider_save(key):
+    """记住最后一次成功的通道。只在真变了的时候写盘。"""
+    if not key or key not in PROVIDERS or _PROVIDER.get('preferred') == key:
+        return
+    _PROVIDER['preferred'] = key
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = PROVIDER_FILE + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump({'preferred': key, 'updated': _now()}, f,
+                      ensure_ascii=False, indent=2)
+        os.replace(tmp, PROVIDER_FILE)
+    except Exception as e:                                              # noqa: BLE001
+        print('[fanyi] 记翻译通道失败：%s' % e, flush=True)
+
+
+def _provider_keys():
+    """尝试顺序：上次成功的排第一，其余按固定顺序补在后面。"""
+    _provider_load()
+    pref = _PROVIDER.get('preferred') or PROVIDER_ORDER[0]
+    if pref not in PROVIDERS:
+        pref = PROVIDER_ORDER[0]
+    return [pref] + [k for k in PROVIDER_ORDER if k != pref]
 
 
 def _gt_extract(data):
@@ -294,8 +487,95 @@ def _gt_extract(data):
     return translated, detected
 
 
+def _c5_extract(data):
+    """Google `clients5` 的返回格式有两种：
+        · 明确 source：`["Hello"]`
+        · source=auto：`[["你好","en"]]`
+    """
+    if isinstance(data, str):
+        return data, ''
+    if isinstance(data, list):
+        if data and isinstance(data[0], str):
+            return ''.join(str(x) for x in data if isinstance(x, str)), ''
+        parts, detected = [], ''
+        for item in data:
+            if not isinstance(item, (list, tuple)) or not item:
+                continue
+            if isinstance(item[0], str):
+                parts.append(item[0])
+            if len(item) > 1 and isinstance(item[1], str) and not detected:
+                detected = item[1]
+        return ''.join(parts), detected
+    if isinstance(data, dict):
+        for key in ('translation', 'translatedText', 'text'):
+            if isinstance(data.get(key), str):
+                return data[key], ''
+    return '', ''
+
+
+def _prov_google(text, source, target):
+    data = _fetch_json(GT_URL, params={
+        'client': 'gtx', 'sl': source or 'auto', 'tl': target,
+        'dt': 't', 'q': text})
+    return _gt_extract(data)
+
+
+def _prov_google_c5(text, source, target):
+    data = _fetch_json(GT_C5_URL, params={
+        'client': 'dict-chrome-ex', 'sl': source or 'auto',
+        'tl': target, 'q': text})
+    return _c5_extract(data)
+
+
+def _prov_youdao(text, source, target):
+    """有道免密 Demo 接口。不支持的方向会回 errorCode，外层继续换通道。"""
+    data = _fetch_json(YDL_URL, params={
+        'q': text,
+        'from': 'auto' if (not source or source == 'auto') else YD_LANG.get(source, source),
+        'to': YD_LANG.get(target, target),
+    })
+    code = str(data.get('errorCode') or '0')
+    if code not in ('0', 'None'):
+        raise RuntimeError('有道返回错误码 %s' % code)
+    tr = data.get('translation') or []
+    if isinstance(tr, str):
+        tr = [tr]
+    translated = ''.join(str(x) for x in tr if isinstance(x, str))
+    if not translated.strip():
+        raise RuntimeError('有道没返回译文')
+    l = str(data.get('l') or data.get('type') or '')
+    detected = l.split('2', 1)[0] if '2' in l else ''
+    return translated, detected
+
+
+def _prov_mymemory(text, source, target):
+    """MyMemory 免费接口：无 key，但单次长度/每日配额有限；放最后兜底。"""
+    if len(text) > 500:
+        raise RuntimeError('文本超过 MyMemory 免费接口长度限制')
+    src = 'autodetect' if (not source or source == 'auto') else source
+    data = _fetch_json(MYM_URL, params={'q': text,
+                                        'langpair': '%s|%s' % (src, target)})
+    rd = data.get('responseData') or {}
+    translated = rd.get('translatedText') or ''
+    if isinstance(translated, str):
+        translated = html.unescape(translated)
+    if not translated.strip():
+        raise RuntimeError('MyMemory 没返回译文')
+    detected = str(rd.get('detectedLanguage') or '')
+    return translated, detected
+
+
+PROVIDERS['google']['fn'] = _prov_google
+PROVIDERS['google_c5']['fn'] = _prov_google_c5
+PROVIDERS['youdao']['fn'] = _prov_youdao
+PROVIDERS['mymemory']['fn'] = _prov_mymemory
+
+
 def do_translate(text, target='auto'):
-    """翻译一段文字。返回给界面用的现成结果（含缓存命中标记）。"""
+    """翻译一段文字。返回给界面用的现成结果（含缓存命中标记）。
+
+    ★ 多通道：按 `_provider_keys()` 依次试，一个成功就记住它；全失败才回错误。
+    """
     text = (text or '').strip()
     if not text:
         return {'ok': False, 'why': '没有要翻译的文字'}
@@ -303,36 +583,43 @@ def do_translate(text, target='auto'):
         return {'ok': False, 'why': '一次最多 5000 字，太长了'}
     target = (target or 'auto').strip()
 
-    detected = ''
+    source_hint = _guess_lang(text)
     if target == 'auto':
-        try:
-            detected = _gt_extract(_gt_raw(text, 'en'))[1]
-        except Exception as e:                                          # noqa: BLE001
-            return {'ok': False, 'why': '网络翻译失败：%s' % e}
-        target = 'en' if str(detected).lower().startswith('zh') else 'zh-CN'
+        # 本地粗判：中文 → 英文，其余 → 中文。和原版行为一致，但省掉一次
+        # Google 检测请求——原来的 429 有一部分就是 auto 模式每次发两次请求造成的。
+        target = 'en' if str(source_hint).lower().startswith('zh') else 'zh-CN'
 
-    hit = _cache.get(_key(text, target))
+    hit = _cache.get(_key(text, target)) if _keep_history else None
     if hit:
-        return {'ok': True, 'source': hit.get('source') or detected or 'auto',
+        return {'ok': True, 'source': hit.get('source') or source_hint or 'auto',
                 'target': target, 'original': text, 'translated': hit['translated'],
-                'cached': True, 'at': hit.get('at') or '', 'who': _who()}
+                'cached': True, 'at': hit.get('at') or '', 'who': _who(),
+                'provider': 'cache', 'provider_name': '本地缓存'}
 
-    try:
-        translated, detected2 = _gt_extract(_gt_raw(text, target))
-    except Exception as e:                                              # noqa: BLE001
-        return {'ok': False, 'why': '网络翻译失败：%s' % e}
-    if not translated:
-        return {'ok': False, 'why': '没拿到译文，换个说法再试'}
-    detected = detected or detected2
-    rec = cache_store(text, target, translated, detected)
-    return {'ok': True, 'source': detected or 'auto', 'target': target,
-            'original': text, 'translated': translated, 'cached': False,
-            'at': rec['at'], 'who': _who()}
+    errors = []
+    for key in _provider_keys():
+        spec = PROVIDERS[key]
+        try:
+            translated, detected = spec['fn'](text, 'auto', target)
+            if not (translated or '').strip():
+                raise RuntimeError('没返回译文')
+            source = detected or source_hint or 'auto'
+            _provider_save(key)
+            rec = cache_store(text, target, translated, source)
+            return {'ok': True, 'source': source, 'target': target,
+                    'original': text, 'translated': translated, 'cached': False,
+                    'at': rec['at'], 'who': _who(),
+                    'provider': key, 'provider_name': spec['name']}
+        except Exception as e:                                          # noqa: BLE001
+            errors.append('%s：%s' % (spec['name'], _err_text(e)))
+    return {'ok': False,
+            'why': '网络翻译失败（所有免费通道都试过了）：' + '；'.join(errors)}
 
 
 def cache_info_payload():
     return {'ok': True, 'count': len(_cache), 'path': CACHE_FILE,
-            'dir': CACHE_DIR, 'history': _history[:30], 'who': _who()}
+            'dir': CACHE_DIR, 'history': _history[:30], 'who': _who(),
+            'keep': _keep_history, 'limit': HISTORY_LIMIT}
 
 
 # ---------------------------------------------------------------- 全局热键（ctypes 低级键盘钩子）
@@ -665,8 +952,21 @@ class Embedded:
 
     def cache_clear(self, params=None):
         n = cache_clear()
-        print('[fanyi] 清空缓存：%d 条' % n, flush=True)
-        return {'ok': True, 'removed': n, 'count': 0}
+        print('[fanyi] 清空历史记录 / 缓存：%d 条' % n, flush=True)
+        return dict(cache_info_payload(), removed=n)
+
+    def history_remove(self, params=None):
+        p = params or {}
+        n = history_remove(p.get('src'), p.get('target'))
+        print('[fanyi] 删掉一条历史记录：%d 条' % n, flush=True)
+        return dict(cache_info_payload(), removed=n)
+
+    def keep_history(self, params=None):
+        """读 / 改「保留历史记录」开关：params 里给了 on 就改，返回当前状态。"""
+        p = params or {}
+        if p.get('on') is not None:
+            set_keep_history(p.get('on'))
+        return cache_info_payload()          # 里面就带 keep / count / history
 
     def history(self, params=None):
         limit = int((params or {}).get('limit') or 30)
@@ -764,7 +1064,21 @@ def run_window():
             return cache_info_payload()
 
         def cache_clear(self, params=None):
-            return {'ok': True, 'removed': cache_clear(), 'count': 0}
+            n = cache_clear()
+            print('[fanyi] 清空历史记录 / 缓存：%d 条' % n, flush=True)
+            return dict(cache_info_payload(), removed=n)
+
+        def history_remove(self, params=None):
+            p = params or {}
+            n = history_remove(p.get('src'), p.get('target'))
+            print('[fanyi] 删掉一条历史记录：%d 条' % n, flush=True)
+            return dict(cache_info_payload(), removed=n)
+
+        def keep_history(self, params=None):
+            p = params or {}
+            if p.get('on') is not None:
+                set_keep_history(p.get('on'))
+            return cache_info_payload()
 
         def history(self, params=None):
             limit = int((params or {}).get('limit') or 30)
@@ -802,6 +1116,7 @@ def run_window():
 
 
 def main():
+    _settings_load()                  # 先读设置（「保留历史」开关），再按它读缓存
     cache_load()
     if str(os.environ.get('MOSS_UI_EMBED') or '').strip() in ('1', 'true', 'yes'):
         Embedded().loop()

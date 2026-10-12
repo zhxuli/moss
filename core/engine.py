@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """执行引擎 `ExecEngine`（`E-01`）。
 
 凡是"启动一个东西"要用到的事情，**只允许在这一个地方实现**：
@@ -152,7 +152,7 @@ def build_env(inv):
         # 留着还会漏进目录名里变成 `path-D--python-...`）
         data = paths.path_state_dir(inv.get("cwd") or "")
     env["MOSS_PLUGIN_DATA_DIR"] = str(data)
-    # 约定好的子目录（设计与决策 §6.1）。★ 宿主**不预建**它们：包用哪个自己建，
+    # 约定好的子目录。★ 宿主**不预建**它们：包用哪个自己建，
     # 免得给每个跑过一次的包都留一堆空目录（paths.py 的"懒创建"原则）。
     env["MOSS_PLUGIN_CACHE_DIR"] = str(data / "cache")
     env["MOSS_PLUGIN_LOG_DIR"] = str(data / "logs")

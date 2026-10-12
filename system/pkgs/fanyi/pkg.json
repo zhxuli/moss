@@ -7,7 +7,7 @@
     "zh-CN": "快捷翻译"
   },
   "desc": {
-    "zh-CN": "双击 Ctrl 翻译选中文字并自动粘贴（Google 翻译，带本地缓存）；也能内嵌进 moss 界面手动翻译"
+    "zh-CN": "双击 Ctrl 翻译选中文字并自动粘贴（Google / 有道 / MyMemory 多通道自动切换，带本地缓存）"
   },
   "tags": [
     "翻译",
@@ -31,7 +31,10 @@
       "python"
     ],
     "net": [
-      "translate.googleapis.com"
+      "translate.googleapis.com",
+      "clients5.google.com",
+      "aidemo.youdao.com",
+      "api.mymemory.translated.net"
     ],
     "clipboard": [
       "read",

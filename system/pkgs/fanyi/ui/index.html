@@ -53,7 +53,15 @@
 
         .title-group { display: flex; align-items: center; gap: 10px; }
         .title-group h1 { font-size: 18px; font-weight: 600; }
-        .control-group { display: flex; align-items: center; gap: 20px; }
+        .control-group { display: flex; align-items: center; gap: 16px; }
+
+        /* 「保留历史记录」开关 */
+        .switch { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-muted); cursor: pointer; user-select: none; }
+        .switch-track { position: relative; flex: 0 0 auto; width: 34px; height: 20px; border-radius: 10px; background: #d1d1d6; transition: background .2s; }
+        .switch-track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: transform .2s; }
+        .switch.on { color: var(--text-secondary); font-weight: 500; }
+        .switch.on .switch-track { background: var(--success); }
+        .switch.on .switch-track::after { transform: translateX(14px); }
         .status { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; cursor: pointer; user-select: none; }
         .status-dot { width: 10px; height: 10px; border-radius: 50%; background-color: var(--text-muted); }
         .status-dot.running { background-color: var(--success); box-shadow: 0 0 0 rgba(52, 199, 89, 0.4); animation: pulse-green 2s infinite; }
@@ -164,14 +172,35 @@
         }
         .history-header {
             flex: 0 0 auto;
+            display: flex; align-items: center; justify-content: space-between; gap: 8px;
             padding: 18px 20px 12px; font-size: 14px; font-weight: 600; color: var(--text-secondary);
             border-bottom: 1px solid var(--border-color);
         }
+
+        /* 历史栏里的小按钮（清空 / 再点一次确认） */
+        .mini-btn {
+            font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
+            color: var(--text-secondary); background: var(--bg-page);
+            border: 1px solid var(--border-color); border-radius: 6px; padding: 3px 9px;
+            transition: all .15s; white-space: nowrap;
+        }
+        .mini-btn:hover { background: #fff; border-color: #d1d1d6; color: var(--text-main); }
+        .mini-btn.armed { color: #d70015; border-color: #ff3b30; background: #fff5f5; font-weight: 600; }
         .history-list {
             flex: 1 1 auto; min-height: 0; padding: 16px 20px;
             overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
         }
-        .history-item { background: var(--bg-page); padding: 12px; border-radius: 10px; border: 1px solid transparent; transition: all 0.2s; animation: slideDown 0.4s ease forwards; cursor: pointer; }
+        .history-item { position: relative; background: var(--bg-page); padding: 12px; padding-right: 34px; border-radius: 10px; border: 1px solid transparent; transition: all 0.2s; animation: slideDown 0.4s ease forwards; cursor: pointer; }
+        /* 单条删除按钮：平时藏着，鼠标移到那条上才出现 */
+        .history-del {
+            position: absolute; top: 8px; right: 8px; width: 20px; height: 20px; padding: 0;
+            line-height: 18px; text-align: center; font-size: 14px; font-family: inherit;
+            border: none; border-radius: 50%; background: transparent; cursor: pointer;
+            color: var(--text-muted); opacity: 0; transition: all .15s;
+        }
+        .history-item:hover .history-del { opacity: 1; }
+        .history-del:hover { background: #ffe5e5; color: #d70015; }
+        .history-empty { color: var(--text-muted); font-size: 13px; font-style: italic; }
         .history-item:hover { border-color: #d1d1d6; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
         @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
         .history-source { font-size: 13px; color: var(--text-muted); margin-bottom: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -189,6 +218,11 @@
         </div>
         <div class="control-group">
             <span style="font-size: 13px; color: var(--text-muted);">操作: 双击 <kbd>Ctrl</kbd></span>
+            <!-- 保留历史记录开关：开 = 记历史（也能命中缓存）；关 = 新翻译不落盘 -->
+            <div class="switch" id="keep-switch" title="点一下切换">
+                <div class="switch-track"></div>
+                <span id="keep-label">保留历史</span>
+            </div>
             <div class="status" id="status" title="点击启动 / 停止监听">
                 <div class="status-dot" id="statusDot"></div>
                 <span id="statusText" style="font-weight: 600; color: var(--text-muted);">已停止</span>
@@ -230,7 +264,10 @@
 
         <!-- 右侧：历史记录 -->
         <div class="right-panel" id="right-panel">
-            <div class="history-header" id="history-header">历史记录 (近50条)</div>
+            <div class="history-header" id="history-header">
+                <span id="history-title">历史记录 (近50条)</span>
+                <button type="button" class="mini-btn" id="history-clear" title="清空全部历史记录（连线上的缓存一起删）">清空</button>
+            </div>
             <div class="history-list" id="history-list">
                 <!-- 历史项由 app.js 填充 -->
             </div>

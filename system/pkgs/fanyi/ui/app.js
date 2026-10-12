@@ -11,7 +11,8 @@
 
   var statusEl = $('status'), statusDot = $('statusDot'), statusText = $('statusText');
   var sourceBox = $('source-box'), targetBox = $('target-box');
-  var historyList = $('history-list'), historyHeader = $('history-header');
+  var historyList = $('history-list'), historyTitle = $('history-title');
+  var historyClear = $('history-clear'), keepSwitch = $('keep-switch');
   var consoleEl = $('console'), langIndicator = $('lang-indicator');
   var steps = [1, 2, 3, 4].map(function (i) { return $('step-' + i); });
   var dividers = [1, 2, 3].map(function (i) { return $('div-' + i); });
@@ -80,7 +81,7 @@
     langIndicator.innerHTML = '自动检测 &rarr; 英文';
   }
 
-  function addHistory(source, target) {
+  function addHistory(source, target, targetLang) {
     var item = document.createElement('div');
     item.className = 'history-item';
     item.innerHTML = '<div class="history-source">' + escapeHtml(source) + '</div>'
@@ -91,13 +92,63 @@
         log('OK', '已复制译文到剪贴板');
       }).catch(function () {});
     });
+
+    /* 单条删除：这条历史对应的缓存也一起删（重启不会再冒出来）。
+       ★ 按 (原文, 目标语言) 定位 —— 后端就是照这个找缓存的。 */
+    var del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'history-del';
+    del.textContent = '×';
+    del.title = '删除这条历史（连带它的缓存）';
+    del.addEventListener('click', function (e) {
+      e.stopPropagation();                 // 别触发外层的"点击复制"
+      del.disabled = true;
+      window.moss.call('history_remove', { src: source, target: targetLang || '' })
+        .then(function (r) {
+          refresh(r);
+          log('SYS', '已删除 1 条历史记录');
+        })
+        .catch(function (err) {
+          del.disabled = false;
+          log('SYS', '删除失败：' + err.message);
+        });
+    });
+    item.appendChild(del);
+
     historyList.insertBefore(item, historyList.firstChild);
     while (historyList.childElementCount > 50) historyList.removeChild(historyList.lastChild);
   }
 
   function renderHistory(items) {
     historyList.innerHTML = '';
-    (items || []).forEach(function (h) { addHistory(h.src, h.dst); });
+    if (!items || !items.length) {
+      var hint = document.createElement('div');
+      hint.className = 'history-empty';
+      hint.textContent = '还没有历史记录';
+      historyList.appendChild(hint);
+      return;
+    }
+    /* ★ 倒着插：addHistory 是往最上面插的（新发生的排最前），
+       后端给的顺序本来就是"新的在前"，照原序插会把列表整个翻过来。
+       倒序插一遍 → 页面上就是后端给的顺序（最新的在最上面）。 */
+    items.slice().reverse().forEach(function (h) { addHistory(h.src, h.dst, h.target); });
+  }
+
+  /* 后端每个"改历史"的方法都回一份现成载荷 → 这里一处收口刷新界面 */
+  function refresh(r) {
+    if (!r || !r.ok) return;
+    renderHistory(r.history);
+    if (typeof r.count === 'number') {
+      historyTitle.textContent = '历史记录 (共 ' + r.count + ' 条)';
+    }
+    if (typeof r.keep === 'boolean') setKeep(r.keep);
+  }
+
+  function setKeep(on) {
+    keepSwitch.classList.toggle('on', !!on);
+    keepSwitch.title = on
+      ? '当前：保留历史记录（点一下 → 不保留）'
+      : '当前：不保留历史记录（点一下 → 保留）';
   }
 
   /* ---------------------------------------------------------------- 交互 */
@@ -108,6 +159,48 @@
     }).catch(function (e) { log('SYS', '热键操作失败：' + e.message); });
   }
   statusEl.addEventListener('click', toggle);
+
+  /* 清空全部历史：点第一次只是"上膛"，3 秒内再点一次才真删
+     （★ 不用 confirm —— 内嵌 iframe 里 confirm 可能被挡，点了没反应） */
+  var armedAt = 0;
+  function disarmClear() {
+    armedAt = 0;
+    historyClear.textContent = '清空';
+    historyClear.classList.remove('armed');
+  }
+  if (historyClear) {
+    historyClear.addEventListener('click', function () {
+      var now = Date.now();
+      if (!armedAt || now - armedAt > 3000) {
+        armedAt = now;
+        historyClear.textContent = '再点一次确认';
+        historyClear.classList.add('armed');
+        setTimeout(function () { if (armedAt && Date.now() - armedAt >= 3000) disarmClear(); }, 3200);
+        return;
+      }
+      disarmClear();
+      window.moss.call('cache_clear', {}).then(function (r) {
+        refresh(r);
+        log('SYS', '已清空历史记录（' + ((r && r.removed) || 0) + ' 条，缓存一起删了）');
+      }).catch(function (e) { log('SYS', '清空失败：' + e.message); });
+    });
+  }
+
+  /* 保留历史：开 = 翻译完记历史（也能命中缓存）；关 = 新翻译不落盘、每次都联网翻 */
+  if (keepSwitch) {
+    keepSwitch.addEventListener('click', function () {
+      var next = !keepSwitch.classList.contains('on');
+      setKeep(next);
+      window.moss.call('keep_history', { on: next }).then(function (r) {
+        refresh(r);
+        log('SYS', next ? '已开启：翻译结果会记进历史（同样的句子走缓存）'
+                        : '已关闭：新翻译不再记入历史（每次都重新联网翻）');
+      }).catch(function (e) {
+        setKeep(!next);
+        log('SYS', '切换失败：' + e.message);
+      });
+    });
+  }
 
   /* 左右拖动分隔线：调整右侧面板宽度（左侧自适应） */
   (function initSplitter() {
@@ -178,8 +271,12 @@
       targetBox.style.display = 'block';
       targetBox.textContent = res.translated || d.text || '';
       langIndicator.textContent = langName(res.source) + ' → ' + langName(res.target);
-      log('OK', '粘贴成功！任务结束。');
-      addHistory(res.original || '', res.translated || d.text || '');
+      log('OK', '粘贴成功！' + (res.provider_name ? '（' + res.provider_name + '）' : '') + '任务结束。');
+      if (keepSwitch && !keepSwitch.classList.contains('on')) {
+        log('INFO', '「不保留历史」已开启：这条结果没记进历史。');
+      } else {
+        addHistory(res.original || '', res.translated || d.text || '', res.target);
+      }
       setTimeout(resetStep, 2500);
       return;
     }
@@ -203,12 +300,9 @@
     } catch (e) { /* 无妨 */ }
     try {
       window.moss.call('cache_info', {}).then(function (c) {
-        if (c && c.ok) {
-          renderHistory(c.history);
-          if (typeof c.count === 'number') {
-            historyHeader.textContent = '历史记录 (共 ' + c.count + ' 条)';
-          }
-        }
+        if (!c || !c.ok) return;
+        refresh(c);                       // 历史列表 + 条数 + 开关状态，一次画好
+        if (c.keep === false) log('SYS', '当前是「不保留历史」：新翻译不会记进历史');
       }).catch(function () {});
     } catch (e) { /* 无妨 */ }
     window.moss.on('ready', function () {

@@ -1,116 +1,49 @@
-# moss
+﻿# moss
 
-> **苔藓**：贴着表面悄悄生长、慢慢铺开 —— Windows 上一个「常驻在身边、会自己长新功能」的效率中枢。
-> 现状：**单机版**，v1 只支持 `go` / `python` / `html` 三种插件（先跑通，再逐个回填）。
+**把常用工具、脚本和自动化流程放进同一个 Windows 启动入口。**
 
-moss 是**一个启动器 + 插件宿主**。整套东西就是 `moss.exe` + 一个 `system/` 文件夹，没有安装程序、不写注册表。
+moss 是一个轻量级的启动器和插件宿主：它既可以帮你从命令行快速运行程序，也可以通过图形界面管理并运行插件。你可以从一个现成插件开始使用，也可以编写自己的插件来扩展功能，而不必把每个小工具都做成独立安装的软件。
 
-```powershell
-moss                     # 用法 + 列出所有包（直接敲它就行）
-moss m                   # 在当前目录（及向上几层）找 main.py / main.go / main.html 并运行
-moss b/m                 # 先进 b 开头的子目录，再找 m 开头的
-moss :md5 abc            # 跑名为 md5 的包（":" 前缀 = 包命名空间）
-moss :img webp 60% *.png # 包自己解释参数（rest 型参数）
-moss ~name               # 后台脱离运行，不占住当前控制台
-moss ui                  # 打开界面（双击 moss.exe / 快捷方式 / 快速启动栏也是这个）
-                         #  详情 / 命令行 / 文件管理 三个选项卡；带界面的包会多一个「界面」
-                         #  （包自己的网页界面**内嵌**在这一页里跑，切走不停 —— 见 system/pkgs/skill/）
-                         #  最下面是状态栏：左边"最近一条状态提示"，右边那颗齿轮 = 「设置」
-moss --history           # 最近的启动记录，方向键选、回车再跑一次
-moss -h                  # 完整用法
-moss --selfcheck         # 自检：安装根 / runner 表 / 包 / 自带运行时 / 启动方式 / 配置
-```
+## 它解决什么问题
 
-> **有没有参数决定干什么，有没有控制台决定怎么进来**：终端里敲 `moss` = 用法 + 包列表；
-> 终端里敲 `moss ui`（或双击、快捷方式、快速启动栏）= 界面；带参数（`moss :img 60%`）就一律按参数干活。
-> 打包用的是 `--windows-console-mode=hide`：产物仍是**控制台子系统**（所以在终端里 shell 会照常等它跑完，
-> `moss cd` / `--history` / 交互式包都正常），但双击/快捷方式启动时那个控制台窗口会被立刻藏掉 —— 不弹黑框。
+日常工具往往散落在不同文件夹，需要记住各自的启动方式和参数。moss 提供统一入口：按名称或当前目录找到并运行程序，把常用功能整理成插件，并在同一个界面里查看、启动和管理它们。插件与宿主分开，用户插件和数据保存在 `user_data/`，内置组件位于 `system/`。
 
-> 不带前缀的**裸名默认当路径**处理（`moss m` = 找文件）。如果你主要用途是「跑装好的包」，
-> 打开 `user_data\config.toml` 把 `plugin_mode` 留空、`path_mode` 填 `":"` —— 于是 `moss img` 直接跑包。
-> 那个文件是**带注释的 TOML**，每一项干什么、怎么改，打开就知道。
-> 不想开编辑器也行：`moss ui` 界面**右下角那颗齿轮**就是这份文件的面板（改完写回同一个文件，
-> 注释和排版一字不动）。
+moss 面向 Windows 单机使用。它不要求安装服务或写注册表；发行版由 `moss.exe` 与配套的 `system/` 目录组成。
 
-## 目录里都是什么
+## 能做什么
 
-| 路径 | 是什么 | 进 git 吗 |
-|---|---|---|
-| `moss.exe` | 打包产物（由 `core/` 编译而成，**构建出来的**） | ❌ 不进 |
-| `core/` | 内核：解析算法 / 执行引擎 / 内核协议 | ✅ |
-| `system/` | 出厂件：内置包、自带运行时、插件契约、runner 表 | ✅ |
-| `system/ui/` | 宿主界面（`main.py` + `index.html`，由自带运行时跑）**不在 exe 里，改它不用重新打包**；含文件管理与代码编辑器，第三方库（highlight.js / Lucide）在 `system/ui/vendor/` | ✅ |
-| `system/runtimes/` | 自带 Python 运行时（181 MB / 7863 个文件） | ❌ 不进，用脚本拉 |
-| `system/pkgs/<id>/` | 内置包，每个包一个 `AGENT.md` | ✅ |
-| `user_data/` | **你的数据**：用户包、状态、历史、`config.toml` | ❌ 不进 |
-| `tools/` | 构建与维护脚本 | ✅ |
-| `设计与决策.md` | 唯一设计文档（宿主级决策台账） | ✅ |
-| `venv/` | 构建用的 Python 环境（nuitka） | ❌ 不进 |
+- 从终端运行当前目录中的程序，也可以按名称调用已安装插件。
+- 用 `moss ui` 打开图形界面，浏览插件、查看详情、运行命令及管理文件。
+- 用 `moss --new <id>` 生成插件骨架，按统一契约扩展自己的工具。
+- 用 `moss --history` 查看并重新运行近期启动项；用 `moss --selfcheck` 检查运行环境。
 
-## 日常同步（就这 4 条）
+## 快速开始
+
+在已配置 moss 命令的终端中：
 
 ```powershell
-cd D:\python\two\moss
-git status                                  # 看改了什么
-git add -A
-git commit -m "这次改了什么"                 # 中文说明，一行写清
-git push
+moss                 # 查看用法和插件列表
+moss ui              # 打开图形界面
+moss                  # 在当前目录查找并运行程序时，可使用 moss <路径片段>
+moss --history       # 查看近期启动记录
+moss --selfcheck     # 检查安装与运行环境
 ```
 
-## 快照：怎么看清单、怎么回到某一个
+也可以直接双击 `moss.exe` 打开图形界面。命令行运行本地程序时，裸名称按路径查找；已安装插件使用 `:` 前缀，例如 `moss :<插件名>`。完整参数以 `moss --help` 为准。
 
-**每一个 commit 就是一个快照。**（人类可读的对应清单是 `设计与决策.md` 的「附录 A · 变更记录」，第 N 版 ↔ commit 大致一一对应。）
+## 添加插件
 
-```powershell
-git log --oneline              # 一行一个快照，最新的在最上面
-git log --oneline -20          # 只看最近 20 个
-git log --oneline -- core/     # 只看碰过 core/ 的快照
-git show 8970190               # 某个快照具体改了什么（哈希写前 7 位就够）
-```
+运行 `moss --new <id>` 创建插件骨架，再按 [插件开发向导](插件开发向导.md) 完成开发。插件的唯一格式规范是 [插件契约](system/spec/插件契约.md)，也可以运行 `moss --spec` 查看。
 
-网页上也能看：`https://github.com/zhxuli/moss/commits/main`
+- 个人插件放在 `user_data/pkgs/<id>/`。
+- 随 moss 一起发布的内置插件放在 `system/pkgs/<id>/`。
+- 插件运行数据由宿主提供的数据目录接口管理，不要写入插件源码目录。
 
-### 回到某个快照
+## 项目目录
 
-| 你想要的效果 | 敲什么 | 说明 |
-|---|---|---|
-| 未提交的改动不要了，回到最后一个快照 | `git restore .` | 最常用。只丢**没提交**的改动 |
-| 从旧快照里**只取回一两个文件** | `git checkout 8970190 -- core/cli.py` | ★ 最安全。之后照常 `git commit` 即可 |
-| 整体退回某个旧快照，**连历史一起退** | `git reset --hard 8970190` | 之后那些提交在本机就没了（想连 GitHub 一起退再加 `git push --force-with-lease`） |
-| 整体退回，但**保留历史**（推荐，能再退回来） | `git revert 8970190` | 生成一个「反向提交」，不重写历史，直接 `git push` |
-| 想先看看旧快照长什么样 | `git checkout 8970190` | 进入游离状态看代码；回主线的命令是 `git switch -` |
+- `core/`：打包进 moss 可执行文件的宿主内核。
+- `system/`：内置插件、界面、运行时及插件契约。
+- `user_data/`：个人插件、配置与运行数据。
+- `tools/`：构建和维护工具。
 
-> ⚠️ **恢复快照不会带回这三样**（它们不在 git 里）：`moss.exe`（构建产物）、`system/runtimes/`（181 MB）、`user_data/`（你的包/状态/历史/配置）。
-> 好消息也是同一件事：`git reset --hard` **碰不到 `user_data/`** —— 你的数据不会被 git 操作删掉。
-
-## 换台机器 / 重装系统后怎么恢复
-
-```powershell
-git clone https://github.com/zhxuli/moss.git D:\python\two\moss
-cd D:\python\two\moss
-py -3.12 -m venv venv                                  # 必须 3.12（nuitka 不支持 3.13+MinGW）
-.\venv\Scripts\python.exe -m pip install nuitka
-.\venv\Scripts\python.exe tools\拉取运行时.py          # 拉 181 MB 自带运行时（默认从旧项目 runtime 复制）
-.\venv\Scripts\python.exe tools\build.py               # 出 moss.exe（约 1~2 分钟，6.3 MB）
-.\moss.exe --selfcheck                                 # 自检
-```
-
-`user_data\` 不在 git 里 —— 它单独备份/复制过去就行。
-
-## 想了解设计 / 想加一个包
-
-| 想知道 | 看哪 |
-|---|---|
-| 宿主怎么设计、哪些定了哪些没定 | `设计与决策.md`（平时只看**第一部分 · 决策台账**） |
-| 某个包怎么用、有什么坑、从哪来 | `system/pkgs/<id>/AGENT.md` |
-| 包格式与宿主契约（怎么写一个包） | `system/spec/插件契约.md`，或直接 `moss --spec` |
-| **带界面的包怎么写（默认方案）** | `system/pkgs/skill/` —— 一份网页界面，内嵌 / 独立窗口两种跑法都成立 |
-| 生成一个能跑的包骨架 | `moss --new <id>`（生成到 `user_data\pkgs\<id>\`） |
-
-> **默认约定（写新包时按这个来）**：要界面就**写成网页** + `pkg.json` 里声明 `ui.embed`
-> —— 既能在 moss 的「界面」选项卡里内嵌跑，也能 `moss :<id>` 自己开窗口。
-> 别一上来就 `webview.create_window` 自己开窗口，也别用 Tk 写新包；
-> 只有"必须是独立大窗口 / 必须用非网页技术 / 这个包没有界面"才例外。契约 §1.0 与 §4.2 有全文。
-
-改 `core/` 或 `moss.py` 要重新打包（`tools\build.py`，打包前先关掉正在跑的 `moss.exe`）；
-改包、改 `system/pkgs/` 里的东西**不用重新打包**，直接生效。
+修改插件和大多数 `system/` 内容通常不用重新打包；修改 `core/` 或 `moss.py` 后需要重新构建可执行文件。

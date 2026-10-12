@@ -33,12 +33,30 @@ import questionary
 
 
 def kill_processes(processes):
-    """terminate + 最多等 3 秒。返回 (成功数, 失败数)。**照抄旧实现。**"""
+    """terminate + 最多等 3 秒，同时处理子进程。"""
     success, failed = 0, 0
     for p in processes:
         try:
+            # ① 先抓整棵子树（父子可能不同 exe 路径，但 psutil 走 PPID，能抓全）
+            try:
+                children = p.children(recursive=True)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                children = []
+
+            # ② 先杀子（叶子先走，避免父进程被拆后子进程变孤儿）
+            for c in children:
+                try:
+                    c.terminate()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+            # ③ 再杀自己
             p.terminate()
             p.wait(timeout=3)
+
+            # ④ 等子进程也退干净
+            psutil.wait_procs(children, timeout=3)
+
             success += 1
         except Exception:
             failed += 1

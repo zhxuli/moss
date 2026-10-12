@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """`cd` 的两条落地路：注入按键（零配置）与装 shell 包装函数（无回显）。
 
 ★ 为什么要这么绕：**子进程改不了父 shell 的工作目录**。`os.chdir()` 只影响
@@ -22,7 +22,7 @@
 ★ 实测（2026-09-25，**同步形态** —— 与真实 `moss cd` 一致：shell 阻塞在子进程上，
   子进程注入完就退出，shell 之后才读键盘）：经典 conhost + PowerShell 5.1 /
   Windows Terminal·ConPTY + PowerShell 5.1 / conhost + cmd.exe / 中文目录真 cd，
-  **全部成功**。详见「设计与决策.md」§23.7。
+  **全部成功**。
 
 ★ 注入能成功的三个关键（少一个就完全没反应）：
     · 每条记录要带**真实虚拟键码**（`VkKeyScanW`）和扫描码（`MapVirtualKeyW`）
