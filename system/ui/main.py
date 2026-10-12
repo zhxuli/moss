@@ -4574,8 +4574,11 @@ class Api:
                 "url": "http://127.0.0.1:%d/%s/%s" % (port, token, rel),
                 "port": port}
 
-    def embed_start(self, pid, cwd=""):
-        """给这个包起一个"内嵌界面"的后端进程（`MOSS_UI_EMBED=1`）。已经起着就复用。"""
+    def embed_start(self, pid, cwd="", args_text=""):
+        """给这个包起一个"内嵌界面"的后端进程（`MOSS_UI_EMBED=1`）。已经起着就复用。
+
+        `cwd` / `args_text` 只在本次真启动时生效（复用已有进程时不会重起）。
+        """
         pid = str(pid)
         with EMBED_LOCK:
             cur = EMBED.get(pid)
@@ -4591,7 +4594,7 @@ class Api:
                     workdir = str(cwd)
             except OSError:
                 workdir = None
-        argv = HOST + ["--pkg", str(pid)]
+        argv = HOST + ["--pkg", str(pid)] + _split(args_text)
         try:
             proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     stdin=subprocess.PIPE, env=env, cwd=workdir,

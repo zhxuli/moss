@@ -2554,7 +2554,7 @@ MOCK_JS = r"""
         let autoMarks = false, autoMarked = "", markTip = "", markLine = "", markOnly = false;
         if (typeof autostartRun === "function"){
           M.auto = {items: [{kind: "pkg", id: "md5", args: "16896999", on: true},
-                            {kind: "pkg", id: "path", args: "", on: true}]};
+                            {kind: "pkg", id: "pip", args: "", on: true}]};
           M.runs = [];
           AUTORAN = false;                       // 让它再跑一次（这个场景里允许重跑）
           // 把 `termRunPackage` 换成"只记一笔"的桩：自启动**一次都不该经过终端**
@@ -2567,13 +2567,13 @@ MOCK_JS = r"""
           window.termRunPackage = _origTerm;
           autoSeq = (M.runs || []).map(r => r.pid);
           autoPipes = autoSeq.length;
-          autoBoth = autoSeq.indexOf("md5") >= 0 && autoSeq.indexOf("path") >= 0;
+          autoBoth = autoSeq.indexOf("md5") >= 0 && autoSeq.indexOf("pip") >= 0;
           // ★ `V-366`：左边列表里那两个包要**多一条竖线**（`.item.pkg-autorun`），
           //   其余行不许有；而且鼠标停上去要有「已设置自动运行」。
           const marked = [].slice.call(document.querySelectorAll("#list .item.pkg-autorun"))
                                .map(el => el.dataset.id).sort();
           autoMarked = marked.join(",");
-          autoMarks = marked.length === 2 && autoMarked === "md5,path";
+          autoMarks = marked.length === 2 && autoMarked === "md5,pip";
           const mEl = document.querySelector('#list .item[data-id="md5"]');
           if (mEl){
             markTip = mEl.getAttribute("title") || "";

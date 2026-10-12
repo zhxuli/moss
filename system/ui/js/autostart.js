@@ -364,7 +364,7 @@ async function autostartRun(){
         const p = (DATA.packages || []).find(x => x.id === it.id);
         if (!p){ failed.push(it.id + "（找不到这个包）"); continue; }
         // 工作路径 = 第三个参数；`noTerm` = 各走各的管道（见上面那段）
-        await startRun(p, it.args || "", it.cwd || "", {noTerm: true});
+        await startRun(p, it.args || "", it.cwd || "", {noTerm: true, keepTab: true});
         done.push(PSYM + p.id);
       }
     }catch(e){ failed.push(it.id + "：" + ((e && e.message) || e)); }

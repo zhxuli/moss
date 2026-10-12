@@ -66,7 +66,7 @@ async function embedOpen(p, opts){
   if (!embedSupported(p)) return;
   const rec = EMB.alive[p.id];
   if (!rec){                                   // 没起过：起后端 + 建帧
-    const r = await pywebview.api.embed_start(p.id);
+    const r = await pywebview.api.embed_start(p.id, o.cwd || "", o.args || "");
     if (!r || !r.ok){ toast("✗ 起不来：" + ((r && r.msg) || ""), true); return; }
     const f = await embedFrameFor(p);
     if (!f){ await pywebview.api.embed_stop(p.id); return; }   // 界面拿不到地址：别留个空进程
@@ -392,6 +392,15 @@ function argsInput(){ return $("#args") || $("#hargs"); }
 async function startRun(p, args, cwd, opts){
   if (RUNS[p.id]) return;                // ★ 只拦"同一个包重复起"，不再拦别的包
   const o = opts || {};
+  /* ★ 带 `ui.embed` 的包，所有"运行"入口统一走内嵌那条路（`embedOpen`）：
+     左边列表那颗快捷运行 / 自动运行以前直接调 `startRun`，宿主按普通包拉起，
+     包看不到 `MOSS_UI_EMBED` 就自己开独立窗口；点右上角 / 详情「运行」走
+     `clickRun` 时本来就会先判 `embedSupported`，所以那两条路没问题。
+     这里收口之后行为一致；`rawRun` 留给以后确实要普通进程时用。 */
+  if (embedSupported(p) && !o.rawRun){
+    await embedOpen(p, {keepTab: !!o.keepTab, args: args || "", cwd: cwd || ""});
+    return;
+  }
   const cmd = "moss " + PSYM + p.id + ((args || "").trim() ? " " + args.trim() : "");
   lastRun = {id: p.id, args: args, label: cmd};
   consoleKey = p.id;                     // 输出落进"这个包自己的"那份
