@@ -4179,6 +4179,10 @@ MOCK_JS = r"""
       // ★ `V-183`：**扩展名**这条规矩（拖 .txt 时 :img 不该亮、拖 .png 该亮）
       if (h === "drop-ext"){
         const dz = document.querySelector("#dropzone");
+        // ★ `V-382`：假宿主一开始**没有** `M.runs` 这个数组（第一次跑起来才建）。
+        //   少了这一行，下面 `M.runs.length` 会先抛错，把真正的断言（"到底跑起来没有"）
+        //   一起吞掉 —— 这条场景以前就是这么变成 SCENARIO-ERR 的。
+        M.runs = M.runs || [];
         const listIds = () => [].slice.call(document.querySelectorAll("#list .item"))
                                 .map(e => e.dataset.id);
         const mkDrag = (name, isDir) => {
@@ -4204,10 +4208,11 @@ MOCK_JS = r"""
         const noIp = idsTxt.indexOf("ip") < 0;
         const barTxt = ((document.querySelector("#dragbar") || {}).textContent || "")
                          .replace(/\s+/g, " ");
-        // ★ 说清"为什么"的那句话只在**一个都没收**时才出现；拖 .txt 时 md5/open 是收的，
+        // ★ 说清"为什么"的那句话只在**一个都没收**时才出现；拖 .txt 时 md5 是收的，
         //   所以这里分开验两件事：① 条上把筛完的数字说对；② `dropWhyNone`（0 个收的时候
         //   那句点名）本身说的话对 —— 直接调它，别指望拖动时会走到那条分支（`V-202` 改）。
-        const barOk = /只列出收得下它的 2 个包/.test(barTxt);
+        //   ★ `V-382`：那个数字**按当前列表现算**（写死"2 个包"的话，出厂包一增一减就红）。
+        const barOk = barTxt.indexOf("只列出收得下它的 " + idsTxt.length + " 个包") >= 0;
         const whyTxt = (typeof window.dropWhyNone === "function")
           ? window.dropWhyNone([{name: "note.txt", isDir: false}]) : "";
         const saidWhy = whyTxt.indexOf("img") >= 0 && whyTxt.indexOf("只收") >= 0;
@@ -4234,19 +4239,24 @@ MOCK_JS = r"""
         select("img");
         await sleep(350);
         const runsBefore = (M.runs || []).length;
+        const embBefore = (M.embedStarts || []).length;
         window.__mossDrop([{path: "D:\\x\\note.txt", isDir: false, dir: "D:\\x",
                             name: "note.txt"}]);
         await sleep(500);
-        const noRun = (M.runs || []).length === runsBefore;
+        const noRun = (M.runs || []).length === runsBefore
+                      && (M.embedStarts || []).length === embBefore;
         const toastTxt = ((document.querySelector("#toasts") || {}).textContent || "")
                            .replace(/\s+/g, " ");
         const toastSaid = toastTxt.indexOf("不收") >= 0 && toastTxt.indexOf("png") >= 0;
         // ⑤ 换成 .png 再塞一次：该跑（否定那一半不能把正常路也堵死）
+        //   ★ `V-382`：`img` 自己带 `ui.embed` ⇒ **运行入口早就统一走内嵌那条路**了
+        //     （`startRun` 第一句就判 `embedSupported`）。所以这里该验的是"它的界面被拉起来了"，
+        //     不是 `run_start` —— 这条断言停在"改口之前"，场景就一直是红的（跑=0）。
         window.__mossDrop([{path: "D:\\x\\photo.png", isDir: false, dir: "D:\\x",
                             name: "photo.png"}]);
         await sleep(700);
-        const run = (M.runs || [])[M.runs.length - 1] || {};
-        const ranOk = (M.runs || []).length === runsBefore + 1 && run.pid === "img";
+        const embedOpened = (M.embedStarts || []).indexOf("img") >= 0;
+        const ranOk = embedOpened;
         // ⑥ `V-188`：**真机就是这样**（`_ui_drop.log` 里 `drag begin … items=null`）——
         //     `dragenter` 什么都读不到、到 `dragover` 才补上。这条路径必须也能筛干净。
         dragEnd();
@@ -4262,7 +4272,9 @@ MOCK_JS = r"""
         document.dispatchEvent(lateDrag);
         await sleep(300);
         const idsLate = listIds();                   // 补读到 .py → 该筛干净
-        const lateOk = idsLate.indexOf("md5") >= 0 && idsLate.indexOf("open") >= 0 &&
+        // ★ `V-382`：`open`（出厂包「打开网址」）已经删了 —— 这条断言不能钉死在某个包，
+        //   否则"少一个出厂包"就红。md5 才是"收任意文件"的那个基准。
+        const lateOk = idsLate.indexOf("md5") >= 0 &&
                        idsLate.indexOf("img") < 0 &&
                        onlyDir.concat(["ip"]).every(id => idsLate.indexOf(id) < 0);
         dragEnd();
@@ -4280,7 +4292,7 @@ MOCK_JS = r"""
         document.dispatchEvent(mimeDrag("text/x-python"));
         await sleep(300);
         const idsMime = listIds();
-        const mimeOk = idsMime.indexOf("md5") >= 0 && idsMime.indexOf("open") >= 0 &&
+        const mimeOk = idsMime.indexOf("md5") >= 0 &&
                        idsMime.indexOf("img") < 0 &&
                        onlyDir.concat(["ip"]).every(id => idsMime.indexOf(id) < 0);
         dragEnd();
@@ -4297,7 +4309,7 @@ MOCK_JS = r"""
         document.dispatchEvent(mimeDrag(""));
         await sleep(300);
         const idsBlank = listIds();
-        const blankOk = ["img", "tree", "mark", "sync", "path", "md5", "open"]
+        const blankOk = ["img", "tree", "mark", "sync", "path", "md5"]
                           .every(id => idsBlank.indexOf(id) >= 0);
         dragEnd();
         await sleep(200);
@@ -4315,7 +4327,8 @@ MOCK_JS = r"""
           "\n② .PNG 后 img 出现=" + imgIn + "   大小写/无扩展名判定=" + upperOk +
           "\n③ 文件夹「我 的.照片」img 还收=" + dirIn +
           "\n④ 硬塞 .txt：没跑=" + noRun + "  弹的提示=" + JSON.stringify(toastTxt.slice(0, 90)) +
-          "\n⑤ 换成 .png 照跑=" + ranOk + "（pid=" + (run.pid || "-") + "）" +
+          "\n⑤ 换成 .png ⇒ " + (embedOpened ? "把 img 的界面拉起来了" : "没反应（该拉起界面）") +
+          "（内嵌起过 = " + JSON.stringify(M.embedStarts || []) + "）" +
           "\n⑥ 真机那样（enter 读不到 / dragover 才补上）：先全列=" + idsBlind.length +
           " 个，补读后 = " + idsLate.join(",") + "  筛干净=" + lateOk +
           "\n⑦ 真机形状（只有 kind+type=text/x-python，名字全空）= " + idsMime.join(",") +
@@ -4329,7 +4342,19 @@ MOCK_JS = r"""
           " 跑=" + (ranOk ? 1 : 0);
         dz.className = "";
         if (ok) setTab("console");
-        document.title = ok ? "READY" : "DROPEXT-FAIL";
+        // ★ `V-382`：失败时把**是哪一条**写进标题（截图看不到 `#out` 那一大段，
+        //   以前只知道 DROPEXT-FAIL 却不知道差哪一项）。
+        document.title = ok ? "READY" : ("DROPEXT-FAIL ext=" + (hasExt ? 1 : 0) +
+          " img藏=" + (imgOut ? 1 : 0) + " md5=" + (md5In ? 1 : 0) +
+          " 条=" + (barOk ? 1 : 0) + " 理由=" + (saidWhy ? 1 : 0) +
+          " png=" + (imgIn ? 1 : 0) + " 大写=" + (upperOk ? 1 : 0) +
+          " 目录=" + (dirIn ? 1 : 0) + " 拦=" + (noRun ? 1 : 0) +
+          " 提示=" + (toastSaid ? 1 : 0) + " 跑=" + (ranOk ? 1 : 0) +
+          " 只目录=" + (noDirOnly ? 1 : 0) + " ip=" + (noIp ? 1 : 0) +
+          " late=" + (lateOk ? 1 : 0) + " mime=" + (mimeOk ? 1 : 0) +
+          " mimeImg=" + (mimeImgOk ? 1 : 0) + " blank=" + (blankOk ? 1 : 0) +
+          " runs=" + JSON.stringify(((M.runs || []).map(r => r && r.pid))) +
+          " 列表=" + idsTxt.join(","));
       }
       // ★ `V-192` / `V-194`：浮动窗口那条线（真机是两个窗口，预览里只能验页面这一侧）
       if (h === "float-window"){
