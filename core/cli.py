@@ -730,6 +730,10 @@ def cmd_rename(name, new_id, table):
     ★ 新 id 写成**它现在的 id** 时（`moss --rename my-first first`），这条命令就是
       `D-27` 方案 C 里那个「把目录名对齐成 id」的动作：只改目录名，别的什么都不动
       （id 没变 ⇒ 数据目录不用动、清单不用重写）。
+
+    ★ 2026-10-13 加：`AGENT.md` / `README.md` 里的旧 id 也做**全文替换**
+      （等价于 `str.replace(old_id, new_id)`）。骨架和 AI 生成的文档里会拿旧 id
+      当命令示例，只改 pkg.json 的话文档会一直挂着旧名字。
     """
     new_id = str(new_id or "").strip().lower()
     if not paths.valid_id(new_id):
@@ -834,14 +838,35 @@ def cmd_rename(name, new_id, table):
             out.print_cyan("[警告] 清单没改成：%s" % e)
             out.print_cyan("       目录已经是 %s，把 pkg.json 里的 id 手动改成 '%s' 即可。"
                            % (dir_new, new_id))
+        # ④ 随包文档：`AGENT.md` / `README.md` 里旧 id 的**全文替换**。
+        #   为什么要跟着做：骨架 / AI 写的文档里到处是 `moss :旧id ...` 示例；
+        #   只改清单 id 的话，下一任 AI 读文档还会按旧名字干活。
+        for doc_name in ("AGENT.md", "README.md"):
+            doc = dir_new / doc_name
+            if not doc.is_file():
+                continue
+            try:
+                raw = doc.read_bytes()
+                enc = "utf-8-sig" if raw.startswith(b"\xef\xbb\xbf") else "utf-8"
+                try:
+                    text = raw.decode(enc)
+                except UnicodeDecodeError as e:
+                    out.print_cyan("[警告] %s 不是 UTF-8，没替换旧 id：%s" % (doc_name, e))
+                    continue
+                new_text = text.replace(old_id, new_id)
+                if new_text != text:
+                    doc.write_bytes(new_text.encode(enc))
+                    done.append(doc_name)
+            except OSError as e:
+                out.print_cyan("[警告] %s 里的旧 id 没换成：%s" % (doc_name, e))
     if same_id:
         out.print_cyan("已对齐：目录名 %s → %s（id 一直是 '%s'）"
                        % (pkg_dir.name, new_id, old_id))
         _shortcut_sync()
         return 0
     out.print_cyan("已改名：%s → %s（改了 %s）" % (old_id, new_id, "、".join(done)))
-    print("       显示名 / 别名里的旧 id 也一起换过了（`name` 里出现 `%s` 的地方都换成 `%s`）。"
-          % (old_id, new_id))
+    print("       显示名 / 别名 / AGENT.md / README.md 里的旧 id 也一起换过了"
+          "（出现 `%s` 的地方全文换成 `%s`）。" % (old_id, new_id))
     if layer == "user":
         out.print_cyan("       包调用现在要用 `moss :%s`（旧名字不再认识，除非你把它写进 aliases）。"
                        % new_id)

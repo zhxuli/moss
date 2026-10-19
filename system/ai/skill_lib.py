@@ -788,10 +788,11 @@ def run(name, args, roots_in=None, _detail=False):
     _log_run({"id": got["id"], "name": got.get("name") or "", "at": at, "args": args,
               "code": p.returncode, "out": tail(out), "err": tail(err),
               "dur": dur, "cmd": cmd, "ok": p.returncode == 0})
-    head = "技能「%s」退出码 %d" % (got["id"], p.returncode)
+    full = "技能「%s」退出码 %d" % (got["id"], p.returncode)
     if err:
-        head += "\n[stderr]\n" + tail(err)
-    return _ret(head + "\n" + tail(out), ok=(p.returncode == 0), id=got["id"],
+        full += "\n[stderr]\n" + err
+    full += "\n" + out
+    return _ret(full, ok=(p.returncode == 0), id=got["id"],
                 name=got.get("name") or "", code=p.returncode, out=out, err=err,
                 dur=dur, at=at, cmd=cmd, cwd=str(got["dir"]))
 
