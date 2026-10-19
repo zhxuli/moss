@@ -103,7 +103,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "fanyi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
-          "ai-hist-live",
+          "ai-hist-live", "ai-follow",
           "ai-turn-edit", "ai-self-tools", "ai-ask",
           "hl-window", "set-debounce", "parasite"]
 
@@ -1692,6 +1692,15 @@ MOCK_JS = r"""
         const autoHad = autoPkgIds().has(autoOldId);
         setTab("file");
         await sleep(400);
+        // ★ `V-384`：**备份库分组也是按 id 记的** —— 改名必须跟着搬（真机上没搬，
+        //   快照就留在旧 id 那个分组里，界面按新 id 去问 ⇒ 用户看到"一片空白"）。
+        //   这里给旧 id 摆一条 AI 快照；改完名它应该挂在新 id 那个组里。
+        //   ⚠️ 这条同时钉住"传给 `backup_rename_group` 的是**旧 id**"：假宿主那条
+        //   `--rename` 是**就地改** `p0.id` 的，传 `p.id` 就会变成"新→新"，什么都不搬。
+        M.bk = [{id: "bk-v384", group: autoOldId, title: "改热键之前", note: "", by: "ai",
+                 by_task: "", created: 1, created_text: "2026-10-19 18:16:13", sources: [],
+                 files: [{rel: "user/pkgs/x/run.py", fp: "f1", size: 10, mtime: 1}],
+                 new_objects: 1, new_bytes: 10}];
         const want = h === "pkg-align-file" ? p0.id : "first2";
         if (h === "pkg-align-file"){
                   cmdAlignPkgDir(p0);                       // 对齐目录名：不弹模态，直接跑
@@ -1702,6 +1711,12 @@ MOCK_JS = r"""
           if (inp){ inp.value = want; (document.querySelector("#m-ok") || {click(){}}).click(); }
         }
         await sleep(1200);
+        // ★ `V-384`：① 备份分组跟没跟着改名（要不搬 = 快照在界面上"消失"）
+        //   ② 改完名有没有**自动进到新包 + 进 AI 对话**（用户报的第 2 条）
+        const bkGroup1 = String(((M.bk || [])[0] || {}).group || "");
+        const aiOn1 = !!($("#pane-ai") && $("#pane-ai").classList.contains("on"));
+        const v384a = (h === "pkg-align-file") ? true : (bkGroup1 === String(want));
+        const v384b = (h === "pkg-align-file") ? true : aiOn1;
         setTab("file");
         await sleep(500);
         const key = h === "pkg-align-file" ? p0.id : want;
@@ -1734,17 +1749,24 @@ MOCK_JS = r"""
         //   界面 2.5 秒轮询到之后走的是 `followRename`。预览里没有 `pkg_watch` 那个假接口，
         //   所以这里直接调一次，把这条路的"搬 id"也钉住（不然两条路只测了一条）。
         let autoOk2 = true, autoIds2 = [];
+        let bkOk2 = true, bkGroup2 = "";
         if (h === "pkg-renamed-file"){
           const dirOf = (x) => String(p0.dir || "").replace(/[\\/][^\\/]*$/, "\\" + x);
           state.packages.push(Object.assign({}, p0, {id: "first3", dir: dirOf("first3")}));
+          // ★ `V-384`：轮询那条路（别的进程改名）也得把备份分组搬过去
+          M.bk = [{id: "bk-v384b", group: String(want), title: "轮询那条路", note: "",
+                   by: "ai", by_task: "", created: 2, created_text: "2026-10-19 18:20:00",
+                   sources: [], files: [], new_objects: 0, new_bytes: 0}];
           await followRename(want, "first3", "指纹一致", dirOf(want));
+          bkGroup2 = String(((M.bk || [])[0] || {}).group || "");
+          bkOk2 = (bkGroup2 === "first3");
           const rows2 = ((M.autoSaved || {}).items) || [];
           autoIds2 = rows2.map(x => x.id);
           autoOk2 = rows2.filter(x => String(x.id) === "first3").length === 1 &&
                     rows2.filter(x => String(x.id) === String(want)).length === 0 &&
                     rows2.filter(x => x.args === "--auto 1").length === 1;
         }
-        const ok = okBase && autoOk && autoOk2 && paraOk;
+        const ok = okBase && autoOk && autoOk2 && paraOk && v384a && v384b && bkOk2;
         const relOld = /odd-dirname/.test(String((s && s.rel) || ""));
         const entOld = rels.some(r => /odd-dirname/.test(String(r)));
         const short = x => String(x).replace("user/pkgs/", "").replace("system/pkgs/", "sys/");
@@ -1760,12 +1782,18 @@ MOCK_JS = r"""
             JSON.stringify(autoRows) + " / 判定 = " + autoOk + "（want=" + want + "）" +
           "\n自动运行(轮询那条路) = " + JSON.stringify(autoIds2) + " / 判定 = " + autoOk2 +
           "\n寄生模式名单 = " + JSON.stringify(paraIds) + "（要 [" + want + "]）/ 判定 = " + paraOk +
+          "\n备份分组(按钮那条路) = " + JSON.stringify([autoOldId, want, bkGroup1]) +
+            " / 判定 = " + v384a +
+          "\n改完名进 AI 页 = " + aiOn1 + " / 判定 = " + v384b +
+          "\n备份分组(轮询那条路) = " + JSON.stringify([String(want), "first3", bkGroup2]) +
+            " / 判定 = " + bkOk2 +
           "\nfs_list  = " + (M.ls || []).map(short).join(" > ");
         // 顶栏那点宽度只能放一句短的；完整那份写进下面的大白区（截图看得清）
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " rO=" + (relOld ? 1 : 0) + " eO=" + (entOld ? 1 : 0) +
           " n=" + rels.length + " rf=" + (M.readFail ? 1 : 0) + " auto=" + (autoOk ? 1 : 0) +
-          " auto2=" + (autoOk2 ? 1 : 0) +
+          " auto2=" + (autoOk2 ? 1 : 0) + " bk=" + (v384a ? 1 : 0) + " ai=" + (v384b ? 1 : 0) +
+          " bk2=" + (bkOk2 ? 1 : 0) +
           " ids=" + JSON.stringify(autoRows.map(x => x.id)) + JSON.stringify(autoIds2);
         document.querySelector("#fm-body").innerHTML =
           '<pre style="padding:18px 22px;font-size:13px;line-height:1.7;white-space:pre-wrap">' +
@@ -5465,6 +5493,108 @@ MOCK_JS = r"""
           : ("AIHISTLIVE-FAIL live=" + (liveOk ? 1 : 0) + " 步骤=" + n0 + "/" + n1 + "/" + n2 +
              " 行=" + JSON.stringify(metaTxt.slice(0, 24)) +
              " 错=" + (window.__errors || []).length);
+      }
+      // ★ `V-385`（你 2026-10-19 问的「有时候自动下拉 有时候不下拉 是不是检测太严苛」）：
+      //   把"跟不跟滚"单独钉住。以前判据只有一条 48px，而且**我们自己那次平滑滚动的
+      //   几十个 scroll 事件也被当成"用户往上翻了"** —— 真机上就是"跟一两次就不跟了"。
+      //   这里不跑真任务，直接把日志撑高，然后**模拟**那几种情况：
+      //     ① 我们自己滚的那一趟里中途的 scroll ⇒ 必须**不动** stick（旧代码会被打成 false）
+      //     ② 真的往上翻（我们那一趟已经收尾）⇒ 必须按住
+      //     ③ 离底 60px（旧阈值 48 算"翻了"、新阈值 80 算"贴着底"）⇒ stick 仍是 true
+      //     ④ 滚轮往上一格 ⇒ 立刻按住（旧代码没这个监听）
+      //     ⑤ 贴着底时来新内容 ⇒ 真滚到底（gap≈0）
+      if (h === "ai-follow"){
+        const p0 = state.packages.find(x => x.id === "first") || state.packages[0];
+        select(p0.id);
+        await sleep(300);
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(600);
+        const el = document.querySelector("#pane-ai .ai-log");
+        const vm = window.__aiVm;
+        if (!el || !vm){ document.title = "AIFOLLOW-NO-LOG" + (vm ? "" : "-NO-VM"); return; }
+        const gap = () => el.scrollHeight - el.scrollTop - el.clientHeight;
+        const fire = () => el.dispatchEvent(new Event("scroll"));
+        // 无头浏览器在虚拟时间下**不推进 CSS 平滑滚动动画**（`scrollTop = x` 量出来还是老位置）
+        // ⇒ 这里把容器改成瞬时滚动：本场景验的是"跟不跟滚"的判断，动画交给真机。
+        el.style.scrollBehavior = "auto";
+        // 先把日志撑高（不跑真任务：直接塞几条长对话）
+        for (let i = 0; i < 8; i++){
+          AIR.turns.push({key: "f" + i,
+            task: "第 " + (i + 1) + " 条：把 run.py 里那句 print 改掉，顺便把 --upper 参数也补上，" +
+                  "再跑一遍看看退出码是不是 0（这条故意写长一点，好让日志滚得动）",
+            at: "10-19 18:0" + (i % 10), steps: [], note: ""});
+        }
+        AIR.rev++;
+        await sleep(400);
+        if (!(el.scrollHeight > el.clientHeight + 600)){
+          document.title = "AIFOLLOW-NOT-TALL"; return;
+        }
+        // ① 判据本身（纯函数 `stickAfterScroll`，就是 `onLogScroll` 走的那一条）
+        const S = (window.stickAfterScroll || function(){ return null; });
+        const chk1a = S({auto: true, stick: true}, {gap: 400, clientHeight: 600, scrollHeight: 3000}) === true;
+        const chk1b = S({auto: false, stick: true}, {gap: 400, clientHeight: 600, scrollHeight: 3000}) === false;
+        const chk1c = S({auto: false, stick: true}, {gap: 60, clientHeight: 600, scrollHeight: 3000}) === true;
+        const chk1d = S({auto: false, stick: false}, {gap: 80, clientHeight: 600, scrollHeight: 3000}) === false;
+        const chk1 = chk1a && chk1b && chk1c && chk1d;
+        // 后面几步先把组件里还没收尾的那一趟按住（不然它 900ms 的兜底一到就又滚回底部，
+        // 把"我设的 scrollTop"当场顶掉 —— 第一版就栽在这儿）
+        const quiet = () => {
+          vm._gen = (vm._gen || 0) + 1;
+          clearTimeout(vm._settleT);
+          AIR.auto = false;
+        };
+        // ② 真往上翻（DOM 这条路，直接调组件那个方法 —— 不靠"等事件"）：必须按住
+        quiet();
+        el.scrollTop = el.scrollHeight;
+        AIR.stick = true; AIR.rev++;
+        el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 500);
+        await sleep(500);                       // 容器带 scroll-behavior:smooth，得等它滚完
+        const d2a = Math.round(gap()) + "/" + (AIR.auto ? 1 : 0) + "/" + (AIR.stick ? 1 : 0);
+        vm.onLogScroll();
+        const d2b = Math.round(gap()) + "/" + (AIR.auto ? 1 : 0) + "/" + (AIR.stick ? 1 : 0);
+        const chk2 = !AIR.stick;
+        // ③ 离底 60px（旧阈值 48 会判"翻了"、新阈值 80 判"贴着底"）：DOM 这条路也要对
+        quiet();
+        el.scrollTop = el.scrollHeight;        // 先到底
+        AIR.stick = true; AIR.rev++;
+        el.scrollTop = el.scrollTop - 60;      // 再往上退 60px（相对移动，不受内容继续长高的影响）
+        await sleep(200);
+        const gap3 = gap();
+        vm.onLogScroll();
+        // 不变量：80px 内算"贴着底"（旧代码 48px，60 就被判成"翻了"）
+        const chk3 = (gap3 < 80) === !!AIR.stick;
+        // ④ 滚轮往上一格 ⇒ 立刻按住
+        quiet();
+        AIR.stick = true; AIR.rev++;
+        el.dispatchEvent(new WheelEvent("wheel", {deltaY: -120, bubbles: true, cancelable: true}));
+        await sleep(60);
+        const chk4 = !AIR.stick;
+        // ⑤ 贴着底时**来新内容** ⇒ 真滚到底（`__followN` 是"确实喊了跟滚"的把手）
+        //    注意用**重新赋值**而不是 push —— 生产里就是这么进来的（`AIR.steps = got.steps`
+        //    每跳一次、`AIR.turns = got.turns.map(...)`），push 不会触发那个路径 watcher。
+        quiet();
+        el.scrollTop = 0;
+        AIR.stick = true; AIR.rev++;
+        const n0 = window.__followN || 0;
+        const stickAtPush = !!AIR.stick;
+        AIR.turns = AIR.turns.concat([{key: "f-y", task: "最后一条（看它跟不跟）",
+                                       at: "10-19 19:01", steps: [], note: ""}]);
+        AIR.rev++;
+        await sleep(600);
+        const followed = (window.__followN || 0) > n0;
+        const atBottom = gap() < 5;
+        const chk5 = followed && atBottom;
+        const ok = chk1 && chk2 && chk3 && chk4 && chk5 && !(window.__errors || []).length;
+        const diag = "①判据 自己滚不动=" + chk1a + " 真翻就按=" + chk1b +
+          " 60px算贴底=" + chk1c + " 80px算翻了=" + chk1d +
+          " ②真上翻按住=" + chk2 + "[gap/auto/stick " + d2a + " → " + d2b + "]" +
+          " ③离底 60px 仍算贴底=" + chk3 + "（gap=" + Math.round(gap3) + "）" +
+          " ④滚轮上拨按住=" + chk4 + " ⑤跟着滚到底=" + chk5 +
+          "（followN+" + ((window.__followN || 0) - n0) + "、gap=" + Math.round(gap()) +
+          "、stick@push=" + stickAtPush + "）" +
+          " 错=" + (window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") + "\n" + diag;
+        document.title = ok ? "READY" : ("AIFOLLOW-FAIL " + diag);
       }
       // ★ `V-251`/`V-252`：**历史会话要能找回来、能接着聊** —— 你原话「怎么还是找不到历史
       //   会话记录，一旦重新打开 moss 只能重新再来 …… 没法继续上一次的聊天继续沟通」。

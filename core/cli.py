@@ -689,6 +689,7 @@ def cmd_new(pid, kind="task"):
     if target.exists():
         out.print_cyan("[错误] 已经存在：%s" % target)
         return 1
+    stale = _set_aside_stale_state(pid)
     try:
         target.mkdir(parents=True, exist_ok=True)
         pkg = json.loads(json.dumps(NEW_PKG_JSON).replace("__ID__", pid))
@@ -717,6 +718,37 @@ def cmd_new(pid, kind="task"):
     out.print_cyan("契约（字段、环境变量、数据放哪、界面怎么写）：moss --spec")
     _shortcut_sync()
     return 0
+
+
+def _set_aside_stale_state(pid):
+    """把 `state/<pid>` 里**上一条命**留下的东西挪开（`V-384`）。
+
+    为什么要有这一步（用户 2026-10-19 的原话：「我创建了一个插件 它使用默认的 my-first
+    包名 然后我发现 还有之前的 AI 历史」）：
+    数据目录是**按 id 算**的（`D-05`：`moss --rename` 连它一起搬），可 id 会被**重复用**——
+    上一个同名包删了 / 改了名，`state/<id>` 里还留着他的 AI 会话、运行数据、临时文件。
+    新包一开就**继承**了那一整包东西：AI 页的历史里冒出别人的对话，用户只会觉得
+    "你又在乱来"。删包时清干净是治本（`cmd_remove` 已经连它一起删），但**手删目录 /
+    改过名 / 老版本留下的**那些兜不住，所以新建这一刻再挡一道。
+
+    做法是**挪开**（`state/<id>.prev-<时间戳>`），不是删：老数据还在，用户想找回就找回。
+    """
+    d = paths.pkg_state_dir(pid)
+    try:
+        if not d.is_dir():
+            return ""
+    except OSError:
+        return ""
+    import time as _t                                              # noqa: PLC0415
+    keep = d.with_name("%s.prev-%s" % (d.name, _t.strftime("%Y%m%d-%H%M%S")))
+    try:
+        d.rename(keep)
+    except OSError as e:
+        out.print_cyan("[警告] 上一个同名包的数据目录没挪开：%s" % e)
+        return ""
+    out.print_cyan("注意：这个 id 以前用过，`%s` 里还留着它的数据（AI 会话 / 运行记录 / "
+                   "临时文件）—— 已经挪到 `%s`，新包从干净的开始。" % (pid, keep.name))
+    return str(keep)
 
 
 def cmd_rename(name, new_id, table):
@@ -764,9 +796,10 @@ def cmd_rename(name, new_id, table):
     if dir_new.exists() and dir_new != pkg_dir:
         out.print_cyan("[错误] 目标目录已经存在：%s" % dir_new)
         return 1
-    if not same_id and state_new.exists():
-        out.print_cyan("[错误] 目标数据目录已经存在：%s" % state_new)
-        return 1
+    # ★ `V-384`：目标数据目录已经存在**不再拒绝改名**（你 2026-10-19 报的：改完名
+    #   "没有自动进入新包"后面还跟着一堆乱账 —— 老的那个 `state/junk` 是上一条命留下的，
+    #   它会把新包的 AI 历史 / 运行数据混进来）。现在把那堆**挪开**再搬，改名照常成功。
+    state_stale = bool(not same_id and state_new.exists())
 
     if same_id:
         out.print_cyan("将要只改目录名：%s → %s（id 不变，还是 '%s'）"
@@ -799,6 +832,14 @@ def cmd_rename(name, new_id, table):
     # ② 数据目录（id 没变就不用动 —— 数据目录是按 id 算的，`D-05`）
     if not same_id and state_old.is_dir():
         try:
+            if state_stale:
+                # 目标位置已经有上一任的东西 ⇒ 先挪开（不删），再把这次的搬过去
+                import time as _t                                  # noqa: PLC0415
+                keep = state_new.with_name("%s.prev-%s"
+                                           % (state_new.name, _t.strftime("%Y%m%d-%H%M%S")))
+                state_new.rename(keep)
+                out.print_cyan("  目标数据目录里原来有东西（上一个同名包留下的）—— "
+                               "已经挪到 %s" % keep.name)
             state_old.rename(state_new)
             done.append("数据目录")
         except OSError as e:

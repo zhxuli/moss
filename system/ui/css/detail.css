@@ -26,6 +26,9 @@
 #pane-detail{
   --dp-primary:#3b82f6; --dp-primary-hover:#2563eb;
   --dp-danger:#ef4444; --dp-danger-bg:#fef2f2;
+  /* ★ `V-384`：**运行中**（停止那颗钮）用绿色，不用红 —— 用户原话
+     「那个停止按钮和下拉按钮 也都改成绿色 不用红色 这不和谐」。红仍然是"出错/删除"的色。 */
+  --dp-run:#1f9d55; --dp-run-hover:#17864a;
   --dp-bg-body:#f3f4f6; --dp-bg-card:#ffffff;
   --dp-text-main:#1f2937; --dp-text-muted:#6b7280; --dp-text-light:#9ca3af;
   --dp-border:#e5e7eb;
@@ -42,6 +45,7 @@
   #pane-detail{
     --dp-primary:#5b9bf8; --dp-primary-hover:#7cb0fa;
     --dp-danger:#f87171; --dp-danger-bg:rgba(248,113,113,.14);
+    --dp-run:#34d399; --dp-run-hover:#10b981;        /* `V-384`：深色下也能看清的绿 */
     --dp-bg-body:#151517; --dp-bg-card:#1c1c1e;
     --dp-text-main:#f5f5f7; --dp-text-muted:#a1a1a6; --dp-text-light:#8e8e96;
     --dp-border:#2c2c30;
@@ -181,9 +185,12 @@ button.dp-primary svg{width:17px;height:17px}
 .dp-split-main svg{width:17px;height:17px}
 .dp-split-arrow svg{width:16px;height:16px;transition:transform .2s ease}
 .dp-split.open .dp-split-arrow svg{transform:rotate(180deg)}
-/* 运行中：主按钮变红、显示「停止」——和右上角那颗同一个意思 */
-.dp-split-main.warn{background:var(--dp-danger)}
-.dp-split-main.warn:hover{background:var(--dp-danger);filter:brightness(.94)}
+/* 运行中：主按钮变绿、显示「停止」——和右上角那颗同一个意思（`V-384`：以前是红的） */
+.dp-split-main.warn{background:var(--dp-run)}
+.dp-split-main.warn:hover{background:var(--dp-run);filter:brightness(.94)}
+/* 运行中那颗**下拉箭头**也跟着绿（不然主按钮绿、箭头蓝，一块儿看着像没改完） */
+.dp-split:has(.dp-split-main.warn) .dp-split-arrow{background:var(--dp-run)}
+.dp-split:has(.dp-split-main.warn) .dp-split-arrow:hover{background:var(--dp-run-hover)}
 /* 下拉菜单：位置 / 动效照稿子；底色 / 描边 / 字色用详情页变量 */
 .dp-split-menu{position:absolute;top:calc(100% + 8px);right:0;background:var(--dp-bg-card);
   border:1px solid var(--dp-border);border-radius:8px;

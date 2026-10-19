@@ -11,15 +11,21 @@ user_data/
 # 构建产物：由 tools/build.py 现场产出，不进 git
 # （解放行版时把 moss.exe + system\ 一起拷走即可）
 moss.exe
-# 重新打包时如果旧的 exe 正被界面占用（Windows 不让删正在运行的 exe），
-# 新的产物会打成 moss.exe.exe（你定的名字：仍然是 .exe，能直接运行）—— 那也是构建产物，不进 git。
-moss.exe.old
+# 打包时产物先落 moss.build.exe，编完再"结束旧进程 + 替换"成 moss.exe（`V-384`）。
+moss.build.exe
+# 下面两种是**老方案**的残渣名（热改名留下的 moss.exe.old-*、V-380~V-383 的 moss.exe.exe）。
+# 现在不再产生，但盘上可能还有，继续挡着。
+moss.exe.old*
 moss.exe.exe
 # nuitka 的中间产物
 moss.build/
 moss.dist/
 moss.onefile-build/
 nuitka-crash-report.xml
+
+# 发行/打包输出目录（`moss/` + `moss.zip`，实测 261 MB / 7500+ 文件）：
+# 它是 `moss.exe` + 整个 `system/` 的副本，随时能由 build + 复制重新产出 —— 不进 git。
+打包专用目录/
 
 # 生成物：图标预览图，用 tools/图标优化.py 随时能再生成
 *.preview.png

@@ -14,6 +14,26 @@
  *   所以"选中的包换了"要靠定时器比对 + 改一个响应式字段来通知 Vue 重画
  *   （和 `CONSOLER` / `DRAGR` 一个套路，见 console.js 里那段注释）。
  */
+/* ★ `V-385`：**滚了一下之后还该不该"跟着看"** —— 判据收成一个纯函数（探针能直接算）。
+
+   ★ 你 2026-10-19 问的原话：「AI界面 有时候自动下拉界面 有时候不下拉 是不是对于自动下拉
+     条件的检测太严苛了导致有时候应该下拉但是没下拉？」——猜对了大半，真凶有两个：
+     ① **我们自己那次平滑滚动的几十个 scroll 事件也被当成"用户往上翻了"**：一开始离底
+        几百像素，第一个事件就把 `stick` 打成 false ⇒ 下一步就不跟了；内容一变多，最后那个
+        事件也还在"离底 > 48px"，于是一直不跟，直到你手动拉到底。
+     ② 48px 太紧：差一点就不算"贴着底"。
+   现在：`auto`（我们自己滚的那一趟）里的事件**什么都不改**；否则离底 80px 内算贴着底。 */
+function stickAfterScroll(st, m){
+  st = st || {};
+  m = m || {};
+  if (st.auto) return !!st.stick;                 // 我滚的 ⇒ 不算你翻了
+  const ch = Number(m.clientHeight || 0);
+  const sh = Number(m.scrollHeight || 0);
+  if (!ch) return true;                           // 量不出来（藏着）⇒ 别乱改
+  if (sh <= ch + 4) return true;                  // 还没撑出滚动条 ⇒ 本来就在底
+  return Number(m.gap || 0) < 80;
+}
+
 const AIR = Vue.reactive({
   rev: 0, curId: "", curDir: "", info: null, err: "",
   task: "", running: false, steps: [], say: [], result: null,
@@ -99,8 +119,12 @@ const AIR = Vue.reactive({
   /* ★ `V-315`：**点开某一步看原始细节**（参数 + 输出）—— 不做黑箱 */
   stepOpen: null, modalTab: "detail",
   /* ★ `V-307`：聊天区**跟不跟着滚**。你往上翻的时候它不许把你拽回底部
-     （你的原话："当我向上滑动聊天记录的时候 它总是自动弹回到最下面去"）。 */
+     （你的原话："当我向上滑动聊天记录的时候 它总是自动弹回到最下面去"）。
+     ★ `V-385`（你 2026-10-19 问的"有时候自动下拉 有时候不下拉"）：加 `auto` ——
+     **我们自己滚的那一下**（平滑动画会连发几十个 scroll 事件）不能拿来判"用户往上翻了"。
+     不然一开始离底几百像素 ⇒ 自己把自己判成"用户翻了" ⇒ 下一步就不跟了。 */
   stick: true,
+  auto: false,
   /* ★ `V-328`：加目录那一格的**行内报错**（填错时贴在输入框下面那一句）。
      ★ `V-329`（你报的："怎么我瞎写一个 点添加 会出来两个错误提醒呢"）：原来这里走 `toast()`，
        而 `toast()` 是**两处一起报**（浮出来的深色胶囊 + 底部状态栏留一行）—— 一个错看两遍。
@@ -1554,14 +1578,72 @@ const MossAi = {
         toast("复制了 " + (data.messages || []).length + " 条");
       }catch(e){ toast("复制失败：" + (e && e.message ? e.message : e), true); }
     },
-    /* ---- ★ V-307：滚动条不抢你的（你报的"往上滑就被弹回最下面"） ---- */
+    /* ---- ★ V-307：滚动条不抢你的（你报的"往上滑就被弹回最下面"） ----
+       ★ `V-385`（"有时候自动下拉 有时候不下拉"）：以前这里有两个坑 ——
+         ① **我们自己那次平滑滚动的几十个 scroll 事件也被当成"用户滚的"**：
+            一开始离底几百像素 ⇒ `stick` 被打成 false ⇒ 下一步就不跟了
+            （内容一变多，最后那个事件也还在"离底 > 48px"⇒ 就这么一直不跟，直到你手动拉到底）；
+         ② 48px 太紧：稍微差一点点就不算"贴着底"。
+       现在：自己滚的那一趟（`AIR.auto`）里的事件不算数；判据放宽到 80px；
+       已经开始往上拖 / 滚轮往上 ⇒ 立刻按住（不跟）。 */
+    _logEl(){
+      return this.$refs.log || (this.$el && this.$el.querySelector(".ai-log"));
+    },
+    _gap(el){ return el.scrollHeight - el.scrollTop - el.clientHeight; },
+    nearBottom(el){
+      return stickAfterScroll({auto: false, stick: true},
+                              {gap: this._gap(el), clientHeight: el.clientHeight,
+                               scrollHeight: el.scrollHeight});
+    },
     onLogScroll(){
-      const el = this.$refs.log || (this.$el && this.$el.querySelector(".ai-log"));
+      const el = this._logEl();
       if (!el) return;
-      const near = (el.scrollHeight - el.scrollTop - el.clientHeight) < 48;
-      if (near !== AIR.stick){ AIR.stick = near; AIR.rev++; }
+      // 藏起来的时候（切到别的页签）量出来全是 0，别拿它改状态
+      if (!el.clientHeight) return;
+      const next = stickAfterScroll(AIR, {gap: this._gap(el), clientHeight: el.clientHeight,
+                                          scrollHeight: el.scrollHeight});
+      if (next !== AIR.stick){ AIR.stick = next; AIR.rev++; }
+    },
+    /* 用户往上拨一格滚轮 ⇒ 就是"想往回看"，立刻按住（不等 scroll 事件） */
+    onLogWheel(ev){
+      if (!ev || ev.deltaY >= 0) return;
+      if (!AIR.stick && !AIR.auto) return;
+      AIR.stick = false; AIR.auto = false;
+      clearTimeout(this._settleT);
+      AIR.rev++;
     },
     toBottom(){ AIR.stick = true; this.followLog(true); },
+    /* 滚到底（`V-385`）。`depth`：这一趟没滚到真底（期间内容又长高了）就再补一趟，最多 3 次。 */
+    _logToBottom(force, depth){
+      const el = this._logEl();
+      if (!el) return;
+      depth = depth || 0;
+      const gen = (this._gen = (this._gen || 0) + 1);
+      const gap = this._gap(el);
+      const far = gap > Math.max(240, el.clientHeight * 1.5);
+      const instant = !!(force || far);
+      AIR.auto = true;                           // 这一趟的 scroll 事件不算数（见 `onLogScroll`）
+      clearTimeout(this._settleT);
+      // 离底太远就直接跳（平滑滚三千像素又慢又会被新内容顶掉）。
+      // ⚠️ `auto` 会走 CSS 的 `smooth`，要"立刻"必须写 `instant`。
+      el.scrollTo({top: el.scrollHeight, behavior: instant ? "instant" : "smooth"});
+      const check = () => {
+        if (gen !== this._gen) return;           // 又起了新的一趟 ⇒ 交给新的收尾
+        const left = this._gap(el);
+        if (AIR.stick && left > 2 && depth < 3){ this._logToBottom(true, depth + 1); return; }
+        AIR.auto = false;
+        clearTimeout(this._settleT);
+        if (left > 2 && AIR.stick) AIR.rev++;    // 实在追不上：至少让「回到最新」出来
+      };
+      // 跳过去的那种没有动画可等 ⇒ 两帧后自己核对一遍（新卡片常常是"滚完才量全"）
+      if (instant) requestAnimationFrame(() => requestAnimationFrame(check));
+      if (this._sock){ try{ el.removeEventListener("scrollend", this._sock); }catch(e){} this._sock = null; }
+      if ("onscrollend" in el){
+        this._sock = () => { if (gen === this._gen){ clearTimeout(this._settleT); check(); } };
+        el.addEventListener("scrollend", this._sock, {once: true});
+      }
+      this._settleT = setTimeout(check, instant ? 300 : 900);
+    },
     /* 回退到"开工前"那条快照（`V-236`）。默认 `only="all"`：缺的补上、变了的回退，       多出来的**不动**（和「文件管理 → 快照」里那个「只写回」一个语义）。 */
     rollback(snapIn){
       // ★ `V-257`：这里原来写的是裸 `A` / `target` / `shortPath` —— 那是**模块级/计算属性**
@@ -1858,18 +1940,14 @@ const MossAi = {
           结果就是你一边看历史、它一边把你拽回底部。
        现在的规矩：**只在你本来就贴着底的时候跟滚**；你往上翻了就按住不动，
        右下角浮一颗「回到最新」，点它才回去（`A.stick`）。
-       `force=true`：你主动点「回到最新」/ 新发一条指令时，无条件滚到底。 */
+       `force=true`：你主动点「回到最新」/ 新发一条指令时，无条件滚到底。
+       ★ `V-385`：真正的滚动搬进 `_logToBottom()` —— 那一趟自己的 scroll 事件不算"你翻了"。 */
     followLog(force){
       // `window.__followN`：探针的把手（无头浏览器里**平滑滚动不跑动画**，量 scrollTop 量不出来，
       // 所以断言"确实喊了跟滚"这一下 —— 真机上配合 CSS 的 scroll-behavior 就是平滑到底）。
       if (!force && !AIR.stick) return;
       window.__followN = (window.__followN || 0) + 1;
-      this.$nextTick(() => {
-        const el = (this.$refs && this.$refs.log) ||
-                   (this.$el && this.$el.querySelector(".ai-log"));
-        if (!el) return;
-        el.scrollTo({top: el.scrollHeight, behavior: force ? "auto" : "smooth"});
-      });
+      this.$nextTick(() => this._logToBottom(!!force, 0));
     },
     openRun(id){ aiOpenRun(id); },
     forgetRun(id){ aiForgetRun(id); },
@@ -2218,6 +2296,17 @@ const MossAi = {
         aiLoadRuns();
       }
       if (AIR.running) aiPollOnce();
+      /* ★ `V-385`：**刚从"藏着"变成"看得见"时补一次** —— 典型就是切回 AI 页签：
+         它藏着的时候量出来全是 0 高度，滚动监听什么也判断不了，回来时位置就停在老地方。
+         ⚠️ 只在"可见性刚变化"那一下补，**不能每跳都补** —— 每跳补就会跟"用户正往上翻"
+            打架（第一版这么写过，探针的 `ai-follow` 当场把这条抓了出来）。 */
+      if (AIR.stick){
+        const lg = this.$refs.log || (this.$el && this.$el.querySelector(".ai-log"));
+        const vis = !!(lg && lg.clientHeight);
+        if (vis && !AIR.wasVis && (lg.scrollHeight - lg.scrollTop - lg.clientHeight) > 2)
+          this.followLog(true);
+        AIR.wasVis = vis;
+      }
       /* ★ `V-345`：浮层开着的时候顺手复算一次位置 —— 左侧栏 hover 展开/收起会让整页横移，
          那不是 window 的 resize（上面那个监听收不到）。fitPop 自己有“没变就跳过”。 */
       if (AIR.permPop) this.fitPop("perm");
@@ -2231,11 +2320,17 @@ const MossAi = {
     window.addEventListener("resize", this._rs);
     /* ★ `V-253`（照稿子）：刚进来时文本域是 56px，等一帧量一下（内容长的话自动长高） */
     this.$nextTick(() => this.autoGrow());
-    /* ★ `V-307`：滚动监听 —— 判"你是不是贴着底"，决定跟不跟滚（你往上翻就不许抢） */
+    /* ★ `V-307`：滚动监听 —— 判"你是不是贴着底"，决定跟不跟滚（你往上翻就不许抢）
+       ★ `V-385`：再加一条 `wheel` —— 滚轮往上一格就是"想往回看"，比等 scroll 事件更准
+       （而且那一下可能正好撞在"我们自己那次平滑滚动"里，靠 scroll 事件会被让掉）。 */
     this._sc = () => this.onLogScroll();
+    this._wh = (ev) => this.onLogWheel(ev);
     this.$nextTick(() => {
       const el = this.$refs.log || (this.$el && this.$el.querySelector(".ai-log"));
-      if (el) el.addEventListener("scroll", this._sc, {passive: true});
+      if (el){
+        el.addEventListener("scroll", this._sc, {passive: true});
+        el.addEventListener("wheel", this._wh, {passive: true});
+      }
       this.onLogScroll();
     });
     /* ★ `V-307`/`V-316`：**拖一个文件夹到这一页 = 加进权限清单（读+写都开）**。
@@ -2922,7 +3017,9 @@ const MossAi = {
    `vendor/lucide.js` 里是个全局函数（`window.ico` 查得到），模板里照样报
    `ico is not a function` —— 实测踩到，查了半天。别的页要这么干：
    `js/console.js` 也是 `mountVue(MossConsole, "#pane-console", {ico: ico})`。 */
-mountVue(MossAi, "#pane-ai", {ico: ico, pSym: () => PSYM});   // `pSym()`：跑包符号（`V-305`，别硬编码 `:`）
+/* ★ `V-385`：留一个把手给探针（界面预览的 `ai-follow` 场景要直接调 `onLogScroll` /
+   `_logToBottom`，靠"等几百毫秒看事件"太看运气）。和 `window.__AIR` / `__followN` 一个路数。 */
+window.__aiVm = mountVue(MossAi, "#pane-ai", {ico: ico, pSym: () => PSYM});   // `pSym()`：跑包符号（`V-305`，别硬编码 `:`）
 
 
 

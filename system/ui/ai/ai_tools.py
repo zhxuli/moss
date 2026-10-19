@@ -795,6 +795,20 @@ class Tools:
             return ("[拒绝] %s\n先自己确认路径：`list_dir` 看一眼父目录、或者用 `read_file` "
                     "试一下；要新建目录的话，申请的应该是**它的父目录**（那个是存在的）。" % problem)
         _need = "read" if str(a.get("need") or "").strip().lower().startswith("r") else "write"
+        # ★ `V-384`：**已经能碰的地方，别再拿请求去打断用户**。
+        #   真机证据（2026-10-19 那次 `my-first → junk`）：用户勾了「完全权限」，它还是为
+        #   "改名之后的新目录"和"新造的技能"弹了两张请求卡（记录 `20261019-180546-e84f`
+        #   的第 47 / 90 步）。判据直接用宿主自己的守卫 —— `can_write/can_read` 说"能"，
+        #   那就根本没有要申请的东西，别把这件事推给人。
+        _now = (M.can_write(p, scope=self.workdir) if _need == "write"
+                else M.can_read(p, scope=self.workdir))
+        if _now is None:
+            _why = ("现在是「完全权限」：任意路径都算允许"
+                    if M.wildcard_write()
+                    else "它本来就在允许范围里（清单 / 你这次干活的包 / 你自己的地方）")
+            return ("[不用申请] `%s` 你本来就能%s —— %s。直接动它，"
+                    "**别再调 allow_path**（那只会白弹一张卡、白等一个人）。"
+                    % (p, "写" if _need == "write" else "读", _why))
         if not self.perm_gate:
             return ("[没人可问] 这次是命令行跑的（没有界面），用户看不到那条请求。**别动那里** —— "
                     "改在允许的目录里做，或者在回答里说明你需要他放行 `%s`。" % p)

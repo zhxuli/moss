@@ -248,6 +248,53 @@ def _file_of(run_id, scope=None):
     return None
 
 
+def _bucket_pkg_dir(d):
+    """`state/<id>/ai/runs` ⇒ **那个包现在的目录**（认不出来就空串）。
+
+    ★ `V-384`：包改过名之后，桶跟着 `--rename` 一起搬到了新 id 下，所以"桶名"
+      就是**现在的** id —— 拿它去包根下找，就能把过期的 `workdir` 纠回来。
+    """
+    try:
+        st = (E.user_data() / "state").resolve()
+        parts = Path(d).resolve().relative_to(st).parts
+    except (OSError, ValueError):
+        return ""
+    if not parts:
+        return ""
+    pid = parts[0]
+    for root in (E.user_data() / "pkgs", E.HOME / "system" / "pkgs"):
+        try:
+            p = Path(root) / pid
+        except OSError:
+            continue
+        if p.is_dir():
+            return str(p)
+    return ""
+
+
+def _fix_workdir(rec, d):
+    """记录里的 `workdir` 过期了（包改过名 / 目录搬过）⇒ **按桶**纠正回来。
+
+    ★ `V-384`（你 2026-10-19 报的"改完名没有自动进入 AI 对话"里有这一半）：
+      会话文件跟着 `--rename` 搬到了 `state/<新id>/ai/runs/`，可 JSON 里的 `workdir`
+      还写着旧目录 ⇒ 界面按新目录去"认领这条会话"就认不上（历史列得出来、接不上）。
+      `state/<id>/ai/runs/` 这个位置本身就说明"这是 <id> 的会话"，所以按桶纠正是对的。
+    """
+    wd = str(rec.get("workdir") or "")
+    try:
+        if wd and Path(wd).is_dir():
+            return rec
+    except OSError:
+        pass
+    now = _bucket_pkg_dir(d)
+    if not now:
+        return rec
+    rec = dict(rec)
+    rec["workdir"] = now
+    rec["workdir_fixed"] = True
+    return rec
+
+
 def list_runs(limit=30, with_steps=False, scope=None, everywhere=False):
     """按时间倒序列出（默认**不带步骤流**，那个大；列表只需要一行摘要）。
 
@@ -263,7 +310,7 @@ def list_runs(limit=30, with_steps=False, scope=None, everywhere=False):
             rec = _load(p)
             if not rec:
                 continue
-            rows.append(rec)
+            rows.append(_fix_workdir(rec, d))
     rows.sort(key=lambda r: str(r.get("id") or ""), reverse=True)
     out = []
     for rec in rows[:max(1, int(limit or 30))]:
@@ -289,7 +336,10 @@ def list_runs(limit=30, with_steps=False, scope=None, everywhere=False):
 def get(run_id, scope=None):
     """读一条完整的（含步骤流）—— 界面上点「看」用它。"""
     p = _file_of(run_id, scope)
-    return _load(p) if p else None
+    if not p:
+        return None
+    rec = _load(p)
+    return _fix_workdir(rec, p.parent) if rec else None
 
 
 def messages(run_id, scope=None):

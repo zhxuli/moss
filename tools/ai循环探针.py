@@ -1565,6 +1565,103 @@ def main():
     chk("S ★ 用户点 ✕（= 拒绝）⇒ 那一行没了，宿主据此判「拒绝」",
         M.find(str(_out2)) is None, "")
 
+    # ---- S10：`V-384`（用户 2026-10-19 报的三条） --------------------------------
+    # ① 勾了「完全权限」⇒ **一次权限请求都不该再有**（真机记录 `20261019-180546-e84f`
+    #    第 47 / 90 步：明明全放开了，它还是为"改名后的新目录""新造的技能"弹了两张卡）
+    # ② 改一个**已经存在的包** ⇒ **开工就存**快照（真机上它先读十几分钟，
+    #    用户在「版本快照」里看到空白，只能判断成"没备份"）；一个字都没改就收掉
+    # ③ 包改过名之后，会话记录里过期的 `workdir` 要按桶纠正 —— 不然界面认领不上，
+    #    "改完名没有自动进入 AI 对话"
+    print()
+    print("-" * 72)
+    print("S10：`V-384` 完全权限还弹请求 / 开工没镜像 / 改完名接不上会话")
+    print("-" * 72)
+    import ai_runs as R                                              # noqa: E402
+
+    _star_before = MP.wildcard_write()
+
+    def _gate_counted(p, why, need):
+        _gate_calls.append(str(p))
+        return {"granted": True, "read": True, "write": True}
+
+    _gate_calls = []
+    _v384pkg = pkgs / "v384pkg"
+    _v384pkg.mkdir(parents=True, exist_ok=True)
+    (_v384pkg / "pkg.json").write_text('{"spec": 1, "id": "v384pkg"}', encoding="utf-8")
+    _v384out = tmp / "v384outside"
+    _v384out.mkdir(parents=True, exist_ok=True)
+
+    MP.allow_add("*", read=False, write=True, why="探针：完全权限")
+    _r = str(T.Tools(workdir=str(_v384pkg), perm_gate=_gate_counted).call(
+        "allow_path", {"path": str(_v384out), "need": "write", "why": "改它"}))
+    chk("S10 ★★ 勾了「完全权限」⇒ `allow_path` 直接回「不用申请」，"
+        "而且**闸一次都没被叫**（不再白弹一张卡、白等一个人）",
+        "不用申请" in _r and not _gate_calls, _r[:80])
+    # 同一个目录，**没**开完全权限 ⇒ 仍然要走请求（不是无条件放行）
+    MP.allow_add("*", read=False, write=False, why="探针：关掉完全权限")
+    _r = str(T.Tools(workdir=str(_v384pkg), perm_gate=_gate_counted).call(
+        "allow_path", {"path": str(_v384out), "need": "write", "why": "改它"}))
+    chk("S10 ★★ 关掉「完全权限」⇒ 该问的还是要问（闸叫到了，不是无条件放行）",
+        bool(_gate_calls) and "不用申请" not in _r, "闸收到：%s" % (_gate_calls[:1],))
+    # 已经在范围内的地方也不用申请（改名后的新目录属于这一类：包本来就是你的）
+    _gate_calls = []
+    _r = str(T.Tools(workdir=str(_v384pkg), perm_gate=_gate_counted).call(
+        "allow_path", {"path": str(_v384pkg), "need": "write", "why": "改它"}))
+    chk("S10 ★★ 本来就允许的地方（当前这个包）⇒ 也回「不用申请」，不打扰人",
+        "不用申请" in _r and not _gate_calls, _r[:80])
+    MP.allow_add("*", read=False, write=_star_before, why="探针：还原")
+    MP.allow_rm(str(_v384out))
+
+    # ② 开工就存（只认"已经是个包"的目录）
+    _s1 = S.snapshot_at_start("探针：开工就存", str(_v384pkg))
+    chk("S10 ★★ 改一个**已经存在的包** ⇒ 开工那一刻就存了快照（不用等它第一次写）",
+        _s1.get("ok") is True and _s1.get("group") == "v384pkg", str(_s1.get("msg"))[:90])
+    _s2 = S.snapshot_at_start("探针：新建包那种", str(pkgs))
+    chk("S10 ★★ `pkgs` 整层（新建包那种）**不在开工时存** —— 没有\"动手前的样子\"可存",
+        (not _s2.get("ok")) and (_s2.get("skip") is True), str(_s2.get("msg"))[:80])
+    chk("S10 ★ 开工那条**收得掉**（一个字没改时用）",
+        S.drop_untouched(_s1.get("id"), _s1.get("group")).get("ok") is True, "")
+
+    # 纯问答（`answer` 收工、没改没跑）⇒ 开工那条空快照要在收工时收掉
+    _v384b = pkgs / "v384b"
+    _v384b.mkdir(parents=True, exist_ok=True)
+    (_v384b / "pkg.json").write_text('{"spec": 1, "id": "v384b"}', encoding="utf-8")
+    _seen_snap = []
+    _rl = L.Loop(FakeModel([call("answer", {"text": "我是模型。"})]),
+                 workdir=str(_v384b), say=lambda *a, **k: None,
+                 on_snapshot=lambda s: _seen_snap.append(s))
+    _rr = _rl.run("你是哪个大模型")
+    chk("S10 ★★ 纯问答那轮：开工**存了**（`on_snapshot` 收到了）、收工又**收掉**（`V-269` 想省的"
+        "\"问答也留一条\"还在省着）",
+        bool(_seen_snap) and _rr.get("snapshot") is None and S.ai_count("v384b") == 0,
+        "开工时收到 %d 次 / 收工 snapshot=%s / 库里还剩 %d 条"
+        % (len(_seen_snap), _rr.get("snapshot"), S.ai_count("v384b")))
+    # 真改过文件 ⇒ **留着**（那是这一跑的真退路）
+    _rl2 = L.Loop(FakeModel([call("write_file", {"path": str(_v384b / "run.py"),
+                                                 "content": "# hi\n"}),
+                             call("done", {"summary": "改好了"})]),
+                  workdir=str(_v384b), max_steps=4, say=lambda *a, **k: None)
+    _rr2 = _rl2.run("给这个包加个 run.py")
+    chk("S10 ★★ 真改动过 ⇒ 开工那条快照**留着**（那是这一跑的退路，不能收）",
+        bool((_rr2.get("snapshot") or {}).get("id")) and S.ai_count("v384b") >= 1,
+        "snapshot=%s" % ((_rr2.get("snapshot") or {}).get("id"),))
+
+    # ③ 改名之后：记录里的 `workdir` 过期 ⇒ 按桶纠正（界面才认领得上）
+    _gone = pkgs / "v384old"                     # 假装是改名之前的目录（不存在）
+    _scope = {"kind": "pkg", "id": "v384b", "dir": R.scope_dir(str(_v384b))}
+    R.save({"id": "29990101-000000-0000", "task": "改名前那条会话",
+            "workdir": str(_gone), "steps": [], "messages": [{"role": "user",
+                                                              "content": "hi"}]}, scope=_scope)
+    _rows = R.list_runs(5, scope=_scope)
+    _hit = [r for r in _rows if r.get("id") == "29990101-000000-0000"]
+    chk("S10 ★★ 改名后：会话记录里过期的 `workdir` **按桶纠正**成新目录（历史能接上）",
+        bool(_hit) and _hit[0].get("workdir") == str(_v384b),
+        "纠正成：%s" % ((_hit[0].get("workdir") if _hit else "(没读到)"),))
+    _p_raw = R._file_of("29990101-000000-0000", _scope)
+    _raw = json.loads(_p_raw.read_text(encoding="utf-8")) if _p_raw else {}
+    chk("S10 ★ 盘上那份**没被改写**（只纠读出来的那份，不偷偷动别人的记录）",
+        str(_raw.get("workdir") or "") == str(_gone), "盘上还是：%s" % (_raw.get("workdir"),))
+
     shutil.rmtree(tmp, ignore_errors=True)
     print()
     print("=" * 72)

@@ -75,8 +75,11 @@ svg.i{width:16px;height:16px;flex:none;display:block}
 .iconbtn:active{transform:scale(.97)}
 .iconbtn:disabled{opacity:.4;cursor:default;transform:none}
 .iconbtn svg.i{width:17px;height:17px}
-.iconbtn.warn{color:#ef4444}
-.iconbtn.warn:hover{background:color-mix(in srgb, #ef4444 13%, transparent)}
+/* ★ `V-384`：`.warn` 在这套界面里**只表示"运行中"**（`console.js::paintActions` 那三处
+   `classList.toggle("warn", running)`），所以它是**绿色**的，不是红 —— 你说过
+   「运行中的时候…不用红色 这不和谐」。真正的错误另有 `.bad` / `.danger` 那两套（还是红）。 */
+.iconbtn.warn{color:#1f9d55}
+.iconbtn.warn:hover{background:color-mix(in srgb, #1f9d55 13%, transparent)}
 .iconbtn.danger{color:#ef4444}
 .iconbtn.danger:hover{background:color-mix(in srgb, #ef4444 13%, transparent)}
 header{display:flex;align-items:center;gap:10px;padding:9px 14px;

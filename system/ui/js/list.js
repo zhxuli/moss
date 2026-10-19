@@ -900,10 +900,13 @@ async function cmdRenamePkg(p){
     await pkgFollowId(oldId, newId);
     // ★ `V-367`：这里以前先弹一句「已改名为 x」，函数末尾又弹一句（带"显示名里的旧名字
     //   也一起换了"）—— 一个动作两颗胶囊，说的还是同一件事。**只在末尾说一次**。
-    // ★ `V-89`：备份库里那个**分组文件夹**跟着改名（不然"改个 id 就一起改"这件事
-    //   在备份那侧就断了）。改名失败不影响主流程，只在状态栏/日志里说一声。
+    // ★ `V-89` / `V-384`：备份库里那个**分组文件夹**跟着改名 —— 必须用 **`oldId`**。
+    //   以前这儿传的是 `p.id`：改完名之后那个包对象随时可能被换成新 id，于是这句变成
+    //   "新→新"，`rename_group` 一看名字没变就什么都不搬。后果是你 2026-10-19 报的
+    //   "还是没有在开工前自动创建镜像"：快照明明存了，却还记在旧 id 那个分组里，
+    //   界面按新 id 去问 ⇒ 一片空白。改名失败不影响主流程，只 console 说一声。
     try{
-      const br = await pywebview.api.backup_rename_group(p.id, newId);
+      const br = await pywebview.api.backup_rename_group(oldId, newId);
       if (br && br.ok && br.renamed) console.info("备份分组已改名：" + (br.msg || ""));
       else if (br && !br.ok) console.warn("备份分组没改成：" + (br.msg || ""));
     }catch(e){ console.warn("备份分组没改成：", e); }
@@ -917,8 +920,25 @@ async function cmdRenamePkg(p){
     // ★ `V-357`：清单里那几样（`id` / 显示名里那个旧 id / 别名）**都是宿主改的**
     //   （`core/cli.py::cmd_rename` 第 ③ 步，一次落笔）—— 界面不再自己写一遍 pkg.json，
     //   免得同一个文件两个人写（你定的"别名和 id 一致"也归那一步管）。
+    // ★ `V-384`：**改完名直接进新包、进它的 AI 对话**（你 2026-10-19 报的：
+    //   "它使用了更改标识符以后 没有自动进入到新的包 并自动进入AI对话"）。
+    if (np) await followIntoAi(newId);
     toast("已改名为 " + PSYM + newId + "（显示名里的旧名字也一起换了）");
   });
+}
+
+/* ★ `V-384`：改名之后"接着聊"那一步 —— 新包里要是有 AI 会话，就切到 AI 页把它接上。
+   ★ 判据为什么是"有没有会话"而不是无脑切：给一个从没用过 AI 的包改名，不该把人从
+     文件管理硬拽到 AI 页去。 */
+async function followIntoAi(id){
+  try{
+    if (typeof aiLoadRuns !== "function") return false;
+    await aiLoadRuns();                                  // 这一步里 `aiAdoptLast` 会把会话接上
+    const A = window.__AIR || {};
+    if (!(A.runs || []).length) return false;
+    if (typeof setTab === "function") setTab("ai");
+    return true;
+  }catch(e){ return false; }
 }
 
 /* ---------------------------------------------------------------- 更名跟随（`V-355`）
@@ -976,6 +996,12 @@ async function followRename(oldId, newId, how, oldDir){
   const oldRel = relOfDir(oldDir) || (wasOpen ? pkgRel(cur) : null);
   // 按 id 记的那几样（参数框 / 运行缓冲 / 命令行那块屏 / 自动运行名单）统一在 `pkgFollowId` 里搬
   await pkgFollowId(oldId, newId);
+  // ★ `V-384`：备份分组也跟过来（命令行 / AI 那边改的名，以前这条路**没搬**）。
+  //   不搬的话：快照还在旧 id 那个分组里，界面按新 id 问 ⇒ "退路"看起来凭空没了。
+  try{
+    const br = await pywebview.api.backup_rename_group(oldId, newId);
+    if (br && !br.ok) console.warn("备份分组没改成：" + (br.msg || ""));
+  }catch(e){ console.warn("备份分组没改成：", e); }
   // 内嵌界面的后端是**按旧 id** 起的：目录都搬走了 ⇒ 停掉，改完名按新 id 再起起来
   const hadEmbed = (typeof embedRunning === "function") && embedRunning(oldId);
   if (hadEmbed) await embedStop(oldId, true);
@@ -985,6 +1011,8 @@ async function followRename(oldId, newId, how, oldDir){
   if (wasOpen && np){
     select(newId, /*keepTab*/ true);         // 人正开着它 ⇒ 换成新名字，不切走他那一页
     if (hadEmbed && embedSupported(np)) await embedOpen(np, {keepTab: true});
+    // ★ `V-384`：它有一条 AI 会话的话，接上去（人接着聊的是同一件事，别看空页）
+    await followIntoAi(newId);
   }
   // ★ `V-367`：不再回显宿主那条判据（`how` = "指纹一致" / "按新旧 id 推断"）——
   //   那是**它是怎么认出来的**，属于内部机制；用户要知道的只有"跟着改了"。

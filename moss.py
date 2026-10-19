@@ -11,7 +11,7 @@ r"""moss 入口。
  打包命令（留在这里一份，方便直接看、直接粘）
 ════════════════════════════════════════════════════════════════════════
 
-    venv\Scripts\python.exe -m nuitka --onefile --lto=yes --remove-output --assume-yes-for-downloads --onefile-tempdir-spec="{CACHE_DIR}/moss_build/moss-<stamp>" --onefile-cache-mode=cached --windows-icon-from-ico=system/icon/moss.ico --windows-console-mode=hide --include-package=core -o moss moss.py
+    venv\Scripts\python.exe -m nuitka --onefile --lto=yes --remove-output --assume-yes-for-downloads --onefile-tempdir-spec="{CACHE_DIR}/moss_build/moss-<stamp>" --onefile-cache-mode=cached --windows-icon-from-ico=system/icon/moss.ico --windows-console-mode=hide --include-package=core -o moss.build moss.py
 
     （懒得敲就在仓库根目录敲  build.cmd  —— 它 cd 到自己那个目录再调上面这条；
       `build.py` 自己不依赖 cwd，所以从哪个目录敲都一样。）
@@ -30,9 +30,10 @@ r"""moss 入口。
   2.1 GB）。`--onefile-cache-mode=cached` 是保险：以后谁再把 `{TIME}` 塞回来，**打包当场
   报错**。细节见 `tools/build.py` 的 `source_stamp()`。
 
-★ 打包时如果旧的 `moss.exe` 正被占着（界面开着），`build.py` 会**把产物打成 `moss.exe.exe`**
-  （你定的名字：仍然是 `.exe`、能直接双击运行）—— 正在跑的那个 `moss.exe` 一个字节都不动。
-  关掉 moss 之后再打一次，就会正常替换 `moss.exe`（并顺手清掉那个 `moss.exe.exe`）。
+★ 打包时如果旧的 `moss.exe` 正被占着（界面开着），**不用你关**：`build.py` 先把产物编成
+  `moss.build.exe`，编完**结束**占着它的进程、替换成 `moss.exe`，然后**自动把界面重新拉起来**
+  —— 打完就能直接测新版，而且老文件是被真正删掉的，不会留下 `moss.exe.old` 之类的残渣。
+  认不出是谁占着时（杀软、管理员身份启动的）它**不会乱杀**，只把 `moss.build.exe` 留着并报错。
 
 每个参数为什么必须有
 --------------------

@@ -313,9 +313,12 @@ class Loop:
                  asker=None, mode_fn=None, on_journal=None, run_id="", tmp_dir=None,
                  perm_gate=None):
         self.client = client
-        # ★ `V-269`：快照**不再开工就存**，改成"第一次真要写文件之前"存（`_before_first_write`）。
-        #   原话那次的教训：你问一句「你是哪个大模型」，它也给你存了一条备份。
+        # ★ `V-384`：快照**开工就存**（改一个已经存在的包的时候）；新建包那种还是
+        #   等"第一次真要写之前"。`V-269` 想省的"问一句也留一条"由收工时那条
+        #   `drop_untouched`（一个字都没改就收掉）兜住。
         self.snapshot = None
+        #: ★ `V-384`：开工那条快照的 id（收工时判断要不要收掉）
+        self._snap_at_start = ""
         #: ★ `V-382`：快照**没存上**的原因（空 = 存上了 / 压根没触发）。收工报告要照实说。
         self.snapshot_note = ""
         self.want_snapshot = True
@@ -605,6 +608,30 @@ class Loop:
         return self._step(n, tool, brief, disp=brief, nodisp=True, why=why, args=args, out=out)
 
     # ------------------------------------------------------------------ 主循环
+    def _snapshot_at_start(self):
+        """**开工就存**（`V-384`）—— 只对"已经在某个包目录里"的活。
+
+        ★ 为什么要它：你在真机上等了十几分钟，点开「版本快照」看见的是空的 ⇒
+          只能判断成"它压根没备份"。开工就存，"退路"这件事一眼就看得见。
+        ★ 为什么还要 `drop_untouched`：这条的代价是"问答也留一条"（`V-269` 修过的
+          那条）。用一条更准的判据挡住 —— **这一跑既没改文件、也没跑过命令**就收掉。
+        """
+        import ai_snap as S                                              # noqa: PLC0415
+        got = S.snapshot_at_start(self.task, self.tools.workdir)
+        if not got.get("ok"):
+            if not got.get("skip"):
+                self.say("（开工这条快照没存上：%s —— 等第一次写之前再试）" % got.get("msg"))
+            return ""
+        self.snapshot = {"id": got.get("id"), "group": got.get("group")}
+        self._snap_at_start = str(got.get("id") or "")
+        self.say("开工先存了一条快照：%s（%s）" % (got.get("id"), got.get("msg")))
+        if self.on_snapshot:
+            try:
+                self.on_snapshot(self.snapshot)
+            except Exception:                                            # noqa: BLE001
+                pass
+        return self._snap_at_start
+
     def _before_first_write(self, touched=None):
         """第一次真要写文件之前：存"动手前"的快照（`V-269`，从开工就存改过来的）。
 
@@ -712,13 +739,17 @@ class Loop:
                                  ("；**缺**：" + "、".join(missing)) if missing else ""))
         # ★ `V-236`：**动手前先给这个包存一条快照**（`by="ai"` + 这次的任务原文）。
         #   改坏了要能一键回去；存不上也照干（只是没退路，而且会如实说）。
-        # ★ `V-269`：**什么时候存**改了 —— 原来是这一行（开工就存），现在挂到
-        #   `Tools.before_write` 上，等**第一次真的要写文件**时才存：
-        #     · 纯问答（"你是哪个大模型"）不再白写一条备份；
-        #     · 快照点也更准（贴着你真正要改的那一刻）。
+        # ★ `V-384`：**开工就存**（改一个已经存在的包的时候）。`V-269` 曾经把这一步
+        #   挪到"第一次真要写文件之前"，理由是不想"问一句也存一条"；真机上它的代价是
+        #   **前十几分钟看着像"根本没备份"**（18:05 开工、18:16 才第一次写）。
+        #   现在两头都要：开工先存（看得见），这一跑真没改任何东西就在收工时收掉
+        #   （`_finish` → `drop_untouched`）。新建包那种还是等第一次写之前再存。
         #   参数 `snapshot=False` 照旧能整个关掉。
         self.snapshot = None
         self.snapshot_note = ""
+        self._snap_at_start = ""
+        if self.want_snapshot:
+            self._snapshot_at_start()
         nudges, result = 0, {"ok": False, "reason": "步数用完了（还没验收通过）"}
         for n in range(1, self.max_steps + 1):
             if self.stop_check and self.stop_check():
@@ -930,7 +961,34 @@ class Loop:
         return self._finish(result["ok"], result["reason"], used, missing)
 
     # ------------------------------------------------------------------ 收尾
+    def _drop_untouched_snapshot(self):
+        """这一跑**一个字都没改** ⇒ 把开工那条空快照收掉（`V-384`）。
+
+        判据刻意收得很紧：**没改过文件**（`edit_seq == 0`、`changed` 空）**而且一条命令
+        都没跑过**（`run_seq == 0`）。少一条都不收 —— 跑过命令就可能改过盘（比如它
+        自己的包/脚本），那条快照就是真退路，不能因为"没调 edit_file"就当成空的。
+        """
+        bid = str(getattr(self, "_snap_at_start", "") or "")
+        if not bid or not getattr(self, "snapshot", None):
+            return False
+        try:
+            if self.tools.edit_seq or self.tools.changed or self.tools.run_seq:
+                return False
+        except Exception:                                                # noqa: BLE001
+            return False
+        import ai_snap as S                                              # noqa: PLC0415
+        got = S.drop_untouched(bid, (self.snapshot or {}).get("group") or "")
+        if not got.get("ok"):
+            # 收不掉也别硬来：留着不影响，顶多多一条空快照。
+            self.say("（开工那条空快照没收回：%s）" % got.get("msg"))
+            return False
+        self.say("这一跑没动过任何东西 ⇒ 把开工那条空快照收掉了（问答不留垃圾）")
+        self.snapshot = None
+        self._snap_at_start = ""
+        return True
+
     def _finish(self, ok, reason, used, missing, summary="", caveats="", kind="work"):
+        self._drop_untouched_snapshot()
         got = {"ok": bool(ok), "reason": reason, "summary": summary, "caveats": caveats,
                # ★ `V-269`：`kind="chat"` = 这次只是**回答**（没动文件、不用验收）——
                #   界面拿它把结论卡写成「💬 回答」而不是「✅ 验收通过」。

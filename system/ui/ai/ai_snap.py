@@ -298,6 +298,54 @@ def clean_ai(group="", bid=""):
         return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 
 
+# ====================================================================== 开工那条
+# ★★ `V-384`（你 2026-10-19 的原话：「它还是没有在开工前 自动创建镜像」）：
+#   `V-269` 把快照从"开工就存"挪到了"第一次真要写之前" —— 理由是"问一句『你是哪个
+#   大模型』也存一条"太浪费。但真机上的代价是：它先读十几分钟文件（18:05 开工、
+#   18:16 才第一次写），你在那个窗口里点开「版本快照」**看到的是空的** ⇒ 只能判断成
+#   "它压根没备份"。所以规矩改成：
+#     ① **改一个已经存在的包 ⇒ 开工就存**（`snapshot_at_start`）；
+#     ② 新建包 / 在包外面写项目 ⇒ 那一刻没有"动手前的样子"，仍然等第一次写之前存
+#        （`snapshot_before` 的 retry）；
+#     ③ 开工存的这条要是**这一跑一个字都没改**（既没改文件、也没跑过命令），收工时
+#        收掉（`drop_untouched`）—— `V-269` 想省的"问答也留一条"仍然省着。
+def is_pkg_dir(d):
+    """这个目录是不是**一个包**（有 pkg.json）。"""
+    try:
+        return (Path(str(d)) / "pkg.json").is_file()
+    except OSError:
+        return False
+
+
+def snapshot_at_start(task, workdir):
+    """**开工就存**一条（`V-384`）。返回口径和 `snapshot_before` 一样，多一个 `at_start`。
+
+    只对"已经在某个包目录里"的活生效：新建包（`workdir` 是 `pkgs` 整层）那一刻
+    没有任何"动手前的样子"可存，强行存只会把整层 `pkgs` 拷进去。
+    """
+    wd = Path(str(workdir or ""))
+    if not is_pkg_dir(wd):
+        return {"ok": False, "skip": True,
+                "msg": "这次不是改一个已经存在的包 —— 等它第一次动手之前再存"}
+    got = snapshot_before(task, str(wd))
+    got["at_start"] = True
+    return got
+
+
+def drop_untouched(bid, group=""):
+    """把"开工那条空快照"收掉（这一跑一个字都没改）。**只删 `by == "ai"` 的。**"""
+    if not bid:
+        return {"ok": False, "msg": "没有快照 id"}
+    try:
+        st = _store()
+        got = st.delete_ai(bid=str(bid), group=(str(group or "") or None))
+        if isinstance(got, dict):
+            got.setdefault("ok", True)
+        return got or {"ok": True}
+    except Exception as e:                                            # noqa: BLE001
+        return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
+
 def ai_count(group=""):
     """这一组里有几条是 AI 存的（界面那个"清掉 AI 的 (N)"要用）。"""
     try:

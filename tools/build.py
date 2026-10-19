@@ -55,6 +55,7 @@ nuitka 在 Python 3.13 + MinGW/gcc 下**不受支持**：
 这台机器没装 Visual Studio，所以 `--msvc=latest` 那条路也走不通。
 venv 把构建工具链挡在系统 Python 外面，名字用规范的 `venv`。
 """
+import ctypes
 import hashlib
 import os
 import re
@@ -62,6 +63,7 @@ import shutil
 import subprocess
 import sys
 import time
+from ctypes import wintypes as wt
 from pathlib import Path
 
 # ★ 控制台编码：Windows 中文系统的控制台默认 cp936(GBK)，
@@ -97,9 +99,19 @@ ICON = HOME / ICON_REL
 
 #: onefile 解包目录的**名字前缀**（`V-380`）。真正用的是 `moss-<构建指纹>`。
 ONEFILE_DIR_PREFIX = "moss"
-#: `moss.exe` 被占着时的产物名（你定的：**仍然是 .exe，能直接双击运行**；
-#: `.old` 那种名字跑不起来）。`.gitignore` 里也把它挡掉了。
-ALT_EXE_NAME = "moss.exe.exe"
+#: **编译产物先落这个名字**，编完再"换"进 `moss.exe`（`V-384`）。
+#: ★ 为什么不直接 `-o moss`：`moss.exe` 正在跑时 Windows 不让**删 / 覆写**它 ——
+#:   nuitka 收尾那一步拿到 `WinError 5`，整次打包白跑（`V-380` 踩的就是这个）。
+#:   先编成别的名字就没有这一步冲突，替换留到编完之后由 `install_exe()` 做。
+#: ★ 顺带的好处：**打包中途炸了，手上的 `moss.exe` 还是完整可用的上一版**。
+STAGE_NAME = "moss.build"
+#: **上一版**（热改名那一版，还没来得及提交就被换掉）会留下 `moss.exe.old-<指纹>`。
+#: 现在的换法是"**杀掉再替换**"，不会再产生这种文件 —— `sweep_old_exes()` 只负责把
+#: 已经躺在盘上的擦掉（你机器上就有一个）。
+OLD_PREFIX = "moss.exe.old-"
+#: `V-380~V-383` 留下的旧产物名（那套"被占着就打成 moss.exe.exe"）。现在不产生了，
+#: 清扫时顺手删掉，别让它躺在那儿。
+LEGACY_ALT = "moss.exe.exe"
 #: `{CACHE_DIR}` 在本机就是 `%LOCALAPPDATA%`（清残渣时要自己算出来 —— 那一步在 Python 里做，
 #: 不是 nuitka 展开的）。
 MOSS_BUILD_DIR = Path(os.environ.get("LOCALAPPDATA")
@@ -112,8 +124,6 @@ _FIXED_FLAGS = ("--onefile --lto=yes --remove-output --windows-icon-from-ico=" +
 #: 解包目录名里的指纹（算出来的，注释里写不出具体值 ⇒ 核对时按占位符比）。
 _STAMP_RE = re.compile(r"moss_build[/\\]" + ONEFILE_DIR_PREFIX + r"-[0-9a-f]{4,}", re.I)
 _STAMP_PLACEHOLDER = "moss_build/" + ONEFILE_DIR_PREFIX + "-<stamp>"
-#: 这一次的产物名 / 有没有被占着（`preflight` 填，`main` 用）。
-_OUT = {"locked": False}
 
 
 _STAMP_CACHE = []
@@ -172,9 +182,11 @@ def exe_is_locked():
 
     ★ 为什么非要知道（`V-380`）：Windows 不给**删/覆写**正在运行的 exe —— 实测 nuitka 最后
       一步 `os.unlink('moss.exe')` 拿到 `WinError 5 拒绝访问`，整次打包白跑。
-    ★ 那怎么办：**产物换个名字**（`moss.exe.exe`，你定的）—— 正跑着的那个 `moss.exe` 一个
-      字节都不动、照常能用，新产物也仍然是 `.exe`、**能直接双击运行**（`moss.exe.old` 那种
-      名字就跑不起来）。关掉 moss 之后再打一次，它就会正常替换 `moss.exe`。
+    ★ 那怎么办（`V-384`）：**先编到别的名字**（`moss.build.exe`），编完由 `install_exe()`
+      换进来。占着就**结束它**、替换、再把界面拉起来 —— 你要的是"打完立刻测新版"，
+      直接杀最干脆，而且老文件是被**真正删掉**的，不留任何残渣。
+    ★ 实测（2026-10）：`os.replace` 往正在运行的 exe 上打 → `WinError 5`；
+      把那个进程结束掉之后，同一个调用立刻成功。所以"能不能换"其实只取决于"它还在不在跑"。
     """
     exe = HOME / "moss.exe"
     if not exe.is_file():
@@ -187,17 +199,219 @@ def exe_is_locked():
         return True
 
 
+# ---------------------------------------------------------------- 「杀掉再换」（`V-384`）
+# ★ 为什么要自己数进程：兜底那一档要把**占着 `moss.exe` 的进程**结束掉，而 venv 里没有
+#   psutil（那是自带运行时才带的），所以只能 ctypes + Toolhelp。
+# ★ 为什么按**映像全路径**认：只按进程名 `moss.exe` 杀，会把**发行版副本**
+#   （`打包专用目录\moss\moss.exe`）一起杀掉 —— 本仓库真出过"收进程收过头"的事故。
+#   拿不到全路径的进程（权限不够 / 系统进程）**跳过**：宁可少杀，不可多杀。
+_TH32CS_SNAPPROCESS = 0x00000002
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_DETACHED = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+_NEW_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+class InstallError(RuntimeError):
+    """换不进去。**抛出之前该重启的已经重启了** —— 杀掉就是承诺要把它拉起来。"""
+
+
+class _PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [("dwSize", wt.DWORD), ("cntUsage", wt.DWORD),
+                ("th32ProcessID", wt.DWORD), ("th32DefaultHeapID", ctypes.c_void_p),
+                ("th32ModuleID", wt.DWORD), ("cntThreads", wt.DWORD),
+                ("th32ParentProcessID", wt.DWORD), ("pcPriClassBase", ctypes.c_long),
+                ("dwFlags", wt.DWORD), ("szExeFile", wt.WCHAR * 260)]
+
+
+def _norm_path(p):
+    """比较进程路径用：大小写、相对路径、正反斜杠都不该影响判断。"""
+    return os.path.normcase(os.path.abspath(str(p)))
+
+
+def pids_running(exe):
+    """{pid: 父 pid} —— 映像**正好是** `exe` 的那些进程。
+
+    ★ 只认全路径（`QueryFullProcessImageNameW`），不认进程名：同名副本不算。
+    ★ 拿不到路径就跳过 —— **宁可少杀，不可多杀**（`V-220` 那两起事故的教训）。
+    """
+    want = _norm_path(exe)
+    found = {}
+    if os.name != "nt":
+        return found
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    k32.CreateToolhelp32Snapshot.argtypes = [wt.DWORD, wt.DWORD]
+    k32.OpenProcess.restype = ctypes.c_void_p
+    k32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    k32.Process32FirstW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_PROCESSENTRY32W)]
+    k32.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_PROCESSENTRY32W)]
+    k32.QueryFullProcessImageNameW.argtypes = [ctypes.c_void_p, wt.DWORD,
+                                               wt.LPWSTR, ctypes.POINTER(wt.DWORD)]
+
+    snap = k32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
+    if not snap or snap == ctypes.c_void_p(-1).value:
+        return found
+    try:
+        entry = _PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(_PROCESSENTRY32W)
+        ok = k32.Process32FirstW(snap, ctypes.byref(entry))
+        while ok:
+            pid = int(entry.th32ProcessID)
+            handle = k32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if handle:
+                try:
+                    buf = ctypes.create_unicode_buffer(32768)
+                    size = wt.DWORD(32768)
+                    if k32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                        if _norm_path(buf.value) == want:
+                            found[pid] = int(entry.th32ParentProcessID)
+                finally:
+                    k32.CloseHandle(handle)
+            ok = k32.Process32NextW(snap, ctypes.byref(entry))
+    finally:
+        k32.CloseHandle(snap)
+    return found
+
+
+def kill_pids(pids):
+    """结束这些进程**连同子进程树** —— 口径照抄 `core/engine.py:kill_process_tree()`。
+
+    `/T` 是必须的：onefile 的 `moss.exe` 只是引导程序，真正的程序是它解包出来的子进程，
+    界面又是再下一层。只杀根进程会留一地孤儿。
+    """
+    for pid in sorted(pids):
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       creationflags=_NO_WINDOW)
+
+
+def wait_unlocked(exe, timeout=15.0):
+    """等 `exe` 变成"能独占打开"。杀完进程到真的解锁之间有几十毫秒抖动。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not exe_is_locked():
+            return True
+        time.sleep(0.2)
+    return not exe_is_locked()
+
+
+def restart_ui():
+    """把界面重新拉起来。返回 `(pid 或 None, 一句说明)`。
+
+    ★ 为什么固定 `moss ui`（`V-384`）：
+      · 能长时间占着 `moss.exe` 的只有界面这条路 —— `moss ui` / 双击 / 快捷方式
+        三个入口最后都落到 `cmd_ui`；
+      · 别的跑法（`moss :pkg`）是**一次性**的，杀掉之后替用户重跑一遍等于替他
+        重新执行了一条命令 —— 不做；
+      · **必须显式带 `ui`**：不带参数时 moss 会判成"在终端里敲的"（父进程链上有
+        shell），于是去打用法 + 包列表，界面根本不会起来。
+    ★ `DETACHED_PROCESS`：不挂到打包这个控制台上 —— 否则打包窗口一关（或 Ctrl-C），
+      刚拉起来的界面会被一起带走。
+    """
+    exe = HOME / "moss.exe"
+    try:
+        proc = subprocess.Popen(
+            [str(exe), "ui"], cwd=str(HOME),
+            creationflags=_DETACHED | _NEW_GROUP,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, close_fds=True)
+    except OSError as exc:
+        return None, "重新启动失败：%s" % exc
+    time.sleep(3.0)                     # onefile 首次解包 + 起窗口，等够了再判
+    code = proc.poll()
+    if code is not None:
+        return proc.pid, ("进程立刻退出了（退出码 %s）—— 手动双击 moss.exe 看看" % code)
+    return proc.pid, ""
+
+
+def install_exe(staged, allow_kill=True):
+    """把编好的 `staged` 顶到 `moss.exe`。返回
+    `{"method": "replace"|"kill", "killed": [...], "restart": (pid, 说明)}`。
+
+    只有两条路（`V-384` 的口径：**要杀就杀，不玩改名**）：
+
+      1) **没人占着** → `os.replace` 一步原子替换，完事；
+      2) **占着**（界面开着）→ **结束它**，等文件解锁，再替换。★ 杀完一定**重新拉起**：
+         成功时由 `main()` 接着调 `restart_ui()`；失败时在本函数里**先重启再抛**
+         `InstallError`（"杀掉就得弄完再启动它"这条是你定的）。
+
+    ★ 为什么不用"改名换位"（试过，能成，但放弃了）：代价是旧 exe 被挪开之后**仍然被
+      旧进程锁着**，删不掉 —— 仓库根上会一直躺着一个 `moss.exe.old-*`，得等"旧进程退出 +
+      再来一次打包"才清得掉。你要的是"打完就能立刻测新版"，所以直接杀：老文件被
+      `os.replace` **真正删掉**，不留残渣；界面也当场换到新版上。
+    ★ 杀谁只认**映像全路径**（`pids_running`）：同名副本（`打包专用目录\\moss\\` 那份）不算；
+      **认不出来就一个都不动**，把 staged 留着并报错 —— 宁可少杀，不可多杀。
+    """
+    final = HOME / "moss.exe"
+
+    if not exe_is_locked():
+        os.replace(str(staged), str(final))
+        return {"method": "replace", "killed": [], "restart": (None, "")}
+
+    pids = pids_running(final)
+    if not pids:
+        raise InstallError(
+            "%s 正被占着，但**认不出**是哪个进程（大概杀软，或者它是用管理员身份跑的）。\n"
+            "       这次只留下 %s；手动关掉 moss 之后重跑一次打包即可。"
+            % (final.name, staged.name))
+    if not allow_kill:
+        raise InstallError(
+            "%s 正被 %d 个进程占着（%s），这次带了 --no-kill，所以一个都没动。\n"
+            "       新产物留在 %s；关掉 moss 之后重跑一次打包即可。"
+            % (final.name, len(pids), ", ".join(str(p) for p in sorted(pids)),
+               staged.name))
+
+    print("  · %s 正被 %d 个进程占着 —— 结束它们：%s"
+          % (final.name, len(pids), ", ".join(str(p) for p in sorted(pids))))
+    kill_pids(pids)
+    if not wait_unlocked(final):
+        restart_ui()                        # 杀都杀了，先把它拉回来
+        raise InstallError("进程结束了但 %s 仍然换不进去（被杀软按住？）。已把界面重新拉起来。"
+                           % final.name)
+    try:
+        os.replace(str(staged), str(final))
+    except OSError as exc:
+        restart_ui()
+        raise InstallError("替换失败（%s）。已把界面重新拉起来。" % exc)
+    return {"method": "kill", "killed": sorted(pids), "restart": (None, "")}
+
+
+def sweep_old_exes():
+    """清掉盘上已经躺着的旧产物：`moss.exe.old-*`（上一版热改名留下的）和
+    `V-380~V-383` 的 `moss.exe.exe`。
+
+    现在的换法**不会再产生**这两种文件（杀掉 → 替换，老文件直接被删），这里纯粹是
+    **给老仓库擦屁股**。还占着的（跑着的旧进程锁着自己那份）跳过、只提示，不算失败。
+    """
+    keep = _norm_path(HOME / "moss.exe")
+    leftovers = sorted(HOME.glob(OLD_PREFIX + "*"))
+    legacy = HOME / LEGACY_ALT
+    if legacy.is_file():
+        leftovers.append(legacy)
+    for f in leftovers:
+        if not f.is_file() or _norm_path(f) == keep:
+            continue
+        try:
+            f.unlink()
+            print("  清掉 %s" % f.name)
+        except OSError:
+            print("  %s 还被跑着的 moss 占着 —— 它退出之后，下次打包再清" % f.name)
+
+
 def tempdir_spec(stamp):
     """给 nuitka 的 `--onefile-tempdir-spec`：**同一个构建固定、换构建就换**。"""
     return "{CACHE_DIR}/moss_build/" + ONEFILE_DIR_PREFIX + "-" + stamp
 
 
 def mask_stamp(s):
-    """把"算出来的那两样"换成占位符，好和 `moss.py` 注释里那一份比：
-    · 解包目录名里的构建指纹；
-    · 产物名（`moss` / `moss.exe.exe` —— 后者是"`moss.exe` 被占着"时的备用名）。"""
-    s = _STAMP_RE.sub(_STAMP_PLACEHOLDER, s)
-    return s.replace(ALT_EXE_NAME, "moss")
+    """把"算出来的那样"换成占位符，好和 `moss.py` 注释里那一份比：
+    · 解包目录名里的构建指纹（`moss-<stamp>`）。
+
+    ★ `V-384` 起产物名是**固定**的 `moss.build`，不用再打码了 —— 以前要按"占不占"
+      在 `moss` / `moss.exe.exe` 之间切换，那才需要归一化。"""
+    return _STAMP_RE.sub(_STAMP_PLACEHOLDER, s)
 
 
 def prune_old_cache(keep_name):
@@ -310,10 +524,11 @@ def preflight():
 
     stamp = source_stamp()
     spec = tempdir_spec(stamp)
-    # ★ `V-380`：`moss.exe` 被占着（界面开着）时，产物换个名字 —— 见 `exe_is_locked()`。
+    # ★ `V-384`：产物名是**固定**的 `moss.build.exe`，这里探一下 `moss.exe` 是不是正被
+    #   占着，**只是提前把"这次会怎么换"告诉用户**；真正的换法由 `install_exe()` 按当时
+    #   的实际情况定（见 `exe_is_locked()`）。
     locked = exe_is_locked()
-    _OUT["locked"] = locked                 # `main` 打完包要按它决定产物名 / 收尾的话
-    out_name = ALT_EXE_NAME if locked else "moss"
+    out_name = STAGE_NAME                   # 产物永远是临时名，换名在编完之后（`install_exe`）
     cmd = [
         sys.executable, "-m", "nuitka",
         "--onefile",
@@ -352,11 +567,13 @@ def preflight():
         return None, die(err)
 
     print("  注释核对: ✔ %s 里的命令与本次要执行的一致" % DOC_SOURCE)
-    print("  产物   : %s" % (HOME / (ALT_EXE_NAME if locked else "moss.exe")))
+    print("  产物   : %s（编完换成 %s）"
+          % (HOME / (STAGE_NAME + ".exe"), HOME / "moss.exe"))
     if locked:
-        print("           ★ `moss.exe` 正被占着（界面开着？）⇒ 这次打成 %s：" % ALT_EXE_NAME)
-        print("             正在跑的那个 moss 一个字节都没动、照常能用；")
-        print("             等关掉 moss 再打一次，就会正常替换成 moss.exe。")
+        print("           ★ `moss.exe` 正被占着（界面开着）—— **不用你关**：")
+        print("             编完先**结束**跑着它的进程，再替换，然后**自动把界面拉起来**（就是新版）。")
+    else:
+        print("           （没人占着：编完直接替换成 moss.exe）")
     print("  解包目录: %s（指纹 %s —— 每次打包换一个，旧的打包时清）"
           % (spec.replace("{CACHE_DIR}", str(MOSS_BUILD_DIR.parent)), stamp))
     print("  旧目录  : 打完包会清一遍（只清 %s 里我们自己那两种名字）" % MOSS_BUILD_DIR)
@@ -379,50 +596,59 @@ def main():
         print("[检查模式] 前置检查全部通过，未执行打包。")
         return 0
 
-    # ★ `V-380`：主产物要是正被占着（界面开着），这一次的产物**换个名字**（`moss.exe.exe`）——
-    #   正在跑的那个 `moss.exe` 一个字节都不动（不然 nuitka 最后一步 `os.unlink('moss.exe')`
-    #   会拿到 WinError 5，整次打包白跑；这一轮实测踩到了）。产物名是 `preflight` 定的。
-    locked = bool(_OUT["locked"])
+    # ★ `V-384`：产物名不再跟着"占不占"变 —— 永远是 `moss.build.exe`，换进 `moss.exe`
+    #   是**编完之后**的一步（`install_exe()`）。打包中途炸了，手上的 `moss.exe` 还是
+    #   完整可用的上一版（以前是直接往 moss.exe 上写）。
     print("开始编译。首次运行会下载约 100MB 的 C 编译器到用户缓存（之后不再下载），")
     print("之后每次约 1-3 分钟。")
     print("=" * 64)
     sys.stdout.flush()
 
+    staged = HOME / (STAGE_NAME + ".exe")
+    if staged.exists():                     # 上次失败留下的残渣：先清掉（清不掉就交给 nuitka）
+        try:
+            staged.unlink()
+        except OSError:
+            print("（%s 清不掉，先不管，接着编）" % staged.name)
+
     rc = subprocess.call(cmd, cwd=str(HOME))
     if rc != 0:
         return die("nuitka 返回 %d，打包失败。" % rc)
+    if not staged.is_file():
+        return die("nuitka 报成功，但 %s 不存在。" % staged.name)
 
-    exe = HOME / (ALT_EXE_NAME if locked else "moss.exe")
-    if not exe.is_file():
-        return die("nuitka 报成功，但 %s 不存在。" % exe.name)
+    try:
+        res = install_exe(staged, allow_kill="--no-kill" not in sys.argv[1:])
+    except InstallError as exc:
+        return die(str(exc))
 
-    # 上一次"被占着"那次留下的备用产物：这次正常替换成功了就顺手清掉，别攒着。
-    if not locked:
-        stale = HOME / ALT_EXE_NAME
-        if stale.is_file():
-            try:
-                stale.unlink()
-                print("（顺手清掉上一次留下的 %s）" % ALT_EXE_NAME)
-            except OSError:
-                print("（%s 清不掉、先留着 —— 大概它正被另一个进程跑着）" % ALT_EXE_NAME)
-
+    exe = HOME / "moss.exe"
     print()
     print("=" * 64)
     print("[完成] %s  (%.1f MB)" % (exe, exe.stat().st_size / 1048576))
     print("=" * 64)
-    # ★ `V-380`：顺手把旧的解包目录清掉 —— `{TIME}` 那版实测堆了 95 个 / 2.1 GB。
+    if res["method"] == "replace":
+        print("（`moss.exe` 没人占着，编完直接替换 —— 下次启动就是新版）")
+    else:
+        print("★ 结束了在跑的那 %d 个进程，新 exe 已经就位（老文件是**真正删掉**的，没残渣）。"
+              % len(res["killed"]))
+        pid, note = restart_ui()
+        if pid and not note:
+            print("  界面已经**自动重新拉起来**了（pid=%s）—— 它跑的就是刚打的这一版，直接测。"
+                  % pid)
+        else:
+            print("  ⚠ 界面没能自动拉起来（pid=%s）：%s" % (pid, note or "未知原因"))
+            print("     手动双击 %s 即可。" % exe)
+
+    print()
+    print("擦掉盘上可能还躺着的旧产物（上一版热改名的 `moss.exe.old-*`、`V-380~V-383` 的 %s）："
+          % LEGACY_ALT)
+    sweep_old_exes()
     print()
     print("清理 onefile 的旧解包目录：%s" % MOSS_BUILD_DIR)
     gone, kept = prune_old_cache("%s-%s" % (ONEFILE_DIR_PREFIX, source_stamp()))
     print("  清掉 %d 个，留着 %d 个（留着的是当前指纹那份 + 清不掉的）" % (gone, kept))
     print("  ★ 换过指纹之后的**第一次**运行会解包一次（约 0.5 秒），之后就一直复用那份了。")
-    if locked:
-        print()
-        print("★ 这次是备用产物：`moss.exe` 正被占着，所以打成了 %s。" % ALT_EXE_NAME)
-        print("  1) 直接用它就测新版：  %s --selfcheck" % exe)
-        print("  2) 想让它变成正式的 `moss.exe`：关掉 moss（界面）之后再敲一次 build；")
-        print("     或者你自己把 %s 改名成 moss.exe（改名之后双击/命令行都正常）。" % ALT_EXE_NAME)
-        print("  3) 它已经在 `.gitignore` 里了，不会进 git。")
     print()
     print("接下来两步别省（nuitka onefile 下路径最容易翻车）：")
     print("  1) %s --selfcheck" % exe)
