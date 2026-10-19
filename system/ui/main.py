@@ -2781,7 +2781,9 @@ class Api:
                             "files": part.get("files") or [],
                             "procs": part.get("procs") or [],
                             "killed": part.get("killed") or [],
-                            "snapshot": part.get("snapshot")})
+                            "snapshot": part.get("snapshot"),
+                            # ★ `V-382`：快照没存上的原因（结论卡上的告警要用）
+                            "snapshot_note": part.get("snapshot_note") or ""})
                 if force:
                     rec["continue_note"] = cont_note
                 R.save_live(rec, scope)
@@ -2850,6 +2852,8 @@ class Api:
                         "summary": got.get("summary") or "", "caveats": got.get("caveats") or "",
                         "usage": got.get("usage") or {}, "files": got.get("files") or [],
                         "snapshot": got.get("snapshot"), "steps": got.get("steps") or [],
+                        # ★ `V-382`：没存上快照的原因（结论卡据此告警"这次没有退路"）
+                        "snapshot_note": got.get("snapshot_note") or "",
                         "folded": got.get("folded") or 0,
                         # ★ `V-251`：这条会话的对话本身 + 从哪条接过来的 ——
                         #   「接着聊」靠它，重启 moss 也不会"只能重新再来"。
@@ -3352,7 +3356,7 @@ class Api:
         return chain
 
     def _ai_snap_exists(self, snap):
-        """这条镜像在盘上还在吗（可能被 `snap_clean` 清掉了）。"""
+        """这条镜像在盘上还在吗（用户自己在「版本快照」里清过 / 或"编辑会话"回退时收走了）。"""
         if not snap or not snap.get("id"):
             return False
         try:

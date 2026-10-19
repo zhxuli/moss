@@ -269,6 +269,8 @@ def list_runs(limit=30, with_steps=False, scope=None, everywhere=False):
     for rec in rows[:max(1, int(limit or 30))]:
         row = {k: rec.get(k) for k in ("id", "task", "workdir", "ok", "reason", "summary",
                                        "caveats", "usage", "files", "snapshot", "seconds",
+                                       # ★ `V-382`：快照没存上的原因（界面上要告一句"没退路"）
+                                       "snapshot_note",
                                        "started_text", "finished", "model", "max_tokens",
                                        "kind", "stopped", "continued_from", "running",
                                        "updated", "mode")}

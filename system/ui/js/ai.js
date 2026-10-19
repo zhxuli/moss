@@ -25,6 +25,17 @@ const AIR = Vue.reactive({
   promptTokens: 0,             // 上一轮实际发出去多少输入 token（= 现在上下文多长）
   runs: [],                   // `V-243`：跑过的任务（存 user_data/ai/runs/，重启 moss 还在）
   viewing: "",                // 正在看哪条历史记录（空 = 看当前/最近这次）
+  /* ★ `V-383`：**"现在这一跑"的坐标** —— 用户报的那个 bug：
+     「我把历史里当前那条点开了，界面就不更新了，可是状态还显示在跑」。
+     病根：`aiOpenThread` 会把 `AIR.turns` 换成盘上那份**半截**记录、并把 `AIR.cur` 设成 -1，
+     轮询就找不到"这一轮"了 ⇒ 写不进去 ⇒ 冻住（顶栏却还在显示 running）。
+     所以现在活的那一轮有**固定的 key**（`liveKey`，轮询认 key 不认下标），
+     宿主给的 `run_id` 记成 `liveRunId`（历史列表据此高亮"当前"，点它 = 切回实时）。
+       · `liveKey`     正在跑的**那一轮**的 key（`aiStart` 建轮时定下）
+       · `liveRunId`   正在跑的**那条记录**的 id（每跳从 `ai_poll` 拿；不在跑就空）
+       · `liveTask`    这一跑的任务原文（切回实时时用来重建那一轮）
+       · `liveListFor` 已经为哪个 run_id 刷新过历史列表（免得每跳都重读） */
+  liveKey: "", liveRunId: "", liveTask: "", liveListFor: "",
   maxMillions: 100,            // 界面上那一格是**百万为单位**（100 = 1 亿）
   model: "",                   // `V-252`：顶栏那个模型下拉选中的（空 = 用配置里第一个）
   diskNoted: "",               // `V-249`：已经通知过"盘上变了"的那一次（免得每轮轮询都刷一遍）
@@ -231,6 +242,46 @@ function jsonTreeHtml(v, key, depth, forceOpen){
    外面想断言"到底 ready 没有 / 是不是还 busy"就靠它 —— 不用去猜 DOM。 */
 window.__AIR = AIR;
 
+/* ★ 修一个启动竞态：AI 页比 pywebview 桥先挂载时，`window.pywebview` 还不存在，
+   直接读 `window.pywebview.api` 会报 "Cannot read properties of undefined (reading 'api')"。
+   现在先等桥出现（最多 10 秒），期间不刷红错误；桥真没来才给人话。 */
+let _aiApiWait = null;
+function aiApiReady(){
+  return !!(window.pywebview && window.pywebview.api);
+}
+function aiWaitApi(timeoutMs){
+  if (aiApiReady()) return Promise.resolve(window.pywebview.api);
+  if (_aiApiWait) return _aiApiWait;
+  const limit = timeoutMs || 10000;
+  _aiApiWait = new Promise(resolve => {
+    const t0 = Date.now();
+    const timer = setInterval(() => {
+      if (aiApiReady()){
+        clearInterval(timer);
+        _aiApiWait = null;
+        resolve(window.pywebview.api);
+      }else if (Date.now() - t0 > limit){
+        clearInterval(timer);
+        _aiApiWait = null;
+        resolve(null);
+      }
+    }, 50);
+  });
+  return _aiApiWait;
+}
+
+async function aiStartPage(){
+  const api = await aiWaitApi();
+  if (!api){
+    AIR.err = "读不到 AI 状态：宿主桥一直没连上，重启 moss 界面再试。";
+    AIR.rev++;
+    return;
+  }
+  aiLoadRuns();
+  aiLoadSkills();
+  aiPollOnce();
+}
+
 function aiWhereDir(){
   // ★ `V-315`：干活的地方**就是这个包**（"在哪干活"那个下拉已经去掉了）。
   //   没有选包时回空串 —— 调用方（`aiStart`）会弹一句"先在左边选一个包"。
@@ -240,7 +291,9 @@ function aiWhereDir(){
 
 async function aiRefreshInfo(force){
   try {
-    AIR.info = await window.pywebview.api.ai_info(aiWhereDir(), !!force);
+    const api = await aiWaitApi();
+    if (!api) return;                         // 桥没来：先不刷红字，等下一跳
+    AIR.info = await api.ai_info(aiWhereDir(), !!force);
     if (AIR.info && AIR.info.ok){
       if (AIR.info.max_tokens) AIR.maxTokens = AIR.info.max_tokens;
       if (AIR.info.warn_tokens) AIR.warnTokens = AIR.info.warn_tokens;
@@ -463,6 +516,13 @@ async function aiLoadRuns(){
     if (!got || !got.ok) return;
     AIR.runs = got.runs || [];
     AIR.scope = got.scope || null;
+    // ★ `V-383`：列表里已经有"现在这一跑"了 ⇒ 把它选成「当前」（那一行要能高亮）。
+    //   没有就别动 `pickId`（不然会把它指到一个列表里还不存在的 id 上，
+    //   顶栏那句"现在：…"和列表高亮就一起空了 —— `ai-alt-jump` 场景当场抓到过）。
+    if (AIR.running && AIR.liveRunId
+        && (AIR.runs || []).some(r => r && String(r.id) === String(AIR.liveRunId))){
+      AIR.pickId = AIR.liveRunId;
+    }
     if (!AIR.running) aiAdoptLast();
   }catch(e){ /* 读不到就空着，不吵人 */ }
 }
@@ -506,9 +566,16 @@ async function aiOpenThread(id, quiet){
     if (got.cont){ AIR.contId = tail; AIR.contTask = (AIR.turns[AIR.turns.length - 1] || {}).task || ""; }
     else { AIR.contId = ""; AIR.contTask = ""; }
     // 底栏那两个"最近一轮"的镜像（`A.steps` / `A.result` 还在被那几个计算属性读）
-    const last = AIR.turns[AIR.turns.length - 1] || null;
-    AIR.steps = (last && last.steps) || [];
-    AIR.result = (last && last.result) || null;
+    // ★ `V-383`：**正在跑的时候这份镜像归"活的那一轮"** —— 不能被历史快照盖掉
+    //   （盖掉的话，接回来的活轮会把历史步骤当成自己的）。这时 `AIR.steps` 就是
+    //   轮询每跳维护的那一份，正是"最新的"。
+    if (AIR.running){
+      aiAttachLiveTurn();             // 活的那一轮接在后面继续更新（界面不冻住）
+    }else{
+      const last = AIR.turns[AIR.turns.length - 1] || null;
+      AIR.steps = (last && last.steps) || [];
+      AIR.result = (last && last.result) || null;
+    }
     AIR.rev++;
     return true;
   }catch(e){
@@ -538,6 +605,27 @@ async function aiAdoptLast(){
     // ★ `V-262`：认领的是**整条会话**（重启后也把前几轮摆出来），不是只有最后那一条
     await aiOpenThread(last.id, true);
   }
+}
+
+/* ★ `V-383`：**把"现在这一跑"接回界面**（用户报的那个 bug 的正解）。
+   什么时候会用到：你正在跑，同时点开了历史里的某条会话 —— 以前那一下把 `AIR.turns`
+   整个换成盘上的快照、`AIR.cur` 设成 -1，于是轮询写不进去：**步骤再也不更新，
+   可顶栏还写着在跑**。
+   现在：活的那一轮按 `liveKey` 找回来；真被换掉了（还在跑）就**重建一轮接在后面**——
+   步骤用的是轮询一直维护着的 `AIR.steps`，所以接回来就是最新的，不是半截快照。 */
+function aiAttachLiveTurn(){
+  if (!AIR.running) return null;
+  let t = (AIR.turns || []).filter(x => x && x.key === AIR.liveKey)[0];
+  if (!t){
+    if (!AIR.liveKey) AIR.liveKey = "live" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1);
+    t = {key: AIR.liveKey, task: AIR.liveTask || AIR.task || "",
+         at: "运行中 · " + new Date().toTimeString().slice(0, 8),
+         steps: AIR.steps || [], result: AIR.result || null,
+         folded: false, autoFolded: false, note: ""};
+    AIR.turns = (AIR.turns || []).concat([t]);
+  }
+  AIR.cur = (AIR.turns || []).indexOf(t);
+  return t;
 }
 
 /* 点「看」：把那条历史的步骤流/结论load进来（只看，不重跑）。
@@ -748,6 +836,22 @@ async function aiPollOnce(){
     //   刚给自己造了一只，那条「等你允许」得立刻冒出来（不然你要等下次进这一页才看见）。
     const _wasRunning = AIR.running;
     AIR.running = !!got.running;
+    // ★ `V-383`：**"现在这一跑"的 id**（宿主每跳都给）。它有两个用处，都是用户报的那个
+    //   bug（"点开历史里当前那条，界面就不更新了，可状态还显示在跑"）：
+    //     ① 让"当前"那一行在历史列表里高亮（`pickId` 指过去）；
+    //     ② 点它就认得出"这就是正在跑的" ⇒ 切回实时，而不是去读盘上那份半截记录。
+    AIR.liveRunId = AIR.running ? String(got.run_id || "") : "";
+    if (AIR.running && AIR.liveRunId && AIR.liveRunId !== AIR.liveListFor){
+      // 这一跑的记录已经落盘了（宿主开工就写）—— 让列表把它带上，
+      // 不然"当前"那一行根本不存在，既高亮不了也点不回来。
+      AIR.liveListFor = AIR.liveRunId;
+      aiLoadRuns();
+    }
+    if (AIR.running && AIR.liveRunId
+        && (AIR.runs || []).some(r => r && String(r.id) === String(AIR.liveRunId))){
+      // 列表里真有这条才指过去（理由见 `aiLoadRuns` 里那一段）
+      AIR.pickId = AIR.liveRunId;
+    }
     if (_wasRunning && !AIR.running){
       aiLoadSkills();
       aiRefreshInfo(true);      // `V-319`：这一跑里它可能问过权限，跑完把清单重读一次
@@ -762,8 +866,14 @@ async function aiPollOnce(){
     AIR.steps = got.steps || [];
     // Poll payload is authoritative for the live turn: refresh the matching turn snapshot
     // so answered ask cards stop showing controls and remain readable in history.
-    const liveTurn = (AIR.turns || [])[AIR.cur];
-    if (liveTurn) liveTurn.steps = AIR.steps;
+    // ★ `V-383`：**认 key，不认下标** —— 下标会被"翻历史 / 清空"改掉（`aiOpenThread`
+    //   以前把它设成 -1），认错了活的那一轮就收不到步骤 ⇒ 界面冻住、状态还写着在跑。
+    let cur = null;
+    if (AIR.liveKey){
+      cur = (AIR.turns || []).filter(t => t && t.key === AIR.liveKey)[0] || null;
+    }
+    if (!cur && !AIR.viewing) cur = (AIR.turns || [])[AIR.cur] || null;
+    if (cur) cur.steps = AIR.steps;
     AIR.say = got.say || [];
     AIR.seconds = got.seconds || 0;
     AIR.phase = got.phase || "";
@@ -794,9 +904,8 @@ async function aiPollOnce(){
     if (!got.idle) AIR.result = got.result || null;
     // ★ `V-258`：这一轮的步骤/结论**落在它自己身上**（`AIR.steps` 还是"现在这轮"的镜像，
     //   底下那几个计算属性照旧读它）—— 关键：**前几轮的 steps 数组不被碰**。
-    const cur = (AIR.turns || [])[AIR.cur];
+    //   ★ `V-383`：`cur` 在上面按 `liveKey` 找过了，这里别再按下标取一遍。
     if (cur){
-      cur.steps = AIR.steps;
       if (got.result){
         cur.result = got.result;
         // ★ `V-259`：这一次到底**接着没有** —— 宿主把话说清楚，界面照实显示在那一轮上
@@ -875,12 +984,18 @@ async function aiStart(){
   const cont = AIR.contId || (AIR.viewing ? "" : (AIR.lastId || ""));
   // ★ `V-258`：**新起一轮** —— 前面几轮原样留着（这样接着聊时还看得到上文）；
   //   输入框发出去就清空（照稿子的 `handleInput.value = ""`）。
-  AIR.turns.push({key: "t" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1), task: task,
+  // ★ `V-383`：这一轮的 key 记进 `liveKey` —— 之后不管界面被切到哪儿
+  //   （翻历史 / 清空 / 换会话），轮询都靠它把"活的那一轮"找回来。
+  const liveKey = "t" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1);
+  AIR.turns.push({key: liveKey, task: task,
                   attachments: atts.map(a => ({name: a.name, kind: a.kind, size: a.size})),
                   at: (cont ? "接着聊" : "新会话") + " · " +
                       new Date().toTimeString().slice(0, 8),
                   steps: [], result: null, folded: false, autoFolded: false, note: ""});
   AIR.cur = AIR.turns.length - 1;
+  AIR.liveKey = liveKey;
+  AIR.liveTask = task;
+  AIR.liveListFor = "";
   AIR.diskNoted = "";            // `V-249`：新任务 = 允许再通知一次"盘上变了"
   AIR.snapNoted = "";            // `V-250`：新任务 = 允许再通知一次"快照存好了"
   /* ★ `V-259`：**接着哪条** —— 这是"一个会话一直聊"的关键，之前只有 `contId` 一个来源，
@@ -896,6 +1011,10 @@ async function aiStart(){
     const got = await window.pywebview.api.ai_start(task, dir, AIR.maxTokens, cont, AIR.model || "", atts);
     if (!got || !got.ok) { toast((got && got.msg) || "起不来。", true); AIR.busy = false; return; }
     AIR.running = true;
+    // ★ `V-383`：**开工那一下就知道"这一跑的记录 id"**（不用等下一跳）——
+    //   历史列表里的"当前"那一行马上就能高亮、点它也能认出来是活的。
+    AIR.liveRunId = String(got.run_id || "");
+    if (AIR.liveRunId) AIR.liveListFor = "";       // 让下一跳去刷新历史列表（把它带上）
     AIR.task = "";
     AIR.attachments = [];
     toast((cont ? "接着上次那条聊" : "开了一条新会话") +
@@ -1378,11 +1497,22 @@ const MossAi = {
     chainMeta(c){
       const bits = [];
       if (c && c.turns > 1) bits.push(c.turns + " 轮");
-      if (c && c.tail && c.tail.interrupted) bits.push("⚠ 上次没跑完");
+      // ★ `V-383`：**正在跑的那条**别写成"上次没跑完"（那是给强制关掉的那种记录用的）。
+      //   用户原话：「这个记录应该高亮 因为这是当前记录」。
+      if (this.isLiveChain(c)) bits.push("运行中");
+      else if (c && c.tail && c.tail.interrupted) bits.push("⚠ 上次没跑完");
       else if (c && c.tail && c.tail.ok) bits.push("✅");
       const at = (c && c.tail && c.tail.started_text) || "";
       if (at) bits.push(String(at).slice(5, 16));
       return bits.join(" · ");
+    },
+    /* ★ `V-383`：这一串会话就是**正在跑的那一条**吗（历史列表据此高亮 + 加个小圆点）。 */
+    isLiveChain(c){
+      this.A.rev;
+      if (!this.A.running || !this.A.liveRunId || !c) return false;
+      const live = String(this.A.liveRunId);
+      return (c.ids || []).map(String).indexOf(live) >= 0 ||
+             String((c.tail && c.tail.id) || "") === live;
     },
     dropEnter(){ if (!AIR.dropHot){ AIR.dropHot = true; AIR.rev++; } },
     dropLeave(e){
@@ -1472,6 +1602,9 @@ const MossAi = {
       AIR.muted = 0;
       AIR.result = null; AIR.steps = []; AIR.sentTask = ""; AIR.viewing = ""; AIR.pickId = ""; AIR.answeredQid = "";
       AIR.task = "";
+      // ★ `V-383`：**正在跑的时候清空**只该清历史，不能把它正在干的那一轮也弄丢
+      //  （丢了的话轮询就没地方写步骤 —— 又是一次"看着像卡死，其实在跑"）。
+      if (AIR.running) aiAttachLiveTurn();
       AIR.rev++;
       this.$nextTick(() => this.autoGrow());
     },
@@ -1811,12 +1944,26 @@ const MossAi = {
         AIR.viewing = ""; AIR.sentTask = ""; AIR.steps = []; AIR.result = null;
         AIR.turns = []; AIR.cur = -1;                    // `V-258`：换会话 = 清空日志
         AIR.contId = ""; AIR.contTask = ""; AIR.lastId = ""; AIR.muted = 0;
+        // ★ `V-383`：正在跑的时候"新开一条"只该改"下一句不接着谁"，
+        //   不能把它正在干的那一轮也抹掉（抹了轮询就没地方写 —— 又是一次"看着像卡死"）。
+        if (AIR.running) aiAttachLiveTurn();
         AIR.rev++;
         toast("新会话：下一条不带之前的对话");
         return;
       }
       const c = this.sessChains.filter(x => x.head.id === id || x.tail.id === id)[0];
       const tail = (c && c.tail.id) || id;
+      // ★ `V-383`：**点的是"正在跑的那一条"** ⇒ 别去读盘上那份半截记录
+      //   （读完 `AIR.cur` 变 -1、`turns` 换成快照 ⇒ 界面冻住，可顶栏还写着在跑）。
+      //   直接切回实时：活的那一轮接回来，轮询继续往下写。
+      if (AIR.running && tail && tail === AIR.liveRunId){
+        AIR.pickId = tail;
+        AIR.viewing = "";                 // 这不是"历史"，这是"现在"
+        aiAttachLiveTurn();
+        AIR.rev++;
+        toast("这就是正在跑的那一条 —— 已经切回实时，它在继续跑");
+        return;
+      }
       const r = (AIR.runs || []).filter(x => x.id === tail)[0] ||
                 (AIR.runs || []).filter(x => x.id === id)[0];
       // ★ `V-262`：先**把整条会话读回来**（几轮都在），再决定"能不能接着聊" ——
@@ -1827,7 +1974,8 @@ const MossAi = {
       AIR.viewing = tail;                 // 标一下"这是翻出来的历史"（结论卡上会带牌子）
       if (r && r.cont){
         AIR.contId = tail; AIR.contTask = r.task || "";
-        toast("接着这条聊 —— 在下面写下一句，点发送");
+        toast("接着这条聊 —— 在下面写下一句，点发送"
+              + (AIR.running ? "（正在跑的那一轮接在最下面，还在更新）" : ""));
       } else {
         AIR.contId = ""; AIR.contTask = "";
         toast("这条是更早的记录（当时还没存对话）—— 只能看，接不上", true);
@@ -2045,9 +2193,7 @@ const MossAi = {
   },
   mounted(){
     aiRefreshInfo();
-    aiLoadRuns();
-    aiLoadSkills();
-    aiPollOnce();
+    aiStartPage();
     /* 700ms 一跳：① 选中的包换了就重读信息；② 正在跑就拉步骤流。
        要不要改成事件驱动？不用 —— 命令行那一页也是轮询（run_poll 200ms），
        而且 loop 一步可能几秒，这个频率足够"看着它在动"。 */
@@ -2065,6 +2211,9 @@ const MossAi = {
         AIR.steps = []; AIR.result = null; AIR.lastId = ""; AIR.lastAdopted = "";
         AIR.sentTask = ""; AIR.muted = 0; AIR.pickId = "";
         AIR.turns = []; AIR.cur = -1;                 // `V-258`：换了包 = 换一条会话，日志清空
+        // ★ `V-383`：换包时把"活的那一轮"的指针也放掉 —— 别的包的页面不该凭空冒出
+        //   上一页那一跑（它要是还在跑，回到原来的包就看得见）。
+        AIR.liveKey = ""; AIR.liveTask = ""; AIR.liveListFor = "";
         aiRefreshInfo();
         aiLoadRuns();
       }
@@ -2415,6 +2564,12 @@ const MossAi = {
                     <button class="btn btn-outline" @click.stop="rollback(t.result.snapshot)"
                             title="回到这次动手之前（只写回：缺的补上、变了的回退）">回退到开工前</button>
                   </div>
+                  <!-- V-382：改了文件却没有快照 ⇒ 照实告警（以前这里什么都不显示，
+                       用户以为有退路，其实没有）。 -->
+                  <div class="ai-rsnap warn" v-else-if="(t.result.files || []).length">
+                    <span>⚠ 这次改了文件，但没存上快照（{{ t.result.snapshot_note || '原因没记下来' }}）
+                      —— 出问题回不去</span>
+                  </div>
                   <p v-if="t.result.summary" class="ai-rsum">{{ t.result.summary }}</p>
                   <p v-if="t.result.caveats" class="ai-rcav">它自己标的不确定：{{ t.result.caveats }}</p>
                   <div v-if="(t.result.files || []).length" class="ai-rfiles">动过的文件：<span
@@ -2527,7 +2682,8 @@ const MossAi = {
                   <div class="popover-title">当前包的历史<span class="popover-hint">点一条就切过去</span></div>
                   <div class="history-list">
                     <div class="history-item ai-hist-i" v-for="c in sessChains" :key="c.head.id"
-                         :class="{active: sessCurrent && (sessCurrent.head.id === c.head.id)}"
+                         :class="{active: sessCurrent && (sessCurrent.head.id === c.head.id),
+                                  live: isLiveChain(c)}"
                          :title="(c.head.task || '') + '　' + chainMeta(c)"
                          @click="pickChain(c)">
                       <div class="history-item-left">

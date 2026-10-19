@@ -38,10 +38,6 @@ NO_WINDOW = 0x08000000
 #: `V-307`：给跑包的子进程单独开一个进程组 —— 停止时 `taskkill /T` 才能把它**整个家族**
 #: （moss → python → 包自己的子进程）一次收干净。
 CREATE_NEW_PROCESS_GROUP = 0x00000200
-#: 回给模型的东西**一律截断**（全量留在「命令行」页给人看）—— 这是省 token 的第 5 条
-TAIL_LINES = 60
-TAIL_CHARS = 4000
-
 #: 契约就在这儿（唯一真相）。提示词里**不抄**它的正文，要用就当场切一段。
 def spec_path():
     return E.HOME / "system" / "spec" / "插件契约.md"
@@ -96,21 +92,13 @@ TOOLS = [
             "section": {"type": "string"}}, "required": []}}},
     {"type": "function", "function": {
         "name": "run_moss",
-        "description": ("跑一条 moss 命令（和用户在终端里敲完全一样），回退出码 + 输出末尾。"
+        "description": ("跑一条 moss 命令（和用户在终端里敲完全一样），回退出码 + **完整输出**"
+                        "（不截断）。长输出会直接进入上下文，做好预算。"
                         "改完必须用它证明「真的能跑」：例如 args=\":新包名 示例参数\"。"),
         "parameters": {"type": "object", "properties": {
             "args": {"type": "string", "description": "moss 后面的那串，例如 \":dazi 你好 3\""},
             "timeout": {"type": "integer", "description": "秒，默认 120"}},
             "required": ["args"]}}},
-    {"type": "function", "function": {
-        "name": "snap_clean",
-        "description": ("清掉**你自己**存过的快照（开工前自动存的那种）。"
-                        "**碰不到用户自己存的快照** —— 那些一律跳过，这是设计好的闸。"
-                        "run_moss 里删快照的命令会被拒（只能用它）。"),
-        "parameters": {"type": "object", "properties": {
-            "group": {"type": "string", "description": "包 id（不填 = 当前这次任务的那个包）"},
-            "id": {"type": "string", "description": "只清这一条（可选）"}},
-            "required": []}}},
     {"type": "function", "function": {
         "name": "answer",
         "description": ("**只是回答问题**时用它收工（问你是谁、问某个包怎么用、问契约里怎么写…）："
@@ -230,20 +218,6 @@ def tools_for(self_tools=None):
     return out
 
 
-def tail(text, lines=TAIL_LINES, chars=TAIL_CHARS):
-    s = str(text or "")
-    if not s:
-        return "（没有输出）"
-    ls = s.splitlines()
-    cut = len(ls) > lines or len(s) > chars
-    if len(ls) > lines:
-        s = "\n".join(ls[-lines:])
-    if len(s) > chars:
-        s = s[-chars:]
-    return ("……（前面还有 %d 行，已省略）\n" % (len(ls) - lines) if len(ls) > lines else "") + \
-           ("……（已截到末尾 %d 字）\n" % chars if cut and len(s) >= chars else "") + s
-
-
 def host_cmd():
     """真正跑包用的宿主命令。
 
@@ -340,6 +314,8 @@ class Tools:
         self.reads = {}            # 每个文件读了几次（`V-237`：读第三回就提醒别再磨）
         self.greps = {}            # 每组 (路径, 正则) 搜了几次（`V-241`：同一组搜三回就喊停）
         self.grep_files = {}       # 每个文件被搜了几次（换正则也算 —— 那是"一行行刨文件"）
+        #: ★ `V-382`：同一条 `run_moss` 命令跑了几次（第 3 回就顶一句"换个证据来源"）
+        self.runs = {}
         # ---- `V-307`：停止 / 进程 / 提问 ----
         self.stop_check = stop_check or (lambda: False)
         self.asker = asker
@@ -458,18 +434,52 @@ class Tools:
         # ★ `V-269`：写文件之前先让 loop 存快照（`before_write` 里做的事**必须**在
         #   `fn(...)` 之前跑完 —— 不然存下来的就是"已经改了一半"的样子）。
         #   只认第一次：同一轮里连改三个文件也只存一条。存不上不影响改（loop 那边自己会记）。
+        # ★ `V-382`：① 把**这个文件**交给 loop（以前只按 workdir 存 —— workdir 是 A、实际在改 B
+        #   的时候，存下来的是 A 那个空壳）；② 只写自己的 tmp / 备份库**不触发**（那是中间产物：
+        #   为它白存一条既浪费，又把真正的快照点推远了）。
         if not self._wrote and name in ("edit_file", "write_file") and self.before_write:
-            self._wrote = True
+            target = self._path(args)
             try:
-                self.before_write()
-            except Exception as e:                                   # noqa: BLE001
-                self.log.append(("(快照)", "动手前存快照失败：%s" % e))
+                import ai_snap as _S                                     # noqa: PLC0415
+                _scratch = _S.is_scratch(target)
+            except Exception:                                            # noqa: BLE001
+                _scratch = False
+            if not _scratch:
+                try:
+                    # `"later"` = 要改的东西还没建出来（新建包）：**这一次没存成，但别把
+                    # 机会用掉** —— 等它建出来、下一次动它之前再存（见 `_before_first_write`）。
+                    state = self.before_write(target)
+                except Exception as e:                                   # noqa: BLE001
+                    self.log.append(("(快照)", "动手前存快照失败：%s" % e))
+                    state = "done"
+                self._wrote = (state != "later")
         try:
             out = fn(args or {})
         except Exception as e:                                       # noqa: BLE001
             return "[工具自己炸了] %s: %s" % (type(e).__name__, e)
+        out = self._nudge_repeat(name, args, out)
         self.log.append((name, str(out).replace("\n", " ")[:110]))
         return out
+
+    def _nudge_repeat(self, name, args, out):
+        """同一条 `run_moss` 命令**第 3 回**还跑？在结果前面顶一句硬提醒（`V-382`）。
+
+        真机证据（autokey 那几轮）：`:autokey daemon start` 连跑 5 回、`:autokey check` 4 回，
+        每回输出一模一样 —— 它不肯换证据来源，就在原地打转，一轮烧掉 16.7M token。
+        提醒**不拦**（万一它真有理由），只是把"你已经在原地转了几圈"摆到它眼前。
+        """
+        if name != "run_moss":
+            return out
+        cmd = " ".join(str((args or {}).get("args") or "").split())
+        if not cmd:
+            return out
+        n = self.runs.get(cmd, 0) + 1
+        self.runs[cmd] = n
+        if n < 3:
+            return out
+        return ("★ 这条命令你已经跑了 %d 次（前几次结果一样）。**别再用它换第 %d 次同样的结果** —— "
+                "换个证据来源：读源码 / 读它自己的日志文件 / 在代码里加一行 print 再跑一次 / "
+                "直接问用户看到了什么。\n%s" % (n, n, out))
 
     def _path(self, args, key="path"):
         raw = str((args or {}).get(key) or "").strip()
@@ -633,12 +643,13 @@ class Tools:
         line = str(args.get("args") or "").strip()
         if not line:
             return "args 不能空（比如 \":我的包 参数\"）"
-        # ★ `V-236` 的硬闸：**删快照这条命令不给走**。
-        #   要清就用 `snap_clean`（它只删 `by == "ai"` 的，结构上碰不到用户存的）。
+        # ★ `V-236`/`V-382` 的硬闸：**删快照这条命令不给走**。
+        #   而且现在连 `snap_clean` 也没有了（工具表里删掉了）—— 快照是 AI 和用户的退路，
+        #   删它只能由人（界面「版本快照」页 / `moss --snap rm`）。
         low = line.lower()
         if "--snap" in low and any(w in low for w in (" rm", " del", " delete", " drop", " gc")):
-            return ("[拒绝] 删快照不许用 run_moss —— 用 `snap_clean` 工具"
-                    "（它只删 AI 自己存的那几条，用户存的一条都不碰）")
+            return ("[拒绝] 删快照不许用 run_moss —— 快照是**你和用户的退路**，AI 一律不能删"
+                    "（`snap_clean` 这个工具也已经没有了）。要清请用户去「文件管理 → 版本快照」。")
         # ★ `V-281` 的硬闸：**`:skill` 里那几个"要人点头"的动作不给走**。
         #   技能那一层的整个设计就是"人点一次允许"。要是它能 `run_moss(":skill allow --x")`，
         #   就等于自己给自己发通行证 —— 那道闸白设。`new` / `list` 这类不含"决定"的照旧随便用。
@@ -706,7 +717,7 @@ class Tools:
             self._kill_tree(proc.pid)                # 连子孙一起（`/T`）
             reader.join(2.0)
             self.run_seq -= 1                        # 被停/超时的这次不算"跑过一次"
-            body = tail("$ %s\n%s" % (" ".join(cmd[1:]), "".join(chunks)))
+            body = "$ %s\n%s" % (" ".join(cmd[1:]), "".join(chunks))
             if "停止" in killed:
                 return "[已停止] 用户按了停止 —— 这条命令**连它的子进程一起被杀掉了**。\n%s" % body
             return ("[超时] 跑超过 %s 秒 —— 交互式包（等你敲键的那种）在这儿跑不了。"
@@ -716,7 +727,7 @@ class Tools:
         code = proc.returncode
         if code == 0:
             self.last_ok_run_seq = self.edit_seq
-        out = tail("$ %s\n%s" % (" ".join(cmd[1:]), "".join(chunks)))
+        out = "$ %s\n%s" % (" ".join(cmd[1:]), "".join(chunks))
         return "退出码 %d（第 %d 次运行）\n%s" % (code, self.run_seq, out)
 
     def _t_ask(self, args):
@@ -848,21 +859,20 @@ class Tools:
         return "收到（这次是回答，没动文件）。"
 
     def _t_snap_clean(self, args):
-        """清自己存的快照（`V-236`）。**只能删 `by == "ai"` 的** —— 闸在 `delete_ai()` 里。"""
-        import ai_snap as S                                              # noqa: PLC0415
-        group = str((args or {}).get("group") or "").strip()
-        if not group:
-            # 不填就按"这次干活的那个包目录"猜（`user_data/pkgs/<id>` ⇒ id）
-            try:
-                rel = os.path.relpath(str(self.workdir), str(E.write_root()))
-                group = rel.split(os.sep)[0] if rel and not rel.startswith("..") else ""
-            except ValueError:
-                group = ""
-        got = S.clean_ai(group=group, bid=str((args or {}).get("id") or ""))
-        if not got.get("ok"):
-            return "[失败] %s" % got.get("msg")
-        return "%s（清掉 %d 条，跳过你存的 %d 条）" % (
-            got.get("msg"), len(got.get("deleted") or []), len(got.get("skipped") or []))
+        """**不给删**（`V-382`）。
+
+        以前这里有这个工具（"AI 只能清自己存的"）。查会话记录才看清它被用成了什么：
+        那几轮收尾都调它，理由写着"清掉我自己开工时自动存的快照，别占着用户地方"
+        —— 于是**动手前那条快照一条都没留下**，用户的原话就变成了
+        「你给我改代码也不先创建快照？现在整个都废了」。
+
+        所以现在：工具表里没有它（模型根本调不到），这一份留着当**兜底** —— 万一它照着
+        老会话的记忆硬调这个名字，回它一句人话，而不是真把退路删掉。
+        人要清：界面「版本快照」那一页（`backup_clean_ai`）或 `moss --snap rm`。
+        """
+        return ("[拒绝] 快照（备份）是**你和用户的退路**，AI 一律不能删 —— 连自己存的也不行。"
+                "要清请用户去「文件管理 → 版本快照」点「清掉 AI 的」，或者他自己敲 "
+                "`moss --snap rm`。你接着干你的活。")
 
     # ------------------------------------------------------------------ 验收闸
     def _remember(self, p):

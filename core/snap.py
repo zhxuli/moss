@@ -346,16 +346,22 @@ def _pick(b, st, key, group):
             g = _group_of([_rel_of(Path.cwd())], {})
         except Exception:                                           # noqa: BLE001
             g = None
-    if not g or not st.ids(g):
-        # ★ `V-115`：**不给 `--group` 也能用 `latest`** —— 全库按时间找最新那一条。
-        #   原来只有"当前目录能猜出组"时才认 latest，于是在别处敲 `moss --snap ls latest`
-        #   会说"没找到"（我测的时候自己就踩了一下）。
-        items = st.list_backups(None)
-        if items:
-            return items[0].get("id"), items[0].get("group")
-        return None, None
-    ids = st.ids(g)
-    return (ids[0] if ids else None), g
+    if g:
+        # ★ `V-382`：**组是明给的（`--group` 或 `:<包名>`）就不许跨组兜底。**
+        #   以前这一句是 `if not g or not st.ids(g):` —— 于是"这个包还没有快照"会被
+        #   兜成"全库最新那一条"，拿**别的包**的快照来 diff / revert。真机日志里那句
+        #   `20261013-143850-6f31 user/pkgs/lan-view ← 现在 vs 快照` 就是它：
+        #   AI 敲的是 `--snap diff :autokey`，屏幕上却是 lan-view。那比"没找到"危险得多
+        #   （revert 会按那条清单去写另一个包的文件）。
+        ids = st.ids(g)
+        return (ids[0] if ids else None), g
+    # ★ `V-115`：**组完全不知道**（在仓库根那种"根外面"）时，`latest` 才全库找最新那一条。
+    #   原来只有"当前目录能猜出组"时才认 latest，于是在别处敲 `moss --snap ls latest`
+    #   会说"没找到"（我测的时候自己就踩了一下）。
+    items = st.list_backups(None)
+    if items:
+        return items[0].get("id"), items[0].get("group")
+    return None, None
 
 
 def _cmd_show(pos, opt, flag):
@@ -380,7 +386,11 @@ def _cmd_diff(pos, opt, flag):
     st = b.BackupStore(paths.USER_DIR / "backups", _rel_of, _resolve, trash=_trash)
     bid, g = _pick(b, st, pos[0] if pos else "", opt.get("--group") or "")
     if not bid:
-        out.print_cyan("[错误] 没找到这次快照。")
+        if g:
+            out.print_cyan("「%s」这一组还没有快照 —— 先 `moss --snap save :%s` 存一个"
+                           "（`moss --snap list` 看有哪些组）。" % (g, g))
+        else:
+            out.print_cyan("[错误] 没找到这次快照。")
         return EXIT_NOTHING
     rel = opt.get("--rel") or ""
     if pos[1:]:

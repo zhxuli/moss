@@ -293,6 +293,9 @@
   background:var(--aib-bg-panel);border:1px solid var(--aib-border-color);
   padding:1px 6px;border-radius:4px;color:var(--aib-text-main);
 }
+/* `V-382`：改了文件却没快照 ⇒ 结论卡上要有一个**看得见的告警**（不是灰字） */
+.aiwrap .ai-rsnap.warn{color:var(--aib-warning)}
+.aiwrap .ai-rsnap.warn span{font-weight:500}
 .aiwrap .ai-old{
   font-size:11px;background:var(--aib-primary-light);color:var(--aib-primary);
   border-radius:4px;padding:1px 6px;margin-right:6px;font-weight:500;
@@ -1074,6 +1077,17 @@
 .aiwrap .btn-delete:hover{color:var(--aib-danger);background:#FEE2E2}
 .aiwrap .btn-delete svg.i{width:15px;height:15px}
 .aiwrap .history-item.new{color:var(--aib-primary);font-weight:500;justify-content:flex-start}
+/* ★ `V-383`：**正在跑的那一条**要看得出来（用户原话："这个记录应该高亮 因为这是当前记录"）。
+   绿点在呼吸 = 活的；点它 = 切回实时（不会冻在历史快照上）。 */
+.aiwrap .history-item.live{background:#f0fdf4}
+.aiwrap .history-item.live .status-dot{background:#10b981;box-shadow:0 0 0 0 rgba(16,185,129,.7);animation:ai-live-pulse 1.6s infinite}
+.aiwrap .history-item.live .history-item-title{color:#047857;font-weight:600}
+.aiwrap .history-item.live .ai-hist-m{color:#059669}
+@keyframes ai-live-pulse{
+  0%{box-shadow:0 0 0 0 rgba(16,185,129,.55)}
+  70%{box-shadow:0 0 0 6px rgba(16,185,129,0)}
+  100%{box-shadow:0 0 0 0 rgba(16,185,129,0)}
+}
 
 /* ---- 权限浮层 ---- */
 .aiwrap .ai-perm-wrap .ai-perm-body{width:500px;padding:14px;gap:0;overflow:visible;background:var(--aib-bg-panel)}

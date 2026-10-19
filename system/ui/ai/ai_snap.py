@@ -10,6 +10,15 @@
 ★ 为什么这条快照不标 tag：`tags.json` 是 tag→id 的**映射**（一个 tag 只能指一条），
   AI 跑第二趟就把上一趟顶掉了 —— 它没法当"这条是 AI 的"的标记。
   真字段 `by` 才是判据（清单里，写在 `system/ui/backup.py` 的 `create()`）。
+
+★★ `V-382`（你 2026-10-17 的原话：「你给我改代码也不先创建快照？现在整个都废了」）：
+  查了会话记录，真相不是"没存"，是**存了又被它自己删了** —— 那几轮收尾都调了
+  `snap_clean`（"别占着用户地方"）。所以现在的规矩改硬了：
+    ① AI **没有任何删快照的工具**（`snap_clean` 整条从工具表里拿掉了，见 `ai_tools.py`）；
+    ② 快照覆盖的是**真的被改的那个目录**（不再只看 workdir：以前 workdir 是 `pkgs/mu`
+       却在改 `pkgs/autokey` 时，存下来的是 mu 那个空壳）；
+    ③ 包**外面**的目录（用户让你"给我写个项目"那种）也存 —— 它有 `abs/` 这个根；
+       但盘根 / 用户主目录 / 库本身 / 你自己的 tmp 不存（那是"备份整块盘"，不是备份）。
 """
 import os
 import sys
@@ -90,31 +99,192 @@ def _resolve(rel):
     raise ValueError("认不出这个 rel：%s" % rel)
 
 
-def snapshot_before(task, workdir):
-    """动手前给**这个包**存一条（`by="ai"` + 那次的任务原文）。
+#: 一次"动手前"快照最多收多少个文件。过了就不存（宁可如实说"没退路"，
+#: 也不能让 AI 一次改动把半块盘拷进备份库、还要用户等好几分钟）。
+MAX_FILES = 20000
 
-    只在"改一个已经存在的包"时存：新建包没什么可回退的（那目录本来就没有）。
-    返回 `{ok, id, group, msg}`；存不了也**不拦着**干活（AI 该干的活照干，只是没退路）。
 
-    ★ `V-347`：**出厂包（`system/pkgs/<id>`）也存** —— 既然放开了让它改，那就得给它退路
-      （`BackupStore` 本来就认 `system/…` 这种来源，`group_for_sources` 会把 `system/pkgs/<x>`
-      归到 `<x>` 那一组，跟用户包一个待遇）。只放这一个口子：`system/` 下面的**别的东西**
-      （`system/ui`、契约…）不是这次任务的目标，仍然不存。
+def _count_files(d, cap=MAX_FILES):
+    """飞快数一下这个目录下有多少文件（数到 `cap` 就停 —— 只用来做"太大就不存"的判断）。"""
+    n = 0
+    for _cur, _dirs, names in os.walk(str(d)):
+        n += len(names)
+        if n > cap:
+            return n
+    return n
+
+
+def too_broad(d):
+    """这个目录**不该整个存**吗（存了就是"备份整块盘"）—— 回一句人话原因，或空串。
+
+    ★ 为什么要这道闸：`V-382` 之后 AI 能备份 `user_data` / `system` **外面**的目录了
+      （用户说"给我写个项目"经常就在外面）。没有这道闸的话，它对着 `D:\\` 或用户主目录
+      按下去，就是几个 G 的拷贝 + 几分钟的白等。
+    """
+    try:
+        p = Path(str(d)).resolve()
+    except OSError:
+        return "这个路径读不到"
+    # ① 盘根 / 用户主目录 / 系统目录：一律不存
+    if p.parent == p:
+        return "这是盘根（整块盘不是一次备份的对象）"
+    home = Path(os.environ.get("USERPROFILE") or os.path.expanduser("~") or "/")
+    try:
+        if p == home.resolve():
+            return "这是你的用户主目录（太大，也不是一次备份的对象）"
+    except OSError:
+        pass
+    # ② 我们自己的根：user_data / system / 安装根 下面那几个"一整层"的
+    for r in (E.user_data(), E.HOME / "system", E.HOME):
+        try:
+            if p == Path(r).resolve():
+                return "这是 `%s`（整层太大，要存就存它下面的某个包 / 目录）" % Path(r).name
+        except OSError:
+            continue
+    for r in (E.user_data() / "pkgs", E.user_data() / "state",
+              E.user_data() / "backups", E.user_data() / "trash",
+              E.user_data() / "ai", E.HOME / "system" / "pkgs",
+              E.HOME / "core", E.HOME / "system" / "ui",
+              E.HOME / "system" / "runtimes"):
+        try:
+            if p == Path(r).resolve():
+                return "这是 `%s`（整层太大，要存就存它下面的某个包 / 目录）" % r.name
+        except OSError:
+            continue
+    # ③ 备份库自己（套娃）
+    try:
+        if str(p).lower().startswith(str((E.user_data() / "backups").resolve()).lower()):
+            return "这是备份库自己（不能备份备份）"
+    except OSError:
+        pass
+    return ""
+
+
+def is_scratch(path):
+    """这个路径是**AI 自己的中间产物**吗（tmp / 备份库 / 回收站）—— 是就不值得为它存快照。
+
+    ★ 为什么要有：它跑诊断会先在 `MOSS_AI_TMP` 里写一个探针脚本。那一下要是也触发
+      "动手前快照"，等于**每个只在做诊断的回合都白存一条**（跟 `V-269` 修掉的
+      "问一句也存一条"是同一类浪费），而且真正的改动点反而离快照更远。
+    """
+    try:
+        p = str(Path(str(path)).resolve()).lower()
+    except OSError:
+        return False
+    for root in (E.user_data() / "backups", E.user_data() / "trash",
+                 E.user_data() / "ai" / "tmp"):
+        try:
+            if p.startswith(str(Path(root).resolve()).lower()):
+                return True
+        except OSError:
+            continue
+    # `user_data/state/<包>/ai/tmp/…`（`V-314` 起临时空间按包分）
+    try:
+        st = str((E.user_data() / "state").resolve()).lower()
+    except OSError:
+        return False
+    return p.startswith(st) and (os.sep + "ai" + os.sep + "tmp" + os.sep) in p
+
+
+def _pkg_dir(d):
+    """`d` 落在某个 `pkgs` 根下面 ⇒ 回**那个包目录**；否则回 None。"""
+    for root in (E.user_data() / "pkgs", E.HOME / "system" / "pkgs"):
+        try:
+            rel = Path(str(d)).resolve().relative_to(Path(root).resolve())
+        except (ValueError, OSError):
+            continue
+        if rel.parts:
+            return Path(root) / rel.parts[0]
+    return None
+
+
+def scope_dir(path):
+    """要改的那个东西属于**哪个目录**（快照就存它）。
+
+    规律：落在某个 `pkgs` 根下面的，存**那个包目录**（不是它下面更深的子目录 ——
+    恢复时你希望整个包一起回去）；其它的就存文件所在的那一层目录。
+    """
+    p = Path(str(path))
+    try:
+        if p.is_dir():
+            return _pkg_dir(p) or p
+    except OSError:
+        return p
+    # 文件（或还不存在的文件：新建）⇒ 看它父目录
+    parent = p.parent
+    got = _pkg_dir(parent)
+    if got:
+        return got
+    return parent if parent.exists() else p
+
+
+def snapshot_before(task, workdir, touched=None):
+    """动手前给**这次真的会改到的地方**存一条（`by="ai"` + 那次的任务原文）。
+
+    `touched`（`V-382` 新加）：第一处要写的**文件路径**。给了它就以它为准 ——
+      · 改的是某个包里的文件 ⇒ 存那个包；
+      · 改的是包**外面**的目录（"给我写个项目"）⇒ 存那个目录（`abs/` 那个根）；
+      · 只写到自己的 tmp / 备份库 ⇒ 不值得存（`is_scratch`，调用方已经先挡了一道）。
+    不给就退回老行为：存 `workdir`。
+
+    返回 `{ok, id, group, sources, msg, retry}`；存不了也**不拦着**干活（AI 该干的活照干，
+    只是没退路 —— 这句会如实回给模型，让它写进收工报告）。
+    `retry=True` 的那一种（要改的东西**还不存在**，典型是"新建一个包 / 新写一个目录"）
+    **不占掉这次机会**：等它真把东西建出来、下一次再动它之前，再存一次。
+    不然一个新包从创建到改坏，全程一条快照都没有（真机上就是这么丢的）。
+
+    ★ `V-347`：**出厂包（`system/pkgs/<id>`）也存** —— 既然放开了让它改，那就得给它退路。
     """
     wd = Path(str(workdir or ""))
     try:
-        if not wd.is_dir():
-            return {"ok": False, "msg": "这个目录还不存在（新建包）—— 不用存动手前的快照"}
-        rel = str(_rel_of(wd)).replace("\\", "/").lower()
-        if not (rel.startswith("user/") or rel.startswith("system/pkgs/")):
+        cands, will_exist = [], []
+        if touched:
+            d = scope_dir(touched)
+            if d.is_dir():
+                cands.append(d)
+            else:
+                will_exist.append(d)            # 要改的东西还没建出来 ⇒ 下一次再存
+        if wd.is_dir():
+            cands.append(wd)
+        srcs, why_not = [], []
+        seen = set()
+        for d in cands:
+            try:
+                key = str(Path(d).resolve()).lower()
+            except OSError:
+                key = str(d).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            bad = too_broad(d)
+            if bad:
+                why_not.append(str(d) + "：" + bad)
+                continue
+            n = _count_files(d)
+            if n > MAX_FILES:
+                why_not.append("%s：文件太多（>%d 个）" % (d, MAX_FILES))
+                continue
+            srcs.append(str(Path(d).resolve()))
+        if not srcs:
+            # ★ 只要"要改的东西还没建出来"，就**留着这次机会**（新建包 / 新写一个目录）：
+            #   这一刻没有任何"动手前的样子"可存，但等它建出来再动它之前就有了。
+            #   ★ 别被 `why_not` 拦住（workdir 常常是 `user_data/pkgs` 那种整层 —— 那是
+            #     "太宽不该存"，不是"永远不用存"；探针当场抓到过这一条）。
+            if will_exist:
+                return {"ok": False, "retry": True,
+                        "msg": "要改的东西还没建出来（新建）—— 等它存在了再存动手前的快照"}
+            if not wd.is_dir() and not touched:
+                return {"ok": False, "msg": "这个目录还不存在（新建包）—— 不用存动手前的快照"}
             return {"ok": False,
-                    "msg": "只给 `user_data/` 和 `system/pkgs/` 里的包存快照（别的地方的人来管）"}
+                    "msg": ("没有可以存的地方" + ("（" + "；".join(why_not) + "）" if why_not else ""))}
         st = _store()
-        srcs = [str(wd.resolve())]
         man = st.create(srcs, title=title_for(task), note=note_for(task),
                         by="ai", by_task=str(task or "").strip())
         return {"ok": True, "id": man.get("id"), "group": man.get("group"),
-                "msg": "存好了：%s（分组 %s）" % (man.get("id"), man.get("group"))}
+                "sources": srcs, "files": (man.get("stats") or {}).get("files"),
+                "msg": "存好了：%s（分组 %s，%s 个文件）"
+                       % (man.get("id"), man.get("group"),
+                          (man.get("stats") or {}).get("files"))}
     except Exception as e:                                            # noqa: BLE001
         return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 

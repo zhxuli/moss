@@ -477,7 +477,8 @@ def protected(path):
             pass
     if _inside(p, E.user_data() / "backups"):
         return ("[拒绝] `user_data/backups/**` 是**版本快照仓** —— 那是你（和 AI）的退路，"
-                "不许由 AI 来写 / 删。要清快照请用界面「版本快照」那一页，或者 `snap_clean` 清 AI 自己存的。")
+                "不许由 AI 来写 / 删。要清快照只能用户自己在界面「版本快照」那一页清"
+                "（`V-382`：AI 这边连删快照的工具都没有了）。")
     return None
 
 
@@ -589,7 +590,9 @@ def danger_of(tool, args):
                     str(a.get("args") or "")[:60], w.strip())
         return None
     if name == "snap_clean":
-        return "清掉你自己存的版本快照（回退用的退路）"
+        # `V-382`：工具表里已经没有它了（AI 不许删快照）。这份留着只为"老会话里的名字
+        # 还能被认出来"，不再产生任何危险等级。
+        return None
     return None
 
 

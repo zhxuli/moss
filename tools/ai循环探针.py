@@ -529,27 +529,102 @@ def main():
                    max_steps=3, say=lambda s: None).run("开个新的", history=[]).get("messages") or []) >= 3,
         "")
     R.delete(_saved.get("id"))
-    # 用户自己存一条（by 为空），然后试"清 AI 的" —— **它必须一条都不动我的**
+    # ---------------------------------------------------------------- `V-382`
+    # ★ 查会话记录查出来的真事：AI 收尾时**自己把开工前那条快照清掉了**
+    #   （`snap_clean`，理由写着"别占着用户地方"）⇒ 用户的原话变成
+    #   「你给我改代码也不先创建快照？现在整个都废了」。所以现在整条工具都拿掉了。
+    chk("H ★★ `snap_clean` **不在工具表里**（结构上删不了，不靠它自觉）",
+        "snap_clean" not in T.builtin_names()
+        and "snap_clean" not in [t["function"]["name"] for t in T.tools_for({})],
+        str([n for n in T.builtin_names()]))
     mine = S._store().create([str(fake_pkg.resolve())], title="我自己存的", note="")
     chk("H 人存的那条 by 是空的（默认就是\"人存的\"）", not (mine.get("by") or ""), "by=%r" % mine.get("by"))
+    # 就算它照着老会话的记忆硬调这个名字，也只能拿到一句拒绝 —— 盘上那条**动不了**
+    _before = [b["id"] for b in S._store().list_backups(group="zz")]
+    refused = t.call("snap_clean", {"group": "zz"})
+    _after = [b["id"] for b in S._store().list_backups(group="zz")]
+    chk("H ★★ 硬调 `snap_clean` 也只会被拒（快照一条没少）",
+        "拒绝" in refused and _after == _before, "%s / %d → %d 条"
+        % (refused.replace("\n", " ")[:60], len(_before), len(_after)))
+    # 人那侧的能力照旧（界面「版本快照」页用的就是它）：**只清 AI 的，你的不碰**
     cleaned = S.clean_ai(group="zz")
-    chk("H ★ 清 AI 的：AI 那条被删了", got_snap.get("id") in (cleaned.get("deleted") or []),
+    chk("H ★ 界面上「清掉 AI 的」照旧能用（AI 那条被清、我的一条没动）",
+        got_snap.get("id") in (cleaned.get("deleted") or [])
+        and mine.get("id") in (cleaned.get("skipped") or []),
         str(cleaned.get("msg"))[:80])
-    chk("H ★★ 用户自己存的那条**一条没动**（这是结构性的闸，不是提醒）",
-        mine.get("id") not in (cleaned.get("deleted") or []) and
-        mine.get("id") in (cleaned.get("skipped") or []),
-        "跳过了 %s" % (cleaned.get("skipped") or []))
     still = [b["id"] for b in S._store().list_backups(group="zz")]
     chk("H 删完再看列表：只剩我存的那条", still == [mine.get("id")], str(still))
-    # 就算 AI 拿 `run_moss` 去删（绕过 snap_clean）也要被拦下
+    # 就算 AI 拿 `run_moss` 去删也要被拦下
     os.environ["MOSS_HOST_CMD"] = json.dumps([sys.executable, str(host)])
     blocked = t.call("run_moss", {"args": '--snap rm "%s" --group zz --yes' % mine.get("id")})
-    chk("H ★ 走 run_moss 删快照被拒（只能走 snap_clean）",
-        "拒绝" in blocked and "snap_clean" in blocked, blocked.replace("\n", " ")[:80])
+    chk("H ★ 走 run_moss 删快照也被拒（那两个入口都堵死了）",
+        "拒绝" in blocked and "快照" in blocked, blocked.replace("\n", " ")[:80])
     chk("H 而且那条真的还在（拦住了，不是嘴上说说）",
         S._store().manifest(mine.get("id"), "zz").get("id") == mine.get("id"), "")
     chk("H 不给 group 清全库被拒（免得手一抖）", S.clean_ai().get("ok") is False, "")
     chk("H ai_count 数得对（这一组现在 AI 存的是 0 条）", S.ai_count("zz") == 0, "")
+    # ① 包**外面**的目录也存得了（用户说"给我写个项目"经常就在外面）
+    outside = tmp / "外面那个工程"
+    outside.mkdir(exist_ok=True)
+    (outside / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    got_out = S.snapshot_before("给我在外面写个项目", pkgs, touched=outside / "main.py")
+    chk("H ★★ 包**外面**的目录也存得了（`abs/` 那个根）",
+        got_out.get("ok") is True and str(got_out.get("group") or "").startswith("@abs"),
+        str(got_out.get("msg"))[:90])
+    # ② 快照认的是**你要改的那个目录**，不是 workdir（真机那次 workdir=mu、实际在改 autokey）
+    other = pkgs / "xx"
+    other.mkdir(parents=True, exist_ok=True)
+    (other / "run.py").write_text("print('x')\n", encoding="utf-8")
+    got_scope = S.snapshot_before("改的是 xx，不是 zz", fake_pkg, touched=other / "run.py")
+    _srcs = [str(x).lower() for x in (got_scope.get("sources") or [])]
+    chk("H ★★ 快照认的是**真要改的那个目录**（workdir 是 zz、改的是 xx ⇒ 主来源是 xx）",
+        got_scope.get("ok") is True and bool(_srcs) and _srcs[0].endswith("\\xx")
+        and any(s.endswith("\\zz") for s in _srcs), str(_srcs))
+    # ③ 盘根 / 我们自己的那几个"整层"不许存（不然就是备份整块盘）
+    for _bad in (Path("D:/"), E.user_data(), E.user_data() / "pkgs", E.HOME / "system"):
+        chk("H ★ 不存 `%s`（整层 / 盘根不是一次备份的对象）" % str(_bad)[-24:],
+            bool(S.too_broad(_bad)), S.too_broad(_bad))
+    # ④ 只写自己的 tmp ⇒ 不该触发"动手前快照"（那是中间产物，不是改动）
+    _scr = E.user_data() / "state" / "zz" / "ai" / "tmp" / "run1" / "探针.py"
+    chk("H ★ 写自己的 tmp 不算改动（不为它白存一条快照）", S.is_scratch(_scr) is True, str(_scr))
+    chk("H 但写包里的文件算改动", S.is_scratch(fake_pkg / "run.py") is False, "")
+    _snaps3 = []
+    _m4 = FakeModel([call("write_file", {"path": str(_scr), "content": "print(1)\n"}),
+                     call("done", {"summary": "只是写了个探针"})])
+    _g3 = L.Loop(_m4, workdir=fake_pkg, max_steps=4, say=lambda s: None,
+                 on_snapshot=lambda g: _snaps3.append(g)).run("先跑个诊断")
+    chk("H ★★ 只往 tmp 写探针 ⇒ **一条快照都不存**（快照点留给真正的改动）",
+        _snaps3 == [] and (_g3.get("snapshot") in (None, "")), "通知了 %r" % (_snaps3,))
+    shutil.rmtree(_scr.parent, ignore_errors=True)      # 别把后面"S6 临时空间"的数占上
+    # ⑥ **新建包**那一轮：第一次写的时候目录还没建出来 ⇒ 不占掉这次机会；
+    #    等它建出来、下一次动它之前再存（不然"新包从建到改坏"全程没有退路）
+    newpkg = pkgs / "brand-new"
+    _snaps5 = []
+    _m5 = FakeModel([call("write_file", {"path": str(newpkg / "run.py"),
+                                         "content": "print(1)\n"}),
+                     call("edit_file", {"path": str(newpkg / "run.py"),
+                                        "find": "print(1)", "replace": "print(2)"}),
+                     call("done", {"summary": "新建了一个包"})])
+    _g5 = L.Loop(_m5, workdir=pkgs, max_steps=5, say=lambda s: None,
+                 on_snapshot=lambda g: _snaps5.append(g)).run("新建一个 brand-new")
+    chk("H ★★ 新建包：目录还没建出来时不硬存（机会留着），建出来之后再动它才存",
+        len(_snaps5) == 1 and (_snaps5[0] or {}).get("group") == "brand-new",
+        "存了 %d 条：%r" % (len(_snaps5), _snaps5[:1]))
+    _man5 = S._store().manifest((_snaps5[0] or {}).get("id"), "brand-new") if _snaps5 else {}
+    _rels5 = [e.get("rel") for e in (_man5.get("files") or [])]
+    chk("H ★★ 而且那条快照是**改之前**的样子（里面是 print(1)，不是 print(2)）",
+        bool(_rels5) and (_man5.get("files") or [{}])[0].get("fp")
+        and S._store().read_blob((_man5.get("files") or [{}])[0].get("fp"),
+                                 group="brand-new").get("text", "").strip() == "print(1)",
+        str(_rels5))
+    # ⑤ 同一条命令第 3 回还跑 ⇒ 结果前面顶一句"换个证据来源"
+    t4 = T.Tools(workdir=pkgs)
+    _o1 = t4.call("run_moss", {"args": ":zz"})
+    _o2 = t4.call("run_moss", {"args": ":zz"})
+    _o3 = t4.call("run_moss", {"args": ":zz"})
+    chk("H ★ 同一条命令第 3 回还跑 ⇒ 顶一句「别换第 3 次同样的结果」",
+        "第 3 次" not in _o1 and "第 3 次" not in _o2 and "你已经跑了 3 次" in _o3,
+        "%r / %r" % (_o2[:24], _o3[:60]))
 
     print()
     print("=" * 72)

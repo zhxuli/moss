@@ -211,6 +211,15 @@ def env_note(workdir=None, perm="", tmp="", allow=()):
             "用户看 `run_moss` 这种工具名看不懂你要干嘛。\n"
             "【拿不准就问】要动的东西有歧义、有不止一种做法、要删/覆盖东西 —— "
             "**先用 `ask` 工具问用户**（可以给选择题），别自己猜着往下冲。")
+    # ★ `V-382`：把"备份"这件事作为**事实**告诉它 —— 以前提示词里一个字都没有，
+    #   于是它（a）以为没备份、慌了去手动 `--snap save`；（b）收尾时把自动存的那条
+    #   当垃圾清掉（`snap_clean` → "别占着用户地方"）。两头都是同一个坑：它不知道有退路。
+    out += ("\n【备份是宿主做的，不许你动】第一次改文件之前，宿主会**自动**存一条"
+            "「动手前」快照（`by=ai`，标题就是这次的任务原文）。所以：\n"
+            "  · **不用**自己 `--snap save`（重复存只是浪费，也不会更安全）；\n"
+            "  · **不许删**（没有任何删快照的工具；`--snap rm/gc` 会被拒）—— 那是用户的退路；\n"
+            "  · 收工时在 summary 里写一句「快照 = <id>，要回退到「文件管理 → 版本快照」」。\n"
+            "  · 如果宿主说「没存上」，那这次改动**没有退路** —— 收工时必须照实写出来。")
     return out
 
 
@@ -307,6 +316,8 @@ class Loop:
         # ★ `V-269`：快照**不再开工就存**，改成"第一次真要写文件之前"存（`_before_first_write`）。
         #   原话那次的教训：你问一句「你是哪个大模型」，它也给你存了一条备份。
         self.snapshot = None
+        #: ★ `V-382`：快照**没存上**的原因（空 = 存上了 / 压根没触发）。收工报告要照实说。
+        self.snapshot_note = ""
         self.want_snapshot = True
         self.task = ""
         #: ★ `V-307`：这次跑的 id / 临时目录 / 权限模式的**现读**入口
@@ -538,7 +549,10 @@ class Loop:
                              "tools_log": list(self.tools.log),
                              "procs": list(self.tools.procs.keys()),
                              "killed": list(self.tools.killed),
-                             "snapshot": getattr(self, "snapshot", None)}, bool(force))
+                             "snapshot": getattr(self, "snapshot", None),
+                             # ★ `V-382`：没存上的原因也要落盘（界面据此告警）
+                             "snapshot_note": str(getattr(self, "snapshot_note", "") or "")},
+                            bool(force))
         except Exception:                                                # noqa: BLE001
             pass
 
@@ -591,18 +605,25 @@ class Loop:
         return self._step(n, tool, brief, disp=brief, nodisp=True, why=why, args=args, out=out)
 
     # ------------------------------------------------------------------ 主循环
-    def _before_first_write(self):
+    def _before_first_write(self, touched=None):
         """第一次真要写文件之前：存"动手前"的快照（`V-269`，从开工就存改过来的）。
 
         ★ 为什么由 `Tools` 来喊：只有它知道"这一刻要动盘了"。快照必须在**写之前**落盘
           —— 存"已经改了一半"的样子等于没存。
         ★ `V-250` 那条不变：**存好就立刻通知界面**（版本快照那一列要刷新出来），
           不然你要等跑完才看得见它刚存的那条。
+        ★ `V-382`：`touched` 是**第一处要写的那个文件**。以前这里只传 workdir，
+          于是"workdir 是 A、实际在改 B"的时候存下来的是 A 的空壳（真机记录里就有）。
+        回 `"later"` = 这次没存成、但**别把这个机会用掉**（要改的东西还没建出来，比如新建包）——
+        `Tools` 拿它决定下一次写文件之前再试一次；其余情况它只用一次。
+
+        为什么"新建"要允许重试：一个新包从建目录、写文件到改坏，全程一条快照都没有的话，
+        用户能回退的只有"删掉它"。等它真建出来、下一次动它之前再存一条，才是那个"动手前"。
         """
         if not self.want_snapshot or self.snapshot:
-            return
+            return "done"
         import ai_snap as S                                              # noqa: PLC0415
-        got = S.snapshot_before(self.task, self.tools.workdir)
+        got = S.snapshot_before(self.task, self.tools.workdir, touched=touched)
         if got.get("ok"):
             self.snapshot = {"id": got.get("id"), "group": got.get("group")}
             self.say("动手前存了快照：%s（分组 %s）" % (got.get("id"), got.get("group")))
@@ -611,8 +632,15 @@ class Loop:
                     self.on_snapshot(self.snapshot)
                 except Exception:                                        # noqa: BLE001
                     pass
-        else:
-            self.say("（没存动手前的快照：%s）" % got.get("msg"))
+            return "done"
+        if got.get("retry"):
+            self.say("（这次先不存快照：%s —— 等它建出来再存）" % got.get("msg"))
+            return "later"
+        self.say("（没存动手前的快照：%s）" % got.get("msg"))
+        # ★ `V-382`：**存不上要留痕** —— 不然收工报告里看起来"一切正常"，
+        #   用户以为有退路，其实没有（他找你的时候就是这么发现的）。
+        self.snapshot_note = str(got.get("msg") or "")
+        return "done"
 
     def _stopped(self):
         """用户按了停止没有（`stop_check` 可能没有 / 可能抛 —— 都当"没停"）。"""
@@ -690,6 +718,7 @@ class Loop:
         #     · 快照点也更准（贴着你真正要改的那一刻）。
         #   参数 `snapshot=False` 照旧能整个关掉。
         self.snapshot = None
+        self.snapshot_note = ""
         nudges, result = 0, {"ok": False, "reason": "步数用完了（还没验收通过）"}
         for n in range(1, self.max_steps + 1):
             if self.stop_check and self.stop_check():
@@ -910,6 +939,9 @@ class Loop:
                "prompts": used, "missing_prompts": missing, "tools_log": self.tools.log,
                "files": list(self.tools.changed), "folded": self.folded,
                "snapshot": getattr(self, "snapshot", None),
+               # ★ `V-382`：**没存上**的原因（存上了就是空串）。界面据此在结论卡上告一句
+               #   "这次改动没有退路"，免得用户以为有备份。
+               "snapshot_note": str(getattr(self, "snapshot_note", "") or ""),
                # ★ `V-251`：**把这一整条对话留下来** —— 界面存进任务记录，
                #   下次点「接着聊」就把它接上去（不然重启 moss 只能从头再来）。
                #   存的是**收尾时**的消息表（`_compact` 已经折过的那些，所以不算大）。

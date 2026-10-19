@@ -103,6 +103,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "fanyi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
+          "ai-hist-live",
           "ai-turn-edit", "ai-self-tools", "ai-ask",
           "hl-window", "set-debounce", "parasite"]
 
@@ -529,6 +530,9 @@ MOCK_JS = r"""
       M.aiRun = {task: task, workdir: workdir, maxSteps: steps, cont: contId || "",
                  model: model || ""};
       M.aiN = 0;
+      // ★ `V-383`：真宿主 `ai_start` 就把**这一跑的记录 id** 交回来了（界面靠它认出
+      //   "历史列表里哪一条是现在这一跑"）。假宿主也给一个。
+      M.aiLiveId = "r-live";
       // ★ `V-250`：真宿主**动手之前**就给这个包存一条快照（`ai_snap.snapshot_before`，
       //   `by="ai"` + `by_task`），然后**马上**通知界面刷新「版本快照」那一列。
       //   预览这里照做一遍（不然"存完看不见"这个 bug 在预览里永远演不出来）。
@@ -547,7 +551,9 @@ MOCK_JS = r"""
                    sources: [rel], files: files, new_objects: files.length, new_bytes: 0});
         M.aiSnap = {id: id, group: bkGroupOf([rel])};
       }
-      return {ok: true, workdir: workdir, model: "deepseek-flash"};
+      return {ok: true, workdir: workdir, model: "deepseek-flash",
+              // ★ `V-383`：这一跑的记录 id（界面靠它认出历史列表里的"当前"）
+              run_id: M.aiLiveId || ""};
     },
     ai_poll: async () => {
       // ★ 没交过任务就老老实实说"闲着"（`V-233`）：否则页面一挂载那次轮询
@@ -571,6 +577,17 @@ MOCK_JS = r"""
         {n: 4, tool: "done", brief: '{"summary": "加了 --dry-run"}', note: "收到。",
          at: "12:03:55", tokens: 3900, args: '{\n "summary": "加了 --dry-run"\n}', out: "收到。"},
       ];
+      // ★ `V-383`：场景 `ai-hist-live` 要"跑得久一点"才点得着 —— 把这一步的剧本拉长
+      //   （真跑一轮本来就有几十步，4 步只是预览里的最小样本）。
+      if (M.aiPad){
+        const pad = Number(M.aiPad) || 10;
+        for (let i = 0; i < pad; i++){
+          const c = Object.assign({}, script[1]);
+          c.n = script.length + 1;
+          c.at = "12:04:0" + (i % 10);
+          script.push(c);
+        }
+      }
       M.aiN = Math.min(script.length, (M.aiN || 0) + 1);
       const running = M.aiN < script.length;
       // ★ `V-333`：**问答 / 求放行也是聊天记录里的一条** —— 真宿主由 `Loop.note()` 插进步骤流
@@ -592,6 +609,8 @@ MOCK_JS = r"""
                    args: {path: M.aiPerm.path, need: M.aiPerm.need || "write"}});
       }
       return {ok: true, running: running, task: (M.aiRun || {}).task || "",
+              // ★ `V-383`：**现在这一跑是哪条记录**（界面拿它高亮历史列表里的"当前"）
+              run_id: (M.aiRun ? (M.aiLiveId || "") : ""),
               steps: script.slice(0, M.aiN).concat(talk), say: [], seconds: 3.5,
               max_tokens: 100000000,
               // ★ `V-307`/`V-308`：活的 token 账 / 现在哪一档 / 临时空间 / 挂着的问题
@@ -625,6 +644,16 @@ MOCK_JS = r"""
     ai_runs: async (limit, workdir) => ({ok: true,
       scope: {kind: "pkg", id: "md5", dir: state.home + "\\user_data\\state\\md5\\ai\\runs", label: "包 md5"},
       runs: [
+      // ★ `V-383`：**正在跑的那一条也在列表里**（真宿主开工就落盘 `running=true`）——
+      //   场景 `ai-hist-live` 靠它验"当前那一行要高亮、点它能切回实时"。
+      ...(M.aiLiveRow && M.aiRun ? [{
+        id: (M.aiLiveId || "r-live"), task: (M.aiRun && M.aiRun.task) || "",
+        steps: Math.max(1, M.aiN || 1), ok: false, cont: true, msgs: 2,
+        interrupted: true, running: true,
+        workdir: (M.aiRun && M.aiRun.workdir) || state.home + "\\system\\pkgs\\md5",
+        reason: "", started_text: "2026-10-19 13:50:00",
+        usage: {prompt_tokens: 800, completion_tokens: 40, total_tokens: 840},
+        files: [], summary: ""}] : []),
       {id: "r-old", task: "给 :calc 支持指数和开方", steps: 6, ok: true, cont: true, msgs: 14,
        workdir: state.home + "\\system\\pkgs\\md5",
        reason: "验收通过", started_text: "2026-10-04 00:12:33",
@@ -5360,6 +5389,58 @@ MOCK_JS = r"""
              " 悬停=" + JSON.stringify(badgeTip.slice(0, 24)) +
              " 错=" + (window.__errors || []).length);
       }
+      // ★★ `V-383`：**历史列表里的"当前这一条"** —— 你报的那个 bug：
+      //   「我把历史里当前那条点开了，界面就不更新了，可是状态还显示在跑」。
+      //   一条场景钉两件事：
+      //     ① 正在跑的那一条在列表里**高亮**（.live 呼吸点 + 文案「运行中」，不是"上次没跑完"）；
+      //     ② 点它之后**步骤继续往上涨**（以前那一下把 turns 换成盘上快照、cur=-1 ⇒ 冻住）。
+      if (h === "ai-hist-live"){
+        M.aiLiveRow = true;              // 假宿主：这一跑的记录进历史列表（真宿主本来就写盘）
+        M.aiPad = 40;                    // 剧本拉长一点，才点得着"正在跑"的那一刻
+        M.aiRun = null; M.aiN = 0; M.aiSnap = null;
+        const p0 = state.packages.find(x => x.id === "first") || state.packages[0];
+        select(p0.id);
+        await sleep(300);
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(500);
+        const taskEl = document.querySelector("#pane-ai .ai-task");
+        if (taskEl){
+          taskEl.value = "把 run.py 里那句 print 改掉";
+          taskEl.dispatchEvent(new Event("input", {bubbles: true}));
+        }
+        await sleep(80);
+        (document.querySelector("#pane-ai .ai-actions .btn.primary") || {click(){}}).click();
+        const nSteps = () => document.querySelectorAll("#pane-ai .ai-step").length;
+        let n0 = 0;
+        for (let i = 0; i < 40 && !n0; i++){ await sleep(120); n0 = nSteps(); }
+        // 打开历史：当前那一行要**高亮**（live = 正在跑；active = 当前选中）
+        (document.querySelector("#pane-ai .ai-hist") || {click(){}}).click();
+        await sleep(400);
+        const liveRow = document.querySelector("#pane-ai .ai-hist-i.live");
+        const actRow  = document.querySelector("#pane-ai .ai-hist-i.active");
+        const metaTxt = liveRow ? String(liveRow.textContent || "").replace(/\s+/g, " ").trim() : "";
+        const liveOk = !!liveRow && !!actRow && /运行中/.test(metaTxt) && !/上次没跑完/.test(metaTxt);
+        // 就点这一下（你误点的那个动作）
+        if (liveRow) liveRow.click();
+        await sleep(250);
+        const n1 = nSteps();
+        await sleep(1600);               // 再轮询两跳（700ms 一跳）
+        const n2 = nSteps();
+        const ok = liveOk && n1 > 0 && n2 > n1 && !(window.__errors || []).length;
+        // 截图用：把浮层再打开一次（那一行高亮"运行中"要看得到）
+        (document.querySelector("#pane-ai .ai-hist") || {click(){}}).click();
+        await sleep(350);
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n当前那一行高亮 = " + liveOk + "（live=" + !!liveRow + " / active=" + !!actRow +
+          " / 文案=" + JSON.stringify(metaTxt.slice(0, 40)) + "）" +
+          "\n点它之后步骤数：" + n0 + " → " + n1 + " → " + n2 +
+          (n2 > n1 ? "（还在涨 ✓）" : "（冻住了 ✗）") +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+          : ("AIHISTLIVE-FAIL live=" + (liveOk ? 1 : 0) + " 步骤=" + n0 + "/" + n1 + "/" + n2 +
+             " 行=" + JSON.stringify(metaTxt.slice(0, 24)) +
+             " 错=" + (window.__errors || []).length);
+      }
       // ★ `V-251`/`V-252`：**历史会话要能找回来、能接着聊** —— 你原话「怎么还是找不到历史
       //   会话记录，一旦重新打开 moss 只能重新再来 …… 没法继续上一次的聊天继续沟通」。
       //   这条走真人那条路：进「AI」页（相当于重启 moss 后第一次进来）→
@@ -5738,7 +5819,8 @@ MOCK_JS = r"""
           " · `(说话)` 卡正文照旧显示 = " + talkHasBody +
           "\n「重新跑」按钮在 = " + !!rerunBtn + " · 点了把原话填回输入框 = " + rerunOk +
           "（填回来的是：" + JSON.stringify((taskEl.value || "").slice(0, 20)) + "）" +
-          "\n底栏 = " + JSON.stringify(foot.replace(/\s+/g, " ").trim().slice(0, 40)) +
+          "\n底栏 = " + JSON.stringify((document.querySelector("#pane-ai .ai-foot") || {textContent: ""})
+                                         .textContent.replace(/\s+/g, " ").trim().slice(0, 40)) +
           " · 页内错误 = " + (window.__errors || []).length;
         document.querySelector("#meta").className = "meta";
         document.title = ok ? "READY"
