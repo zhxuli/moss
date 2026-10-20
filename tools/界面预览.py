@@ -455,6 +455,15 @@ MOCK_JS = r"""
       model: "deepseek-flash", base_url: "https://api.deepseek.com/v1", has_key: true,
       // `V-252`：这家配了哪些模型（顶栏那个下拉用它）—— 真宿主回的是配置里那一串
       models: ["deepseek-flash", "deepseek-reasoner", "deepseek-chat"],
+      // ★ `V-386`：**所有**服务商 + 各自模型（模型下拉按家分组）。这里特意给**两家** ——
+      //   用户报的就是"配了两家，下拉只看得见第一家"，假数据只有一家就永远验不出那件事。
+      profile: "DeepSeek",
+      providers: [
+        {name: "DeepSeek", has_key: true, base_url: "https://api.deepseek.com/v1",
+         models: ["deepseek-flash", "deepseek-reasoner", "deepseek-chat"]},
+        {name: "帅红", has_key: false, base_url: "https://other.example/v1",
+         models: ["claude-haiku-5-5", "glm-5.3"]},
+      ],
       // `V-278`：现在每次都装的只有这两份；"方法论"（写新包/收拖入）改成**技能**按需读
       //   （系统提示里只列清单），所以这里不再有 new_pkg.md。
       prompts: ["system.md", "edit.md", "技能清单（2 个：dragdrop、new-pkg）"],
@@ -4896,7 +4905,7 @@ MOCK_JS = r"""
         await sleep(600);
         const pane = document.querySelector("#pane-ai");
         const paneOn = !!(pane && pane.classList.contains("on"));
-        const head = ((document.querySelector("#pane-ai .ai-model") || {}).textContent || "");
+        const head = ((document.querySelector("#pane-ai .ai-model-txt") || {}).textContent || "");
         const taskEl = document.querySelector("#pane-ai .ai-task");
         // `V-240`：预算就一格，**单位是百万**（出厂 100 = 1 亿）—— 改一下要真存
         //   （存的是 token：界面 100 百万 ⇒ 100000000）
@@ -4913,19 +4922,29 @@ MOCK_JS = r"""
         const budSaved = String(M.bud);
         // ★ `V-252`（照你给的稿子重排之后）：顶上那两个下拉 ——
         //   「会话」列出跑过的记录 + 新会话；「模型」列出这家配的模型（并真的传给宿主）。
+        // ★ `V-386`：模型那格**不再是原生 `<select>`**了 —— 改成自己画的面板（按服务商分组、
+        //   可筛、选中打勾）。所以这里照**真人手法**来：点按钮 → 读面板里那几条 → 点第三个
+        //   → 看面板有没有关、`AIR.model` 有没有记上（下面还有一条断言盯"真发给宿主的就是它"）。
         const sessSel = document.querySelector("#pane-ai .ai-sess");
-        const mdlSel = document.querySelector("#pane-ai .ai-model");
         const sessOpts = sessSel ? [].slice.call(sessSel.options).map(o => o.textContent) : [];
-        const mdlOpts = mdlSel ? [].slice.call(mdlSel.options).map(o => o.value) : [];
+        const mdlBtn = document.querySelector("#pane-ai .ai-model-btn");
+        let mdlOpts = [];
+        mdlBtn && mdlBtn.click();
+        await sleep(250);
+        const mdlItems = [].slice.call(document.querySelectorAll("#pane-ai .ai-model-pop .ai-model-it"));
+        mdlOpts = mdlItems.map(b => ((b.querySelector(".ai-model-nm") || {}).textContent || "").trim());
+        const mdlGroups = [].slice.call(document.querySelectorAll("#pane-ai .ai-model-pop .ai-model-gn"))
+          .map(e => (e.textContent || "").trim());
+        const mdlOpen = !!document.querySelector("#pane-ai .ai-model-pop") && mdlItems.length > 0;
         const topBar = !!document.querySelector("#pane-ai .ai-foot .chat-input-container .toolbar");
         const foot = !!document.querySelector("#pane-ai .ai-foot .ai-box .ai-task");
         M.aiRun = null;
         let mdlSent = "";
-        if (mdlSel && mdlOpts.length > 2){
-          mdlSel.value = mdlOpts[2];
-          mdlSel.dispatchEvent(new Event("change", {bubbles: true}));
-          await sleep(80);
+        if (mdlItems.length > 2){
+          mdlItems[2].click();
+          await sleep(150);
         }
+        const mdlClosed = !document.querySelector("#pane-ai .ai-model-pop");
         const btn = document.querySelector("#pane-ai .ai-actions .btn.primary");
         const btnOk = !!(btn && !btn.disabled);
         // 交个任务：照着"真人怎么点"来（填字 → 点开始）
@@ -4972,8 +4991,10 @@ MOCK_JS = r"""
         //   会话列表由下面的 `histOk` 盯（它检查列表里有几条 + 有没有「新建空白会话」）。
         mdlSent = started ? String(started.model || "") : "";
         const sessOk = true;
-        const mdlOk = !!mdlSel && mdlOpts.length === 3 && mdlOpts.indexOf("deepseek-flash") >= 0 &&
-                      mdlSent === mdlOpts[2];
+        // ★ `V-386`：面板里要**两家都在**（用户报的就是"配了两家只看得见第一家"）——
+        //   假 API 给了 DeepSeek(3) + 帅红(2)，所以一共 5 条、分 2 组。
+        const mdlOk = mdlOpen && mdlClosed && mdlGroups.length === 2 && mdlOpts.length === 5 &&
+                      mdlOpts.indexOf("deepseek-flash") >= 0 && mdlSent === mdlOpts[2];
         const frameOk = topBar && foot;
         // ★ `V-253`：跑完那一下日志要**跟着滚到底**（agent 控制台该有的样子）。
         //   ★ 无头浏览器里平滑滚动**不跑动画**（`scroll-behavior:smooth` + `scrollTo`），
@@ -6298,7 +6319,7 @@ MOCK_JS = r"""
         const tabDetail = document.querySelector('.tab[data-tab="detail"] svg');
         const selfchk = document.querySelector("#btn-selfcheck svg");
         const at = e => !!(e && e.querySelector(SHAPE));
-        const sample = ["play", "file", "folder", "history", "moss-openai",
+        const sample = ["play", "file", "folder", "history", "moss-deepseek",
                         "moss-user", "moss-plus", "moss-back", "moss-camera",
                         "moss-folder-out", "moss-history", "terminal"];
         const missing = sample.filter(n => !(T[n] && /<(path|circle|rect|line|polyline|polygon|ellipse)/.test(T[n].body)));

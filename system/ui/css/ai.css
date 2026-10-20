@@ -101,6 +101,74 @@
 .aiwrap .custom-select option:hover{background:var(--aib-primary-light);color:var(--aib-primary)}
 .aiwrap .custom-select option:disabled{color:var(--aib-text-light)}
 
+/* ★ `V-386`：**模型下拉改成自己画的面板**（原生 `<select>` 的弹出层是浏览器画的 —— `optgroup`
+   连内边距都不给，hover / 勾选态也全不认，所以看着"素"）。面板复用 `.popover-panel`；
+   它在**底部工具栏**上，所以是往上弹、右对齐。 */
+.aiwrap .ai-model-pick{position:relative;flex:none}
+.aiwrap .ai-model-btn{
+  display:flex;align-items:center;gap:6px;max-width:min(300px,40vw);
+  background:var(--aib-primary-light);border:1px solid #BFDBFE;color:var(--aib-primary);
+  padding:5px 9px;border-radius:6px;font-family:inherit;font-size:13px;font-weight:500;
+  cursor:pointer;transition:var(--aib-transition-smooth);
+}
+.aiwrap .ai-model-btn:hover{background:#DBEAFE;border-color:#93C5FD}
+.aiwrap .ai-model-btn.active{box-shadow:var(--aib-shadow-focus);border-color:var(--aib-primary)}
+.aiwrap .ai-model-btn:disabled{opacity:.55;cursor:default}
+.aiwrap .ai-model-btn svg.i{width:15px;height:15px;flex:none}
+.aiwrap .ai-model-txt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 当前是哪一家（只配了一家时不显示，省地方） */
+.aiwrap .ai-model-prov{
+  flex:none;max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:11px;font-weight:600;color:#1D4ED8;background:#DBEAFE;
+  padding:1px 6px;border-radius:999px;
+}
+.aiwrap .ai-model-cv{display:inline-flex;flex:none;opacity:.75}
+.aiwrap .ai-model-cv svg.i{width:13px;height:13px}
+.aiwrap .ai-model-pop{
+  width:min(430px,86vw);left:auto;right:0;padding:12px;transform-origin:bottom right;
+}
+/* 筛选框（模型多于 6 个才出现 —— 帅红那家 40 个，不筛没法找） */
+.aiwrap .ai-model-q{
+  display:flex;align-items:center;gap:6px;padding:6px 9px;margin:0 2px 8px;
+  background:var(--aib-code-bg);border:1px solid var(--aib-border-color);border-radius:8px;
+  transition:var(--aib-transition-smooth);
+}
+.aiwrap .ai-model-q:focus-within{
+  background:#fff;border-color:var(--aib-primary);box-shadow:var(--aib-shadow-focus);
+}
+.aiwrap .ai-model-q svg.i{width:14px;height:14px;flex:none;color:var(--aib-text-light)}
+.aiwrap .ai-model-q input{
+  flex:1;min-width:0;border:none;outline:none;background:transparent;
+  font-family:inherit;font-size:13px;color:var(--aib-text-main);
+}
+.aiwrap .ai-model-list{max-height:min(330px,46vh);overflow-y:auto;padding-right:2px}
+.aiwrap .ai-model-grp + .ai-model-grp{margin-top:4px}
+/* 服务商那行：吸顶（滚 40 条的时候还知道自己在看谁家的模型） */
+.aiwrap .ai-model-gh{
+  display:flex;align-items:center;gap:6px;padding:6px 8px 4px;position:sticky;top:0;z-index:1;
+  background:var(--aib-bg-panel);font-size:11px;font-weight:600;color:var(--aib-text-muted);
+}
+.aiwrap .ai-model-gn{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aiwrap .ai-model-gc{color:var(--aib-text-light);font-weight:400}
+.aiwrap .ai-model-gk,.aiwrap .ai-model-gnow{
+  margin-left:auto;flex:none;font-size:10px;font-weight:600;line-height:16px;
+  padding:0 6px;border-radius:999px;
+}
+.aiwrap .ai-model-gk{color:#B45309;background:var(--aib-warning-light);border:1px solid var(--aib-warning-border)}
+.aiwrap .ai-model-gnow{color:#047857;background:#ECFDF5;border:1px solid #A7F3D0}
+.aiwrap .ai-model-it{
+  display:flex;align-items:center;gap:7px;width:100%;padding:6px 8px;border:none;
+  background:transparent;border-radius:6px;cursor:pointer;text-align:left;
+  font-family:inherit;font-size:13px;color:var(--aib-text-main);transition:background .15s;
+}
+.aiwrap .ai-model-it:hover{background:var(--aib-primary-light)}
+.aiwrap .ai-model-it.on{background:var(--aib-primary-light);color:var(--aib-primary);font-weight:600}
+.aiwrap .ai-model-tick{display:inline-flex;flex:none;width:14px;height:14px;opacity:0;color:var(--aib-primary)}
+.aiwrap .ai-model-it.on .ai-model-tick{opacity:1}
+.aiwrap .ai-model-tick svg.i{width:14px;height:14px}
+.aiwrap .ai-model-nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aiwrap .ai-model-none{padding:12px 8px;text-align:center;font-size:12px;color:var(--aib-text-light)}
+
 /* 数字输入框交互（★ `V-263`：自带 nowrap —— 以前它自己折成两行，就是你要修的那个）
    ★ `V-315`：**平时看着就是一段文字**（没有边框、没有底色）—— "token 上限"那几个字
      挪进了 input 的 `title`，点进去编辑时才显出输入框的样子。界面因此干净一块。 */

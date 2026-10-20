@@ -125,8 +125,9 @@ def main():
     if verify:
         bad, ok = [], 0
         for name, got in have.items():
-            # ★ 手工加的那几颗（`moss-*`）不在 lucide-static 里（`moss-openai` 是 Tabler 的
-            #   标记、另外三颗是自绘）—— 别拿线上去核对它，白报"取不到"。
+            # ★ 手工加的那几颗（`moss-*`）不在 lucide-static 里（`moss-deepseek` 是官方
+            #   DeepSeek mark、`moss-openai` 原来是 Tabler 的标记、另外几颗是自绘）——
+            #   别拿线上去核对它，白报"取不到"。
             if name.startswith("moss-"):
                 continue
             try:

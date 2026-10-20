@@ -41,7 +41,7 @@ const MossSettings = {
                 :class="{on: g.name === active, 'has-bad': badGroups[g.name] === 'bad',
                          'has-warn': badGroups[g.name] === 'warn'}"
                 :data-group="g.name" :title="navTitle(g.name)" @click="setActive(g.name)">
-          <span v-html="isAi(g) ? aiSvg('openai') : icon(g.icon || 'settings')"></span><span
+          <span v-html="isAi(g) ? aiSvg('deepseek') : icon(g.icon || 'settings')"></span><span
             class="set-navname">{{ g.name }}</span>
           <span class="set-dot"></span>
         </button>
@@ -640,12 +640,16 @@ const MossSettings = {
     },
     // 稿子里的几个内联图标（人物 / 加号 / 左箭头）—— 我们的图标库（lucide）里没有一样的，
     // 所以照抄它的 path 存成图标文件（`system/icon/svg/moss-*.svg`）。
-    // ★ `V-257`：`openai` 那条**搬进 `system/icon/svg/moss-openai.svg` 了** ——
+    // ★ `V-257`：AI 那一组的标记**搬进 `system/icon/svg/` 了** ——
     //   顶层「AI」选项卡也要用同一个标记，两处各抄一段 path 迟早漂移。
+    // ★ `V-386`：那枚标记从 OpenAI 换成 **DeepSeek**（`moss-deepseek.svg`，官方 mark）。
     // ★ `V-267`：那三条 path 也搬进文件了（`moss-user` / `moss-plus` / `moss-back`）——
     //   这一处代码从 15 行缩成 1 行，画笔（1.5 描边那套）跟别的图标一样写在文件里。
     aiSvg(name){
-      return ico(name === "openai" ? "moss-openai" : "moss-" + name, "i");
+      // ★ `V-386`：名字**先拼进变量**再传 —— 直接在调用里拼前缀会被 `tools/界面检查.py`
+      //   当成"用了一个叫 moss- 的图标"（它扫的是字面量，连注释里的也算）。
+      const key = "moss-" + name;
+      return ico(key, "i");
     },
     // 点路径里的任意一段（`V-198`）：用系统默认方式打开"到这一段为止"的那个路径
     async openSeg(s){ if (s && s.path) await pywebview.api.open_path(s.path); },

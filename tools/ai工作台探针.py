@@ -188,6 +188,37 @@ def main():
     M.HOST = [sys.executable, str(cfg_ok)]
     M._AI_CFG.update({"t0": 0.0, "got": None})
 
+    # ★ `V-386`：用户真报的那个 —— **配了两家，AI 页的模型下拉却永远只有第一家的**。
+    #   根因：`ai_info` 只问宿主"当前那组"，而宿主那份 JSON 其实**早就**把每组的摘要
+    #   （`summary`）一起给了。现在从它把**每一组**的模型都带出来（下拉按家分组）。
+    cfg_two = tmp / "fake_cfg_two.py"
+    cfg_two.write_text(
+        "import json\nprint(json.dumps({'ok': True, 'active': '假组', 'profile': '假组',\n"
+        "  'params': {'base_url': 'https://fake.example/v1', 'api_key': 'sk-假的key',\n"
+        "             'model': ['fake-model', 'fake-model-2']}, 'profiles': ['假组', '假二组'],\n"
+        "  'summary': {\n"
+        "    '假组': {'base_url': 'https://fake.example/v1', 'model': ['fake-model'],\n"
+        "             'has_key': True},\n"
+        "    '假二组': {'base_url': 'https://other.example/v1', 'model': ['other-model'],\n"
+        "               'has_key': False}}}))\n",
+        encoding="utf-8")
+    M.HOST = [sys.executable, str(cfg_two)]
+    M._AI_CFG.update({"t0": 0.0, "got": None})
+    two = api.ai_info(str(pkgs), True)
+    names = [p.get("name") for p in (two.get("providers") or [])]
+    chk("A ★★ 配了两家时两家的模型都给到了（以前只给当前那家，下拉永远只有第一家）",
+        names == ["假组", "假二组"],
+        json.dumps(two.get("providers"), ensure_ascii=False))
+    chk("A 当前那组排最前、并被 profile 标出来（下拉第一眼就是正在用的那家）",
+        (two.get("providers") or [{}])[0].get("name") == "假组"
+        and two.get("profile") == "假组",
+        "profile=%r" % two.get("profile"))
+    chk("A 没填 key 的那家也照样列（optgroup 上标「没填 key」，不是藏起来）",
+        any(p.get("name") == "假二组" and p.get("has_key") is False
+            for p in (two.get("providers") or [])), "")
+    M.HOST = [sys.executable, str(cfg_ok)]
+    M._AI_CFG.update({"t0": 0.0, "got": None})
+
     print()
     print("=" * 72)
     print("B：交任务的基本规矩 —— 空任务拒绝、没配好时说清原因")
@@ -1048,7 +1079,16 @@ def main():
         api.ai_allow(str(ROOT / "core"), True, True, "", "add").get("ok") is False, "")
 
     # ---- J-ε：它问、你答（宿主这一半的桥） --------------------------------------
-    _asker = A.Asker(publish=lambda q: None, timeout=5)
+    # ★ `V-386`（修探针）：`publish` 必须像宿主 `on_ask()` 那样把问题挂进 `AI["state"]["ask"]`
+    #   —— `ai_answer` 会拿它核对 qid（"这个问题过期了吗"）。原来 `publish=lambda q: None`，
+    #   等于问题从没挂出来，界面（和这里）根本拿不到 qid，所以这条一直是红的。
+    def _publish_ask(q):
+        with M.AI_LOCK:
+            st = M.AI.get("state")
+            if st is not None:
+                st["ask"] = q
+
+    _asker = A.Asker(publish=_publish_ask, timeout=5)
     _api_ask = {"ok": True}
     with M.AI_LOCK:
         M.AI["asker"] = _asker
@@ -1056,8 +1096,14 @@ def main():
     _import_thread = None
 
     def _ask_later():
-        time.sleep(0.3)
-        _api_ask.update(api.ai_answer("", "就按 B 来", "B") or {})
+        # 像界面那样**等那张卡出现**（`ai_poll` 拿到 ask 的 qid），再拿着它回答。
+        _q = ""
+        for _ in range(60):
+            time.sleep(0.1)
+            _q = str(((M.AI.get("state") or {}).get("ask") or {}).get("qid") or "")
+            if _q:
+                break
+        _api_ask.update(api.ai_answer(_q, "就按 B 来", "B") or {})
 
     import threading as _th                                                 # noqa: E402
     _import_thread = _th.Thread(target=_ask_later, daemon=True)
@@ -1130,9 +1176,11 @@ def main():
         _res3.get("reason") == "denied" and _res3.get("granted") is False, str(_res3)[:80])
 
     # 「已经等了 N 秒」不许是空数字（老 bug：publish 那一份没有 asking）
-    _asker3 = A.Asker(publish=lambda q: None, timeout=60)
+    # ★ `V-386`（修探针）：这条测的是 `ai_poll` 的**退路** —— "asker 已经收工，但
+    #   `state["ask"]` 还在" 时也要把秒数算出来。`ai_poll` 的口径是 **asker 为准**，
+    #   所以这里必须让 asker 是 None；原来挂了个空 asker，它手上没题 ⇒ 永远拿到空。
     with M.AI_LOCK:
-        M.AI["asker"] = _asker3
+        M.AI["asker"] = None
         M.AI["state"] = {"ask": {"qid": "q-sec", "question": "在吗？", "options": [],
                                  "allow_text": True, "kind": "ask", "why": "", "detail": "",
                                  "at": time.time() - 7}}

@@ -2432,7 +2432,11 @@ class Api:
         if not refresh and _AI_CFG["got"] and now - float(_AI_CFG["t0"]) < 15:
             return _AI_CFG["got"]
         out = {"ok": False, "source": "", "model": "", "base_url": "", "api_key": "",
-               "models": [], "why": ""}
+               "models": [], "why": "",
+               # ★ `V-386`：`profile` = **当前那组**的名字；`providers` = **所有**组 + 各自模型
+               #   清单 —— 顶栏那个模型下拉要能**跨服务商**选（以前只问得到当前那组，配两家也
+               #   永远只看得见第一家的）。见 `ai_info()` / `ai.js` 的 `modelGroups`。
+               "profile": "", "providers": []}
         env_base = (os.environ.get("MOSS_AI_BASE_URL") or "").strip()
         env_model = (os.environ.get("MOSS_AI_MODEL") or "").strip()
         if env_base and env_model:                 # 万一哪天界面进程也有了，直接用
@@ -2441,6 +2445,10 @@ class Api:
                         "model": env_model,
                         "models": [m.strip() for m in (os.environ.get("MOSS_AI_MODELS") or "").split(",")
                                    if m.strip()] or [env_model]})
+            out["profile"] = "环境变量"
+            out["providers"] = [{"name": "环境变量", "models": out["models"],
+                                 "has_key": bool(out["api_key"]),
+                                 "base_url": out["base_url"]}]
         else:
             r = _run_capture_split(HOST + ["--ai-config-reveal"])
             obj = _first_json((r.get("out") or "") + (r.get("err") or ""))
@@ -2453,6 +2461,21 @@ class Api:
                             "models": models, "profile": obj.get("profile") or "",
                             "why": "" if models and p.get("base_url")
                                    else "AI 配置里接口地址 / 模型没填全"})
+                # ★ `V-386`：**每一组**各自配了哪些模型。宿主 `--ai-config` 已经一起给了
+                #   `summary`（每组：地址 / 模型 / 有没有 key），所以这里**不用再起一个进程**
+                #   —— `ai_info` 是每 700ms 一跳的，多一趟就是灾难。
+                profs = []
+                for nm, one in (obj.get("summary") or {}).items():
+                    if not isinstance(one, dict):
+                        continue
+                    ms = [str(x).strip() for x in (one.get("model") or []) if str(x).strip()]
+                    profs.append({"name": nm, "models": ms,
+                                  "has_key": bool(one.get("has_key")),
+                                  "base_url": str(one.get("base_url") or "").rstrip("/")})
+                # 当前那组排最前（下拉第一眼就是正在用的那家），其余按名字。
+                _cur = str(obj.get("active") or obj.get("profile") or "")
+                profs.sort(key=lambda x: (x["name"] != _cur, x["name"]))
+                out["providers"] = profs
             else:
                 out["why"] = "读不到 AI 配置 —— 去「设置 → AI」配一组（挑一家、把 key 填上）"
         _AI_CFG.update({"t0": now, "got": out})
@@ -2532,6 +2555,10 @@ class Api:
             if not _ms and out["model"]:
                 _ms = [out["model"]]
             out["models"] = _ms
+            # ★ `V-386`：**所有**服务商 + 各自模型 —— 顶栏那个下拉按家分组；选别家的模型
+            #   就顺手把那家设为当前（`ai.js` 的 `pickModel()`）。`profile` 标着当前是哪家。
+            out["providers"] = p.get("providers") or []
+            out["profile"] = p.get("profile") or ""
             out["base_url"] = p.get("base_url") or ""
             out["has_key"] = bool(p.get("api_key"))
             out["key_from"] = p.get("source") or ""
