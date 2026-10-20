@@ -58,6 +58,11 @@ function closeModal(){
   const i = $("#m-input"), t = $("#m-textarea");
   if (i) i.hidden = true;
   if (t){ t.hidden = true; t.value = ""; }
+  // ★ `V-387`：自定义插槽也要清干净（新建包那个弹窗整个塞在这里面）
+  const ex = $("#m-extra");
+  if (ex){ ex.hidden = true; ex.innerHTML = ""; }
+  const card = document.querySelector("#modal .card");
+  if (card) card.classList.remove("wide", "np-card");
   modalCb = null; modalCb2 = null;
 }
 /* ---------------------------------------------------------------- 状态栏（`V-61` ✅）

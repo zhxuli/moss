@@ -108,6 +108,10 @@ const AIR = Vue.reactive({
   permHover: false, permPinned: false,
   /* ★ `V-316`：左上角那颗**历史图标**点开才出的会话列表（原来是一个占满宽度的下拉） */
   histOpen: false,
+  /* ★ `V-386`：顶栏那个**模型下拉**（改成自己画的面板：按服务商分组 + 可筛 + 选中打勾）。
+     `modelQ` = 面板里那个筛选框的内容。为什么要自己画：原生 `<select>` 的弹出层是浏览器画的，
+     `optgroup` 连内边距都不给（你说"看着有点素"），而帅红那家 40 个模型也根本没法找。 */
+  modelOpen: false, modelQ: "",
   /* ★ `V-340`：**权限浮层**开不开（新稿子把权限从"左下角常驻卡"改成"工具栏里点开才出的浮层"） */
   permPop: false,
   /* ★ `V-308`：它现在挂着的问题（`ask` 卡片）。`askText` = 你在那张卡上打的字 */
@@ -879,6 +883,16 @@ async function aiPollOnce(){
     if (_wasRunning && !AIR.running){
       aiLoadSkills();
       aiRefreshInfo(true);      // `V-319`：这一跑里它可能问过权限，跑完把清单重读一次
+      // ★ `V-387`：**这一跑刚结束 ⇒ 包表重问一遍**。它会改 `pkg.json`（典型：新加
+      //   `ui.embed` 声明"我这个包带内嵌界面"）—— 而包表是"启动 / 存盘那一刻"的快照，
+      //   不问就一直是旧的：于是**顶部那个「界面」选项卡不出现**，非要把包切走再切回来
+      //   （`select()` 里才重画）才看得见（用户报的就是这个）。
+      //   代价：一次 `state()`（宿主起一个进程，~0.3-1 秒），**一跑只一次**，可以接受。
+      //   `refreshPkgs` 那边会顺手重画选项卡（同一版补的）。
+      try{
+        if (typeof refreshPkgs === "function")
+          await refreshPkgs((cur && cur.id) || undefined, true);
+      }catch(e){ /* 重问失败不影响这一页 */ }
     }
     // ★ 技能状态一变（AI 造了/改了、用户点了允许/撤销）立刻重读技能那一行 ——
     //   不然它改完技能，界面上还写着「已允许」（用户报的这个 bug）。
@@ -1155,12 +1169,56 @@ const MossAi = {
     resultOk(){ this.A.rev; return !!(this.lastRes && this.lastRes.ok); },
     /* ★ `V-252`（照你给的稿子重做这一页）：顶上那两个下拉要的东西 ——
        ① 这一家配了哪些模型（`ai_info.models`；只有一条就只显示那一条）；
-       ② 这个包上次那条（「重新跑」按钮填回它的任务原文）。 */
+       ② 这个包上次那条（「重新跑」按钮填回它的任务原文）。
+       ★ `V-386`：下拉改成**按服务商分组**（`ai_info.providers`）—— 以前只列"当前那组"的
+         模型，配了两家也永远只看得见第一家的，想换家只能跑去「设置 → AI」点「设为当前」。
+         现在下拉里是**所有家**的模型，选别家的任何一个 = 顺手把那家设为当前（见 pickModel）。 */
+    modelGroups(){
+      this.A.rev;
+      const inf = this.A.info || {};
+      const cur = String(inf.profile || "");
+      let ps = (inf.providers || []).map(p => ({
+        name: String(p.name || ""),
+        models: (p.models || []).map(x => String(x)).filter(Boolean),
+        has_key: !!p.has_key,
+      })).filter(p => p.name && p.models.length);
+      if (!ps.length){                        // 老宿主 / 走环境变量那条路：只有当前这一家
+        const ms = (inf.models || []).slice();
+        if (!ms.length && this.A.model) ms.push(this.A.model);
+        if (ms.length) ps = [{name: cur || "当前服务商", models: ms, has_key: true}];
+      }
+      ps.sort((a, b) => (a.name === cur ? -1 : b.name === cur ? 1 : 0));
+      // ★ 下拉的 value 只能是**模型名**（`v-model` 绑的是 A.model）⇒ 同名模型只留一份，
+      //   留给"会被解析到"的那家（当前那家优先，其次靠前的）—— 不然选哪个都指向第一家。
+      const seen = {};
+      const out = [];
+      ps.forEach(g => {
+        const ms = g.models.filter(m => { if (seen[m]) return false; seen[m] = 1; return true; });
+        if (ms.length)
+          out.push({name: g.name, has_key: g.has_key, active: g.name === cur, models: ms});
+      });
+      return out;
+    },
     models(){
       this.A.rev;
-      const ms = (this.A.info && this.A.info.models) || [];
-      if (ms.length) return ms;
-      return this.A.model ? [this.A.model] : [];
+      return this.modelGroups.reduce((a, g) => a.concat(g.models), []);
+    },
+    /* ★ `V-386`：当前这个模型属于哪家（按钮上那颗小标签用它；一家都没标出来时退回"当前那组"）
+       ⚠️ `providerOf(name)` 是**方法**（在 `methods` 里，带参数），不是 computed —— 这里能调它。 */
+    currentProvider(){
+      this.A.rev;
+      return this.providerOf(this.A.model) || String((this.A.info && this.A.info.profile) || "");
+    },
+    /* ★ `V-386`：面板里**筛过**的分组 —— 按"模型名 / 服务商名"匹配；一个都没命中的整组不显示 */
+    modelGroupsShown(){
+      this.A.rev;
+      const q = String(this.A.modelQ || "").trim().toLowerCase();
+      const gs = this.modelGroups;
+      if (!q) return gs;
+      const hit = s => String(s || "").toLowerCase().indexOf(q) >= 0;
+      return gs
+        .map(g => (hit(g.name) ? g : Object.assign({}, g, {models: g.models.filter(hit)})))
+        .filter(g => g.models.length);
     },
     lastRun(){
       this.A.rev;
@@ -2059,8 +2117,52 @@ const MossAi = {
         toast("这条是更早的记录（当时还没存对话）—— 只能看，接不上", true);
       }
     },
-    pickModel(){
-      toast("这次用 " + (AIR.model || "?") + " 跑（换模型连带换上下文窗口）");
+    /* ★ `V-386`：这个模型属于哪一家 —— 决定要不要顺手切"当前那组"（**方法**，带参数） */
+    providerOf(m){
+      const g = this.modelGroups.filter(x => x.models.indexOf(m) >= 0)[0];
+      return g ? g.name : "";
+    },
+    /* ★ `V-386`：模型面板的开关 / 关闭（在跑的时候不给换 —— 这一轮已经用旧 client 建好了） */
+    toggleModelOpen(){
+      if (this.A.running || !this.models.length) return;
+      this.A.modelOpen = !this.A.modelOpen;
+      if (this.A.modelOpen){
+        this.A.modelQ = "";
+        this.$nextTick(() => {
+          try{ const el = this.$refs.modelQ; if (el && el.focus) el.focus(); }catch(e){}
+        });
+      }
+    },
+    closeModelPop(){
+      this.A.modelOpen = false;
+      this.A.modelQ = "";
+    },
+    /* ★ `V-252` / `V-386`：换模型说一声；要是选的是**别家**的模型，先把那家设成"当前"
+       —— key 和接口地址是按"当前那组"注入的，不切家的话 B 家的模型名会被发到 A 家的接口上。
+       切完强刷一次 `ai_info`，让按钮上的标签、底下的上下文窗口一起对上。 */
+    async pickModel(m){
+      m = String(m || "").trim();
+      if (!m) return;
+      this.closeModelPop();
+      AIR.model = m;
+      const want = this.providerOf(m);
+      const cur = String((AIR.info && AIR.info.profile) || "");
+      if (!want || !cur || want === cur){
+        toast("这次用 " + m + " 跑（换模型连带换上下文窗口）");
+        return;
+      }
+      const api = await aiWaitApi();
+      if (!api || !api.ai_set_active){
+        toast("「" + want + "」这家要先切过去，但界面桥没连上 —— 重启 moss 界面再试", true);
+        return;
+      }
+      const r = await api.ai_set_active(want);
+      if (r && r.ok){
+        toast("已切到「" + want + "」，这次用 " + m + " 跑（" + (r.msg || "已记住") + "）");
+        await aiRefreshInfo(true);
+      } else {
+        toast("切到「" + want + "」没成功：" + ((r && r.msg) || "宿主没说什么"), true);
+      }
     },
     /* ★ `V-257`：下拉点不开是**点在了外框上**（`.custom-select` 有 6×12 内边距、还有一个图标，
        真正能弹出列表的只有里面那个 `<select>` 的文字那一小块）。补一个：点框子的任何地方
@@ -2380,6 +2482,8 @@ const MossAi = {
       const t = e.target;
       if (AIR.histOpen && !(t && t.closest && t.closest(".ai-hist-wrap"))) AIR.histOpen = false;
       if (AIR.permPop && !(t && t.closest && t.closest(".ai-perm-wrap"))) AIR.permPop = false;
+      // ★ `V-386`：模型面板同理（点别处就收起来）
+      if (AIR.modelOpen && !(t && t.closest && t.closest(".ai-model-pick"))) AIR.modelOpen = false;
       if (!AIR.altOn) return;
       if (t && t.closest && t.closest(".ai-jump")) return;
       AIR.altOn = false;
@@ -2757,14 +2861,46 @@ const MossAi = {
                          title="token 上限（单位：百万）：这次任务最多烧多少 token。烧到 80% 时劝它收尾，到顶就停手。" aria-label="token 上限（百万）"> 百万</span>
               </span>
 
-              <div class="custom-select select-model btn-model" @click="openSel($event)"
-                   :title="'这次用哪个模型。这家配了 ' + models.length + ' 个；换模型连带换上下文窗口。'">
-                <span v-html='ico("sparkles", "i")'></span>
-                <select class="ai-model" v-model="A.model" :disabled="A.running || !models.length"
-                        @change="pickModel()">
-                  <option v-for="m in models" :key="m" :value="m">{{ m }}</option>
-                  <option v-if="!models.length" value="">（还没配 AI）</option>
-                </select>
+              <div class="popover-wrapper ai-model-pick">
+                <button type="button" class="ai-model-btn" :class="{active: A.modelOpen}"
+                        :disabled="A.running || !models.length" @click.stop="toggleModelOpen()"
+                        :title="'这次用哪个模型。当前「' + currentProvider + '」，'
+                                + '共 ' + modelGroups.length + ' 家 / ' + models.length + ' 个模型。'
+                                + '选别家的模型会自动把那家设为当前。'">
+                  <span v-html='ico("sparkles", "i")'></span>
+                  <span class="ai-model-txt">{{ A.model || "（还没配 AI）" }}</span>
+                  <span class="ai-model-prov" v-if="modelGroups.length > 1">{{ currentProvider }}</span>
+                  <span class="ai-model-cv" v-html='ico("chevron-down", "i")'></span>
+                </button>
+                <div class="popover-panel ai-model-pop" :class="{show: A.modelOpen}"
+                     v-if="A.modelOpen" @click.stop>
+                  <div class="popover-title">选择模型
+                    <span class="popover-hint">{{ modelGroups.length }} 家 · {{ models.length }} 个<span
+                          v-if="A.running">（跑完才能换）</span></span>
+                  </div>
+                  <label class="ai-model-q" v-if="models.length > 6">
+                    <span v-html='ico("search", "i")'></span>
+                    <input ref="modelQ" v-model="A.modelQ" spellcheck="false" autocomplete="off"
+                           placeholder="筛一下：模型名 / 服务商"
+                           @keydown.esc.stop.prevent="closeModelPop()">
+                  </label>
+                  <div class="ai-model-list">
+                    <div class="ai-model-grp" v-for="g in modelGroupsShown" :key="g.name">
+                      <div class="ai-model-gh">
+                        <span class="ai-model-gn">{{ g.name }}</span>
+                        <span class="ai-model-gc">{{ g.models.length }}</span>
+                        <span class="ai-model-gk" v-if="!g.has_key">没填 key</span>
+                        <span class="ai-model-gnow" v-else-if="g.active">当前</span>
+                      </div>
+                      <button type="button" class="ai-model-it" v-for="m in g.models" :key="m"
+                              :class="{on: m === A.model}" @click="pickModel(m)">
+                        <span class="ai-model-tick" v-html='ico("check", "i")'></span>
+                        <span class="ai-model-nm">{{ m }}</span>
+                      </button>
+                    </div>
+                    <div class="ai-model-none" v-if="!modelGroupsShown.length">没有匹配的模型</div>
+                  </div>
+                </div>
               </div>
               <!-- 历史会话（点开才出） -->
               <div class="popover-wrapper ai-hist-wrap">

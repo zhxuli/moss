@@ -221,6 +221,77 @@ def main():
 
     print()
     print("=" * 72)
+    print("A2：`V-387`「让 AI 定一个包」—— id / 名字 / 介绍 / 第一句任务")
+    print("=" * 72)
+    # ★ 这一段比下面 C 段早，所以得**先把假模型换上**（`ai_client.Client = FakeClient`
+    #   在 C 段才做）—— 否则这几次调用会真的往 `fake.example` 发请求。
+    api._ai_mods()
+    sys.modules["ai_client"].Client = FakeClient
+    # 假模型照"我们要的格式"回一段 JSON（真模型偶尔会包一层 ```，所以下面还测了那种）
+    SCRIPT[:] = [{"text": '{"id":"shot-archive","name":"截图归档",'
+                          '"desc":"把剪贴板里的截图按日期存起来，顺手把路径复制回来",'
+                          '"task":"做一个截图归档包：按日期分目录保存，并复制路径"}',
+                  "tool_calls": [], "usage": {}, "native": True,
+                  "message": {"role": "assistant", "content": None}}]
+    sug = api.ai_suggest_pkg("把剪贴板截图按日期归档")
+    chk("A2 一句话就换回四样（id / 名字 / 介绍 / 任务）",
+        sug.get("ok") and sug.get("id") == "shot-archive" and sug.get("name") == "截图归档"
+        and "按日期" in str(sug.get("desc")) and sug.get("task"),
+        "%s / %s" % (sug.get("id"), sug.get("name")))
+    chk("A2 它是**一次最小请求**（不带工具、不建 loop）",
+        not FakeClient.INSTANCES[-1].tools_seen[-1],
+        "tools=%s" % (FakeClient.INSTANCES[-1].tools_seen[-1],))
+    # id 撞了要自动加后缀（不然建包当场失败）
+    _real_taken = api._pkg_ids_taken
+    api._pkg_ids_taken = lambda: {"shot-archive"}
+    sug2 = api.ai_suggest_pkg("再来一个一样的")
+    chk("A2 id 撞了自动加后缀", sug2.get("id") == "shot-archive-2", sug2.get("id"))
+    api._pkg_ids_taken = _real_taken
+    # 模型给的是中文 / 大写 / 带空格 —— 必须掰成合法 id（不能直接信它）
+    SCRIPT[:] = [{"text": '```json\n{"id":"我的 截图工具","name":"截图工具","desc":"存图","task":"做它"}\n```',
+                  "tool_calls": [], "usage": {}, "native": True,
+                  "message": {"role": "assistant", "content": None}}]
+    sug3 = api.ai_suggest_pkg("随便")
+    _id3 = str(sug3.get("id") or "")
+    _id_ok = (bool(_id3) and _id3[0].isalpha() and _id3[0].islower()
+              and all(c.islower() or c.isdigit() or c in "-_" for c in _id3))
+    chk("A2 模型给中文 id 时当场掰成合法 id（还从 ``` 里抠得出 JSON）",
+        sug3.get("ok") and _id_ok, sug3.get("id"))
+    # 没配 AI 时说清原因，不许假装成功
+    M.HOST = [sys.executable, str(cfg_bad)]
+    M._AI_CFG.update({"t0": 0.0, "got": None})
+    bad_sug = api.ai_suggest_pkg("做个东西")
+    chk("A2 没配 AI / 读不到配置时如实说（不假装定了）",
+        bad_sug.get("ok") is False and str(bad_sug.get("msg")), bad_sug.get("msg"))
+    M.HOST = [sys.executable, str(cfg_ok)]
+    M._AI_CFG.update({"t0": 0.0, "got": None})
+    # ---- 建包：`new_pkg` 必须把 id / 名字 / 介绍 都交给宿主（列表式 argv，不跟引号较劲）----
+    #   ★ 断言落在**宿主真收到的 argv** 上（假宿主把它写进一个 UTF-8 文件），而不是回读
+    #     控制台文字 —— 那要跟子进程的 stdout 编码较劲（cp936 / UTF-8 一错就假红）。
+    host_new = tmp / "fake_new.py"
+    host_new.write_text(
+        "import json, sys\n"
+        "sys.stdout.reconfigure(encoding='utf-8')\n"
+        "open(__file__ + '.args', 'w', encoding='utf-8').write("
+        "json.dumps(sys.argv[1:], ensure_ascii=False))\n"
+        "print('OK')\n", encoding="utf-8")
+    M.HOST = [sys.executable, str(host_new)]
+    nr = api.new_pkg("demo-pkg", "截图归档", "一句话介绍")
+    _args = []
+    try:
+        _args = json.loads(Path(str(host_new) + ".args").read_text(encoding="utf-8"))
+    except Exception as exc:                                              # noqa: BLE001
+        _args = ["(读不到宿主收到的 argv: %s)" % exc]
+    chk("A2 建包把 id / 名字 / 介绍 一起给了宿主（argv 列表，中文原样）",
+        nr.get("ok") and _args[:2] == ["--new", "demo-pkg"]
+        and "name=截图归档" in _args and "desc=一句话介绍" in _args, _args)
+    er = api.new_pkg("", "x", "y")
+    chk("A2 没 id 时不瞎跑（直接回一句人话）", er.get("ok") is False and er.get("msg"), er.get("msg"))
+    M.HOST = [sys.executable, str(cfg_ok)]
+    M._AI_CFG.update({"t0": 0.0, "got": None})
+
+    print()
+    print("=" * 72)
     print("B：交任务的基本规矩 —— 空任务拒绝、没配好时说清原因")
     print("=" * 72)
     chk("B 空任务被拒（不浪费一次调用）", api.ai_start("")["ok"] is False, "")

@@ -111,6 +111,9 @@ async function init(){
   }
   fmRender();
   bindDropZone();          // 拖文件进来（`V-35`）：高亮 + 收宿主送来的真实路径
+  // ★ `V-387`：⟳（`#btn-refresh` 的处理器**就是** `init`）之后也把「界面」选项卡重画一遍
+  //   —— 和 `refreshPkgs` 里那次是同一个 bug 的两个入口：包表换了却没人重画选项卡。
+  if (typeof paintEmbedTab === "function") paintEmbedTab();
   autostartRun();          // ★ `V-356`：启动界面之后自动跑起那几条（实现在 js/autostart.js）
 }
 function paintStaticIcons(){
@@ -198,21 +201,173 @@ $("#modal").addEventListener("click", e => { if (e.target.id === "modal") closeM
    这两个功能 CLi 早就有（`moss --new` / `moss --remove`），界面这边原来漏了。
    界面**不重写一遍逻辑**，直接把宿主命令叫起来（和用户手敲是同一条路），
    输出照样进「命令行」那份缓冲。 */
-async function cmdNewPkg(){
-  askText("新建一个包", "my-first", async (id) => {
-    if (!id) return;
-    consoleKey = "__host__";
-    setConsole("__host__", "$ moss --new " + id, "运行中");
-    const r = await pywebview.api.run_host("--new " + id);
-    setConsole("__host__", "$ moss --new " + id + "\n\n" + (r.out || "(没有输出)") +
-               "\n" + runTail(r.code, r.out, false), "退出码 " + r.code);
-    toast(r.code === 0 ? ("已新建 " + PSYM + id) : "✗ 新建失败，看「命令行」",
-          r.code !== 0);
-    if (r.code === 0){
-      await init();                       // 重新扫包列表，新包就出现了
-      select(id);
-    } else setTab("console");
-  });
+/* ★ `V-387`：**新建包** —— 照你给的稿子重做（`AI 创建` / `手动` 二选一，zinc 中性色）。
+   · AI 模式**只有一个输入框**：说一句话 → 点「创建」时先问一次 AI（拿 id / 名字 / 介绍 /
+     第一句任务）→ 建包 → 进 AI 页 → **自动开工**。AI 定好的值会同时填进「手动」那几格，
+     切过去就能看 / 改（不用另开一步"确认"）。
+   · 手动模式：名字 / 包 ID / 一句话介绍 / 第一句任务 → **只建包，不碰 AI**。
+   · 底栏只有一颗「创建」（两种模式共用）；出口是右上角那颗 ×（Esc / 点外面同样能关）。
+   · 纯 CSS 复刻（不引 Tailwind CDN —— 界面是离线的，引外链等于没有样式）。 */
+const NP = {mode: "ai", sug: null, sugFor: "", busy: false};
+
+function npVal(sel){
+  const el = $(sel);
+  return el ? String(el.value || "") : "";
+}
+
+function npSetStatus(text, bad){
+  const el = $("#np-tip");
+  if (!el) return;
+  el.textContent = String(text || "");
+  el.className = "np-tip" + (bad ? " bad" : "");
+}
+
+function npFill(v){
+  [["#np-name", v.name], ["#np-id", v.id], ["#np-desc", v.desc], ["#np-task", v.task]]
+    .forEach(([sel, val]) => { const el = $(sel); if (el) el.value = val == null ? "" : val; });
+}
+
+function npSetMode(mode){
+  NP.mode = mode === "manual" ? "manual" : "ai";
+  const ai = NP.mode === "ai";
+  const va = $("#np-body-ai"), vm = $("#np-body-manual");
+  if (va) va.style.display = ai ? "" : "none";
+  if (vm) vm.style.display = ai ? "none" : "";
+  const ta = $("#np-tab-ai"), tm = $("#np-tab-manual");
+  if (ta) ta.className = ai ? "on" : "";
+  if (tm) tm.className = ai ? "" : "on";
+  // AI 已经定过 → 切到"手动"时把值铺出来（这时候人才能改它）
+  if (!ai && NP.sug) npFill(NP.sug);
+  const first = ai ? $("#np-idea") : $("#np-name");
+  try{ if (first) first.focus(); }catch(e){}
+}
+
+function npBusy(on){
+  NP.busy = !!on;
+  ["#np-go", "#np-close", "#np-tab-ai", "#np-tab-manual"]
+    .forEach(s => { const b = $(s); if (b) b.disabled = !!on; });
+  const go = $("#np-go");
+  if (go) go.textContent = on ? (NP.mode === "ai" ? "AI 正在想…" : "创建中…") : "创建";
+}
+
+/* 建包。**AI 模式：建完直接让 AI 开工；手动模式：只建**（你定的这两条）。
+   AI 模式下先请 AI 把四样（id / 名字 / 介绍 / 第一句任务）定下来。 */
+async function npCreate(){
+  if (NP.busy) return;
+  const aiMode = NP.mode === "ai";
+  // ★ 你定的：AI 创建 ⇒ 建完自动开工；手动 ⇒ 只建（不碰 AI）
+  const andStart = aiMode;
+  const idea = npVal("#np-idea").trim();
+  let v = {id: npVal("#np-id"), name: npVal("#np-name"),
+           desc: npVal("#np-desc"), task: npVal("#np-task")};
+  if (aiMode){
+    if (!idea){
+      npSetStatus("先说一句你想让它干什么 —— 一句话就行", true);
+      const t = $("#np-idea");
+      try{ if (t) t.focus(); }catch(e){}
+      return;
+    }
+    const cached = NP.sug && NP.sugFor === idea;
+    if (!cached){
+      npBusy(true);
+      npSetStatus("AI 正在定 id / 名字 / 介绍…");
+      let r = null;
+      try{ r = await pywebview.api.ai_suggest_pkg(idea); }
+      catch(e){ r = {ok: false, msg: "AI 调用失败：" + (e && e.message ? e.message : e)}; }
+      npBusy(false);
+      if (!r || !r.ok){
+        npSetStatus((r && r.msg) || "AI 没给出结果", true);
+        return;
+      }
+      NP.sug = r;
+      NP.sugFor = idea;
+      npFill(r);
+      v = {id: r.id, name: r.name, desc: r.desc, task: r.task};
+      npSetStatus("AI 定好了：" + r.id + " · " + r.name + "（切「手动」可以改）");
+    } else {
+      v = {id: NP.sug.id, name: NP.sug.name, desc: NP.sug.desc, task: NP.sug.task};
+    }
+  }
+  const id = String(v.id || "").trim().toLowerCase();
+  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(id)){
+    npSetStatus("包 ID 要小写字母开头，只含 a-z 0-9 - _（最长 32）", true);
+    if (NP.mode === "ai") npSetMode("manual");
+    return;
+  }
+  npBusy(true);
+  let r2 = null;
+  try{ r2 = await pywebview.api.new_pkg(id, v.name || "", v.desc || ""); }
+  catch(e){ r2 = {ok: false, msg: "新建失败：" + (e && e.message ? e.message : e)}; }
+  npBusy(false);
+  if (!r2 || !r2.ok){
+    npSetStatus((r2 && r2.msg) || "新建失败（没说明）", true);
+    return;
+  }
+  closeModal();
+  await init();                     // 重扫包列表 —— 新包这会儿才出现在 DATA 里
+  select(id, /*keepTab*/ true);     // keepTab：别把用户弹回「详情」
+  toast("已新建 " + PSYM + id + (v.name ? " · " + v.name : ""));
+  if (!andStart) return;
+  const task = String(v.task || "").trim() || String(v.desc || "").trim() || ("做一个「" + id + "」的包");
+  setTab("ai");
+  await new Promise(res => setTimeout(res, 250));   // 等 AI 那一页挂上（组件按页渲染）
+  window.__AIR.task = task;
+  try{
+    if (typeof aiStart === "function") await aiStart();
+  }catch(e){
+    toast("AI 没起得来：" + (e && e.message ? e.message : e), true);
+  }
+}
+
+function cmdNewPkg(){
+  const card = document.querySelector("#modal .card");
+  if (card) card.classList.add("np-card");
+  const box = $("#m-extra");
+  if (!box) return;
+  box.hidden = false;
+  NP.mode = "ai"; NP.sug = null; NP.sugFor = ""; NP.busy = false;
+  box.innerHTML = [
+    '<div class="np">',
+    '  <div class="np-head">',
+    '    <div class="np-title">新建包</div>',
+    '    <div class="np-head-r">',
+    '      <div class="np-seg">',
+    '        <button type="button" id="np-tab-ai" class="on">AI 创建</button>',
+    '        <button type="button" id="np-tab-manual">手动</button>',
+    '      </div>',
+    '      <button type="button" class="np-close" id="np-close" title="关闭（Esc）"',
+    '              aria-label="关闭">' + ico("x", "i") + '</button>',
+    '    </div>',
+    '  </div>',
+    '  <div class="np-body" id="np-body-ai">',
+    '    <textarea id="np-idea" rows="4" class="np-field np-area" spellcheck="false"',
+    '      placeholder="用一句话描述你想让它干什么，AI 会自动补全名字、ID 和介绍..."></textarea>',
+    '  </div>',
+    '  <div class="np-body" id="np-body-manual" style="display:none">',
+    '    <div class="np-grid">',
+    '      <input id="np-name" class="np-field" placeholder="名字" autocomplete="off" spellcheck="false">',
+    '      <input id="np-id" class="np-field np-mono" placeholder="包 ID (a-z, 0-9, - _)" autocomplete="off" spellcheck="false">',
+    '    </div>',
+    '    <input id="np-desc" class="np-field" placeholder="一句话介绍" autocomplete="off" spellcheck="false">',
+    '    <textarea id="np-task" rows="3" class="np-field np-area" spellcheck="false"',
+    '      placeholder="第一句任务（建完直接发给 AI）"></textarea>',
+    '  </div>',
+    '  <div class="np-tip" id="np-tip"></div>',
+    '  <div class="np-foot">',
+    '    <button type="button" class="np-btn dark" id="np-go">创建</button>',
+    '  </div>',
+    '</div>',
+  ].join("\n");
+  $("#np-tab-ai").onclick = () => npSetMode("ai");
+  $("#np-tab-manual").onclick = () => npSetMode("manual");
+  $("#np-close").onclick = () => { if (!NP.busy) closeModal(); };
+  $("#np-go").onclick = () => npCreate();
+  // Esc 关（这个弹窗里的输入框不吃 app.js 那条 Esc 绑定 —— 那条绑在 `#m-input` 上）
+  box.onkeydown = e => {
+    if (e.key === "Escape" && !NP.busy){ e.stopPropagation(); closeModal(); }
+  };
+  $("#modal").classList.add("on");
+  setTimeout(() => { const t = $("#np-idea"); try{ if (t) t.focus(); }catch(e){} }, 40);
 }
 
 async function cmdRemovePkg(p){

@@ -4948,6 +4948,135 @@ class Api:
         r = _run_capture(HOST + ["--ai-active", name])
         return {"ok": r.get("code") == 0, "msg": (r.get("out") or "").strip()}
 
+    # ------------------------------------------------------------ 新建包（`V-387`）
+    def new_pkg(self, pid="", name="", desc="", kind=""):
+        """建一个包的骨架（走宿主 `moss --new`，唯一实现）。
+
+        ★ 为什么不在这里拼 `run_host("--new x name=…")`：名字/介绍里会有空格、引号、中文，
+          走**列表式 argv** 才不用跟命令行的引号较劲（`_run_capture` 收的就是列表）。
+        ★ 失败（id 非法 / 已存在）时把宿主那句话原样带回去，别吞成"没成功"。
+        """
+        pid = str(pid or "").strip().lower()
+        if not pid:
+            return {"ok": False, "code": 1, "msg": "先说个 id（小写字母开头）", "out": ""}
+        argv = HOST + ["--new", pid]
+        if str(name or "").strip():
+            argv.append("name=" + str(name).strip())
+        if str(desc or "").strip():
+            argv.append("desc=" + str(desc).strip())
+        if str(kind or "").strip():
+            argv.append("kind=" + str(kind).strip())
+        r = _run_capture(argv)
+        ok = r.get("code") == 0
+        text = (r.get("out") or "").strip() or ("建好了" if ok else "没建成")
+        return {"ok": ok, "code": r.get("code"), "msg": text, "out": text}
+
+    @staticmethod
+    def _pkg_id(raw, fallback="new-pkg"):
+        """把模型给的名字**掰成合法 id**：小写、字母开头、`[a-z0-9_-]`、≤24。
+
+        规矩跟 `core/paths.py` 的 `valid_id()` 一致（32 是硬上限，这里留余量给 `-2` 后缀）。
+        模型常给中文 / 大写 / 带空格的名字，所以这一步**必须**有，不能直接信它。
+        """
+        s = str(raw or "").strip().lower()
+        s = re.sub(r"[^a-z0-9_-]+", "-", s).strip("-_")
+        s = re.sub(r"^[^a-z]+", "", s)
+        s = s[:24].strip("-_")
+        return s or fallback
+
+    def _pkg_ids_taken(self):
+        """已经占着的包 id（包表 + 磁盘上真有的目录）—— id 撞了就加后缀。"""
+        taken = set()
+        for p in (DATA.get("packages") or []):
+            try:
+                taken.add(str(p.get("id") or ""))
+            except Exception:                                            # noqa: BLE001
+                pass
+        try:
+            for p in (USER_DATA / "pkgs").iterdir():
+                if p.is_dir():
+                    taken.add(p.name)
+        except OSError:
+            pass
+        return taken
+
+    def ai_suggest_pkg(self, idea=""):
+        """**让 AI 定一个包**：`id` / 名字 / 介绍 / 开工那句任务（`V-387`）。
+
+        用户原话：「创建的时候 其实这个项目到底用啥名字 怎么写介绍 怎么写 id 我也拿不准
+        …… 能不能也有个简单的 AI 帮我完成」。
+
+        ★ 只发**一次**最小请求（不带工具、不建 loop）—— 这是"起名"，不是"干活"；
+          真正的活由建完包之后那一次 `ai_start` 干。
+        ★ 返回的都只是**建议**：界面上那四个框照样能改，这里不替用户拍板。
+        ★ id 当场按 `core/paths.py` 的规矩掰正，并避开已有 id（`-2`、`-3`…）。
+        """
+        idea = str(idea or "").strip()
+        if not idea:
+            return {"ok": False, "msg": "先说一句你想让它干什么 —— 一句话就行"}
+        try:
+            p = self.ai_params(refresh=True)
+            if not (p.get("base_url") and p.get("model")):
+                return {"ok": False,
+                        "msg": p.get("why") or "还没配 AI —— 去「设置 → AI」挑一家、把 key 填上"}
+            c, _e, _l = self._ai_mods()
+            client = c.Client(p.get("base_url"), p.get("api_key") or "", p.get("model"))
+        except Exception as exc:                                         # noqa: BLE001
+            return {"ok": False, "msg": "AI 起不来：%s" % exc}
+        sys_msg = (
+            "你是 moss 的插件规划助手。用户在做一个新插件（moss 里叫「包」），你替他把"
+            "id / 名字 / 介绍 / 第一句任务定下来。\n"
+            "只输出**一个 JSON 对象**，不要解释、不要 Markdown 代码块，键固定四个：\n"
+            '{"id": "...", "name": "...", "desc": "...", "task": "..."}\n'
+            "规则：\n"
+            "· id：小写英文字母开头，只含小写字母/数字/-/_，不超过 24 个字符，"
+            "一眼能看出是干什么的（例：shot-archive）。\n"
+            "· name：中文短名字，4-12 个字，不带引号。\n"
+            "· desc：一句话（20-40 字）说清它干什么、什么时候用 —— 会显示在插件列表里。\n"
+            "· task：给随后写代码的 AI 的第一句指令（中文，一句话说清目标 + 关键约束，"
+            "不要写成需求文档）。\n"
+            "· 除 id 外全部用中文；不要 emoji。"
+        )
+        t0 = time.time()
+        try:
+            got = client.chat([{"role": "system", "content": sys_msg},
+                               {"role": "user", "content": "我想做的东西：" + idea}])
+            raw = str((got or {}).get("text") or "").strip()
+        except Exception as exc:                                         # noqa: BLE001
+            return {"ok": False, "msg": "AI 没答上来：%s" % exc}
+        # ---- 从回复里抠 JSON（模型偶尔包一层 ```，或者前后带话）----
+        blob, data = raw, {}
+        m = re.search(r"\{.*\}", raw, re.S)
+        if m:
+            blob = m.group(0)
+        try:
+            data = json.loads(blob)
+        except Exception:                                                # noqa: BLE001
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        nm = str(data.get("name") or "").strip()[:24]
+        ds = str(data.get("desc") or "").strip()[:80]
+        tk = str(data.get("task") or "").strip()
+        pid = self._pkg_id(data.get("id") or nm, fallback="new-pkg")
+        taken = self._pkg_ids_taken()
+        base, n = pid, 2
+        while pid in taken and n < 50:
+            pid = ("%s-%d" % (base, n))[:24].strip("-_")
+            n += 1
+        if not nm:
+            nm = pid
+        if not ds:
+            ds = idea[:60]
+        if not tk:
+            tk = "做一个「%s」的包：%s" % (nm, idea)
+        return {"ok": True, "id": pid, "name": nm, "desc": ds, "task": tk,
+                "model": str(p.get("model") or ""),
+                "ms": int((time.time() - t0) * 1000),
+                # 模型没按格式回（抠不出 JSON）时上面是兜底值；把原文截一段带回去，
+                # 让"它到底说了啥"能查（别把几 KB 塞进页面）。
+                "raw": "" if data else raw[:400]}
+
     def ai_test(self, name="", fields=None):
         """**测试连接**：宿主按这一组的 `stream` 真发一个最小请求，把结果原样带回来。
 

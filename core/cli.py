@@ -678,8 +678,13 @@ def _shortcut_sync(verbose=True):
         pass
 
 
-def cmd_new(pid, kind="task"):
-    """生成一个能跑的插件骨架（`user_data/pkgs/<id>/`）。"""
+def cmd_new(pid, kind="task", name="", desc=""):
+    """生成一个能跑的插件骨架（`user_data/pkgs/<id>/`）。
+
+    `name` / `desc`（`V-387`）：可选。给了就**直接写进 `pkg.json`** —— 界面上「让 AI 定名字 /
+    介绍」那条路靠它，否则建完还得再改一次清单。`pkg.json` 里这两项是 `{"zh-CN": …}` 那种表，
+    所以这里**只换 `zh-CN` 那一格**，以后加了别的语言不受影响。
+    """
     pid = str(pid or "").strip().lower()
     if not paths.valid_id(pid):
         out.print_cyan("[错误] id 不合法：'%s'（只允许 %s）" % (pid, paths.ID_RE.pattern))
@@ -694,6 +699,11 @@ def cmd_new(pid, kind="task"):
         target.mkdir(parents=True, exist_ok=True)
         pkg = json.loads(json.dumps(NEW_PKG_JSON).replace("__ID__", pid))
         pkg["kind"] = kind
+        # ★ `V-387`：名字 / 介绍一起写进去（只覆盖 zh-CN 那一格）
+        if str(name or "").strip():
+            pkg["name"] = dict(pkg.get("name") or {}, **{"zh-CN": str(name).strip()})
+        if str(desc or "").strip():
+            pkg["desc"] = dict(pkg.get("desc") or {}, **{"zh-CN": str(desc).strip()})
         (target / "pkg.json").write_text(
             json.dumps(pkg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         (target / "run.py").write_text(NEW_RUN_PY.replace("__ID__", pid), encoding="utf-8")
@@ -1824,10 +1834,22 @@ def main(argv):
             return 1
         return cmd_rename(rest[0], rest[1], table)
     if first == "--new":
-        if not rest:
+        # ★ `V-387`：`--new <id>` 后面还能跟 `name=… desc=… kind=…` —— 界面上「让 AI 定名字 /
+        #   介绍」那条路就是带着这三样来建包的（不然建完还得再改一次 pkg.json）。
+        pos, kv = [], {}
+        for tok in rest:
+            if "=" in tok:
+                k, _, v = tok.partition("=")
+                if k.strip().lower() in ("name", "desc", "kind"):
+                    kv[k.strip().lower()] = v
+                    continue
+            pos.append(tok)
+        if not pos:
             out.print_cyan("[错误] --new 需要一个包 id。例：moss --new my-first")
+            out.print_cyan("       也可以带上名字/介绍：moss --new my-first name=截图归档 desc=一句话")
             return 1
-        return cmd_new(rest[0])
+        return cmd_new(pos[0], kv.get("kind") or "task",
+                       kv.get("name") or "", kv.get("desc") or "")
     if first == "--selfcheck":
         return cmd_selfcheck(table)
     if first == "--history":

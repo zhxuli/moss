@@ -480,6 +480,103 @@ table.p th{color:var(--dim);font-weight:500}
   background:var(--fill);color:var(--fg);font-family:var(--mono);outline:none}
 .card input:focus{background:var(--panel);box-shadow:0 0 0 3px var(--field-focus)}
 .card .btns{display:flex;justify-content:flex-end;gap:6px;margin-top:14px}
+
+/* ══ 新建包弹窗（`V-387`）══════════════════════════════════════════════════════
+   照用户给的稿子做的：zinc 中性色、`AI 创建 / 手动` 二选一、AI 模式只有一个输入框。
+   ★ 为什么是**手写 CSS** 而不是稿子里的 Tailwind CDN：界面是离线的（界面资源全内联，
+     不联外网）—— 引一个 CDN 等于没有样式。颜色 / 圆角 / 间距照稿子那一套抄。
+   ★ 这个弹窗**不用**确认框那套壳子（标题/单行框/按钮行都藏掉，整块自己画）。 */
+.card.np-card{
+  width:100%;max-width:460px;min-width:0;padding:0;border:0;background:transparent;
+  box-shadow:none;border-radius:0;
+}
+.card.np-card .set-head,
+.card.np-card #m-text,
+.card.np-card #m-input,
+.card.np-card #m-textarea,
+.card.np-card .btns{display:none!important}
+#m-extra{display:block;margin:0}
+/* ★ `[hidden]` 的 UA 规则打不过 `#m-extra` 这条 id 选择器 —— 不补这一行，关掉弹窗之后
+   那个插槽在 DOM 里还是"显示"的（空的看不出来，但语义不对，别的弹窗也依赖 hidden）。 */
+#m-extra[hidden]{display:none}
+.np{
+  background:#fff;border-radius:16px;overflow:hidden;color:#18181b;
+  box-shadow:0 20px 40px -15px rgba(0,0,0,.10),0 0 0 1px rgba(0,0,0,.06);
+  -webkit-font-smoothing:antialiased;
+}
+.np-head{display:flex;align-items:center;justify-content:space-between;padding:20px 24px 16px}
+.np-title{font-size:14px;font-weight:600;color:#18181b;letter-spacing:-.01em}
+.np-head-r{display:flex;align-items:center;gap:10px}
+/* 关闭（×）：稿子里没有，但"取消"撤掉之后总得有个明确出口（Esc / 点外面也还在） */
+.np-close{
+  display:inline-flex;align-items:center;justify-content:center;flex:none;
+  width:24px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;
+  color:#a1a1aa;cursor:pointer;transition:background-color .15s ease,color .15s ease;
+}
+.np-close:hover{background:#f4f4f5;color:#3f3f46}
+.np-close:disabled{opacity:.5;cursor:default}
+.np-close svg.i{width:15px;height:15px}
+.np-seg{display:flex;align-items:center;background:#f4f4f5;border-radius:8px;padding:2px}
+.np-seg button{
+  border:0;background:transparent;padding:4px 10px;border-radius:6px;font:inherit;
+  font-size:12px;font-weight:500;color:#71717a;cursor:pointer;
+  transition:color .15s ease,background-color .15s ease;
+}
+.np-seg button:hover{color:#18181b}
+.np-seg button.on{background:#fff;color:#18181b;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.np-body{padding:0 24px}
+.np-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.np-body > * + *{margin-top:10px}
+.np-field{
+  width:100%;box-sizing:border-box;background:#fafafa;border:1px solid #e4e4e7;
+  border-radius:12px;padding:8px 12px;font:inherit;font-size:13px;color:#18181b;
+  outline:none;transition:border-color .15s ease,background-color .15s ease;
+}
+.np-field:hover{border-color:#d4d4d8}
+.np-field:focus{background:#fff;border-color:#18181b}
+.np-field::placeholder{color:#a1a1aa}
+.np-mono{font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px}
+.np-area{display:block;resize:none;line-height:1.6}
+.np-tip{padding:0 24px;font-size:12px;line-height:1.5;color:#71717a}
+.np-tip:not(:empty){padding-top:8px}
+.np-tip.bad{color:#dc2626}
+.np-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:16px 24px;margin-top:2px}
+.np-btn{
+  border:0;border-radius:12px;padding:8px 14px;font:inherit;font-size:12px;font-weight:500;
+  cursor:pointer;transition:background-color .15s ease,color .15s ease,transform .1s ease;
+}
+.np-btn:active{transform:scale(.99)}
+.np-btn:disabled{opacity:.55;cursor:default}
+.np-btn.ghost{background:transparent;color:#a1a1aa}
+.np-btn.ghost:hover{color:#3f3f46}
+.np-btn.soft{background:#f4f4f5;color:#3f3f46}
+.np-btn.soft:hover{background:#e4e4e7}
+.np-btn.dark{background:#18181b;color:#fff}
+.np-btn.dark:hover{background:#27272a}
+/* 暗色（界面跟着系统走，见 `app.css` 的 `prefers-color-scheme`） */
+@media (prefers-color-scheme: dark){
+  .np{background:#1c1c1e;color:#f5f5f7;
+    box-shadow:0 20px 40px -15px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.07)}
+  .np-title{color:#f5f5f7}
+  .np-seg{background:rgba(120,120,128,.24)}
+  .np-close{color:#7c7c82}
+  .np-close:hover{background:rgba(120,120,128,.24);color:#d1d1d6}
+  .np-seg button{color:#a1a1a6}
+  .np-seg button:hover{color:#f5f5f7}
+  .np-seg button.on{background:#2c2c30;color:#f5f5f7}
+  .np-field{background:#232326;border-color:#2c2c30;color:#f5f5f7}
+  .np-field:hover{border-color:#3a3a3f}
+  .np-field:focus{background:#232326;border-color:#8e8e93}
+  .np-field::placeholder{color:#7c7c82}
+  .np-tip{color:#a1a1a6}
+  .np-tip.bad{color:#f87171}
+  .np-btn.ghost{color:#7c7c82}
+  .np-btn.ghost:hover{color:#d1d1d6}
+  .np-btn.soft{background:rgba(120,120,128,.24);color:#d1d1d6}
+  .np-btn.soft:hover{background:rgba(120,120,128,.36)}
+  .np-btn.dark{background:#f5f5f7;color:#18181b}
+  .np-btn.dark:hover{background:#e4e4e7}
+}
 /* 弹框里的按钮（`V-92`）：你说"测试镜像功能这里的按钮就是有背景色有边框" —— 现在一律无底色无描边，
    主/危险/当心三个动词只靠**文字颜色** + hover 的一层淡底区分。 */
 .card .btns button{padding:6px 12px;border-radius:8px;border:0;

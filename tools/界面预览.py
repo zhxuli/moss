@@ -105,6 +105,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
           "ai-hist-live", "ai-follow",
           "ai-turn-edit", "ai-self-tools", "ai-ask",
+          "embed-tab", "newpkg-form", "newpkg-manual", "newpkg-manual-go", "newpkg-ai",
           "hl-window", "set-debounce", "parasite"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
@@ -405,6 +406,26 @@ MOCK_JS = r"""
 
   window.pywebview = { api: {
     state: async () => state,
+    // `V-387`：**让 AI 定一个包** + 建包 —— 假后端故意回一份"和真人一样"的建议，
+    //   并把建包时收到的 id/名字/介绍 记在 `M.newpkg`（场景据此断言"真的传过去了"）。
+    //   同时把它塞进 `state.packages`：真宿主建完盘上就有了，界面 `init()` 之后必须能选中它。
+    ai_suggest_pkg: async (idea) => {
+      M.suggestIdea = String(idea || "");
+      return {ok: true, id: "shot-archive", name: "截图归档",
+              desc: "把剪贴板里的截图按日期存起来，顺手把路径复制回来",
+              task: "做一个截图归档包：按日期分目录保存，并复制路径",
+              model: "deepseek-flash", ms: 8};
+    },
+    new_pkg: async (id, name, desc) => {
+      M.newpkg = {id: String(id || ""), name: String(name || ""), desc: String(desc || "")};
+      const dir = state.home + "\\user_data\\pkgs\\" + M.newpkg.id;
+      state.packages.push({
+        id: M.newpkg.id, name: M.newpkg.name || M.newpkg.id, desc: M.newpkg.desc,
+        kind: "task", version: "0.1.0", layer: "user", dir: dir,
+        aliases: [M.newpkg.id], tags: [], params: [], drop: [], ui: null, docs: {},
+        ai_expose: false, ai_risk: "", examples: [], icon: "", icon_svg: ""});
+      return {ok: true, code: 0, msg: "生成好了：" + dir};
+    },
     // `V-300`：插件列表的"自定义顺序 + 排序档"（真宿主存 user_data/state/_ui_order.json）
     list_state: async () => ({ok: true, ids: M.listOrder || [], sort: (M.listOrder || []).length ? "custom" : ""}),
     list_state_set: async (ids, sort) => { M.savedOrder = {ids: ids, sort: sort}; return {ok: true}; },
@@ -4895,6 +4916,135 @@ MOCK_JS = r"""
       //   ① 真的有这个选项卡、② 显示模型、③ 「开始」可用、④ 交任务之后**步骤流一行行出来**、
       //   ⑤ 跑完显示"验收通过 + 改过哪些文件 + token 合计"。
       //   （loop 本身由 tools/ai循环探针.py 验；这条只管"这一页画不画得出来"。）
+      // ★ `V-387`：AI 给包**新加了内嵌界面**（`pkg.json` 的 `ui.embed`）之后，顶上那颗
+      //   「界面」必须**立刻**出现 —— 以前要"把包切走再切回来"才出现（只有 `select()` 会重画它）。
+      if (h === "embed-tab"){
+        document.title = "EMBEDTAB-ERR";
+        select("first");
+        await sleep(400);
+        const t0 = document.querySelector('.tab[data-tab="embed"]');
+        const hiddenBefore = !!(t0 && t0.hidden);
+        // 假装 AI 刚改完 pkg.json：这个包多了 ui.embed（真宿主那边是 `state()` 重问出来的）
+        const p = (M.payload.packages || []).find(x => String(x.id) === "first");
+        if (p) p.ui = {embed: "ui/index.html", title: "预览：第一个包的界面"};
+        await refreshPkgs("first", true);       // ← 就是"AI 跑完那次重问包表"
+        await sleep(250);
+        const t1 = document.querySelector('.tab[data-tab="embed"]');
+        const shownAfter = !!(t1 && !t1.hidden);
+        const ok = hiddenBefore && shownAfter;
+        document.title = ok ? "READY"
+          : ("EMBEDTAB-FAIL 之前隐藏=" + (hiddenBefore ? 1 : 0) +
+             " 之后出现=" + (shownAfter ? 1 : 0));
+        document.querySelector("#meta").textContent = "DIAG " + document.title;
+      }
+      // ★ `V-387`：新建包弹窗（照用户给的稿子：AI 创建 / 手动 二选一）。
+      //   四个场景各管一件事：AI 视图长什么样、手动视图长什么样、
+      //   手动那条真建包、AI 那条「一句话 → 建包 → 进 AI 页开工」。
+      if (h === "newpkg-form"){
+        document.title = "NEWPKG-FORM-ERR";
+        document.querySelector("#btn-newpkg").click();
+        await sleep(300);
+        const np = document.querySelector("#m-extra .np");
+        const seg = [].slice.call(document.querySelectorAll("#m-extra .np-seg button"))
+          .map(b => (b.textContent || "").trim());
+        const aiShown = !!document.querySelector("#np-body-ai") &&
+          getComputedStyle(document.querySelector("#np-body-ai")).display !== "none";
+        const manHidden = !!document.querySelector("#np-body-manual") &&
+          getComputedStyle(document.querySelector("#np-body-manual")).display === "none";
+        const fields = document.querySelectorAll("#np-body-manual .np-field").length;
+        const btnTxt = [].slice.call(document.querySelectorAll("#m-extra .np-foot button"))
+          .map(b => (b.textContent || "").trim());
+        const closeBtn = !!document.querySelector("#np-close");
+        const ok = !!np && aiShown && manHidden && fields === 4 && closeBtn &&
+          seg.join(",") === "AI 创建,手动" &&
+          btnTxt.join(",") === "创建";
+        document.title = ok ? "READY"
+          : ("NEWPKG-FORM-FAIL np=" + (np ? 1 : 0) + " ai=" + (aiShown ? 1 : 0) +
+             " 手动隐藏=" + (manHidden ? 1 : 0) + " 手动格数=" + fields +
+             " 关闭=" + (closeBtn ? 1 : 0) +
+             " 分段=" + seg.join("|") + " 按钮=" + btnTxt.join("|"));
+        document.querySelector("#meta").textContent = "DIAG " + document.title;
+      }
+      if (h === "newpkg-manual"){
+        document.title = "NEWPKG-MANUAL-ERR";
+        document.querySelector("#btn-newpkg").click();
+        await sleep(250);
+        document.querySelector("#np-tab-manual").click();
+        await sleep(150);
+        const set = (sel, v) => {
+          const el = document.querySelector(sel);
+          if (el){ el.value = v; el.dispatchEvent(new Event("input", {bubbles: true})); }
+        };
+        set("#np-name", "截图归档");
+        set("#np-id", "shot-manual");
+        set("#np-desc", "把剪贴板里的截图按日期存起来，顺手把路径复制回来");
+        set("#np-task", "做一个截图归档包：按日期分目录保存，并复制路径");
+        await sleep(150);
+        const manShown = getComputedStyle(document.querySelector("#np-body-manual")).display !== "none";
+        const aiHidden = getComputedStyle(document.querySelector("#np-body-ai")).display === "none";
+        const seg = [].slice.call(document.querySelectorAll("#m-extra .np-seg button"))
+          .map(b => b.className).join("|");
+        const ok = manShown && aiHidden && seg === "|on";
+        document.title = ok ? "READY"
+          : ("NEWPKG-MANUAL-FAIL 手动显示=" + (manShown ? 1 : 0) + " AI隐藏=" + (aiHidden ? 1 : 0) +
+             " 分段=" + seg);
+        document.querySelector("#meta").textContent = "DIAG " + document.title;
+      }
+      if (h === "newpkg-manual-go"){
+        document.title = "NEWPKG-MANUAL-GO-ERR";
+        M.newpkg = null; M.suggestIdea = "";
+        document.querySelector("#btn-newpkg").click();
+        await sleep(250);
+        document.querySelector("#np-tab-manual").click();
+        await sleep(120);
+        const set = (sel, v) => {
+          const el = document.querySelector(sel);
+          if (el){ el.value = v; el.dispatchEvent(new Event("input", {bubbles: true})); }
+        };
+        set("#np-name", "手动建包");
+        set("#np-id", "manual-pkg");
+        set("#np-desc", "手动填的");
+        document.querySelector("#np-go").click();     // 底栏就这一颗（两种模式共用）
+        for (let i = 0; i < 20 && !M.newpkg; i++) await sleep(150);
+        // ★ 假后端在 `new_pkg` 里就把 M.newpkg 记下了，而"关弹窗"是它**返回之后**才做的 ——
+        //   所以这里再等一小会儿，别拿"刚记下"那一刻的 DOM 判"没关"。
+        await sleep(500);
+        const got = M.newpkg || {};
+        const closed = !document.querySelector("#modal").classList.contains("on");
+        // ★ 你定的：手动模式**只建包、不开工** —— 不许跳 AI 页、也不许发任务
+        const onAi = !!document.querySelector("#pane-ai.on");
+        const sent = String((window.__AIR || {}).sentTask || "");
+        const ok = closed && got.id === "manual-pkg" && got.name === "手动建包" &&
+                   !M.suggestIdea && !onAi && !sent;
+        document.title = ok ? "READY"
+          : ("NEWPKG-MANUAL-GO-FAIL 传给宿主=" + JSON.stringify(got) +
+             " 关掉=" + (closed ? 1 : 0) + " 调了AI=" + (M.suggestIdea || "没") +
+             " AI页=" + (onAi ? 1 : 0) + " 发了任务='" + sent.slice(0, 16) + "'");
+        document.querySelector("#meta").textContent = "DIAG " + document.title;
+      }
+      if (h === "newpkg-ai"){
+        document.title = "NEWPKG-ERR";
+        M.newpkg = null; M.suggestIdea = "";
+        document.querySelector("#btn-newpkg").click();
+        await sleep(250);
+        const idea = document.querySelector("#np-idea");
+        if (idea){
+          idea.value = "把剪贴板里的截图按日期归档，顺手把路径复制回来";
+          idea.dispatchEvent(new Event("input", {bubbles: true}));
+        }
+        document.querySelector("#np-go").click();
+        for (let i = 0; i < 26 && !((window.__AIR || {}).sentTask); i++) await sleep(150);
+        const got = M.newpkg || {};
+        const closed = !document.querySelector("#modal").classList.contains("on");
+        const onAi = !!document.querySelector("#pane-ai.on");
+        const sent = String((window.__AIR || {}).sentTask || "");
+        const ok = closed && got.id === "shot-archive" && !!M.suggestIdea && onAi && !!sent;
+        document.title = ok ? "READY"
+          : ("NEWPKG-FAIL 传给宿主=" + JSON.stringify(got) + " 问了AI=" +
+             String(M.suggestIdea || "没").slice(0, 14) + " 关掉=" + (closed ? 1 : 0) +
+             " AI页=" + (onAi ? 1 : 0) + " 任务='" + sent.slice(0, 20) + "'");
+        document.querySelector("#meta").textContent = "DIAG " + document.title;
+      }
       if (h === "ai-pane"){
         const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
         select(p0.id);
