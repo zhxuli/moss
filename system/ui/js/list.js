@@ -560,13 +560,17 @@ function relOfDir(dir){
   if (d === sysroot || d.startsWith(sysroot + "/")) return "system" + d.slice(sysroot.length);
   return null;
 }
-/* 「层」那颗徽章：平时显示 `user 层` / `system 层`，**鼠标悬停时原地变成一颗按钮**
-   （`→ system` / `→ user`），点一下就把这个包的整个目录搬到另一层（走宿主 `moss --layer`）。
+/* 「层」那颗徽章：平时显示 `user 层` / `system 层`，**鼠标悬停（或键盘聚焦）时原地变成**
+   `→ system` / `→ user`，点一下就把这个包的整个目录搬到另一层（走宿主 `moss --layer`）。
 
    ★ 为什么长这样（而不是在旁边多一颗常驻按钮）：层是**属性**，平时只需要看见；
      想改的时候手正好在它上面，不用去别处找。
    ★ 为什么用 inline-grid 把两段文案叠在同一个格子里：徽章宽度取两者的最大值，
      所以悬停时**不会把后面那几颗徽章挤得跳一下**（细节：`.dp-layer` 在 detail.css 里）。
+   ★ ★ 为什么**整颗徽章就是按钮**（不是徽章里套一颗小按钮）：一开始套的是小按钮，
+     而两段文案里"→ user"比"system 层"窄 ⇒ 悬停后徽章两侧留着**点不动的死区**，
+     手偏一点就"点了没反应"（`system → user` 这个方向特别容易踩，因为 `system 层`
+     比 `→ user` 宽得多）。现在 `<button>` 就是那颗药丸，整个面积都能点。
    ★ `p.shadowed` = 这个包正压着另一层的同名包 ⇒ 搬过去必然撞车，按钮就置灰并说明原因。 */
 function layerBadge(p){
   const layer = String((p && p.layer) || "");
@@ -577,14 +581,13 @@ function layerBadge(p){
   const blocked = !!(p && p.shadowed);
   const tip = blocked
     ? ("另一层（" + p.shadowed + "）已经有同名包了 —— 先把那个删掉或改名，才能换层")
-    : why;
-  return '<span class="dp-badge dp-layer"' + (blocked ? ' data-blocked="1"' : "") +
-      ' title="' + esc(tip) + '">' +
+    : (layer + " 层 —— " + why);
+  return '<button type="button" class="dp-badge dp-layer" id="btn-layer-move"' +
+      ' data-to="' + esc(to) + '"' + (blocked ? ' disabled data-blocked="1"' : "") +
+      ' title="' + esc(tip) + '" aria-label="' + esc(tip) + '">' +
       '<span class="dp-layer-now">' + esc(layer) + ' 层</span>' +
-      '<button class="dp-layer-go" id="btn-layer-move" data-to="' + esc(to) + '"' +
-        (blocked ? ' disabled' : "") + ' title="' + esc(tip) + '">' +
-        ico("layers", "i") + '<span>→ ' + esc(to) + '</span></button>' +
-    '</span>';
+      '<span class="dp-layer-go">' + ico("layers", "i") + '→ ' + esc(to) + '</span>' +
+    '</button>';
 }
 /* `keepTab`：只把它选上（右边那颗「运行/停止」跟着它），但**不把人拽去「详情」**——
    列表里直接点「运行」时用（不然"我就点一下跑，结果跳走了"）。 */

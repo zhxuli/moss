@@ -347,30 +347,32 @@ button.dp-browse svg{width:15px;height:15px}
 #pane-detail .dp-hint{font-size:13px;color:var(--dp-text-light);margin-top:10px}
 
 /* ---------------------------------------------------------------- 「层」徽章（悬停换层）
-   平时是 `user 层` / `system 层`；鼠标悬停（或键盘 Tab 到那颗按钮）时**原地**变成
-   `→ system` / `→ user` 的按钮，点一下就把这个包的目录搬到另一层（`moss --layer`，
-   JS 见 `list.js::layerBadge/cmdMoveLayer`）。
+   平时是 `user 层` / `system 层`；鼠标悬停或键盘聚焦时**原地变成** `→ system` / `→ user`，
+   点一下就把这个包的目录搬到另一层（`moss --layer`，JS 见 `list.js::layerBadge/cmdMoveLayer`）。
 
+   ★ **整颗徽章就是那颗 `<button>`** —— 不是"徽章里套一颗小按钮"。
+     套小按钮时：两段文案里 `→ user` 比 `system 层` 窄，悬停后徽章两侧留着**点不动的死区**
+     （`system → user` 这个方向尤其明显：点偏一点就"没反应"，看起来像功能坏了）。
+     现在按钮 = 那颗药丸，**整个面积都能点**。
    ★ 两段文案用 inline-grid **叠在同一个格子里**：徽章宽度 = 两者的最大值，
-     所以悬停时不会把后面那几颗徽章挤得跳一下（刻意的，别改成 display:none）。
-   ★ 隐藏用 opacity 而不是 display / visibility：
-     · display:none 会把格子宽度收掉 ⇒ 悬停时整行还是要跳；
-     · visibility:hidden 会把它从**焦点链**里摘掉 ⇒ 键盘永远按不到这颗按钮。
-   ★ 所以触发条件是 `:hover` **或** `:focus-within` —— 键盘 Tab 进来同样能看见它。 */
-.dp-badge.dp-layer{display:inline-grid;place-items:center;cursor:default;
+     所以悬停时不会把后面那几颗徽章挤得跳一下（别改成 display:none）。
+   ★ 隐藏用 opacity（不是 display / visibility）：display 会把格子宽度收掉 ⇒ 悬停时整行要跳；
+     visibility 会把它从焦点链里摘掉 ⇒ 键盘按不到。
+   ★ 撞车（`data-blocked`：另一层已有同名包）时置灰、悬停也不切文案，只留 title 说原因。 */
+.dp-badge.dp-layer{display:inline-grid;place-items:center;cursor:pointer;
+  border:none;font-family:inherit;font-weight:500;line-height:inherit;appearance:none;
   transition:var(--dp-transition)}
 .dp-badge.dp-layer > *{grid-area:1 / 1;white-space:nowrap;transition:opacity .12s}
 .dp-badge.dp-layer .dp-layer-now{opacity:1}
 .dp-badge.dp-layer .dp-layer-go{display:inline-flex;align-items:center;gap:4px;
-  opacity:0;pointer-events:none;border:none;background:transparent;padding:0;margin:0;
-  font:inherit;letter-spacing:inherit;color:var(--dp-primary);cursor:pointer;
-  border-radius:6px}
+  opacity:0;color:var(--dp-primary)}
 .dp-badge.dp-layer:hover{background:var(--dp-hover-strong)}
-.dp-badge.dp-layer:hover .dp-layer-now,
-.dp-badge.dp-layer:focus-within .dp-layer-now{opacity:0}
-.dp-badge.dp-layer:hover .dp-layer-go,
-.dp-badge.dp-layer:focus-within .dp-layer-go{opacity:1;pointer-events:auto}
-.dp-badge.dp-layer .dp-layer-go:focus{outline:1px solid var(--dp-primary);outline-offset:1px}
-.dp-badge.dp-layer .dp-layer-go:disabled{color:var(--dp-text-muted);cursor:not-allowed}
-.dp-badge.dp-layer[data-blocked]:hover .dp-layer-go{cursor:not-allowed}
+.dp-badge.dp-layer:not([data-blocked]):hover .dp-layer-now,
+.dp-badge.dp-layer:not([data-blocked]):focus .dp-layer-now{opacity:0}
+.dp-badge.dp-layer:not([data-blocked]):hover .dp-layer-go,
+.dp-badge.dp-layer:not([data-blocked]):focus .dp-layer-go{opacity:1}
+.dp-badge.dp-layer:focus-visible{outline:1px solid var(--dp-primary);outline-offset:1px}
 .dp-badge.dp-layer .dp-layer-go svg{width:12px;height:12px}
+.dp-badge.dp-layer[data-blocked]{cursor:not-allowed;color:var(--dp-text-light)}
+.dp-badge.dp-layer[data-blocked]:hover{background:var(--dp-bg-body)}
+.dp-badge.dp-layer[data-blocked] .dp-layer-go{display:none}
