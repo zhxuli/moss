@@ -1,0 +1,78 @@
+{
+  "spec": 1,
+  "id": "github",
+  "kind": "task",
+  "version": "1.0.0",
+  "name": {
+    "zh-CN": "GitHub 可视化助手",
+    "en": "GitHub visual helper"
+  },
+  "desc": {
+    "zh-CN": "看得见的 Git / GitHub：提交时间线（标出哪些已推送）、一键同步、一键镜像（建远端仓库 / 本地备份 / 加镜像远端）、把某个版本从 GitHub 恢复出来、切分支；本地和远端并排看；拖一个目录进来就换当前仓库；每个按钮都告诉你等价的 git / gh 命令和原样输出。",
+    "en": "Visual Git/GitHub: commit timeline (pushed vs local), one-click sync, mirroring (create remote / local backup / add mirror remote), restore any revision, branch switch, local vs remote side by side; drop a folder to switch repos; every button shows its equivalent git/gh command and raw output."
+  },
+  "tags": [
+    "github",
+    "git",
+    "界面",
+    "可视化",
+    "命令行学习"
+  ],
+  "aliases": [
+    "github",
+    "git"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.py"
+  },
+  "params": [
+    {
+      "name": "action",
+      "type": "string",
+      "default": "",
+      "desc": "命令行用法：要执行的动作（status / log / fetch / pull / push …）。留空＝开界面",
+      "placeholder": "status"
+    },
+    {
+      "name": "path",
+      "type": "string",
+      "default": "",
+      "desc": "仓库目录。留空＝用上次用过的目录",
+      "placeholder": "D:\\code\\my-repo"
+    },
+    {
+      "name": "arg",
+      "type": "string",
+      "default": "",
+      "desc": "动作的附加参数（提交信息 / 分支名 / clone 地址）",
+      "placeholder": "提交信息"
+    }
+  ],
+  "ui": {
+    "embed": "ui/index.html",
+    "title": {
+      "zh-CN": "GitHub 可视化助手"
+    }
+  },
+  "drop": {
+    "label": "设为当前仓库",
+    "dir": {
+      "cwd": true
+    }
+  },
+  "output": {
+    "mode": "json",
+    "schema": {
+      "ok": "bool",
+      "action": "string",
+      "cmd": "string",
+      "path": "string",
+      "out": "string"
+    }
+  },
+  "ai": {
+    "expose": false,
+    "risk": "medium"
+  }
+}

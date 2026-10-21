@@ -64,6 +64,10 @@ USAGE = """moss —— 多语言启动器
   moss --new <id>              生成一个能跑的插件骨架到 user_data/pkgs/<id>/
   moss --rename <旧> <新id>    给一个包改名：包目录 / 数据目录 / 清单里的 id 一起改
                                （新 id 写成它现在的 id，就是"把目录名对齐成 id"）
+  moss --layer <包> [user|system]  把这个包的**目录**在 user_data/pkgs ↔ system/pkgs 之间搬：
+                               system = 出厂层（升级会整体替换）/ user = 你自己的（升级不碰，
+                               而且压住 system 层）。不写层 = 只看它现在在哪层。
+                               数据目录按 id 算，**不跟着层走**。
   moss --alias [sync|status]   短命令：把 `moss :包名` 缩成 `mo<包名>`（`moimg` = `moss :img`）。
                                总开关在界面「设置 → 短命令」；sync = 手动对账，status = 看现状
   moss --resolve <名字>        只看解析结果，不执行（排障用：为什么选中它 / 为什么没找到）
@@ -922,6 +926,99 @@ def cmd_rename(name, new_id, table):
     if layer == "user":
         out.print_cyan("       包调用现在要用 `moss :%s`（旧名字不再认识，除非你把它写进 aliases）。"
                        % new_id)
+    _shortcut_sync()
+    return 0
+
+
+def cmd_layer(name, target=None, table=None):
+    """把一个包在 **user / system** 两层之间搬家：`moss --layer <包> [user|system]`。
+
+    「层」是什么：就是**包目录住在哪**（`user_data/pkgs/` 还是 `system/pkgs/`）。它决定两件事：
+      · **升级**会不会动它 —— `system/` 随发行版整体替换，`user_data/` 不碰；
+      · **谁遮蔽谁** —— `user` 压 `system`（见 `registry.scan_all`）。
+    所以"把出厂包收成自己的东西"（改着不怕升级冲掉）和"把自己写的对齐成出厂布局"，
+    本质上都只是把那个目录挪一下。
+
+    ★ 为什么做成宿主命令，而不是让界面自己拼两条路径去搬：这一下要连着守好几条规矩 ——
+      清单 / 目录名（`D-27` 的两把钥匙）/ 数据目录（**按 id 算，不跟着层走**）/
+      短命令 / 同名遮蔽。这些规则只有宿主知道，界面自己拼路径正是 `D-27` 那批毛病的来源。
+    """
+    if not target:
+        rec = registry.find_alias(name)
+        if not rec:
+            out.print_cyan("[错误] 没有这个包：'%s'。直接敲 `moss` 看有哪些。" % name)
+            return 1
+        layer = rec.get("layer")
+        other = "system" if layer == "user" else "user"
+        print("  %-8s %s" % ("包", rec["id"]))
+        print("  %-8s %s（%s）" % ("层", layer,
+                                   dict((k, c) for k, c, _, _ in _LAYERS).get(layer, layer)))
+        print("  %-8s %s" % ("目录", rec["dir"]))
+        print("  %-8s %s（按 id 算，不跟着层走）" % ("数据目录", paths.pkg_state_dir(rec["id"])))
+        if rec.get("shadowed"):
+            print("  %-8s 另一层（%s）也有同名包，这一份现在压着那一份 —— 换层会撞车。"
+                  % ("注意", rec["shadowed"]))
+        out.print_cyan("换到另一层：moss --layer %s %s" % (rec["id"], other))
+        return 0
+
+    target = str(target).strip().lower()
+    if target not in ("user", "system"):
+        out.print_cyan("[错误] 层只有两种：user / system（给的是 '%s'）。" % target)
+        out.print_cyan("       用法：moss --layer <包> [user|system]（不写层 = 只看现在在哪层）")
+        return 2
+    rec = registry.find_alias(name)
+    if not rec:
+        out.print_cyan("[错误] 没有这个包：'%s'。直接敲 `moss` 看有哪些。" % name)
+        return 1
+
+    pid = str(rec["id"])
+    src_layer = rec.get("layer")
+    src_dir = Path(rec["dir"])
+    dirname = src_dir.name                    # 目录名不一定是 id（`D-27`），照原样搬
+    dst_dir = (paths.SYSTEM_PKGS if target == "system" else paths.USER_PKGS) / dirname
+
+    if src_layer == target:
+        out.print_cyan("[信息] '%s' 本来就在 %s 层：%s" % (pid, target, src_dir))
+        return 0
+
+    # ---- 先把冲突全查一遍（"搬一半"比"撞车"糟得多）
+    if dst_dir.exists():
+        out.print_cyan("[错误] 目标层已经有这个目录：%s" % dst_dir)
+        out.print_cyan("       先把它删掉，或者用 `moss --rename %s <新id>` 换个身份再搬。" % pid)
+        return 1
+    for r in registry.scan_all():
+        if r.get("layer") == target and r["id"] == pid:
+            out.print_cyan("[错误] %s 层已经有一个叫 '%s' 的包：%s" % (target, pid, r["dir"]))
+            out.print_cyan("       两层不能同时有同 id 的包（那叫遮蔽，不叫搬家）—— "
+                           "先把那个删掉 / 改名。")
+            return 1
+
+    out.print_cyan("将要换层：%s  %s → %s（id 不变）" % (pid, src_layer, target))
+    print("  %-10s %s" % ("包目录", src_dir))
+    print("  %-10s %s" % ("        →", dst_dir))
+    print("  %-10s %s" % ("数据目录", paths.pkg_state_dir(pid)))
+    if target == "system":
+        out.print_cyan("  注意：放进 system 层等于声明「这是出厂件」—— moss 升级时 system/ 会被"
+                       "整体替换，你对它的改动到那时会被冲掉。")
+    else:
+        out.print_cyan("  放进 user 层：升级不碰它，而且它会压住 system 层的同名包。")
+
+    try:
+        src_dir.rename(dst_dir)               # 同一个安装根下 ⇒ 原子改名
+    except OSError as e:
+        out.print_cyan("[提示] 直接改名没成（%s），改用复制 + 删。" % e)
+        try:
+            shutil.move(str(src_dir), str(dst_dir))
+        except Exception as e2:                                         # noqa: BLE001
+            out.print_cyan("[错误] 搬不动：%s" % e2)
+            out.print_cyan("       常见原因：① 安装目录只读 / 需要管理员；② 这个包还在跑"
+                           "（先在界面上停掉）；③ 目录被资源管理器或编辑器占着。")
+            out.print_cyan("       检查一下这两处：%s ／ %s" % (src_dir, dst_dir))
+            return 1
+
+    out.print_cyan("换层完成：'%s' 现在在 %s 层" % (pid, target))
+    print("       %s" % dst_dir)
+    out.print_cyan("       调用方式一个字没变：moss %s%s" % (config.plugin_symbol(), pid))
     _shortcut_sync()
     return 0
 
@@ -1836,6 +1933,13 @@ def main(argv):
         sys.stdout.write(_json.dumps(config.settings_check(pairs), ensure_ascii=False))
         sys.stdout.flush()
         return 0
+    if first in ("--layer", "--move-layer"):
+        # 换层（`user_data/pkgs` ↔ `system/pkgs`）：界面里那颗「层」徽章点出来的就是这条。
+        if not rest:
+            out.print_cyan("[错误] --layer 需要一个包名。")
+            out.print_cyan("       看现状：moss --layer <包>        换层：moss --layer <包> system|user")
+            return 2
+        return cmd_layer(rest[0], rest[1] if len(rest) > 1 else None, table)
     if first == "--rename":
         if len(rest) < 2:
             out.print_cyan("[错误] --rename 需要两个名字：旧的（id 或别名）和新的 id。")

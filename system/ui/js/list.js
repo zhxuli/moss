@@ -560,6 +560,32 @@ function relOfDir(dir){
   if (d === sysroot || d.startsWith(sysroot + "/")) return "system" + d.slice(sysroot.length);
   return null;
 }
+/* 「层」那颗徽章：平时显示 `user 层` / `system 层`，**鼠标悬停时原地变成一颗按钮**
+   （`→ system` / `→ user`），点一下就把这个包的整个目录搬到另一层（走宿主 `moss --layer`）。
+
+   ★ 为什么长这样（而不是在旁边多一颗常驻按钮）：层是**属性**，平时只需要看见；
+     想改的时候手正好在它上面，不用去别处找。
+   ★ 为什么用 inline-grid 把两段文案叠在同一个格子里：徽章宽度取两者的最大值，
+     所以悬停时**不会把后面那几颗徽章挤得跳一下**（细节：`.dp-layer` 在 detail.css 里）。
+   ★ `p.shadowed` = 这个包正压着另一层的同名包 ⇒ 搬过去必然撞车，按钮就置灰并说明原因。 */
+function layerBadge(p){
+  const layer = String((p && p.layer) || "");
+  const to = layer === "system" ? "user" : "system";
+  const why = to === "system"
+    ? "把它的目录搬进 system 层（出厂件：升级时 system/ 会整体替换，改动可能被冲掉）"
+    : "把它的目录搬进 user_data 层（你自己的：升级不碰，而且压住 system 层的同名包）";
+  const blocked = !!(p && p.shadowed);
+  const tip = blocked
+    ? ("另一层（" + p.shadowed + "）已经有同名包了 —— 先把那个删掉或改名，才能换层")
+    : why;
+  return '<span class="dp-badge dp-layer"' + (blocked ? ' data-blocked="1"' : "") +
+      ' title="' + esc(tip) + '">' +
+      '<span class="dp-layer-now">' + esc(layer) + ' 层</span>' +
+      '<button class="dp-layer-go" id="btn-layer-move" data-to="' + esc(to) + '"' +
+        (blocked ? ' disabled' : "") + ' title="' + esc(tip) + '">' +
+        ico("layers", "i") + '<span>→ ' + esc(to) + '</span></button>' +
+    '</span>';
+}
 /* `keepTab`：只把它选上（右边那颗「运行/停止」跟着它），但**不把人拽去「详情」**——
    列表里直接点「运行」时用（不然"我就点一下跑，结果跳走了"）。 */
 function select(id, keepTab){
@@ -591,7 +617,7 @@ function renderDetailHTML(){
             '<span class="dp-badge">' + esc(PSYM + p.id) + '</span>' +
             '<span class="dp-badge">v' + esc(p.version || "?") + '</span>' +
             '<span class="dp-badge">' + esc(p.kind || "task") + '</span>' +
-            '<span class="dp-badge">' + esc(p.layer) + ' 层</span>' +
+            layerBadge(p) +
             (p.shadowed ? '<span class="dp-badge">遮住了 ' + esc(p.shadowed) + ' 层的同名包' +
                           '</span>' : '') +
           '</span></h1>' +
@@ -834,6 +860,12 @@ function wireDetail(){
   if ($("#btn-align")) $("#btn-align").onclick = () => cmdAlignPkgDir(p);
   // ★ `V-359`（稿子新增的路径栏那两颗）：复制路径 / 打开目录。
   if ($("#btn-copy-dir")) $("#btn-copy-dir").onclick = () => copyDirPath(p.dir);
+  // ★ 「层」徽章上那颗悬停才露出来的按钮：把包在 user / system 之间搬（宿主 `moss --layer`）。
+  if ($("#btn-layer-move")) $("#btn-layer-move").onclick = (ev) => {
+    ev.stopPropagation();
+    if (p.shadowed){ toast("✗ 另一层（" + p.shadowed + "）已经有同名包，先处理它", true); return; }
+    cmdMoveLayer(p);
+  };
   if ($("#btn-open-dir")) $("#btn-open-dir").onclick = async () => {
     const rel = pkgRel(p);
     const r = rel ? await pywebview.api.fs_open_default(rel)
@@ -886,6 +918,45 @@ async function cmdAlignPkgDir(p){
   fmReRoot(oldRel, np ? pkgRel(np) : null);
   if (np) select(p.id);
   else renderDetail();
+}
+
+/* 换层：把包的**整个目录**在 `user_data/pkgs` ↔ `system/pkgs` 之间挪一下。
+   规则（目录名 / id / 数据目录 / 短命令 / 同名遮蔽）只有宿主那侧知道 ⇒ 走 `moss --layer`，
+   界面**不自己拼两条路径去搬**（那正是 `D-27` 那批毛病的来源）。
+   ★ 数据目录按 id 算（`user_data/state/<id>`），**不跟着层走** —— 换层不该让 AI 会话 /
+     运行数据"凭空没了"，所以文案里明说它不动。 */
+async function cmdMoveLayer(p){
+  const to = p.layer === "user" ? "system" : "user";
+  const toText = to === "system"
+    ? "system/pkgs（出厂层：moss 升级时 system/ 会被整体替换，你对它的改动可能被冲掉）"
+    : "user_data/pkgs（你自己的层：升级不碰它，而且它会压住 system 层的同名包）";
+  askConfirm2("给这个包换一层",
+    "<b>" + esc(p.id) + "</b> 现在在 <b>" + esc(p.layer) + "</b> 层。<br><br>" +
+    "要把它整个目录挪到 <b>" + toText + "</b> 吗？" +
+    "<br><br>· 调用方式一个字不变（moss " + esc(PSYM + p.id) + "）" +
+    "<br>· 数据目录 <b>user_data/state/" + esc(p.id) + "</b> 不动",
+    {label: to === "system" ? "搬进 system 层" : "搬回 user 层",
+     danger: to === "system",
+     cb: async () => {
+      const oldRel = pkgRel(p);                  // 搬家前的目录（文件管理缓存里记的是它）
+      consoleKey = "__host__";
+      const cmd = "moss --layer " + p.id + " " + to;
+      setConsole("__host__", "$ " + cmd, "运行中");
+      const r = await pywebview.api.run_host("--layer " + p.id + " " + to);
+      setConsole("__host__", "$ " + cmd + "\n\n" + (r.out || "(没有输出)"),
+                 r.code === 0 ? "完成" : ("退出码 " + r.code));
+      if (r.code !== 0){
+        toast("✗ 没搬成，看「命令行」里说了什么", true);
+        setTab("console");
+        return;
+      }
+      await refreshPkgs(p.id);                   // 包表重问一遍（层的归属变了）
+      const np = DATA.packages.find(x => x.id === p.id);
+      fmReRoot(oldRel, np ? pkgRel(np) : null);  // 文件管理里那条路径跟着搬
+      if (np) select(p.id); else renderDetail();
+      toast("已挪到 " + to + " 层" +
+            (to === "system" ? "（升级时会被整体替换，想留住就再搬回 user）" : ""));
+     }});
 }
 
 /* 更名：界面只负责问"改成什么"，改的事交给宿主（`moss --rename`）。

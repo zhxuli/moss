@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>极简同步</title>
+<!-- ★ ?v= 是"界面版本号"：每次改界面就 +1。
+     浏览器/WebView 会按 URL 缓存 css/js，不加这个就会出现"我明明改了代码，
+     打开还是旧界面"（真机踩过：云端版本列表加了但看不到，白查半天）。
+     改界面时**三处一起 bump**：css 的 v、js 的 v、下面 footer 里那个 UI_VER。 -->
+<link rel="stylesheet" href="style.css?v=22">
+<!-- ★ 错误兜底：**必须排在所有界面脚本最前面** —— 它要接住 app.js 里的异常；
+     也早于垫片加载：早到的错误先排队，等 `moss` ready 再补发上报。
+     内嵌 / 独立窗口两种跑法都走它（内部统一用 `window.moss.call`，垫片自己分流）。 -->
+<script src="error-guard.js?v=1"></script>
+<script src="moss-embed.js"></script>
+</head>
+<body>
+
+<!-- 拖文件夹进来时铺满窗口的提示 -->
+<div id="hint" class="hint">
+  <div class="hint-box">
+    <div class="hint-big">松手 = 打开这个文件夹</div>
+    <div class="hint-sub">里面没有 git 也不怕，打开之后我会问你下一步</div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- ==================== 头部：只有一个"扫描变动" ==================== -->
+  <header class="head">
+    <div class="brand">
+      <div class="logo" id="icoLogo"></div>
+      <div class="brand-txt">
+        <div class="brand-row">
+          <h1>极简同步</h1>
+          <button class="folder-chip" id="dirBtn" data-act="dir-menu" title="换一个文件夹">
+            <span id="icoFolder"></span><span id="dirName">moss</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <button class="scan-btn" data-act="refresh" title="扫描文件变动">
+      <span class="scan-ico" id="icoScan"></span>
+      <span>扫描变动</span>
+    </button>
+    <div class="dir-menu" id="dirMenu"></div>
+  </header>
+
+  <!-- ==================== 环境状态条：缺什么一眼看到、点一下就补 ==================== -->
+  <section id="envBar" class="envbar hide">
+    <div class="env-main">
+      <span id="envIco" class="env-ico"></span>
+      <div class="env-txt">
+        <div class="env-title" id="envTitle">检查中…</div>
+        <div class="env-sub" id="envSub"></div>
+      </div>
+    </div>
+    <div class="env-btns" id="envBtns"></div>
+  </section>
+
+  <main class="flow">
+
+    <!-- ==================== 1. 本地工作区 ==================== -->
+    <section id="cardWork" class="node node-active-amber">
+      <div class="node-top">
+        <div class="node-id">
+          <div id="workIcon" class="node-ico amber"><span id="icoLaptop"></span></div>
+          <div>
+            <h2>本地工作区</h2>
+            <p id="workStatus" class="node-sub amber">正在读取…</p>
+          </div>
+        </div>
+        <button id="filesBtn" class="count-pill" data-act="files-drawer" title="点开看看改了哪些文件">
+          <span class="ping"></span>
+          <span id="checkedCount" class="mono">0</span>
+          <span class="caret" id="drawerArrow"></span>
+        </button>
+      </div>
+
+      <div id="workBody" class="collapse open">
+        <div class="collapse-inner">
+          <div class="work-body">
+
+            <!-- 二级抽屉：挑选文件 -->
+            <div id="fileDrawer" class="collapse">
+              <div class="collapse-inner">
+                <div class="file-drawer" id="fileList"></div>
+              </div>
+            </div>
+
+            <!-- 一句话说明 -->
+            <div class="input-wrap">
+              <input id="note" type="text" spellcheck="false"
+                     placeholder="用一句话描述你做了什么修改...">
+              <span class="enter-hint mono">↵ 回车</span>
+            </div>
+
+            <!-- 快捷填入：点一下就填进说明框，不用自己打字 -->
+            <div class="qf-row">
+              <span class="lb">快捷填入：</span>
+              <button class="qf" type="button" data-text="打包修复：">📦 打包修复</button>
+              <button class="qf" type="button" data-text="清理接口：">🧹 清理接口</button>
+              <button class="qf" type="button" data-text="优化交互：">✨ 优化交互</button>
+              <button class="qf" type="button" data-text="修个 bug：">🐛 修个 bug</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 管道 1：工作区 → 本地历史 ==================== -->
+    <div class="pipe">
+      <svg viewBox="0 0 24 56" preserveAspectRatio="none">
+        <line x1="12" y1="0" x2="12" y2="56" stroke-width="2.5" class="pipe-base"/>
+        <line id="pipe1" x1="12" y1="0" x2="12" y2="50" stroke-width="2.5" class="pipe-idle"/>
+        <polygon id="pipe1Arrow" points="7,46 12,55 17,46"/>
+      </svg>
+      <div id="track1" class="track"></div>
+      <button id="btnSave" class="pipe-btn amber-btn" data-act="save-local">
+        <span id="icoDown"></span><span id="btnSaveTxt">保存到本地</span>
+      </button>
+    </div>
+
+    <!-- ==================== 2. 本地历史记录 ==================== -->
+    <section id="cardLocal" class="node">
+      <div class="node-top">
+        <div class="node-id">
+          <div id="localIcon" class="node-ico gray"><span id="icoHistory"></span></div>
+          <div>
+            <h2>本地历史记录</h2>
+            <div class="legend">
+              <span><i class="dot blue"></i>待上传云端</span>
+              <span><i class="dot green"></i>已安全上云</span>
+            </div>
+          </div>
+        </div>
+        <span id="localVer" class="ver-pill gray mono">—</span>
+      </div>
+      <div class="hsearch" id="qLocalWrap">
+        <span class="si" id="icoSearchL"></span>
+        <input id="qLocal" type="text" spellcheck="false" placeholder="搜索版本号 / 说明…">
+        <button class="sx" type="button" id="qLocalX" title="清空搜索"></button>
+      </div>
+      <div id="historyList" class="hist"></div>
+      <div id="histMore" class="hist-more"></div>
+    </section>
+
+    <!-- ==================== 管道 2：本地 ⇅ 云端 ==================== -->
+    <div class="pipe">
+      <svg viewBox="0 0 24 56" preserveAspectRatio="none">
+        <line x1="12" y1="0" x2="12" y2="56" stroke-width="2.5" class="pipe-base"/>
+        <line id="pipe2" x1="12" y1="6" x2="12" y2="50" stroke-width="2.5" class="pipe-idle"/>
+        <polygon id="pipe2Up" points="7,10 12,1 17,10" class="fade"/>
+        <polygon id="pipe2Down" points="7,46 12,55 17,46"/>
+      </svg>
+      <div id="track2" class="track"></div>
+      <div class="pipe-btns">
+        <button id="btnBackup" class="pipe-btn soft" data-act="backup">
+          <span id="icoDown2"></span><span id="btnBackupTxt">备份到云端</span>
+        </button>
+        <button id="btnFetch" class="pipe-btn soft ghostish" data-act="fetch-new"
+                title="从 GitHub 拉取最新版">
+          <span id="icoUp"></span><span id="btnFetchTxt">获取最新版</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ==================== 3. GitHub 云端 ==================== -->
+    <section id="cardCloud" class="node node-done">
+      <div class="node-top">
+        <div class="node-id">
+          <div id="cloudIcon" class="node-ico green"><span id="icoCloud"></span></div>
+          <div>
+            <h2>GitHub 云端</h2>
+            <p id="cloudStatus" class="node-sub">正在读取…</p>
+          </div>
+        </div>
+        <div class="cloud-tools">
+          <button id="cloudToggle" class="mini-btn" data-act="cloud-toggle"
+                  title="展开 / 收起云端版本列表">
+            <span id="cloudToggleTxt">云端版本</span>
+            <span class="caret" id="cloudCaret"></span>
+          </button>
+          <span id="cloudVer" class="ver-pill green mono">
+            <i id="cloudDot" class="dot green"></i><span id="cloudVerNum">—</span>
+          </span>
+        </div>
+      </div>
+
+      <!-- 云端版本列表：想知道"云端有哪些版本、能不能挑一个拿回来"，就看这里 -->
+      <div id="cloudBody" class="collapse open">
+        <div class="collapse-inner">
+          <div class="cloud-body">
+            <div class="cloud-bar">
+              <span id="cloudRef" class="hintline"></span>
+              <span class="grow"></span>
+              <button class="link" data-act="cloud-refresh" title="联网重新读一次云端">
+                刷新云端
+              </button>
+            </div>
+            <div class="hsearch" id="qCloudWrap">
+              <span class="si" id="icoSearchC"></span>
+              <input id="qCloud" type="text" spellcheck="false" placeholder="在云端版本里搜索…">
+              <button class="sx" type="button" id="qCloudX" title="清空搜索"></button>
+            </div>
+            <div id="cloudList" class="hist"></div>
+            <div id="cloudMore" class="hist-more"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="foot">
+    <span class="log mono" id="log">正在启动…</span>
+    <span class="grow"></span>
+    <!-- 界面版本：改了界面就 +1（跟上面 css/js 的 ?v= 一起改）。
+         万一以后又出现"改了看不到"，看一眼这个数就知道是不是旧页面。 -->
+    <span class="uiver mono" id="uiVer" title="界面版本（不是你的仓库版本）">界面 v23</span>
+    <button class="link" data-act="env-detail" title="Git / GitHub 那几项是否就绪、下一步做什么（快捷键 F8）">环境检查 F8</button>
+    <button class="link" data-act="more" title="分支 / 标记版本 / 镜像备份 / 命令记录…">更多功能</button>
+  </footer>
+</div>
+
+<div id="busy" class="busy"><div class="busy-in"><span class="spin"></span><span id="busyText">正在处理…</span></div></div>
+<div id="toastBox" class="toasts"></div>
+<div id="modal" class="modal"></div>
+
+<script src="app.js?v=23"></script>
+</body>
+</html>

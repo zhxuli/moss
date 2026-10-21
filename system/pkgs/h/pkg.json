@@ -1,0 +1,74 @@
+{
+  "spec": 1,
+  "id": "h",
+  "kind": "task",
+  "version": "1.0.0",
+  "name": {
+    "zh-CN": "历史快捷运行",
+    "en": "History shortcut"
+  },
+  "desc": {
+    "zh-CN": "moss :h <名字> 找到以前跑过的目标，先切到那个目录再跑一次（moss --history 的短名字版；也认 z/m 这种逐级写法）",
+    "en": "Re-run a previous target by name, in its own directory"
+  },
+  "tags": [
+    "历史",
+    "history",
+    "快捷",
+    "重跑"
+  ],
+  "aliases": [
+    "h",
+    "hist",
+    "history"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "run.py"
+  },
+  "params": [
+    {
+      "name": "target",
+      "type": "string",
+      "required": false,
+      "desc": "历史里的名字：目录名 / 文件名 / 前缀，或 z/m 这种逐级写法（/ 和 \\ 都行）。不填 = 列出最近记录",
+      "placeholder": "zeen   或   wwwroot/zeen/main"
+    },
+    {
+      "name": "extra",
+      "type": "string",
+      "required": false,
+      "rest": true,
+      "desc": "透传给被重跑程序的额外参数（moss 的 rest 通道会把引号吃掉，带空格的参数建议用程序自己的 k=v 写法）"
+    }
+  ],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "net": [],
+    "elevated": false
+  },
+  "output": {
+    "mode": "json",
+    "schema": {
+      "query": "string",
+      "target": "string",
+      "cwd": "string",
+      "runner": "string",
+      "exit": "int"
+    }
+  },
+  "docs": {
+    "readme": "README.md",
+    "agent": "AGENT.md"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "low"
+  }
+}

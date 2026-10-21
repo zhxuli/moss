@@ -345,3 +345,32 @@ button.dp-browse svg{width:15px;height:15px}
 /* 上面那一行小字（"命令预览 / 运行在右上角"）：稿子的命令栏本身就是预览，
    所以这一行只在需要时出现，样式跟稿子的 `.setting-text p` 一致 */
 #pane-detail .dp-hint{font-size:13px;color:var(--dp-text-light);margin-top:10px}
+
+/* ---------------------------------------------------------------- 「层」徽章（悬停换层）
+   平时是 `user 层` / `system 层`；鼠标悬停（或键盘 Tab 到那颗按钮）时**原地**变成
+   `→ system` / `→ user` 的按钮，点一下就把这个包的目录搬到另一层（`moss --layer`，
+   JS 见 `list.js::layerBadge/cmdMoveLayer`）。
+
+   ★ 两段文案用 inline-grid **叠在同一个格子里**：徽章宽度 = 两者的最大值，
+     所以悬停时不会把后面那几颗徽章挤得跳一下（刻意的，别改成 display:none）。
+   ★ 隐藏用 opacity 而不是 display / visibility：
+     · display:none 会把格子宽度收掉 ⇒ 悬停时整行还是要跳；
+     · visibility:hidden 会把它从**焦点链**里摘掉 ⇒ 键盘永远按不到这颗按钮。
+   ★ 所以触发条件是 `:hover` **或** `:focus-within` —— 键盘 Tab 进来同样能看见它。 */
+.dp-badge.dp-layer{display:inline-grid;place-items:center;cursor:default;
+  transition:var(--dp-transition)}
+.dp-badge.dp-layer > *{grid-area:1 / 1;white-space:nowrap;transition:opacity .12s}
+.dp-badge.dp-layer .dp-layer-now{opacity:1}
+.dp-badge.dp-layer .dp-layer-go{display:inline-flex;align-items:center;gap:4px;
+  opacity:0;pointer-events:none;border:none;background:transparent;padding:0;margin:0;
+  font:inherit;letter-spacing:inherit;color:var(--dp-primary);cursor:pointer;
+  border-radius:6px}
+.dp-badge.dp-layer:hover{background:var(--dp-hover-strong)}
+.dp-badge.dp-layer:hover .dp-layer-now,
+.dp-badge.dp-layer:focus-within .dp-layer-now{opacity:0}
+.dp-badge.dp-layer:hover .dp-layer-go,
+.dp-badge.dp-layer:focus-within .dp-layer-go{opacity:1;pointer-events:auto}
+.dp-badge.dp-layer .dp-layer-go:focus{outline:1px solid var(--dp-primary);outline-offset:1px}
+.dp-badge.dp-layer .dp-layer-go:disabled{color:var(--dp-text-muted);cursor:not-allowed}
+.dp-badge.dp-layer[data-blocked]:hover .dp-layer-go{cursor:not-allowed}
+.dp-badge.dp-layer .dp-layer-go svg{width:12px;height:12px}

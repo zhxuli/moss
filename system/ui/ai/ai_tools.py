@@ -654,6 +654,13 @@ class Tools:
         #   技能那一层的整个设计就是"人点一次允许"。要是它能 `run_moss(":skill allow --x")`，
         #   就等于自己给自己发通行证 —— 那道闸白设。`new` / `list` 这类不含"决定"的照旧随便用。
         toks = [t.lower() for t in shlex.split(line)] if line else []
+        # ★ 换层（user ↔ system）也不给走：那决定"这个包升级时会被替换还是留着"，
+        #   是**包归置**的事，归用户（界面详情页那颗「层」徽章上就有按钮）。
+        #   和 `:skill` 那几条一个性质：不是能力不够，是**授权**不在你这边。
+        if any(t in ("--layer", "--move-layer") for t in toks):
+            return ("[拒绝] 换层（user ↔ system）不许你用 run_moss 调 —— 它决定这个包"
+                    "**升级时会不会被整体替换**，是包归置的事，归用户。"
+                    "要挪请他点详情页「层」徽章上那颗按钮（或者他自己敲 moss --layer）。")
         if any(t in (":skill", "skill") for t in toks[:2]) and \
                 any(w in toks for w in ("allow", "revoke", "rm", "remove", "del",
                                         "promote", "delete")):
