@@ -992,13 +992,20 @@ async function aiPollOnce(){
   } catch (e) { /* 轮询失败不吵人：下一轮再说 */ }
 }
 
-async function aiStart(){
+async function aiStart(opt){
   if (AIR.busy) return;
   const atts = (AIR.attachments || []).slice();
   const typed = (AIR.task || "").trim();
   const task = typed || (atts.length ? "请分析我发来的附件。" : "");
   if (!task) { toast("先写一句你要它干什么，或者加个附件。", true); return; }
-  const dir = aiWhereDir();
+  /* ★ `V-421`：**干活目录可以由调用方直接指定**（`opt.dir`）。
+     为什么必须能指定：它是"当前选中的包"推出来的，而「新建包 → 切过去 → 自动开工」
+     这条链上只要有一拍错位（包表还没刷出来 / 用户点了一下别的包），AI 就会**在旧包里
+     开工**，然后整段会话都挂在旧包名下（2026-10-21 的真事：在 `ip` 里开工，
+     把 `keytest` 整个建了出来，回到 keytest 的 AI 页只看到"还没跑过"）。
+     新建包那条路**明确知道**要写进哪个目录，就别让它再猜一次。 */
+  const dir = (opt && opt.dir) ? String(opt.dir)
+                               : aiWhereDir();
   if (!dir) { toast("先在左边选一个包（或者选「新建包」）。", true); return; }
   AIR.busy = true;
   AIR.result = null; AIR.steps = []; AIR.say = []; AIR.answeredQid = "";
@@ -2630,6 +2637,13 @@ const MossAi = {
       <!-- 中间日志流（V-263：**不再重复显示会话名** —— 顶栏那个下拉已经写着当前会话了）
            ★ 「V-333」：原来那层"给聊天区盖遮罩"（「V-332」）**撤了** —— 交互已经搬进聊天记录里，
              再压暗就等于把要点的东西一起压暗了。 -->
+      <!-- ★ V-422：日志流外面多包一层**不滚动的框**（.ai-logwrap）。
+           为什么：那颗「回到最新」要浮在聊天区的右下角。它以前直接塞在 main（自己
+           是 overflow-y:auto）里 —— 无论 sticky 还是 absolute 都只会跟着内容走
+           （sticky 要它的静态位置在视口里才吸得住，而这颗是最后一行 ⇒ 你往上翻时它早在
+           视口外了）。所以按钮挪到**滚动容器外面**、由这层定位。（它以前还压根没有 CSS，
+           渲染成通栏大白块 —— 见 ai.css 末尾。） -->
+      <div class="ai-logwrap">
       <main class="log-container ai-log" ref="log">
         <!-- ★ V-258/263：日志按轮排 —— 一轮 = 我说的那句 + 它的动作 + 它的结论。
              ★ 「V-333」（你原话："整体改成那种微信气泡泡的风格 把我说的 和ai说的 以及 其他内容信息
@@ -2800,10 +2814,11 @@ const MossAi = {
 
         <!-- ★ V-307：**你往上翻的时候它不许把你拽回底部**（你报的那条）。
              不跟滚的时候右下角浮一颗「回到最新」，点它才回去、并且重新跟上。 -->
-        <button class="ai-tobottom" v-if="!A.stick" @click="toBottom()"
+      </main>
+        <button class="ai-tobottom" :class="{on: !A.stick}" @click="toBottom()"
                 :title="'有新内容 —— 点一下回到最新（你往上翻的时候它不会抢你的滚动条）'"
                 v-html='ico("chevron-down", "i") + " 回到最新"'></button>
-      </main>
+      </div>
 
       <!-- ★ V-340：**所有按钮和信息都收进下面这一条工具栏**（照新稿子重排）——
            顶上那条"历史图标"栏、左下角那张常驻权限卡都撤了，改成两个**点开才出的浮层**：

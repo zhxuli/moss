@@ -1319,9 +1319,13 @@ class Core:
         online = net_touch()
         items.append({
             'key': 'net', 'state': 'ok' if online else 'warn', 'label': '能不能连上 GitHub',
-            'detail': '能连上' if online else '连不上 github.com（443）—— 多半是网络/代理的问题',
+            # ★ 措辞改了（`V-422`）：这只是一次**3 秒的探测**，探不到不等于推不上去
+            #   （有的网络只卡 DNS / 只卡 HTTPS 的握手，git 走代理照样通）。
+            'detail': '能连上' if online else
+                      '这次没探到 github.com（443）—— 只是 3 秒的探测，不代表推不上去',
             'fix': '', 'url': '',
-            'help': '' if online else '本地存版本一点不受影响；只是暂时上传/拉取不行。'
+            'help': '' if online else '本地存版本一点不受影响。「备份到云端」是**真去推**，'
+                                      '推不推得动以那一步的核对结果为准（不是看这里的探测）；'
                                       '开了代理的话，把系统代理开着再点「再检查一次」。',
         })
 
@@ -1780,14 +1784,48 @@ class Core:
               % (label, got['cmd'], got['ms'], got['code']), flush=True)
         return got
 
+    def _upstream_verified(self, root, upstream=""):
+        """本地 HEAD 和上游**是不是同一个提交** —— 直接用 git 的事实回答。
+
+        ★ 2026-10-21 的假失败就是靠这个止住的：`git fetch` 超时 / 被断，
+          推送其实**已经成功**（reflog 里一条 `update by push`），可界面照着
+          "有一条步骤失败"报了"提交失败，可能是网络问题"。
+          现在成败以"两端是不是同一个提交"为准，步骤日志只当过程。
+        回 `{same, head, up, msg}`；说不清（没有上游 / 命令失败）时 `same=None`。
+        """
+        ref = str(upstream or "").strip() or "@{u}"
+        h = git(root, "rev-parse", "--short", "HEAD", timeout=10)
+        u = git(root, "rev-parse", "--short", ref, timeout=10)
+        head = ((h.get("out") or "").strip().splitlines() or [""])[0].strip()
+        up = ((u.get("out") or "").strip().splitlines() or [""])[0].strip()
+        if not (h.get("ok") and u.get("ok") and head and up):
+            return {"same": None, "head": head, "up": up,
+                    "msg": "核对不上（可能还没有上游分支）：%s"
+                           % ((u.get("out") or h.get("out") or "git 没答话").strip()[:200])}
+        same = (head == up)
+        return {"same": same, "head": head, "up": up,
+                "msg": ("本地和远端是同一个提交 %s —— 推上去了" % head) if same
+                       else ("本地 %s，远端 %s —— 还没对齐" % (head, up))}
+
     def _finish(self, path, steps):
-        """把一串步骤汇总成一份给界面看的结果（ok / 失败原因 / 全部等价命令）。"""
-        bad = [s for s in steps if not s.get('ok')]
+        """把一串步骤汇总成一份给界面看的结果（ok / 失败原因 / 全部等价命令）。
+
+        ★ 标了 `soft: True` 的步骤（现在只有"拉取远端信息"）**不参与判定成功**：
+          它只是"问问远端现在什么样"，问不着不代表活没干成（`V-422`）。
+        """
+        bad = [s for s in steps if not s.get("ok") and not s.get("soft")]
         why = ''
         if bad:
             first = bad[0]
             lines = (first.get('out') or '').splitlines() or ['没跑成']
             why = first.get('why') or lines[0]
+        # 整体成了、只是"问远端"那一步没问着 ⇒ 别让界面显示一个吓人的 ✗
+        if not bad:
+            for s in steps:
+                if s.get("soft") and not s.get("ok"):
+                    s["softFail"] = True
+                    s["ok"] = True
+                    s["label"] = s.get("label", "") + "（这次没问着，不影响下面的推送）"
         return {
             'ok': not bad and bool(steps), 'steps': steps, 'path': path,
             'why': why, 'ms': sum(int(s.get('ms') or 0) for s in steps),
@@ -1950,14 +1988,26 @@ class Core:
         return self._finish(path, steps)
 
     def sync(self, params=None):
-        """一键同步：fetch →（落后就）pull --ff-only →（领先就）push。"""
+        """一键同步：fetch →（落后就）pull --ff-only →（领先就）push。
+
+        ★ 2026-10-21 修的**假失败**：`fetch` 只是"问问远端现在什么样"，它超时 / 被断
+          **不代表推不上去**。以前 fetch 一红，整份结果就报失败（界面上就是
+          "提交失败，可能是网络问题"），可实际上紧接着的 `git push` 已经推上去了
+          —— 真事：15:13:58 的提交，`origin/main` 的 reflog 里 15:14:39 一条
+          `update by push`，界面却说失败。
+          现在：① `fetch` 标成 **soft**（失败只当提示，不判定整体失败）；
+                ② push / pull 之后**再问 git 一次**：`HEAD` 和上游是不是同一个提交；
+                ③ 只要事实对得上，就报成功，并把"没问着"的原话留在步骤里。
+        """
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
         if not info:
             return {'ok': False, 'why': '这不是一个 git 仓库：%s' % path, 'steps': []}
         root = info['root']
-        steps = [self._step(root, ['git', 'fetch', '--all', '--prune'], '① 拉取远端信息', 180)]
+        fetch = self._step(root, ['git', 'fetch', '--all', '--prune'], '① 拉取远端信息', 180)
+        fetch['soft'] = True
+        steps = [fetch]
         info = repo_info(path) or info
         if info['behind'] and info['dirty']:
             steps.append({'ok': False, 'cmd': '(跳过) git pull --ff-only', 'ms': 0,
@@ -1972,6 +2022,14 @@ class Core:
             argv = ['git', 'push'] if info['upstream'] else \
                 ['git', 'push', '-u', 'origin', info['branch'] or 'HEAD']
             steps.append(self._step(root, argv, '③ 推送到 GitHub', 240))
+            # ★ 只信事实：推完之后 `HEAD` 和上游是不是同一个提交
+            info = repo_info(path) or info
+            ver = self._upstream_verified(root, info.get('upstream') or '')
+            steps.append({'ok': bool(ver.get('same') is not False), 'ms': 0,
+                          'cmd': '(核对) git rev-parse HEAD @{u}',
+                          'label': '④ 核对：远端和本地是不是同一个提交',
+                          'out': ver.get('msg') or '',
+                          'why': '' if ver.get('same') else (ver.get('msg') or '')})
         if len(steps) == 1 and steps[0]['ok'] and not info['ahead'] and not info['behind']:
             steps.append({'ok': True, 'cmd': '（无事可做）', 'ms': 0, 'label': '② / ③',
                           'out': '本地和远端已经一致：没有要拉的，也没有要推的。'})

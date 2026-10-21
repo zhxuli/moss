@@ -123,7 +123,6 @@ def scope_of(workdir="", pid=""):
 
 def dir_path(scope=None):
     r"""`scope` 可以是这四种：`scope_of()` 的返回值 / 包 id / **干活目录的路径** / 空。
-
     ★ 为什么要认路径：`save(rec)` 不带 scope 时是按 `rec["workdir"]` 归档的。
       ★★ 这里踩过一次（探针当场抓住）：把 `C:\…\pkgs\zz` 这种**绝对路径**当"包 id"
         拼进去，`Path / 绝对路径` 会**把前面整段丢掉**（pathlib 的规矩）⇒ 记录被写到
@@ -143,6 +142,71 @@ def dir_path(scope=None):
     if ("\\" in s) or ("/" in s) or (":" in s):
         return scope_dir(s)                      # 像个路径 ⇒ 按"干活的地方"解
     return E.user_data() / "state" / s / "ai" / "runs"
+
+
+# ------------------------------------------------------------------ 归位（按"活干在哪个包"）
+def _common_pkg(files):
+    """这些路径**全部**落在同一个包里 ⇒ 回那个包 id；跨包 / 有一处不在包里 ⇒ 空串。
+
+    `files` 是这一跑动过（新建 / 改过）的文件，`pkg_of()` 认得"包目录里的任何东西"。
+    """
+    ids = set()
+    for f in files or []:
+        pid = pkg_of(f)
+        if not pid:
+            return ""
+        ids.add(pid)
+    return next(iter(ids)) if len(ids) == 1 else ""
+
+
+def _rehome(rec):
+    """★ 活干在**另一个包**里 ⇒ 把这条记录整个归到那个包（`V-421`）。
+
+    什么时候会发生（2026-10-21 真事）：界面的"在哪干活"是**从当前选中的包推出来的**；
+    「新建包 → 切过去 → 自动开工」这条链上只要有一拍错位，AI 就会**在 A 包里开工、
+    却把 B 包整个建出来**。结果整段会话挂在了 A 名下 —— 用户回到新包的 AI 页，
+    看到的是"还没有跑过"（真事：会话挂在 `ip` 下，文件全在 `keytest` 里）。
+
+    判据刻意收得很窄 —— **只在"动过的文件全都在同一个包、且那个包就是新建的那个"时才搬**：
+      · 跨包的（AI 顺手修了两个包）不猜；
+      · 落在临时目录 / 技能（`state/skill/<名字>`）的不动（`pkg_of` 本来就认不出它们）；
+      · 已经在正确包里 ⇒ 原样返回（绝大多数情况）。
+    """
+    try:
+        rec = dict(rec or {})
+        pid_now = pkg_of(rec.get("workdir"))
+        pid_new = _common_pkg(rec.get("files"))
+        if not pid_new or pid_new == pid_now:
+            return rec, False
+        for root in (E.user_data() / "pkgs", E.HOME / "system" / "pkgs"):
+            d = Path(root) / pid_new
+            if d.is_dir():
+                old = str(rec.get("workdir") or "")
+                rec["workdir"] = str(d)
+                rec["scope"] = "pkg"
+                rec["scope_id"] = pid_new
+                rec["rehomed_from"] = rec.get("rehomed_from") or old
+                return rec, True
+    except Exception:                                                 # noqa: BLE001
+        pass
+    return dict(rec or {}), False
+
+
+def _drop_stale(rid, keep):
+    """把同一个 id 落在**别的桶**里的旧副本删掉（归位之后会留下一个）。
+
+    只在这一跑确实被归位过（`rehomed_from`）时调用 —— 平时不动别人的文件。
+    """
+    keep = str(keep)
+    for d in _all_dirs():
+        if str(d) == keep:
+            continue
+        p = Path(d) / (str(rid) + ".json")
+        try:
+            if p.is_file():
+                p.unlink()
+        except OSError:
+            pass
 
 
 def _all_dirs():
@@ -180,13 +244,17 @@ def _write(path, rec):
 def save(rec, scope=None):
     """存一条（跑完那次）。回 `{ok, id}`（存不上也不抛 —— 干活要紧）。"""
     try:
-        rec = dict(rec or {})
+        rec, moved = _rehome(rec)
         rec.setdefault("id", _new_id())
         rec.setdefault("finished", time.time())
         rec["running"] = False
-        d = dir_path(scope if scope is not None else rec.get("workdir"))
+        # ★ 被归位了就以**归位后的包**为准（调用方给的 scope 是"开工那一刻的包"）
+        d = dir_path(rec.get("workdir") if moved
+                     else (scope if scope is not None else rec.get("workdir")))
         d.mkdir(parents=True, exist_ok=True)
         _write(d / (rec["id"] + ".json"), rec)
+        if moved:
+            _drop_stale(rec["id"], d)
         _prune(d)
         return {"ok": True, "id": rec["id"], "dir": str(d)}
     except Exception as e:                                            # noqa: BLE001
@@ -199,15 +267,18 @@ def save_live(rec, scope=None):
     每一步写一次（几 KB，原子替换）—— 你强制重启那次丢的正是这条。
     """
     try:
-        rec = dict(rec or {})
+        rec, moved = _rehome(rec)
         rid = str(rec.get("id") or "").strip()
         if not rid:
             return {"ok": False, "id": "", "msg": "没有 id"}
         rec["running"] = True
         rec.setdefault("started", time.time())
         rec["updated"] = time.time()
-        d = dir_path(scope if scope is not None else rec.get("workdir"))
+        d = dir_path(rec.get("workdir") if moved
+                     else (scope if scope is not None else rec.get("workdir")))
         _write(d / (rid + ".json"), rec)
+        if moved:
+            _drop_stale(rid, d)
         return {"ok": True, "id": rid, "dir": str(d)}
     except Exception as e:                                            # noqa: BLE001
         return {"ok": False, "id": "", "msg": "%s: %s" % (type(e).__name__, e)}

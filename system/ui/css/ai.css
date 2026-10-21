@@ -1674,3 +1674,31 @@
   border:1px solid #FDE68A; border-radius:999px; padding:1px 6px; white-space:nowrap;
 }
 .aiwrap .ai-perm-full-info > span{font-size:12px; color:#B45309}
+
+/* ---------------------------------------------------------------- 「回到最新」那颗浮动按钮
+   ★ 它以前**一条样式都没有**（模板里写着 `<button class="ai-tobottom">`，ai.css 里搜不到
+     这个类）—— 于是浏览器按默认 button 画：通栏、白底、灰边、字号 13px 的一整块，
+     看着像界面坏了（2026-10-21 录屏时抓到的就是它）。
+   ★ 形状：贴在手记流（`.ai-log`，自己是 `overflow-y:auto`）的右下角 —— 用 `sticky`
+     而不是 `absolute`：`absolute` 得靠一个"高度已知"的定位祖先，而这里高度是弹性的；
+     `sticky` + `margin-left:auto` 跟着滚动容器走，滚到哪儿它都在右下角。 */
+/* 日志流外面那层**不滚动**的框：只为了让「回到最新」能浮在聊天区右下角 */
+#pane-ai .ai-logwrap{flex:1 1 0; min-height:0; position:relative; display:flex;
+  flex-direction:column}
+#pane-ai .ai-logwrap > .ai-log{flex:1 1 0; min-height:0}
+
+.aiwrap .ai-tobottom{
+  position:absolute; right:26px; bottom:16px;
+  display:none; align-items:center; gap:6px; width:auto; max-width:max-content;
+  padding:8px 14px; border-radius:999px; border:1px solid var(--aib-border-color);
+  background:var(--aib-bg-panel); color:var(--aib-primary); font:inherit; font-size:13px;
+  line-height:1; cursor:pointer; z-index:6; box-shadow:0 6px 18px rgba(15,23,42,.14);
+  transition:var(--aib-transition-smooth);
+}
+/* ★ 用 class 切显示，不用 v-if：按钮那颗一进一出会让整块日志重新 patch 一次，
+   连 <main> 的引用都可能被换掉（i-follow 场景第 ④ 步就是这么被抓出来的）。 */
+.aiwrap .ai-tobottom.on{display:inline-flex}
+.aiwrap .ai-tobottom:hover{background:var(--aib-primary-light);
+  border-color:var(--aib-primary); color:var(--aib-primary-hover)}
+.aiwrap .ai-tobottom svg{width:14px;height:14px}
+.aiwrap .ai-tobottom:focus-visible{outline:2px solid var(--aib-primary);outline-offset:2px}

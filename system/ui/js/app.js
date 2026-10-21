@@ -308,12 +308,29 @@ async function npCreate(){
   select(id, /*keepTab*/ true);     // keepTab：别把用户弹回「详情」
   toast("已新建 " + PSYM + id + (v.name ? " · " + v.name : ""));
   if (!andStart) return;
+  /* ★ `V-421`：**开工目录必须钉死成新包**，不能靠"当前选中"再推一次。
+     以前这里只 `select(id)` 然后就 `aiStart()`（它内部读 `cur`），于是：
+     包表还没刷新 / 用户这一拍点了别的包 / 任何一次异步重选，都会让 AI **在旧包里开工**
+     —— 真事：在 `ip` 里开工、把 `keytest` 整个建出来，会话还挂在 `ip` 名下。
+     现在：① 先从**刷新后的包表**里把这个包的目录找出来（不是从 `cur`）；
+           ② 找不到就再刷一次，还找不到就**明说**，绝不"猜一个目录开始干活"；
+           ③ 找到了就把它**显式传给** `aiStart`。 */
+  let np = (DATA.packages || []).find(p => p.id === id) || null;
+  if (!np || !np.dir){
+    await refreshPkgs(id);
+    np = (DATA.packages || []).find(p => p.id === id) || null;
+  }
+  if (!np || !np.dir){
+    toast("新包建好了，但包列表里还没刷出来 —— 点一下左上角 ⟳ 再开工。", true);
+    return;
+  }
+  if (!cur || cur.id !== id) select(id, true);   // 顺手把选中也摆正（用户可能点了别处）
   const task = String(v.task || "").trim() || String(v.desc || "").trim() || ("做一个「" + id + "」的包");
   setTab("ai");
   await new Promise(res => setTimeout(res, 250));   // 等 AI 那一页挂上（组件按页渲染）
   window.__AIR.task = task;
   try{
-    if (typeof aiStart === "function") await aiStart();
+    if (typeof aiStart === "function") await aiStart({dir: np.dir});
   }catch(e){
     toast("AI 没起得来：" + (e && e.message ? e.message : e), true);
   }
