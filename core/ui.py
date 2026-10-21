@@ -37,6 +37,10 @@ from . import shell as shell_mod
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+#: `docs` 里**每个文件**最多读这么多字符（`V-388`）——够写一份用法说明，
+#: 又不至于让一份大 README 把整个 payload 撑大（界面每次都整份拿）。
+DOCS_MAX = 24000
+
 UI_DIR = paths.SYSTEM_DIR / "ui"
 UI_MAIN = UI_DIR / "main.py"
 UI_PAGE = UI_DIR / "index.html"
@@ -142,6 +146,39 @@ def host_cmd():
     return [exe]
 
 
+def _docs_of(pkg, pkg_dir):
+    """包的「说明」文件（`V-388` ✅）：`"docs": {"readme": "README.md"}`。
+
+    声明里写的是**相对包目录**的路径；这里把它**读成文本**再交给界面 ——
+    界面只管渲染，不用读盘、也不用认识包格式（沿用 `_ui_of` 那条分工）。
+
+    ★ 为什么加这个：`docs` 在契约里早就留着（一直标 ⬜ 没实现），于是像 `pip`
+      这种"一句话 desc + 没有参数"的包，详情页**一个字的使用方法都没有** ——
+      用户的原话："详情里面 并没有它的使用方法的介绍呀"。
+
+    ★ 只认这几个键（白名单），别的原样不动；文件不存在就跳过（不报错、不留空块）；
+      单个文件截到 `DOCS_MAX` 字符，免得 payload 被一份大 README 撑爆。
+    """
+    raw = pkg.get("docs")
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for key in ("readme", "usage", "agent"):
+        rel = str(raw.get(key) or "").strip()
+        if not rel:
+            continue
+        full = (Path(pkg_dir) / rel).resolve() if not os.path.isabs(rel) else Path(rel)
+        try:
+            if not full.is_file():
+                continue
+            text = full.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        out[key] = {"file": rel, "text": text[:DOCS_MAX],
+                    "truncated": len(text) > DOCS_MAX}
+    return out
+
+
 def _ui_of(pkg, pkg_dir):
     """包的「界面」声明（`V-48` ✅）：`"ui": {"embed": "ui/index.html"}`。
 
@@ -194,7 +231,7 @@ def build_payload():
             # 「界面能不能内嵌」（`V-48` ✅）：`_ui_of()` 已经把相对路径解析成绝对路径。
             # `None` = 这个包没有可内嵌的界面（界面上那个选项卡就不出现）。
             "ui": _ui_of(p, rec["dir"]),
-            "docs": p.get("docs") or {},
+            "docs": _docs_of(p, rec["dir"]),
             "ai_expose": bool(ai.get("expose")),
             "ai_risk": str(ai.get("risk") or ""),
             "examples": [str(e.get("args") or "") for e in (ai.get("examples") or [])

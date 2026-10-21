@@ -105,7 +105,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
           "ai-hist-live", "ai-follow",
           "ai-turn-edit", "ai-self-tools", "ai-ask",
-          "embed-tab", "newpkg-form", "newpkg-manual", "newpkg-manual-go", "newpkg-ai",
+          "pkg-docs", "embed-tab", "newpkg-form", "newpkg-manual", "newpkg-manual-go", "newpkg-ai",
           "hl-window", "set-debounce", "parasite"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
@@ -4916,6 +4916,42 @@ MOCK_JS = r"""
       //   ① 真的有这个选项卡、② 显示模型、③ 「开始」可用、④ 交任务之后**步骤流一行行出来**、
       //   ⑤ 跑完显示"验收通过 + 改过哪些文件 + token 合计"。
       //   （loop 本身由 tools/ai循环探针.py 验；这条只管"这一页画不画得出来"。）
+      // ★ `V-388`：**详情页显示「使用说明」**（`pkg.json` 的 `docs.readme`）。
+      //   以前这个字段只躺在 payload 里没人渲染，`pip` 那种"一句话 desc + 没参数"的包
+      //   在详情页**一个字的使用方法都没有**（用户报的）。
+      if (h === "pkg-docs"){
+        document.title = "PKGDOCS-ERR";
+        select("pip");
+        await sleep(500);
+        const card = document.querySelector("#pane-detail details.dp-doc");
+        const body = card ? card.querySelector(".dp-doc-body") : null;
+        const txt = body ? String(body.textContent || "") : "";
+        const fileEl = card ? card.querySelector(".dp-doc-file") : null;
+        const sum = card ? String((card.querySelector(".dp-doc-sum") || {}).textContent || "") : "";
+        // 顺手验"能收起"：把 open 去掉，正文应当不可见（原生 details 行为）
+        let collapsible = 0;
+        if (card) {
+          card.removeAttribute("open");
+          await sleep(60);
+          // ★ 用**高度**判：Chromium 新版 details 是 content-visibility 收的，
+          //   offsetParent 不一定变 null（第一版就栽在这，被误判成"收不起来"）。
+          // ★ 用 checkVisibility()：新版 Chromium 的 details 是 content-visibility
+          //   收的，量高度 / offsetParent 都可能"看着还有"，只有它会如实说不可见。
+          collapsible = (card.open === false && body &&
+            (typeof body.checkVisibility === "function"
+              ? !body.checkVisibility()
+              : body.getClientRects().length === 0)) ? 1 : 0;
+          card.setAttribute("open", "");
+        }
+        const ok = !!card && /Pip 工具 · 怎么用/.test(txt) && /README\.md/.test(
+          String(fileEl ? fileEl.textContent : "")) && /使用说明/.test(sum) && collapsible === 1;
+        document.title = ok ? "READY"
+          : ("PKGDOCS-FAIL 卡片=" + (card ? 1 : 0) + " 标题=" + (/使用说明/.test(sum) ? 1 : 0) +
+             " 文件=" + (fileEl ? String(fileEl.textContent).trim() : "-") +
+             " 含正文=" + (/Pip 工具 · 怎么用/.test(txt) ? 1 : 0) +
+             " 可收起=" + collapsible + " 长度=" + txt.length);
+        document.querySelector("#meta").textContent = "DIAG " + document.title;
+      }
       // ★ `V-387`：AI 给包**新加了内嵌界面**（`pkg.json` 的 `ui.embed`）之后，顶上那颗
       //   「界面」必须**立刻**出现 —— 以前要"把包切走再切回来"才出现（只有 `select()` 会重画它）。
       if (h === "embed-tab"){

@@ -689,6 +689,24 @@ function renderDetailHTML(){
   }
   html += '</div>';
 
+  // ★ `V-388`：**使用说明**（`pkg.json` 的 `docs.readme`）。
+  //   宿主把文件读成文本塞进 payload（界面不读盘，见 `core/ui.py` 的 `_docs_of`）；
+  //   以前这个字段只躺在 payload 里没人渲染，于是像 `pip` 那种"一句话 desc +
+  //   没参数"的包，详情页**一个字的使用方法都没有**（用户报的）。
+  //   用原生 `<details open>`：默认展开、点标题就能收起，不用加任何 JS 绑定。
+  const docReadme = (p.docs && p.docs.readme) || null;
+  if (docReadme && docReadme.text){
+    html += '<div class="dp-card"><details class="dp-doc" open>' +
+        '<summary class="dp-doc-sum">' +
+          '<span class="dp-doc-ico">' + ico("book-open", "i") + '</span>' +
+          '<span class="dp-doc-title">使用说明</span>' +
+          '<span class="dp-doc-file mono">' + esc(docReadme.file || "") + '</span>' +
+          (docReadme.truncated ? '<span class="dp-badge">太长，只显示前面一段</span>' : '') +
+        '</summary>' +
+        '<pre class="dp-doc-body">' + esc(docReadme.text) + '</pre>' +
+      '</details></div>';
+  }
+
   // ★ 卡片 4：高级设置（稿子把"更名 / 开机自动运行 / 卸载"收成一张卡的三行）
   const renameBtn = '<button class="dp-ghost" id="btn-rename" title="给这个包改名（moss --rename）">' +
       ico("pencil", "i") + '<span>更名</span></button>';

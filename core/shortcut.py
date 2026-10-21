@@ -30,6 +30,7 @@ alias 是**整词替换**，`moimg` 不是 `mo`+`img` 拼出来的 —— 普通
   改完广播 `WM_SETTINGCHANGE`）。
 """
 import ctypes
+import hashlib
 import json
 import os
 import re
@@ -46,6 +47,9 @@ PREFIX = "mo"
 DIRNAME = "shortcuts"
 #: 记着"我们生成了哪些"的账本 —— 删的时候**只看这里**，绝不误删别人的文件。
 LEDGER_NAME = "_shortcuts.json"
+#: 账本里记"上次对账时，'应该有哪些短命令'的输入长什么样"。
+#: 有了它，启动时比一次指纹就知道要不要真对账，不用全扫包列表。
+LEDGER_FP = "fp"
 
 
 def shortcuts_dir():
@@ -105,6 +109,52 @@ def _desired():
         for rec in registry.scan_all():
             want[p + str(rec["id"])] = str(rec["id"])
     return want
+
+
+# ---------------------------------------------------------------- 指纹（启动自愈用）
+def _pkg_sig():
+    """包列表的**廉价指纹原料**：目录名 + 各自 `pkg.json` 的 mtime，**不解析清单**。
+
+    为什么不直接 `registry.scan_all()`：那是把两层所有清单全读一遍，挂在"每次 moss
+    启动"上太贵。这里每个包一次 stat 就够，而且这几件事都会让指纹变：
+      · 丢进 / 删掉 / 改名一个包目录 → 目录名集合变；
+      · 手改 `pkg.json`（比如把 id 改了）→ 它的 mtime 变。
+    ★ **不拿目录本身的 mtime**：包跑起来时 Python 会往自己目录里写 `__pycache__`，
+      那会把目录 mtime 改掉 —— 于是每次"某个包第一次运行"都会白对账一次。
+      目录里新增一个子目录对短命令毫无影响，别让它进指纹。
+    """
+    rows = []
+    for base in (paths.SYSTEM_PKGS, paths.USER_PKGS):
+        try:
+            entries = list(os.scandir(base))
+        except OSError:
+            continue
+        for e in entries:
+            try:
+                if not e.is_dir():
+                    continue
+            except OSError:
+                continue
+            try:
+                pm = os.stat(os.path.join(e.path, "pkg.json")).st_mtime_ns
+            except OSError:
+                pm = 0
+            rows.append([e.name, pm])
+    rows.sort()
+    return rows
+
+
+def _state_fp():
+    """"短命令应该长什么样"的指纹：前缀 + 两个开关 + 启动器 + 包列表，一次 sha1。"""
+    sc = config.CONFIG.get("shortcut") or {}
+    blob = json.dumps({
+        "prefix": prefix(),
+        "mo": bool(sc.get("mo")),
+        "pkg": bool(sc.get("pkg")),
+        "launcher": launcher_argv(),
+        "pkgs": _pkg_sig(),
+    }, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------- PATH（注册表，HKCU）
@@ -225,10 +275,12 @@ def sync():
         fn = d / (name + ".cmd")
         # ★ 用**字节**比较 / 写：`.cmd` 必须是 CRLF，而 `read_text` 会把 CRLF 归一成 LF
         #   —— 拿文本比就永远"不一样"，于是每次 sync 都重写一遍（不幂等，实测踩过）。
-        want = _shim_text(pid).encode("utf-8")
+        # ★ 别把这行命名成 `want`：它会盖掉上面那个"应该有哪些"的字典，后面 ③ 再拿
+        #   `want` 判空就会判到一段 bytes 上（当时能跑对纯属巧合）。
+        want_text = _shim_text(pid).encode("utf-8")
         try:
-            if (not fn.is_file()) or fn.read_bytes() != want:
-                fn.write_bytes(want)
+            if (not fn.is_file()) or fn.read_bytes() != want_text:
+                fn.write_bytes(want_text)
                 msgs.append("生成 %s.cmd  →  %s" % (name, ("moss %s %s" % (config.plugin_symbol(), pid))
                                                     if pid else "moss"))
         except OSError as e:
@@ -280,12 +332,50 @@ def sync():
                 msgs.append("已把 %s 从 PATH 移除（新开一个终端才生效）" % home)
         we_added = False                     # 关了就不再是我们管的了
 
-    # ④ 账本：永远反映"现在生成了哪些" + "moss 目录是不是我们加的"
+    # ④ 账本：永远反映"现在生成了哪些" + "moss 目录是不是我们加的" + "对账时的输入长什么样"
     new_ledger = {"dir": d_str, "launcher": launcher_argv(), "files": new_files,
-                  "moss_dir": (home if we_added else None)}
+                  "moss_dir": (home if we_added else None), LEDGER_FP: _state_fp()}
     if new_ledger != ledger:
         _write_ledger(new_ledger)
     return msgs
+
+
+def sync_if_stale():
+    """**启动时的一次廉价自愈**：包列表 / 配置 / 启动器跟上次对账时不一样了，才真 sync。
+
+    ★ 为什么需要它：短命令是**磁盘上的一批 `.cmd`**，而"应该有哪些"是从包列表派生出来的。
+      可"包列表变了"并不总有事件可听 —— 手工把包目录丢进 `user_data/pkgs/`、拷别人的包
+      过来、AI 直接写一个包，宿主一次都没经过 `--new`，于是 `mo<新包>` 永远缺着，
+      用户看到的是"`moh` 不是内部或外部命令"，还会怀疑是包坏了（真事：
+      `moss :h` 这个手写落盘的包，`moh` 就是不出现，最后只能手动 `--alias sync`）。
+    ★ 为什么不是"每次启动都 sync()"：sync 要 `registry.scan_all()` 把两层所有清单
+      全读一遍，挂在热路径（`moss :img` 这种）上不值当。这里只比一次指纹：
+      两次 scandir + 每个包一次 stat + 一次账本读取，本机实测 **2~3 毫秒**。
+      两个开关都没开、磁盘上也没有遗留启动器时，**一次 scandir 就返回**（几十微秒）。
+    ★ 覆盖到的时机（都走 `cli.main()`，所以全都自动生效）：任何 `moss …` ——
+      包括 `moss ui`（界面启动前先对一次账）、裸敲 `moss` 看列表、以及
+      界面每刷新一次包列表调的 `--ui-payload`（所以界面**开着**时丢进来的包也会被补上）。
+    返回这次真做了什么的清单（人话）；什么都没做返回 `[]`。
+    """
+    if os.name != "nt":
+        return []                                   # 短命令只在 Windows 上做
+    sc = config.CONFIG.get("shortcut") or {}
+    if not (sc.get("mo") or sc.get("pkg")):
+        # 功能关掉了。★ 不能直接 `return []`：用户可能是**手改 config.toml** 关的，
+        #   那时磁盘上还留着一批指向包的 `.cmd`（删了包 / 关了开关的现场）——
+        #   只看"现在不想要"就不收拾，那些启动器会一直留着，敲 `moimg` 还能跑。
+        #   所以只有在"没有遗留文件"时才真的零成本返回。
+        try:
+            leftovers = next(iter(shortcuts_dir().glob("*.cmd")), None) is not None
+        except OSError:
+            leftovers = False
+        return sync() if leftovers else []
+    try:
+        if str(_read_ledger().get(LEDGER_FP) or "") == _state_fp():
+            return []
+    except Exception:                                                     # noqa: BLE001
+        pass                                        # 指纹算不出来就当"不一致"，去对账
+    return sync()
 
 
 def status():
@@ -329,6 +419,8 @@ def cmd_alias(argv):
               % (s["dir"], "（已在 PATH 里）" if s["on_path"] else "（不在 PATH 里）"))
         print("  已生成 %d 个           : %s"
               % (len(s["files"]), ", ".join(s["files"]) if s["files"] else "（无）"))
+        print("  启动自愈              : 每次 moss 启动都会比一次指纹 —— 包列表变了就自动补上"
+              "（手工丢包 / 拷包 / AI 写包都不用再手动 sync）")
         return 0
     out.print_cyan("[错误] 不认识的 --alias 子命令：%s（有：sync / status）" % verb)
     return 1

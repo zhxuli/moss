@@ -17,7 +17,8 @@ import unicodedata
 from pathlib import Path
 
 from . import (config, engine, events, history, out, paths, pkg as pkg_mod,
-               registry, resolve, runners as runners_mod, shell, ui)
+               registry, resolve, runners as runners_mod, shell,
+               shortcut as shortcut_mod, ui)
 
 USAGE = """moss —— 多语言启动器
 
@@ -1659,6 +1660,14 @@ def main(argv):
         argv = [config.restore_prefix(argv[0])] + list(argv[1:])
 
     paths.ensure_user_dirs()
+
+    # 短命令自愈：包列表是**磁盘上的现实**（手工丢包 / 拷包 / AI 直接写包都不会触发
+    # "建包"事件），所以每次启动便宜地比一次指纹，不一致就补上 —— 否则 `mo<新包>`
+    # 永远缺着，用户只会看到"命令不存在"（`moh` 就这么缺过）。
+    # ★ 消息走 **stderr**：`--ui-payload` / `--settings` 这些命令的 stdout 是**纯 JSON**，
+    #   往上多打一行就把那条契约破坏了；stderr 在终端里照样看得见。
+    for _msg in shortcut_mod.sync_if_stale():
+        print("[短命令] " + _msg, file=sys.stderr)
 
     # 内建订阅者：历史（不是钩子！见 T-05）
     # ★ 两次记账：启动时先记一条，跑完再补一条（长驻程序跑着的时候也得看得见）

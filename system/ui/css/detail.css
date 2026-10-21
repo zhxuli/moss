@@ -72,6 +72,31 @@
   .dp-card{border-color:rgba(255,255,255,.05)}
 }
 
+/* ---------------------------------------------------------------- 「使用说明」卡（`V-388`）
+   内容来自 `pkg.json` 的 `docs.readme`（宿主读成文本塞进 payload）。
+   用原生 `<details open>`：点标题收起 / 展开，不需要 JS。
+   ★ 正文用 `<pre>` + `white-space:pre-wrap`：README 是 Markdown，这里**不做渲染**
+     （不引解析库），按原样保留换行最诚实 —— 谁要改格式回去改文件就行。 */
+.dp-doc{padding:0;border-radius:var(--dp-radius-lg)}
+.dp-doc-sum{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;
+  padding:18px 24px;color:var(--dp-text-main);font-size:14px;font-weight:600;
+  user-select:none}
+.dp-doc-sum::-webkit-details-marker{display:none}
+.dp-doc-sum::after{content:"展开 / 收起";margin-left:auto;font-size:11px;
+  font-weight:400;color:var(--dp-text-muted)}
+.dp-doc-ico{display:inline-flex;color:var(--dp-text-muted)}
+.dp-doc-ico svg{width:15px;height:15px}
+.dp-doc-title{letter-spacing:-.01em}
+.dp-doc-file{font-size:11px;font-weight:400;color:var(--dp-text-muted)}
+.dp-doc-body{margin:0;padding:0 24px 20px;max-height:420px;overflow:auto;
+  font:12.5px/1.7 ui-monospace,Consolas,"Microsoft YaHei",monospace;
+  color:var(--dp-text-muted);white-space:pre-wrap;word-break:break-word}
+.dp-doc-body::-webkit-scrollbar{width:8px}
+.dp-doc-body::-webkit-scrollbar-thumb{background:rgba(0,0,0,.14);border-radius:4px}
+@media (prefers-color-scheme: dark){
+  .dp-doc-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18)}
+}
+
 /* ---------------------------------------------------------------- 卡 1：基础信息（稿子 .header-card / .plugin-icon / .plugin-info） */
 .dp-card.dp-head{display:flex;gap:24px;align-items:flex-start}
 .dp-icon{width:68px;height:68px;border-radius:16px;flex-shrink:0;display:flex;

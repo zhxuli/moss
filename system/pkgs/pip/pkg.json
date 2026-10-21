@@ -7,7 +7,11 @@
     "zh-CN": "Pip 工具"
   },
   "desc": {
-    "zh-CN": "Pip 相关操作工具"
+    "zh-CN": "图形化的 Python 包管理器：查 / 装 / 卸 / 升级 moss 自己那个 venv 里的包，带 PyPI 搜索、交互式 Shell、操作日志。点「运行」开窗口（别直接双击 exe）。"
+  },
+  "docs": {
+    "readme": "README.md",
+    "agent": "AGENT.md"
   },
   "tags": [
     "python",
