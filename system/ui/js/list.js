@@ -541,10 +541,43 @@ function safeSvg(text){
     return svg.outerHTML;
   }catch(e){ return ""; }
 }
+/* ---------------------------------------------------------------- 图标（带兜底，2026-10-22）
+   你报的：「有时候会忘记创建图标」。
+   契约里图标是**可选项**（`pkg.json` 的 `icon` 可写可不写，包里有没有 `icon.*` 都合法），
+   所以"没图标"不是错误 —— 但界面上原来就是**一个空壳格子**：列表里那 24px 一片空白、
+   详情页那颗大图标位什么都没有，看着像"这个包坏了"。现在没图标就画一颗**兜底的**：
+   名字首字 + 由 id 算出来的颜色（同一个包每次进来颜色都一样）。
+   真正要"图"的包，AI 那边已经被要求画 `icon.svg`（提示词 + `--new` 的骨架里都写了）。 */
+function iconFallbackHue(p){
+  const s = String((p && (p.id || p.name)) || "?");
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+  return h;
+}
+function iconFallbackChar(p){
+  const nm = String((p && (p.name || p.id)) || "?").trim();
+  const ch = Array.from(nm)[0] || "?";
+  return ch;
+}
+function iconInner(p){
+  if (p && p.icon_svg){ const s = safeSvg(p.icon_svg); if (s) return s; }
+  if (p && p.icon) return '<img src="' + p.icon + '" alt="">';
+  return "";
+}
 function iconHTML(p, cls){
-  if (p.icon_svg){ const s = safeSvg(p.icon_svg); if (s) return '<span class="' + cls + '">' + s + '</span>'; }
-  if (p.icon) return '<span class="' + cls + '"><img src="' + p.icon + '" alt=""></span>';
-  return '<span class="' + cls + '"></span>';
+  const inner = iconInner(p);
+  if (inner) return '<span class="' + cls + '">' + inner + '</span>';
+  // 没图标 / 图标坏了 ⇒ 首字兜底（`--fb-h` 是这个包自己的一个色相，见 app.css）
+  return '<span class="' + cls + ' ico-fb" style="--fb-h:' + iconFallbackHue(p) + '">' +
+         esc(iconFallbackChar(p)) + '</span>';
+}
+/* 详情页那颗大图标（`.dp-icon` 自己已经有底色 / 圆角了，所以兜底只管"字"）：
+   有图就放图，没图就把首字放大摆进去。 */
+function iconBigHTML(p){
+  const inner = iconInner(p);
+  if (inner) return inner;
+  return '<span class="dp-fb" style="--fb-h:' + iconFallbackHue(p) + '">' +
+         esc(iconFallbackChar(p)) + '</span>';
 }
 function pkgRel(p){
   return relOfDir(p && p.dir);
@@ -589,9 +622,28 @@ function layerBadge(p){
       '<span class="dp-layer-go">' + ico("layers", "i") + '→ ' + esc(to) + '</span>' +
     '</button>';
 }
+/* ★ 2026-10-22（你报的：「左侧的列表这里，它并没有自动定位到这个童趣打字乐园这里」）：
+   选中变了就把那一行**滚进视口**（跟编辑器 go-to-line 一个心思）。
+   · 为什么不用 `scrollIntoView`：`#list` 是嵌套滚动容器，那个 API 会顺带把整页也滚一下
+     （右边那一页跟着动，很突兀）；这里只改 `#list.scrollTop`。
+   · **只在选中真的变了**时滚：列表每 2.5 秒都会因包状态轮询重画一次，那个每分钟几十次的
+     重画要是也滚，等于"你往上翻两行就被拽回来"（`V-385` 那条跟滚的教训）。
+   · 只在**必要**时滚：已经在视口里就一动不动。 */
+function scrollSelIntoView(){
+  const list = $("#list");
+  if (!list || !list.clientHeight) return;       // 收起了左栏 / 正在看历史 ⇒ 不用管
+  const el = list.querySelector(".item.sel");
+  if (!el) return;                                // 被筛选藏起来了：那就没有"那一行"可定位
+  const lr = list.getBoundingClientRect(), r = el.getBoundingClientRect();
+  if (r.top >= lr.top && r.bottom <= lr.bottom) return;       // 已经看得见，别动滚动条
+  const pad = 6;
+  if (r.top < lr.top) list.scrollTop += (r.top - lr.top) - pad;         // 在上面 ⇒ 往上滚
+  else list.scrollTop += (r.bottom - lr.bottom) + pad;                  // 在下面 ⇒ 往下滚
+}
 /* `keepTab`：只把它选上（右边那颗「运行/停止」跟着它），但**不把人拽去「详情」**——
    列表里直接点「运行」时用（不然"我就点一下跑，结果跳走了"）。 */
 function select(id, keepTab){
+  const prevId = cur ? cur.id : null;
   cur = DATA.packages.find(p => p.id === id) || null;
   curH = null;                                // 选了包就把"历史那条"放下（两者互斥）
   consoleKey = cur ? cur.id : "__host__";     // 命令行跟着换成"这个包自己的那份"
@@ -600,6 +652,8 @@ function select(id, keepTab){
   // 换了包 → 文件管理跟着换到"这个包的那一套"（每个包一份上下文，互不干扰）
   if (cur) fmSelect(cur.id, /*keepTab*/ true);
   paintEmbedTab();                            // 第四个选项卡：这个包有没有界面
+  // 选中换了 ⇒ 等这一帧画完再把那一行滚进视口（新包常常排在列表末尾，就"看不见"）
+  if (cur && cur.id !== prevId) Vue.nextTick(() => { try{ scrollSelIntoView(); }catch(e){} });
 }
 function renderDetailHTML(){
   const who = selObj();
@@ -613,7 +667,7 @@ function renderDetailHTML(){
   //   ★ `.dmeta` 那个类**必须留着**（里面有 `:包id`）—— `sync-run` 场景拿它认"选中的是谁"。
   const dirText = String(p.dir || "");
   let html = '<div class="dwrap"><div class="dp-card dp-head">' +
-      '<div class="dp-icon">' + (iconHTML(p, "") || ico("puzzle", "i")) + '</div>' +
+      '<div class="dp-icon">' + iconBigHTML(p) + '</div>' +
       '<div class="dp-info">' +
         '<h1 title="' + esc(p.name) + '">' + esc(p.name) +
           '<span class="dp-badges dmeta">' +

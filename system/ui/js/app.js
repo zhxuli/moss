@@ -329,6 +329,12 @@ async function npCreate(){
   setTab("ai");
   await new Promise(res => setTimeout(res, 250));   // 等 AI 那一页挂上（组件按页渲染）
   window.__AIR.task = task;
+  /* ★ 2026-10-22：**新包 = 新会话**。这里不清的话，`AIR.contId` / `AIR.lastId` 还指着
+     **上一个包**那条记录（AI 页那个 700ms 的 tick 还没来得及按"换包"清它），于是
+     `aiStart` 会把旧包的会话交给宿主 ⇒ 新包的第一跑挂在旧包的对话链后面：
+     AI 一开口就"接着上次那条聊"。真机 10-22 那轮就是这样：17:31 在 `keytest` 里聊过，
+     17:39 建 `kids-typing` 时 `continued_from` 指向的却是 `keytest` 那条。 */
+  try{ if (typeof aiScopeReset === "function") aiScopeReset(); }catch(e){}
   try{
     if (typeof aiStart === "function") await aiStart({dir: np.dir});
   }catch(e){

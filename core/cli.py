@@ -667,6 +667,21 @@ moss :__ID__ text=你好 times=3
 '''
 
 
+#: `moss --new` 顺手放进去的**起步图标**（2026-10-22）。
+#: 为什么骨架里要先放一颗：契约里图标是**可选项**，于是"AI 直接写一个包"经常整个忘掉 ——
+#: 界面上那个位置就是一片空白（你报的「有时候会忘记创建图标」）。骨架给一颗中性的"包裹"
+#: 图形：① 新包**一定有图标**；② 它是个现成文件，AI 要改就 `edit_file`，比"从零画一个"更容易想起来。
+#: 下面 `--new` 的提示里也点名让它换成跟功能相配的那颗。
+NEW_ICON_SVG = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img">
+  <rect x="4" y="4" width="40" height="40" rx="12" fill="#EEF3F9"/>
+  <path d="M24 12.5 34 18.5v11L24 35.5 14 29.5v-11z" fill="#fff" stroke="#7C93B0"
+        stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M14 18.5 24 24.5l10-6M24 24.5v11" fill="none" stroke="#7C93B0"
+        stroke-width="2.2" stroke-linejoin="round"/>
+</svg>
+'''
+
+
 def _shortcut_sync(verbose=True):
     """让"短命令"追上现在的开关 + 包列表（`V-298`）。
 
@@ -713,11 +728,13 @@ def cmd_new(pid, kind="task", name="", desc=""):
             json.dumps(pkg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         (target / "run.py").write_text(NEW_RUN_PY.replace("__ID__", pid), encoding="utf-8")
         (target / "AGENT.md").write_text(NEW_AGENT_MD.replace("__ID__", pid), encoding="utf-8")
+        # ★ 2026-10-22：起步图标（**新包一定有图标**，不靠"谁记得画一个"）
+        (target / "icon.svg").write_text(NEW_ICON_SVG, encoding="utf-8")
     except Exception as e:                                      # noqa: BLE001
         out.print_cyan("[错误] 生成失败：%s" % e)
         return 1
     out.print_cyan("生成好了：%s" % target)
-    for n in ("pkg.json", "run.py", "AGENT.md"):
+    for n in ("pkg.json", "run.py", "AGENT.md", "icon.svg"):
         print("     - %s" % n)
     out.print_cyan("下一步：")
     print("     1) 改 pkg.json 里的 name / desc / params")
@@ -730,6 +747,8 @@ def cmd_new(pid, kind="task", name="", desc=""):
           "在 pkg.json 里声明")
     print("        \"ui\": {\"embed\": \"ui/index.html\"}：既能在 moss 的「界面」选项卡里"
           "内嵌跑，也能 moss :%s 自己开窗口" % pid)
+    print("     5) 图标就是包目录里的 icon.svg（列表 / 详情页那颗，骨架里已经放了一颗中性的）"
+          " —— 换成跟这个包干什么相配的图形")
     out.print_cyan("契约（字段、环境变量、数据放哪、界面怎么写）：moss --spec")
     _shortcut_sync()
     return 0

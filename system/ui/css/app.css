@@ -238,6 +238,12 @@ main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;he
   justify-content:center;color:var(--dim)}
 .hitem .hico svg,.hitem .hico img,.ico svg,.ico img{width:24px;height:24px}
 .hitem .hico img,.ico img{object-fit:contain}
+/* ★ 2026-10-22：**没有图标的包**画"首字兜底"（见 list.js 的 `iconHTML`）。
+   以前这里是一个空壳 `<span>`：24px 一片空白，看着像"这包坏了 / 图标忘了做"。
+   颜色由包 id 算出来（`--fb-h`），同一个包每次都一样，一眼认得出是同一个。 */
+.ico-fb{border-radius:7px;font-size:13px;font-weight:600;line-height:1;
+  color:hsl(var(--fb-h,215) 40% 32%);background:hsl(var(--fb-h,215) 55% 91%);
+  border:1px solid hsl(var(--fb-h,215) 40% 82%)}
 .hitem .hmain{min-width:0;flex:1}
 .hitem .hname,.nm{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* `.ds` = 列表第二行（普通字号、不是等宽）；`.sub` = 夹在句子里的等宽小字（`:md5` 这种）。

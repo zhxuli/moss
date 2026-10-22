@@ -1177,6 +1177,27 @@
 .aiwrap .path-info{display:flex;flex-direction:column;gap:3px;min-width:0}
 .aiwrap .path-title{font-size:13px;font-weight:500;color:var(--aib-text-main)}
 .aiwrap .path-desc{font-size:12px;color:var(--aib-text-light)}
+/* ★ 2026-10-22：权限清单下面那一行"另有 N 条别的包的权限"（默认收起）。
+   为什么要它：清单是全局的一份账，别的包的行摆在明面上会让人以为"它要动那些包"。 */
+.aiwrap .ai-perm-other{margin-top:10px;border-top:1px dashed var(--aib-border-color);padding-top:10px}
+.aiwrap .ai-perm-other-h{display:flex;align-items:center;gap:8px}
+.aiwrap .ai-perm-other-t{
+  flex:1;min-width:0;display:inline-flex;align-items:center;gap:6px;padding:5px 8px;
+  border:1px solid transparent;border-radius:6px;background:transparent;cursor:pointer;
+  font-size:12px;color:var(--aib-text-muted);text-align:left;
+}
+.aiwrap .ai-perm-other-t:hover{background:#f3f4f6;color:var(--aib-text-main)}
+.aiwrap .ai-perm-other-t svg{width:14px;height:14px}
+.aiwrap .ai-perm-other-t b{color:var(--aib-text-main)}
+.aiwrap .ai-perm-other-t .dim{margin-left:auto;color:var(--aib-text-light);font-size:11.5px}
+.aiwrap .ai-perm-other-x{font-size:12px;padding:4px 8px;border-radius:6px;gap:4px;
+  /* `.btn-delete` 平时是透明的（hover 才露）—— 这颗要**一直看得见** */
+  display:inline-flex;opacity:1;transform:none;border:1px solid var(--aib-border-color)}
+.aiwrap .ai-perm-other-w{
+  margin:2px 0 8px;padding:0 8px;font-size:11.5px;line-height:1.6;color:var(--aib-text-light);
+}
+.aiwrap .ai-perm-i.other{background:#fafafa;border-style:dashed}
+.aiwrap .ai-perm-other .path-list{max-height:min(190px,26vh);margin-top:2px}
 .aiwrap .path-controls{display:flex;align-items:center;gap:12px;flex:none}
 .aiwrap .switch-group{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--aib-text-muted);cursor:pointer}
 .aiwrap .switch{position:relative;display:inline-block;width:32px;height:18px;flex:none}

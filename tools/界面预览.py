@@ -103,7 +103,8 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "fanyi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
-          "ai-hist-live", "ai-follow",
+          "ai-hist-live", "ai-switch-live", "list-autoscroll", "pkg-icon-fallback",
+          "perm-scope", "ai-follow",
           "ai-turn-edit", "ai-self-tools", "ai-ask",
           "pkg-docs", "embed-tab", "newpkg-form", "newpkg-manual", "newpkg-manual-go", "newpkg-ai",
           "hl-window", "set-debounce", "parasite"]
@@ -504,6 +505,9 @@ MOCK_JS = r"""
                at: "2026-10-07 12:00:00"},
               {path: "D:\\proj\\外面", read: true, write: false, why: "试一下", by: "user",
                at: "2026-10-07 12:01:00"},
+              // ★ 2026-10-22：`perm-scope` 场景要**别的包**的行（真机上清单是全局一份，
+              //   以前在隔壁包干活批过的目录会一直留着）。默认没有，场景自己塞。
+              ...(M.allowOther || []),
               {path: "*", read: false, write: false, why: "任意路径（硬锁除外）", by: "system",
                at: ""}],
       wildcard: false,
@@ -5061,6 +5065,8 @@ MOCK_JS = r"""
       if (h === "newpkg-ai"){
         document.title = "NEWPKG-ERR";
         M.newpkg = null; M.suggestIdea = "";
+        // ★ 2026-10-22：剧本拉长一点，好验"开工之后日志真的在动"（见下面那段 nSteps）
+        M.aiPad = 8; M.aiRun = null; M.aiN = 0; M.aiSnap = null;
         document.querySelector("#btn-newpkg").click();
         await sleep(250);
         const idea = document.querySelector("#np-idea");
@@ -5074,11 +5080,20 @@ MOCK_JS = r"""
         const closed = !document.querySelector("#modal").classList.contains("on");
         const onAi = !!document.querySelector("#pane-ai.on");
         const sent = String((window.__AIR || {}).sentTask || "");
-        const ok = closed && got.id === "shot-archive" && !!M.suggestIdea && onAi && !!sent;
+        /* ★ 2026-10-22（你报的「新建一个软件之后切过去，界面一直停在正在思考、没变化」）：
+           光验"任务发出去了"不够 —— 还要验**日志真的在长**（AI 页那一块得画出步骤卡）。
+           以前这里只看到 `sentTask` 就算过，于是"活的那一轮被换包那一下清掉"这种冻结
+           在预览里一直是绿的。 */
+        let nSteps = 0;
+        for (let i = 0; i < 30 && !nSteps; i++){ await sleep(150); nSteps = document.querySelectorAll("#pane-ai .ai-step").length; }
+        const turns = ((window.__AIR || {}).turns || []).length;
+        const aliveLog = nSteps > 0 && turns > 0;
+        const ok = closed && got.id === "shot-archive" && !!M.suggestIdea && onAi && !!sent && aliveLog;
         document.title = ok ? "READY"
           : ("NEWPKG-FAIL 传给宿主=" + JSON.stringify(got) + " 问了AI=" +
              String(M.suggestIdea || "没").slice(0, 14) + " 关掉=" + (closed ? 1 : 0) +
-             " AI页=" + (onAi ? 1 : 0) + " 任务='" + sent.slice(0, 20) + "'");
+             " AI页=" + (onAi ? 1 : 0) + " 任务='" + sent.slice(0, 20) + "'" +
+             " 步骤=" + nSteps + " 轮=" + turns);
         document.querySelector("#meta").textContent = "DIAG " + document.title;
       }
       if (h === "ai-pane"){
@@ -5699,6 +5714,191 @@ MOCK_JS = r"""
         document.title = ok ? "READY"
           : ("AIHISTLIVE-FAIL live=" + (liveOk ? 1 : 0) + " 步骤=" + n0 + "/" + n1 + "/" + n2 +
              " 行=" + JSON.stringify(metaTxt.slice(0, 24)) +
+             " 错=" + (window.__errors || []).length);
+      }
+      /* ★ 2026-10-22（你报的：「切换画面的时候它没有真正切过去，看到的一直是正在思考，
+          但是界面没有变化，必须要点历史记录、点那个会话才行」）。
+         病根：跑着的时候**换包**那一下（`mounted` 里 700ms 的 tick）会把 `AIR.turns` 和
+         `liveKey` 一起清掉 —— 而"活的那一轮"再也没有人接回来：轮询照跑、顶栏那句
+         「AI 正在思考并执行...」照样亮着，可日志里一条步骤都不长（`turns` 空 ⇒ 没东西可画）。
+         你那下"点历史里的会话"正是把那一轮重建了一次，于是又动了 —— 所以看着像"点一下就好"。
+         这条场景就是那个现场：跑着 → 切到别的包（= 点左边另一行）→ 切回来 ⇒ 步骤必须继续涨。 */
+      if (h === "ai-switch-live"){
+        M.aiLiveRow = true;
+        M.aiPad = 30;
+        M.aiRun = null; M.aiN = 0; M.aiSnap = null;
+        const pA = state.packages.find(x => x.id === "md5") || state.packages[0];
+        const pB = state.packages.find(x => x.id === "first") || state.packages[1];
+        select(pA.id);
+        await sleep(300);
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(400);
+        const taskEl = document.querySelector("#pane-ai .ai-task");
+        if (taskEl){
+          taskEl.value = "把这包的 run.py 改成能读 --upper";
+          taskEl.dispatchEvent(new Event("input", {bubbles: true}));
+        }
+        await sleep(80);
+        (document.querySelector("#pane-ai .ai-actions .btn.primary") || {click(){}}).click();
+        const nSteps = () => document.querySelectorAll("#pane-ai .ai-step").length;
+        let n0 = 0;
+        for (let i = 0; i < 40 && !n0; i++){ await sleep(120); n0 = nSteps(); }
+        // 切到别的包 → 等 tick 跑过一跳（换包那一套会清 turns）→ 再切回来
+        select(pB.id);
+        await sleep(1200);
+        select(pA.id);
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(300);
+        const n1 = nSteps();
+        await sleep(1800);              // 再两三跳轮询
+        const n2 = nSteps();
+        const running = !!((window.__AIR || {}).running);
+        const turns = ((window.__AIR || {}).turns || []).length;
+        const ok = n0 > 0 && n1 > 0 && n2 > n1 && !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n跑着的时候切包再切回来：步骤 " + n0 + " → " + n1 + " → " + n2 +
+          (n2 > n1 ? "（还在涨 ✓）" : "（冻住了 ✗）") +
+          "\n还在跑 = " + running + " · 日志里几轮 = " + turns +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+          : ("AISWITCHLIVE-FAIL 步骤=" + n0 + "/" + n1 + "/" + n2 + " 跑=" + (running ? 1 : 0) +
+             " 轮=" + turns + " 错=" + (window.__errors || []).length);
+      }
+      /* ★ 2026-10-22（你报的：「左侧的列表这里，它并没有自动定位到这个童趣打字乐园这里」）。
+         AI 建完包 / 宿主替你把选中挪到某个包时，光标应该**跟着滚到那一行**（跟编辑器 go-to-line
+         一个心思）。原来 `select()` 只改状态、不碰 `#list` 的滚动条 ⇒ 新包在列表末尾时，
+         你看到的还是列表顶上那几行，选中态在屏幕外面（"没有自动定位"就是这么来的）。
+         这条场景两个方向都试：滚到顶选最后一行、滚到底选第一行。 */
+      if (h === "list-autoscroll"){
+        for (let i = 0; i < 100 && document.querySelectorAll("#list .item").length < 4; i++)
+          await sleep(60);
+        await sleep(200);
+        const list = document.querySelector("#list");
+        const rows = () => [].slice.call(document.querySelectorAll("#list .item"));
+        const inView = () => {
+          const el = document.querySelector("#list .item.sel");
+          if (!el || !list) return -1;
+          const r = el.getBoundingClientRect(), lr = list.getBoundingClientRect();
+          return (r.top >= lr.top - 1 && r.bottom <= lr.bottom + 1) ? 1 : 0;
+        };
+        const all = rows();
+        // ① 滚到顶，选**最后**一行（新包名一般排在后面 —— 就是童趣那个位置）
+        list.scrollTop = 0;
+        await sleep(120);
+        const lastId = all[all.length - 1].dataset.id;
+        // 先确认它真的在屏幕外面（不然"在视口里=1"是因为本来就在，这条场景就没意义了）
+        const lr0 = list.getBoundingClientRect(), lrLast = all[all.length - 1].getBoundingClientRect();
+        const lastWasHidden = lrLast.top > lr0.bottom;
+        const beforeDown = (list.scrollTop === 0);
+        select(lastId);
+        await sleep(450);
+        const down = inView();
+        // ② 滚到底，选**第一**行（反方向也得跟）
+        list.scrollTop = list.scrollHeight;
+        await sleep(120);
+        const backToTop = list.scrollTop > 0;
+        const firstId = rows()[0].dataset.id;
+        select(firstId);
+        await sleep(450);
+        const up = inView();
+        const ok = beforeDown && lastWasHidden && backToTop && down === 1 && up === 1;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n滚到顶 → 选最后一行（" + lastId + "）：在视口里 = " + down +
+          "\n滚到底 → 选第一行（" + firstId + "）：在视口里 = " + up +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+          : ("LISTSCROLL-FAIL 下=" + down + " 上=" + up +
+             " 顶=" + (beforeDown ? 1 : 0) + " 底=" + (backToTop ? 1 : 0));
+      }
+      /* ★ 2026-10-22（你报的：「有时候会忘记创建图标」）。
+         契约里图标是**可选项**，可界面上没有一个兜底 —— 没 `icon.*` 的包，列表里就是一个
+         空壳格子（看着像"这包坏了"），详情页那颗大图标位也是空的。这里拿**故意没有图标**的
+         那个预览包（id `first`）验：列表行 + 详情页都要画得出来（首字兜底），不能是空壳。 */
+      if (h === "pkg-icon-fallback"){
+        for (let i = 0; i < 100 && !document.querySelector("#list .item"); i++) await sleep(60);
+        await sleep(200);
+        const noIcon = state.packages.find(p => !p.icon && !p.icon_svg) || null;
+        if (!noIcon){ document.title = "ICONFB-NO-SAMPLE"; return; }
+        const row = document.querySelector('#list .item[data-id="' + noIcon.id + '"]');
+        const box = row ? row.querySelector(".ico") : null;
+        const SHAPE = "svg,img";
+        const txt = box ? String(box.textContent || "").trim() : "";
+        // 兜底可以是"图形"，也可以是"首字"（两者都算画出来了；空壳才是 bug）
+        const drawn = !!(box && (box.querySelector(SHAPE) || txt));
+        const inner = box ? box.innerHTML : "";
+        select(noIcon.id);
+        await sleep(400);
+        const dp = document.querySelector("#pane-detail .dp-icon");
+        const dpDrawn = !!(dp && (dp.querySelector(SHAPE) || String(dp.textContent || "").trim()));
+        const ok = !!row && drawn && !!txt && !!dpDrawn && !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n没有图标的包 = " + noIcon.id + "（" + noIcon.name + "）" +
+          "\n列表行画出东西 = " + drawn + " · 首字 = " + JSON.stringify(txt) +
+          " · 行内 HTML 长度 = " + inner.length +
+          "\n详情页那颗大图标位画出来了 = " + dpDrawn +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+          : ("ICONFB-FAIL 行=" + (row ? 1 : 0) + " 画=" + (drawn ? 1 : 0) +
+             " 字=" + JSON.stringify(txt) + " 详情=" + (dpDrawn ? 1 : 0));
+      }
+      /* ★ 2026-10-22（你报的：「点权限控制，它把**其他包**的权限也带过来显示了 …… 不知道是
+         怎么进去的这些目录权限」）。真机现场：`user_data/ai/mode.json` 是**一份全局的账**，
+         以前在别的包干活批过的目录（换个名字、改个目录就多一行）一直留着，于是打开
+         `kids-typing` 的权限控制，看到的是 my-first / autokey / junk 的目录。
+         这里造一条"别的包"的行，验三件事：
+           ① 明面上**不许**出现它（只留当前包 + 不是包的目录 + `*`）；
+           ② 那颗「可写 N 处」数的也是明面上那几条（不许把收起来的算进来）；
+           ③ 下面那一行「另有 N 条别的包的权限」点开能看到它、点「全清掉」真的把 rm 发给宿主。 */
+      if (h === "perm-scope"){
+        const me = state.packages.find(x => x.id === "md5") || state.packages[0];
+        const otherPkg = state.packages.find(x => x.id === "first") ||
+                         state.packages.find(x => x.id !== me.id);
+        M.allowOther = otherPkg ? [{path: String(otherPkg.dir || "") + "\\ui",
+                                    read: true, write: true,
+                                    why: "包刚改名成 x，权限白名单还指着旧路径",
+                                    by: "ai", at: "2026-10-19 18:18:29"}] : [];
+        select(me.id);
+        await sleep(350);
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(500);
+        await aiRefreshInfo(true);
+        await sleep(350);
+        (document.querySelector("#pane-ai .ai-perm-fold") || {click(){}}).click();
+        await sleep(350);
+        const rows = [].slice.call(document.querySelectorAll("#pane-ai .ai-perm-i"))
+                       .filter(e => !e.classList.contains("other"));
+        const paths = rows.map(e => String((e.querySelector(".ai-perm-info") || {}).title || ""));
+        const leaked = paths.filter(p => String(otherPkg && otherPkg.dir || "").split("\\").pop() &&
+                                         p.indexOf(String(otherPkg.dir || "")) === 0);
+        const badge = String((document.querySelector("#pane-ai .ai-perm-badge") || {}).textContent || "").trim();
+        const fold = document.querySelector("#pane-ai .ai-perm-other");
+        const foldTxt = fold ? String(fold.textContent || "").replace(/\s+/g, " ").trim() : "";
+        const otherRow0 = document.querySelectorAll("#pane-ai .ai-perm-i.other").length;
+        (document.querySelector("#pane-ai .ai-perm-other-t") || {click(){}}).click();
+        await sleep(300);
+        const otherRow1 = document.querySelectorAll("#pane-ai .ai-perm-i.other").length;
+        const otherTxt = String((document.querySelector("#pane-ai .ai-perm-i.other") || {}).textContent || "");
+        M.allowCall = null;
+        (document.querySelector("#pane-ai .ai-perm-other-x") || {click(){}}).click();
+        await sleep(400);
+        const rmOk = !!(M.allowCall && M.allowCall.action === "rm");
+        const ok = paths.length === 3 && !leaked.length && badge === "可写 1 处" &&
+                   !!fold && /别的包/.test(foldTxt) && otherRow0 === 0 && otherRow1 === 1 &&
+                   new RegExp(String((otherPkg || {}).id || "@@")).test(otherTxt) && rmOk &&
+                   !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n明面上的行 = " + paths.length + "：" + JSON.stringify(paths.map(p => p.split("\\").pop())) +
+          "\n漏进来的别的包的行 = " + JSON.stringify(leaked) +
+          "\n可写徽章 = " + JSON.stringify(badge) + "（应为「可写 1 处」）" +
+          "\n折叠那一行 = " + JSON.stringify(foldTxt.slice(0, 40)) +
+          "\n收起时露出的别的包行 = " + otherRow0 + " · 点开后 = " + otherRow1 +
+          "\n「全清掉」把 rm 发给宿主了吗 = " + (rmOk ? 1 : 0) +
+          "（action=" + ((M.allowCall || {}).action || "-") + "）" +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY"
+          : ("PERMSCOPE-FAIL 行=" + paths.length + " 漏=" + leaked.length +
+             " 徽章='" + badge + "' 折=" + (fold ? 1 : 0) + " 收=" + otherRow0 +
+             " 开=" + otherRow1 + " rm=" + (rmOk ? 1 : 0) +
              " 错=" + (window.__errors || []).length);
       }
       // ★ `V-385`（你 2026-10-19 问的「有时候自动下拉 有时候不下拉 是不是检测太严苛」）：

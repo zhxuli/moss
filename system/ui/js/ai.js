@@ -56,6 +56,9 @@ const AIR = Vue.reactive({
        · `liveTask`    这一跑的任务原文（切回实时时用来重建那一轮）
        · `liveListFor` 已经为哪个 run_id 刷新过历史列表（免得每跳都重读） */
   liveKey: "", liveRunId: "", liveTask: "", liveListFor: "",
+  /* ★ 2026-10-22：这一跑是**哪个包**的（切包时靠它判断"活的那一轮该不该跟过来"）——
+     见 `aiLivePkg()`。空 = 还没开工 / 认不出来。 */
+  livePkg: "",
   maxMillions: 100,            // 界面上那一格是**百万为单位**（100 = 1 亿）
   model: "",                   // `V-252`：顶栏那个模型下拉选中的（空 = 用配置里第一个）
   diskNoted: "",               // `V-249`：已经通知过"盘上变了"的那一次（免得每轮轮询都刷一遍）
@@ -108,6 +111,8 @@ const AIR = Vue.reactive({
   permHover: false, permPinned: false,
   /* ★ `V-316`：左上角那颗**历史图标**点开才出的会话列表（原来是一个占满宽度的下拉） */
   histOpen: false,
+  /* ★ 2026-10-22：权限清单下面那块"**别的包 / 旧目录**"展开没有（默认收起，见 `allowOther`） */
+  otherOpen: false,
   /* ★ `V-386`：顶栏那个**模型下拉**（改成自己画的面板：按服务商分组 + 可筛 + 选中打勾）。
      `modelQ` = 面板里那个筛选框的内容。为什么要自己画：原生 `<select>` 的弹出层是浏览器画的，
      `optgroup` 连内边距都不给（你说"看着有点素"），而帅红那家 40 个模型也根本没法找。 */
@@ -145,6 +150,54 @@ const ATTACH_FILE_MAX = 12 * 1024 * 1024;
 
 
 function aiPackage(){ return cur && cur.id ? cur : null; }
+
+/* ★ 2026-10-22（你报的：「切换画面的时候它没有真正切过去，看到的一直是正在思考，
+   但是界面没有变化，必须要点历史记录、点那个会话才行」）——
+   **"现在这一跑是哪个包的"** 得说得清，不然"跑着的时候切了包"只能靠"清掉指针"来避嫌，
+   而那一下会把活的那一轮彻底丢掉（`turns` 空 ⇒ 日志一条不长、顶栏还写着在跑）。
+   两个来源：开工时记下的 `AIR.livePkg`；没有（界面重开 / 老记录）就按宿主给的 `run_id`
+   去历史列表里反查那条记录的 `workdir`（`ai_runs` 每条都带）。 */
+function aiPkgIdOfDir(dir){
+  const d = normDir(dir);
+  if (!d) return "";
+  const all = (DATA && DATA.packages) || [];
+  const p = all.filter(x => normDir(x.dir) === d)[0];
+  return (p && p.id) || "";
+}
+function aiLivePkg(){
+  if (AIR.livePkg) return AIR.livePkg;
+  const rid = String(AIR.liveRunId || "");
+  if (!rid) return "";
+  const r = (AIR.runs || []).filter(x => x && String(x.id) === rid)[0];
+  return r ? aiPkgIdOfDir(r.workdir) : "";
+}
+/* 现在这一跑是不是**当前这个包**的（是才把它接回界面）。
+   ★ 认不出来（老记录 / 包表还没回来）也算"是"：宿主同一时刻只跑一路，
+     `V-383` 要避的只是"**确知**它在别的包里时，别把上一页那一跑凭空摆过来"。 */
+function aiLiveHere(){
+  if (!AIR.running) return false;
+  const who = aiLivePkg();
+  if (!who) return true;
+  const here = (aiPackage() || {}).id || "";
+  return !here || who === here;
+}
+
+/* ★ 2026-10-22：**换了干活的地方（= 换了包）就该换一条会话** —— 该清的都在这儿清。
+   两处调用，别各写一份（以前只有 tick 里一份，新建包那条路就漏了）：
+     ① AI 页那个 700ms 的 tick —— 用户在左边点了别的包，而且**活的那一轮不是这个包的**
+        （是这个包的时候绝不能走到这儿：那样会把正在跑的日志清空，见 tick 里那段注释）；
+     ② `npCreate()`（新建包）—— 它**必须在 `aiStart` 之前**显式叫一次：tick 还没跑，
+        旧包的 `contId` / `lastId` 会被当成"接着聊"交给宿主（真机 10-22：新建
+        `kids-typing` 那一跑的 `continued_from` 指向的是 `keytest` 的会话）。
+   这里**连活的那一轮的指针一起放掉**："换包"就是"这一跑不属于新页面"，要接回来是
+   tick / 轮询那边按 `aiLiveHere()` 的事。 */
+function aiScopeReset(){
+  AIR.contId = ""; AIR.contTask = ""; AIR.viewing = "";
+  AIR.steps = []; AIR.result = null; AIR.lastId = ""; AIR.lastAdopted = "";
+  AIR.sentTask = ""; AIR.muted = 0; AIR.pickId = "";
+  AIR.turns = []; AIR.cur = -1;                 // `V-258`：换一条会话 = 日志清空
+  AIR.liveKey = ""; AIR.liveTask = ""; AIR.liveListFor = "";
+}
 
 /* `V-239`：给人看的 token 数字（32569 → 32.6k）—— 和 `ai_budget.human()` 一个口径。 */
 function humanTokens(n){
@@ -389,6 +442,28 @@ function permParts(p){
   const tail = bits.slice(bits.length - keep).join("\\");
   const midBits = bits.slice(0, bits.length - keep);
   return {head: head, mid: midBits.length ? (midBits.join("\\") + "\\") : "", tail: tail};
+}
+
+/* ★ 2026-10-22（你报的：「它把**其他包**的权限也带过来显示了 …… 不知道是怎么进去的这些
+   目录权限」）—— 这条权限行**属于哪个包**：
+     · 在某个包的目录里 / 就是那个包 ⇒ 回 `{id, dir, live:true}`
+     · 在 `user_data/pkgs/<名字>` 底下、但那个包**已经不在了** ⇒ 回 `{id:名字, dir:"", live:false}`
+     · 压根不是包目录（`D:\项目\xx` / `*`）⇒ 回 `null`
+   为什么要它：清单是**一份全局的账**（一次批准一行，谁也不清），而 AI 那一页是**某个包**的
+   页面 —— 别的包的行摆在这儿，看着就像"它要动那些包"。 */
+function permOwnerOf(pth){
+  const d = normDir(pth);
+  if (!d || d === "*") return null;
+  const pkgs = (DATA && DATA.packages) || [];
+  const hit = pkgs.filter(x => {
+    const pd = normDir(x.dir);
+    return !!pd && (d === pd || d.indexOf(pd + "\\") === 0);
+  }).sort((a, b) => normDir(b.dir).length - normDir(a.dir).length)[0];
+  if (hit) return {id: hit.id, dir: hit.dir, live: true};
+  // 包被删了 / 名录里没有它了：路径形状还认得出"在某个 pkgs 底下" ⇒ 也算别的包的地盘
+  const m = /[\\\/](user_data|system)[\\\/]pkgs[\\\/]([^\\\/]+)/.exec(d);
+  if (m) return {id: m[2], dir: "", live: false};
+  return null;
 }
 
 async function aiAllowAdd(pth, why){
@@ -869,6 +944,9 @@ async function aiPollOnce(){
     //     ① 让"当前"那一行在历史列表里高亮（`pickId` 指过去）；
     //     ② 点它就认得出"这就是正在跑的" ⇒ 切回实时，而不是去读盘上那份半截记录。
     AIR.liveRunId = AIR.running ? String(got.run_id || "") : "";
+    /* ★ 2026-10-22：轮询里带着这一跑的任务原文 —— 记下来，好让"界面重开 / 换了包又切回来"
+       时接回来的那一轮**有抬头那句话**（不然顶上一张空白气泡，看不出这次让它干什么）。 */
+    if (AIR.running && got.task && !AIR.liveTask) AIR.liveTask = String(got.task);
     if (AIR.running && AIR.liveRunId && AIR.liveRunId !== AIR.liveListFor){
       // 这一跑的记录已经落盘了（宿主开工就写）—— 让列表把它带上，
       // 不然"当前"那一行根本不存在，既高亮不了也点不回来。
@@ -881,6 +959,7 @@ async function aiPollOnce(){
       AIR.pickId = AIR.liveRunId;
     }
     if (_wasRunning && !AIR.running){
+      AIR.livePkg = "";          // ★ 2026-10-22：跑完了，这个"是哪个包的"标记也就没意义了
       aiLoadSkills();
       aiRefreshInfo(true);      // `V-319`：这一跑里它可能问过权限，跑完把清单重读一次
       // ★ `V-387`：**这一跑刚结束 ⇒ 包表重问一遍**。它会改 `pkg.json`（典型：新加
@@ -910,6 +989,10 @@ async function aiPollOnce(){
     if (AIR.liveKey){
       cur = (AIR.turns || []).filter(t => t && t.key === AIR.liveKey)[0] || null;
     }
+    /* ★ 2026-10-22：**活的那一轮丢了就当场接回来** —— 这就是"界面一直停在正在思考、
+       日志不见长"那个冻结的兜底（换包那一下会把 `turns` 清空；"清空 / 翻历史"也会换掉）。
+       接回来的步骤用的是轮询一直维护着的 `AIR.steps`（就是最新的），不是盘上那半截快照。 */
+    if (!cur && aiLiveHere()) cur = aiAttachLiveTurn();
     if (!cur && !AIR.viewing) cur = (AIR.turns || [])[AIR.cur] || null;
     if (cur) cur.steps = AIR.steps;
     AIR.say = got.say || [];
@@ -1040,6 +1123,9 @@ async function aiStart(opt){
   AIR.cur = AIR.turns.length - 1;
   AIR.liveKey = liveKey;
   AIR.liveTask = task;
+  /* ★ 2026-10-22：记下"这一跑是哪个包的"。新建包那条路把 `dir` 显式传进来（`V-421`），
+     所以优先按目录反查 id —— 拿 `cur` 猜会在"包表还没刷出来"时猜错。 */
+  AIR.livePkg = aiPkgIdOfDir(dir) || ((aiPackage() || {}).id || "");
   AIR.liveListFor = "";
   AIR.diskNoted = "";            // `V-249`：新任务 = 允许再通知一次"盘上变了"
   AIR.snapNoted = "";            // `V-250`：新任务 = 允许再通知一次"快照存好了"
@@ -1328,7 +1414,9 @@ const MossAi = {
     permBadge(){
       this.A.rev;
       if (this.A.wild) return "已放手";
-      const n = (this.A.allow || []).filter(x => x.write).length;
+      // ★ 2026-10-22：数的是**这一页摆出来的**那些（别的包的行收在下面，不算进来 ——
+      //   不然"可写 5 处"跟眼睛看到的 2 条对不上）
+      const n = this.allowSplit.mine.filter(x => x.write && x.path !== "*").length;
       return n ? ("可写 " + n + " 处") : "只读";
     },
     confirmAsk(){
@@ -1340,13 +1428,25 @@ const MossAi = {
        跟着那条请求段一起删了 —— 请求现在长在聊天记录的气泡里，文字直接用步骤行自己的
        `brief` / `why`（宿主插的那条记录行）。 */
     /* ★ `V-323`：清单里**只画已经批过的**那一份（`pending` 是宿主给闸用的登记，
-       不往界面上摆 —— 请求在聊天记录那条气泡里问）。 */
-    allowRows(){
+       不往界面上摆 —— 请求在聊天记录那条气泡里问）。
+       ★ 2026-10-22：**按包分堆** —— 别的包的那些行不再跟这个包的混在一起（见 `allowOther`）。 */
+    allowSplit(){
       this.A.rev;
-      // ★ V-344：每行预先把路径拆成三段（盘符 / 中间 / 尾巴），模板直接用
-      return (this.A.allow || []).filter(x => !x.pending)
-                                .map(x => Object.assign({}, x, {_p: permParts(x.path)}));
+      const me = (aiPackage() || {}).id || "";
+      const mine = [], other = [];
+      (this.A.allow || []).filter(x => !x.pending).forEach(x => {
+        // ★ V-344：每行预先把路径拆成三段（盘符 / 中间 / 尾巴），模板直接用
+        const it = Object.assign({}, x, {_p: permParts(x.path)});
+        const own = permOwnerOf(it.path);
+        if (own && me && own.id !== me) other.push(Object.assign(it, {_otherOf: own.id, _otherOld: !own.live}));
+        else mine.push(it);
+      });
+      return {mine: mine, other: other};
     },
+    /* 摆在明面上的那一份：当前这个包 + 它不是包的目录（`D:\项目\xx`）+ `*` */
+    allowRows(){ this.A.rev; return this.allowSplit.mine; },
+    /* 收在下面那一行里的：**别的包**的（或者 `pkgs` 底下已经不在了的包的）目录 */
+    allowOther(){ this.A.rev; return this.allowSplit.other; },
     /* ★ `V-307`：历史下拉里那几条 —— 正在跑的 / 上次没跑完的要能一眼看出来。 */
     runLabel(){
       return r => {
@@ -1470,6 +1570,28 @@ const MossAi = {
     },
     allowRm(it){ aiAllowRm(it); },
     allowPick(){ aiAllowPick(); },
+    /* ★ 2026-10-22：权限清单下面那块"**别的包 / 旧目录**"的展开 / 收起。
+       默认收起 —— 那些行不是这一页的事，摆出来只会让人以为"它要动那些包"。 */
+    toggleOtherPerm(){
+      AIR.otherOpen = !AIR.otherOpen;
+      AIR.rev++;
+    },
+    /* 一键清掉那些行（**用户自己点的**，AI 删不了清单）。逐条走宿主那条 `rm`，
+       每条都单独报成功/失败，不假装一把都删干净了。 */
+    async rmOtherAll(){
+      const rows = (this.allowOther || []).slice();
+      if (!rows.length) return;
+      let ok = 0, bad = 0;
+      for (const it of rows){
+        try{
+          const got = await window.pywebview.api.ai_allow(it.path, null, null, "", "rm");
+          if (got && got.ok) ok += 1; else bad += 1;
+        }catch(e){ bad += 1; }
+      }
+      await aiRefreshInfo(true);
+      toast("清掉 " + ok + " 条别的包的权限" + (bad ? ("，" + bad + " 条没清掉") : ""), !!bad);
+      AIR.rev++;
+    },
     /* 清单里那一行怎么显示：当前那个包 → `:包名 当前这个包`；`*` → 任意路径；别的按路径尾巴 */
     permLabel(it){
       if (!it) return "";
@@ -2394,13 +2516,15 @@ const MossAi = {
          所以这里只看 `id` 变没变。 */
       if (id !== AIR.curId){
         AIR.curId = id;
-        AIR.contId = ""; AIR.contTask = ""; AIR.viewing = "";
-        AIR.steps = []; AIR.result = null; AIR.lastId = ""; AIR.lastAdopted = "";
-        AIR.sentTask = ""; AIR.muted = 0; AIR.pickId = "";
-        AIR.turns = []; AIR.cur = -1;                 // `V-258`：换了包 = 换一条会话，日志清空
-        // ★ `V-383`：换包时把"活的那一轮"的指针也放掉 —— 别的包的页面不该凭空冒出
-        //   上一页那一跑（它要是还在跑，回到原来的包就看得见）。
-        AIR.liveKey = ""; AIR.liveTask = ""; AIR.liveListFor = "";
+        /* ★ 2026-10-22：**跑着的时候切回来，日志不许清**。
+           以前这里是无条件清（`turns` / `liveKey` 一起清），于是"跑着的时候换包再切回来"
+           ——「新建包 → 切过去 → 自动开工」那条路正好踩 —— 把活的那一轮彻底丢了：
+           轮询照跑、顶栏还写着「AI 正在思考并执行...」，日志却一条都不长；你只能去点
+           历史里那条会话把它"救"回来（那一下就是重建了一轮，所以看着像"点一下就好"）。
+           现在：活的那一轮**就是这个包的** ⇒ 原样留着（再 `aiAttachLiveTurn` 兜一下）；
+                 是**别的包的** ⇒ 照旧清干净（`V-383`：别的包的页面不该冒出人家的那一跑）。 */
+        if (aiLiveHere()) aiAttachLiveTurn();
+        else aiScopeReset();
         aiRefreshInfo();
         aiLoadRuns();
       }
@@ -3012,6 +3136,43 @@ const MossAi = {
                                 title="从清单里删掉（它就读不了也写不了这里）" v-html='ico("trash-2", "i")'></button>
                         <span class="ai-perm-lock" v-else v-html='ico("file-lock", "i")'
                               title="系统默认那一行 / 当前这个包，删不掉（把开关关掉就行）"></span>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- ★ 2026-10-22（你报的："它把其他包的权限也带过来显示了 …… 不知道是怎么进去的
+                       这些目录权限"）—— 清单是**一份全局的账**（AI 每申请一次就多一行，谁也不清），
+                       而这一页是**这个包**的页面：别的包的行收在这一行里，默认不展开。
+                       不影响任何权限（该生效的照旧生效），只是**别摆在明面上冒充"这个包要动那些"**。 -->
+                  <div class="ai-perm-other" v-if="allowOther.length">
+                    <div class="ai-perm-other-h">
+                      <button type="button" class="ai-perm-other-t" @click.stop="toggleOtherPerm()"
+                              title="这些行指向别的包（或已经不在的包），跟当前这个包无关 —— 点开可以看、可以删">
+                        <span v-html='ico("folder-tree", "i")'></span>
+                        另有 <b>{{ allowOther.length }}</b> 条别的包的权限
+                        <span class="dim">{{ A.otherOpen ? "收起" : "展开 / 清掉" }}</span>
+                      </button>
+                      <button type="button" class="btn-delete ai-perm-other-x" v-if="A.otherOpen"
+                              @click.stop="rmOtherAll()"
+                              title="把这些行全删掉（只影响那些包：它们在各自的页面里还能重新申请）"
+                              v-html='ico("trash-2", "i") + " 全清掉"'></button>
+                    </div>
+                    <p class="ai-perm-other-w">
+                      以前在别的包里干活时批准过的目录，跟当前这个包没关系、也不影响它 ——
+                      想收拾就删掉；这个包真要读写别的包，它会当场来问你。
+                    </p>
+                    <div class="path-list" v-if="A.otherOpen">
+                      <div class="path-item ai-perm-i other" v-for="it in allowOther" :key="it.path">
+                        <div class="path-info ai-perm-info" :title="it.path">
+                          <div class="path-title ai-perm-p"><span class="pp-tail">{{ permLabel(it) }}</span></div>
+                          <div class="path-desc ai-perm-d">
+                            包 {{ it._otherOf }}<span v-if="it._otherOld">（已经不在了）</span>
+                            · {{ it.why || "（没写为什么）" }}
+                          </div>
+                        </div>
+                        <div class="path-controls ai-perm-togs">
+                          <button class="btn-delete ai-perm-x" @click.stop="allowRm(it)"
+                                  title="从清单里删掉这一条" v-html='ico("trash-2", "i")'></button>
+                        </div>
                       </div>
                     </div>
                   </div>

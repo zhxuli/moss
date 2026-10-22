@@ -104,6 +104,10 @@
   background:linear-gradient(135deg,var(--dp-fill-icon),var(--dp-fill-icon2));
   box-shadow:inset 0 2px 4px rgba(255,255,255,.5)}
 .dp-icon svg,.dp-icon img{width:32px;height:32px}
+/* ★ 2026-10-22：**没有图标的包**：那块底 / 圆角本来就有，兜底只把名字首字摆上去
+   （见 list.js 的 `iconBigHTML`；色相按包 id 算，跟列表里那颗小的一致）。 */
+.dp-icon .dp-fb{font-size:30px;font-weight:600;line-height:1;
+  color:hsl(var(--fb-h,215) 45% 30%)}
 .dp-info{flex:1;min-width:0}
 /* 稿子：h1{font-size:24px;font-weight:600;display:flex;align-items:center;gap:12px;margin-bottom:8px} */
 .dp-info h1{font-size:24px;font-weight:600;display:flex;align-items:center;gap:12px;
