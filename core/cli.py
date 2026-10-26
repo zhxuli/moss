@@ -1639,6 +1639,19 @@ def cmd_selfcheck(table):
     print("              → 界面要跑包时调这个：%s" % " ".join(ui.host_cmd()))
     if not ui_ok:
         ok = False
+    # 渲染内核（`V-390`）：机器上缺 WebView2 时界面**能开**，但只有静态文字（图标全没、
+    # 插件列表空白、状态栏一行「“pywebview”未定义」）。现象完全不像"缺组件"，
+    # 所以在自检里点名 —— 远程机器上排查"界面空白"第一条就看它。
+    wv_ok, wv_why = ui.webview2_status(table)
+    if wv_ok is None:
+        print("  渲染内核  : ?   %s" % wv_why)
+    else:
+        print("  渲染内核  : %s   （%s）"
+              % ("WebView2 / Chromium" if wv_ok else "✗ 会退回 IE 内核（界面只有静态文字）",
+                 wv_why))
+        if not wv_ok:
+            ok = False
+            print("              → 装 WebView2 运行时（约 205 MB）：%s" % ui.WEBVIEW2_URL)
     for label, p, has in shell.installed_state():
         print("  %-9s: %s   （%s）" % (label, "已装包装函数" if has else "未装包装函数", p))
     print("            装了包装函数的话，moss cd 在屏幕上不留任何回显；"

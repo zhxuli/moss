@@ -1307,28 +1307,120 @@ function shootOrb(trackId, dir, color) {
   setTimeout(function () { if (o.parentNode) { o.parentNode.removeChild(o); } }, 600);
 }
 
-function doSteps(method, params, title, orb) {
+/* ============================================ 长操作：后台跑 + 看得见的进度
+   ★ 为什么改成这样（真机"三十秒没反应"的根因之一）：
+     以前界面发一条 RPC 然后干等，而垫片里那条 RPC 的上限写死 **30 秒** ——
+     首次推送两百多兆时，三十秒一到就报"后端没回话"，可 git 其实还在传；
+     人以为失败了又点一次，越点越乱。现在：
+       ① 发 `job_start` 立刻拿到号（这条一定秒回，永远不会超时）；
+       ② 界面拿号每 0.5 秒问一次 `job_state`，把每一行进度画出来；
+       ③ 想停就 `job_cancel` —— 真的把那个子进程杀掉；
+       ④ 静默太久就直说"还没回话"，不让人对着转圈发愣。
+   ============================================================================ */
+var JOB = { id: '', timer: null, t0: 0, lastSig: '', after: null };
+
+function stopJobPoll() { if (JOB.timer) { clearInterval(JOB.timer); JOB.timer = null; } }
+
+function jobFace(st, title) {
+  var secs = (st && st.elapsed) || Math.round((Date.now() - JOB.t0) / 1000);
+  var silent = (st && st.silent) || 0;
+  var lines = (st && st.lines) || [];
+  var stall = silent >= 12;
+  var h = '<div class="inst-head">' +
+    (stall ? '<span class="inst-ico no">' + svg('warn') + '</span>'
+           : '<span class="inst-spin"></span>') +
+    '<div class="inst-txt"><div class="inst-title">' + esc(title || '正在处理') + '…</div>' +
+    '<div class="inst-sub">已经 ' + secs + ' 秒' +
+    (silent >= 4 ? '　·　' + Math.round(silent) + ' 秒没有新动静' : '') +
+    '　·　可以关掉这个窗口，活儿会继续' + '</div></div></div>' +
+    '<div class="pbar indet"><i></i></div>';
+  h += '<div class="inst-logbox"><div class="inst-loglabel">进度（实时）</div>' +
+    '<pre class="inst-log" id="jobLog">' +
+    esc(lines.length ? lines.join('\n') : '正在启动…') + '</pre></div>';
+  if (stall) {
+    h += '<div class="inst-hint">' +
+      esc('还在等，只是没新输出 —— 网络慢或者这一步本来就要传很多东西（大仓库第一次推送）。' +
+          '真不想等了，点下面的「停下」。') + '</div>';
+  }
+  return h;
+}
+
+/* 开一个长操作；跑完自动收尾（after 是"跑完之后接着干什么"，可选） */
+function startJob(method, params, title, orb, after) {
   busyOn(title + '…');
   if (orb) { shootOrb(orb[0], orb[1], orb[2]); }
-  var p = { path: S.path };
-  for (var k in (params || {})) { p[k] = params[k]; }
-  var run = (method === 'run_action_key')
-    ? call('run_action', { name: params.name, path: S.path })
-    : call(method, p);
-  return run.then(function (res) {
-    S.last = { title: title, res: res, at: stamp() };
-    if (res.ok) {
-      toast('完成：' + title, 'ok');
-      log('完成：' + title);
-      el('note').value = '';
-      S.picks = null; S.drawer = false;
-    } else {
-      toast('没成功：' + (res.why || '看看详情'), 'no');
-      log('没成功：' + (res.why || title));
-      showResult(title);
+  var p;
+  if (method === 'run_action_key') {
+    p = { path: S.path, method: 'run_action', label: title,
+          params: { name: params.name, path: S.path } };
+  } else {
+    p = { path: S.path, method: method, label: title, params: params || {} };
+  }
+  return call('job_start', p).then(function (r) {
+    busyOff();
+    if (!r || !r.ok) {
+      toast((r && r.why) || '没跑起来（后端没答话）', 'no');
+      return null;
     }
-    return loadAll();
-  }).catch(fail).then(function () { busyOff(); });
+    JOB.id = r.id; JOB.t0 = Date.now(); JOB.lastSig = ''; JOB.after = after || null;
+    openModal(title || '正在处理', jobFace(null, title),
+      [{ text: '停下', key: 'stop', kind: 'ghost' }], true);
+    S.modalActs.stop = function () {
+      call('job_cancel', { id: JOB.id }).catch(function () { /* 无所谓 */ });
+      toast('已经让它停下了', 'ok');
+    };
+    startJobPoll(title);
+    return r.id;
+  }).catch(function (e) { busyOff(); fail(e); return null; });
+}
+
+function startJobPoll(title) {
+  stopJobPoll();
+  JOB.timer = setInterval(function () {
+    call('job_state', { id: JOB.id }).then(function (st) {
+      if (!st || !st.ok) { return; }
+      if (el('modal').classList.contains('show')) {
+        var b = sub('.dlg-b');
+        /* 只在"有变化"时重画：每拍重建 DOM 会让人选中不了日志、也会闪 */
+        var sig = String(st.state) + '|' + ((st.lines || []).length) + '|' +
+          Math.round((st.elapsed || 0) / 5) + '|' + (st.silent >= 12 ? 1 : 0);
+        if (b && sig !== JOB.lastSig) {
+          JOB.lastSig = sig;
+          b.innerHTML = jobFace(st, title);
+          var lg = el('jobLog');
+          if (lg) { lg.scrollTop = lg.scrollHeight; }
+        }
+      }
+      if (st.state === 'done' || st.state === 'cancelled') {
+        stopJobPoll();
+        finishJob(st, title);
+      }
+    }).catch(function () { /* 一次没问到不要紧，下一拍再问 */ });
+  }, 500);
+}
+
+function finishJob(st, title) {
+  var res = (st && st.result) || {};
+  var after = JOB.after;
+  JOB.after = null;
+  S.last = { title: title, res: res, at: stamp() };
+  if (res.ok) {
+    toast('完成：' + title, 'ok');
+    log('完成：' + title);
+    if (el('note')) { el('note').value = ''; }
+    S.picks = null; S.drawer = false;
+    closeModal();
+  } else {
+    toast('没成功：' + (res.why || '看看详情'), 'no');
+    log('没成功：' + (res.why || title));
+    showResult(title);
+  }
+  loadAll();
+  if (typeof after === 'function') { after(res); }
+}
+
+function doSteps(method, params, title, orb, after) {
+  return startJob(method, params, title, orb, after);
 }
 
 /* ① 保存到本地 */
@@ -1341,22 +1433,68 @@ function saveLocal() {
     '保存到本地', ['track1', 'down', 'amber']);
 }
 
-/* ② 备份到云端（有改动先存再传，一个按钮到底） */
+/* ② 备份到云端（有改动先存再传，一个按钮到底）
+   ★ 推之前先"体检"一次：这一推多大、有没有 GitHub 装不下的文件（单文件 100MB 上限）。
+     真事：一个项目的初版提交里有个 182MB 的模型文件，那一推**必然失败**，可失败前
+     先把它整个传一遍 —— 界面上三十秒没动静，人只会以为软件坏了。现在先警告、先问，
+     想屏蔽的话一键处理（写进 .gitignore + 从库里去掉，磁盘上的文件一个不删）。 */
 function backup() {
   var v = viewState();
   if (!v.isRepo) { startRepo(); return; }
   if (!v.hasRemote) { mirrorMenu(); return; }
-  if (v.dirty) {
-    var msg = (el('note').value || '').trim() || ('更新 · ' + stamp());
-    doSteps('commit_all', { message: msg, files: S.picks || [], push: true },
-      '保存并备份到云端', ['track2', 'down', 'blue']);
-    return;
-  }
-  if (v.unpushed > 0) {
+  if (!v.dirty && v.unpushed <= 0) { toast('云端已经是最新的了', 'ok'); return; }
+  pushGuard(function () {
+    if (v.dirty) {
+      var msg = (el('note').value || '').trim() || ('更新 · ' + stamp());
+      doSteps('commit_all', { message: msg, files: S.picks || [], push: true },
+        '保存并备份到云端', ['track2', 'down', 'blue']);
+      return;
+    }
     doSteps('sync', {}, '备份到云端', ['track2', 'down', 'blue']);
-  } else {
-    toast('云端已经是最新的了', 'ok');
-  }
+  });
+}
+
+/* 推之前体检：没问题就直接往下走；有偏大/推不上去的文件就摆出来问一句 */
+function pushGuard(next) {
+  busyOn('正在看这一推有多大…');
+  call('push_check', { path: S.path }).then(function (r) {
+    busyOff();
+    var big = (r && r.big) || [];
+    if (!r || !r.ok || !big.length) { next(); return; }
+    var block = big.filter(function (b) { return b.level === 'block'; });
+    var h = '<div class="note">这一推要传 <b>' + n0(r.files) + ' 个文件</b>，大约 <b>' +
+      esc(r.size || '') + '</b>。' + (r.initial ? '这是第一次上传，全部都要传一遍。' : '') +
+      '</div>';
+    h += '<div class="note" style="color:#b45309">' + (block.length
+      ? '<b>有 ' + block.length + ' 个文件超过了 GitHub 的上限（单个 ' + esc(r.limitHard) +
+        '），照这样推一定失败</b>；而且失败前会先把它们整个传一遍 —— 看着就像"卡住了"。'
+      : '<b>有几个文件偏大</b>，推起来会慢，但能推上去。') + '</div>';
+    h += '<div class="picklist" style="max-height:30vh">';
+    big.forEach(function (b) {
+      h += '<div class="pick-row"><span class="nm">' + esc(b.path) + '</span>' +
+        '<span class="hintline">' + esc(b.size) +
+        (b.level === 'block' ? '　推不上去' : '　偏大') + '</span></div>';
+    });
+    h += '</div>';
+    h += '<div class="note">选「屏蔽」= 这些不再跟着提交（<b>电脑上的文件一个都不会删</b>），' +
+      '以后换了机器自己放回去就行。想一个个挑，去「更多功能 → 屏蔽清单」。</div>';
+    openModal(block.length ? '这一推一定失败' : '这一推会有点慢', h,
+      [{ text: '先别推', key: 'close', kind: 'ghost' },
+       { text: '照这样硬推', key: 'force', kind: 'ghost' },
+       { text: '屏蔽它们再推', key: 'shield', kind: 'primary' }], true);
+    S.modalActs.force = function () { closeModal(); next(); };
+    S.modalActs.shield = function () {
+      var seen = {}, pats = [];
+      big.forEach(function (b) {
+        if (b.pattern && !seen[b.pattern]) { seen[b.pattern] = 1; pats.push(b.pattern); }
+      });
+      closeModal();
+      startJob('shield', { patterns: pats },
+        '屏蔽 ' + pats.length + ' 项（不跟着提交）', null, function (res) {
+          if (res && res.ok) { next(); }
+        });
+    };
+  }).catch(function (e) { busyOff(); fail(e); });
 }
 
 /* ③ 获取最新版 */
@@ -1655,6 +1793,10 @@ function moreMenu() {
     ['log', 'command', '上次执行了什么命令', '这次点按钮到底跑了什么'],
     ['disks', 'drive', '磁盘空间', '看看各个盘还剩多少'],
     ['stash', 'save', '找回收起的改动', '获取最新版时自动备份的那些'],
+    ['ignores', 'x', '屏蔽清单（不跟着提交的东西）', '哪些东西不进仓库；哪条其实还在库里'],
+    ['big', 'drive', '体积排行', '谁把仓库撑大了（大文件会让推送推不上去）'],
+    ['synclog', 'command', '同步日志', '推送 / 拉取每一步花了多久、卡在哪一句'],
+    ['precheck', 'eye', '推送前体检', '这一推多大、有没有 GitHub 装不下的文件'],
     ['clone', 'download', '从 GitHub 下载一份', '把云端仓库拷贝到这台电脑'],
     ['probe', 'wifi', '测一下能不能连上 GitHub', '网络 / 权限有没有问题'],
     ['all', 'command', '全部命令', '所有能做的事（给想用命令行的人）']
@@ -1684,9 +1826,144 @@ function moreItem(w) {
   if (w === 'stash') { return dialogStash(); }
   if (w === 'clone') { return dialogClone(); }
   if (w === 'probe') { return dialogProbe(); }
+  if (w === 'ignores') { return dialogIgnore(); }
+  if (w === 'big') { return dialogBigfiles(); }
+  if (w === 'synclog') { return dialogSyncLog(); }
+  if (w === 'precheck') { return dialogPrecheck(); }
   if (w === 'init') { closeModal(); return startRepo(); }
   if (w === 'all') { return dialogAll(); }
 }
+/* ============================ 屏蔽清单 / 体积排行 / 同步日志 / 推送前体检
+   四张小面板的共同心思：**把黑盒打开**。以前"什么没跟着提交""为什么推不上去"
+   只能去翻隐藏文件或者找 AI，现在界面上直接看、直接改。
+   ============================================================================ */
+function dialogIgnore() {
+  openModal('屏蔽清单', '<div class="note" style="padding:12px 0">正在读…</div>',
+    [{ text: '关闭', key: 'close', kind: 'ghost' }], true);
+  paintIgnore();
+}
+
+function paintIgnore() {
+  call('ignore', { path: S.path }).then(function (r) {
+    var b = sub('.dlg-b');
+    if (!b || !el('modal').classList.contains('show')) { return; }
+    var rows = (r && r.entries) || [];
+    var h = '<div class="note">这些写法命中的文件<b>不跟着提交</b>（电脑上照旧在用）。' +
+      '标着「还在库里」的是以前已经被提交进去的 —— 那些每次推送都会跟着传一遍，' +
+      '想让它们彻底不传，点后面的按钮。</div>';
+    if (!rows.length) {
+      h += '<div class="note">清单是空的 —— 现在什么都跟着提交，包括临时文件和模型、视频这类大件。</div>';
+    }
+    h += '<div class="picklist" style="max-height:44vh">';
+    rows.forEach(function (e) {
+      var bad = n0(e.tracked) > 0;
+      h += '<div class="pick-row"><span class="nm">' + esc(e.pattern) + '</span>' +
+        '<span class="hintline">' + (bad
+          ? ('还在库里 ' + e.tracked + ' 个 / ' + esc(e.size || '')) : '') + '</span>' +
+        (bad ? '<button class="mini-btn" data-act="unshield" data-pattern="' +
+          esc(e.pattern) + '">从库里去掉</button>' : '') +
+        '<button class="mini-btn" data-act="unignore" data-pattern="' +
+        esc(e.pattern) + '">删掉这条</button></div>';
+    });
+    h += '</div>';
+    h += '<div class="field"><label>再加一条（目录写 <span class="hintline">名字/</span>，' +
+      '文件写文件名）</label><input type="text" id="igNew" ' +
+      'placeholder="例如 .venv/ 或 data/ 或 *.mp4">' +
+      '<div class="row-btns" style="margin-top:8px">' +
+      '<button class="env-btn" data-act="ignore-add">加进清单</button></div></div>';
+    h += '<div class="note">删掉一条只是让它<b>以后重新跟着提交</b>；已经提交过的文件' +
+      '不会自己回来，要用命令行 <span class="hintline">git add</span> 再加一次。</div>';
+    b.innerHTML = h;
+  }).catch(fail);
+}
+
+function dialogBigfiles() {
+  openModal('体积排行', '<div class="note" style="padding:12px 0">正在数…</div>',
+    [{ text: '关闭', key: 'close', kind: 'ghost' }], true);
+  call('bigfiles', { path: S.path, limit: 30 }).then(function (r) {
+    var b = sub('.dlg-b');
+    if (!b || !el('modal').classList.contains('show')) { return; }
+    if (!r || !r.ok) {
+      b.innerHTML = '<div class="note">数不出来：' + esc((r && r.why) || '') + '</div>';
+      return;
+    }
+    var h = '<div class="note">版本库里一共 <b>' + n0(r.count) + '</b> 个文件，' +
+      '合计 <b>' + esc(r.size || '') + '</b>。下面是最占地方的几个 —— ' +
+      '推送慢、被 GitHub 拒，基本都是它们。</div>';
+    h += '<div class="picklist" style="max-height:50vh">';
+    (r.top || []).forEach(function (f, i) {
+      h += '<div class="pick-row"><span class="nm">' + (i + 1) + '. ' + esc(f.path) + '</span>' +
+        '<span class="hintline">' + esc(f.size) + '</span>' +
+        '<button class="mini-btn" data-act="shield-one" data-pattern="' +
+        esc(pathDir(f.path)) + '">屏蔽这类</button></div>';
+    });
+    h += '</div>';
+    if ((r.bytes || 0) > 50 * 1024 * 1024) {
+      h += '<div class="note" style="color:#b45309">超过 50MB 了。GitHub 单文件上限 100MB，' +
+        '超了那一推一定失败 —— 用右边的「屏蔽这类」处理掉，别硬推。</div>';
+    }
+    b.innerHTML = h;
+  }).catch(fail);
+}
+
+/* 一条文件路径 → 它所在目录（给"屏蔽这一类"用，省得一个个点） */
+function pathDir(p) {
+  var s = String(p || '').replace(/\\/g, '/');
+  var i = s.lastIndexOf('/');
+  return i > 0 ? (s.slice(0, i) + '/') : s;
+}
+
+function dialogSyncLog() {
+  openModal('同步日志', '<div class="note" style="padding:12px 0">正在读…</div>',
+    [{ text: '关闭', key: 'close', kind: 'ghost' }], true);
+  call('sync_log', { n: 150 }).then(function (r) {
+    var b = sub('.dlg-b');
+    if (!b || !el('modal').classList.contains('show')) { return; }
+    var lines = (r && r.lines) || [];
+    var h = '<div class="note">推送 / 拉取每一步<b>花了多久、退出码、最后几行输出</b>都在这里。' +
+      '再遇到"没反应"，把这一段发出来就能看出卡在哪一句、是网慢还是推不上去。</div>';
+    h += '<div class="note"><span class="hintline">' + esc((r && r.path) || '') + '</span>' +
+      (lines.length ? '（共 ' + n0(r.total) + ' 行，下面是最后 ' + lines.length + ' 行）' : '') +
+      '</div>';
+    h += '<pre class="out">' + esc(lines.length ? lines.join('\n')
+      : ((r && r.out) || '还没有记录 —— 跑一次推送或获取最新版，这里就有了')) + '</pre>';
+    b.innerHTML = h;
+  }).catch(fail);
+}
+
+function dialogPrecheck() {
+  openModal('推送前体检', '<div class="note" style="padding:12px 0">正在数…</div>',
+    [{ text: '关闭', key: 'close', kind: 'ghost' }], true);
+  call('push_check', { path: S.path }).then(function (r) {
+    var b = sub('.dlg-b');
+    if (!b || !el('modal').classList.contains('show')) { return; }
+    if (!r || !r.ok) {
+      b.innerHTML = '<div class="note">查不了：' + esc((r && r.why) || '') + '</div>';
+      return;
+    }
+    var big = r.big || [];
+    var h = '<div class="note">要传 <b>' + n0(r.files) + '</b> 个文件，大约 <b>' +
+      esc(r.size || '') + '</b>，' + n0(r.commits) + ' 个提交还没上云端。</div>';
+    if (!big.length) {
+      h += '<div class="note">没有偏大的文件（上限是单个 ' + esc(r.limitHard) +
+        '）—— 可以放心推。</div>';
+    } else {
+      h += '<div class="picklist" style="max-height:40vh">';
+      big.forEach(function (x) {
+        h += '<div class="pick-row"><span class="nm">' + esc(x.path) + '</span>' +
+          '<span class="hintline">' + esc(x.size) +
+          (x.level === 'block' ? '　推不上去' : '　偏大') + '</span>' +
+          '<button class="mini-btn" data-act="shield-one" data-pattern="' +
+          esc(x.pattern) + '">屏蔽</button></div>';
+      });
+      h += '</div>';
+      h += '<div class="note" style="color:#b45309">' +
+        esc(big[0].why) + '。屏蔽之后电脑上的文件还在，只是不再跟着提交。</div>';
+    }
+    b.innerHTML = h;
+  }).catch(fail);
+}
+
 function dialogBranches() {
   var t = S.tl || {};
   var h = '<div class="note">现在在 <b>' + esc(t.head || '?') + '</b> 这条线上。</div>' +
@@ -2168,6 +2445,27 @@ document.addEventListener('click', function (ev) {
       S.modalActs.next = function () { refreshEnv().then(dialogEnv); };
       startInstPoll(INST.what);
       break;
+    case 'unignore':
+      call('ignore', { path: S.path, op: 'remove', pattern: d('pattern') })
+        .then(function () { toast('这条删掉了', 'ok'); paintIgnore(); }).catch(fail);
+      break;
+    case 'unshield':
+      startJob('untrack', { arg: d('pattern') },
+        '把 ' + d('pattern') + ' 从库里去掉', null, function () { dialogIgnore(); });
+      break;
+    case 'shield-one':
+      startJob('shield', { patterns: [d('pattern')] },
+        '屏蔽 ' + d('pattern'), null, function () { dialogPrecheck(); });
+      break;
+    case 'ignore-add': {
+      var igv = ((el('igNew') || {}).value || '').trim();
+      if (!igv) { toast('先填一条再点', 'no'); break; }
+      call('ignore', { path: S.path, op: 'add', pattern: igv }).then(function (r) {
+        toast((r && r.kept) ? '这条已经在清单里了' : '加好了', 'ok');
+        paintIgnore();
+      }).catch(fail);
+      break;
+    }
     case 'file-diff': fileDiff(d('file')); break;
     case 'file-drop': fileDrop(d('file')); break;
     case 'more': moreMenu(); break;
@@ -2194,14 +2492,9 @@ document.addEventListener('click', function (ev) {
           var v = (fieldValues().arg || '').trim();
           closeModal();
           if (!v) { toast('还没填', 'no'); return; }
-          busyOn(a.label || name);
-          call('run_action', { name: name, arg: v, path: S.path }).then(function (res) {
-            S.last = { title: a.label || name, res: res, at: stamp() };
-            toast(res.ok ? ('做完了：' + (a.label || name)) : ('没成功：' + (res.why || '')),
-              res.ok ? 'ok' : 'no');
-            if (!res.ok) { showResult(a.label || name); }
-            return loadAll();
-          }).catch(fail).then(function () { busyOff(); });
+          /* 走后台任务：这类动作可能很慢（比如屏蔽一整年的日志目录），
+             不能因为一条 RPC 等太久就判它失败 */
+          startJob('run_action', { name: name, arg: v }, a.label || name);
         };
       } else {
         closeModal();

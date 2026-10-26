@@ -124,6 +124,44 @@ def available(table=None):
     return True, exe
 
 
+#: WebView2 运行时的下载页（`V-390`）。缺它界面会**静默**退回 IE 内核 —— 只有这一条路能救
+WEBVIEW2_URL = "https://developer.microsoft.com/microsoft-edge/webview2/"
+
+
+def webview2_status(table=None):
+    """界面能不能用 Chromium 内核渲染。返回 (True / False / None, 说明)。
+
+    ★ 为什么让**界面进程**自己回答（`system/ui/main.py --check-webview2`），而不是宿主直接
+      读注册表：判据是 pywebview 的 `winforms._is_chromium()`（.NET 4.6.2+ **且**注册表里
+      有 WebView2 运行时）。那份逻辑**只能有一处**，否则 pywebview 换判据时必然漏改一边。
+      宿主这边也不该 import pywebview —— 那是界面进程的事，而且会把 CLR 拖进 exe。
+    ★ 返回 None = "问不出来"（运行时缺了 / 界面文件坏了 / 超时），跟 False（确实缺）分开：
+      自检要能分清"这台机器要装 WebView2"和"这份发行版本身不完整"。
+    """
+    if table is None:
+        table = runners_mod.load()
+    exe, why = _python(table)
+    if not exe:
+        return None, "找不到能跑界面的 Python（%s）" % (why or "没配解释器")
+    try:
+        p = subprocess.run([exe, str(UI_MAIN), "--check-webview2"],
+                           cwd=str(paths.HOME), capture_output=True, timeout=25,
+                           creationflags=_NO_WINDOW)
+    except Exception as e:                                            # noqa: BLE001
+        return None, "问不出来：%s" % e
+    out = (p.stdout or b"").decode("utf-8", "replace")
+    for line in reversed(out.strip().splitlines()):
+        try:
+            data = json.loads(line)
+        except Exception:                                             # noqa: BLE001
+            continue
+        if isinstance(data, dict) and "ok" in data:
+            return bool(data.get("ok")), str(data.get("detail") or "")
+    err = (p.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+    return None, ("界面进程没回话（退出码 %s）%s"
+                  % (p.returncode, ("：" + err[-1]) if err else ""))
+
+
 def host_cmd():
     """界面要跑包时该调谁：打包后是 moss.exe 自己，源码运行时是 python + moss.py。
 

@@ -17,7 +17,35 @@ GitHub / Git 的可视化助手：**每个按钮都告诉你它替你敲了哪�
 
 ★ 上面写的是**默认配置**下的调法；本机实际怎么调见下一节。
 
+## ★ 长任务：别让一条命令把界面拖死（2026-10-25 加）
+
+推 / 拉 / 保存这类会联网、可能跑几分钟的操作，**不要**直接 `call('sync')` 然后干等：
+
+| 方法 | 干什么 | 返回 |
+|---|---|---|
+| `job_start {method, label, params}` | 把 `method`（任何 Core 方法，如 `sync` / `commit_all` / `shield`）扔到后台线程跑 | **立刻**返回 `{ok, id}` —— 这条 RPC 秒回，永远不会超时 |
+| `job_state {id, n}` | 看进度 | `{state: running/done/cancelled, elapsed, silent, lines[], result}` |
+| `job_cancel {id}` | 停下（真的 `taskkill /T` 那个子进程树） | `{state}` |
+
+为什么非得这么干（真机踩出来的三条）：
+1. `ui/moss-embed.js` 里每条 RPC 原来写死 **30 秒**上限 —— 首次推送大仓库时三十秒一到就报
+   "后端没回话"，可 git 还在传，人以为失败又点一次。（现在提到 90 秒，而且长操作走的是
+   `job_*`，根本用不到这个上限。）
+2. 内嵌模式下 **stdout 是协议通道**（一行一个 JSON）。`main.py` 里到处是 `print(...)`，
+   这些行进去只会被宿主当垃圾丢掉 ⇒ 界面上什么也看不到。现在 `Embedded` 一启动就把
+   `sys.stdout` 换成 `_StdoutToProgress`，**所有 print 自动改道成进度**（进 `job_state` 的
+   `lines`）。`_live()` 里**绝不能再 print**：那会自己叫自己（探针里表现为同一行刷 80 遍）。
+3. 网络卡住时 `p.kill()` 杀不动读管道的线程 ⇒ 主循环自己查 `_job_cancelled()`，一看到就收尾。
+
+`sync.log`（`DATA_DIR/sync.log`）只记**慢的（≥3 秒）和失败的**命令：耗时、退出码、命令原文、
+最后 10 行输出。`action=gitlog` 或界面上「更多功能 → 同步日志」读它。必然失败的探路命令
+（`rev-parse @{u}` 之类）不记，免得把有用的挤掉。
+
 ## ★ 本机实测的调法（2026-10-08 实测，改前先看这节）
+
+> ★ 2026-10-25 更正：这一节记的是当时那台机器的配置。后来 `config.toml` 改过，
+> `moss :github action=version` / `moss :github action=gitlog` 现在**都能跑**（退出码 0）。
+> 先看上表的默认调法；真报"找不到目标"再回来看下面这一节。
 
 这台机器的 `user_data/config.toml` 里是 `path_mode = ""` / `plugin_mode = "-"`
 （裸名 = 路径调用，不是默认档），所以上面写的 `moss :github …` **在本机解析不到**：
@@ -56,7 +84,14 @@ moss :github action=disks
 | `tags` | `git tag --sort=-creatordate` | 只看 |
 | `fetch` | `git fetch --all --prune` | 只更新远端账本（联网） |
 | `pull` | `git pull --ff-only` | 动代码（联网；只快进） |
-| `push` | `git push`（没跟踪分支时 `-u origin <分支>`） | 动远端（联网） |
+| `push` | `git push --progress`（没跟踪分支时 `-u origin <分支>`） | 动远端（联网） |
+| `precheck` | （本机统计 `git ls-tree -r -l HEAD`） | **只看**：这一推多大、有没有 GitHub 装不下的文件 |
+| `bigfiles` | （本机统计 `git ls-files` + 文件大小） | 只看：版本库里谁占体积 |
+| `gitlog` | （读 `state/github/sync.log`） | 只看：慢命令的耗时 / 退出码 / 输出尾巴 |
+| `ignore` | （读 `.gitignore`，`arg=规则` 则加一条） | 改 `.gitignore` |
+| `shield` | 写 `.gitignore` + `git rm -r --cached -- <路径>` | 从版本库去掉（磁盘文件不动） |
+| `untrack` | `git rm -r --cached -- <路径>` | 只从版本库去掉，**不动 `.gitignore`** |
+| `amend` | `git commit --amend --no-edit` | 并进上一条提交（只在没推过时用） |
 | `add_all` | `git add -A` | 动暂存区 |
 | `commit`（`arg=` 提交信息） | `git commit -m "<信息>"` | 本地历史 |
 | `new_branch`（`arg=` 分支名） | `git checkout -b <名>` | 切分支 |

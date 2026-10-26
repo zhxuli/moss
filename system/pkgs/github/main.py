@@ -11,6 +11,7 @@
   ① **界面不做业务**：仓库 / 磁盘 / 同步状态全在这个文件里算好，前端只负责画。
   ② **每个动作都必须同时给出「等价命令行」** —— 这是这个包存在的意义（用多了自然会敲）。
 """
+import collections
 import json
 import os
 import re
@@ -567,8 +568,298 @@ def run(argv, cwd=None, timeout=30):
         code, out = 124, '超时：%s 秒还没回来（网络慢 / 要你输密码？）' % timeout
     except Exception as e:                                               # noqa: BLE001
         code, out = 1, '%s: %s' % (type(e).__name__, e)
-    return {'ok': code == 0, 'code': code, 'out': (out or '').strip('\n'),
-            'ms': int((time.time() - t0) * 1000), 'cmd': display(argv)}
+    got = {'ok': code == 0, 'code': code, 'out': (out or '').strip('\n'),
+           'ms': int((time.time() - t0) * 1000), 'cmd': display(argv)}
+    # 慢的 / 失败的留一条日志（快而成功的直接跳过，别把日志冲成垃圾）
+    log_cmd(argv, cwd, got, timeout)
+    return got
+
+
+# ------------------------------------------------------------------ 同步日志 / 带进度地跑
+#: 每条"慢的 / 失败的"命令都在这儿留一条 —— 推送卡住时能回看它到底走到了哪一步。
+#: 界面里的「同步日志」和 `moss :github action=gitlog` 读的就是这个文件。
+SYNC_LOG = os.path.join(DATA_DIR, 'sync.log')
+LOG_KEEP = 300          # 最多留多少条（再多就把最老的挤掉）
+LOG_MAX = 512 * 1024
+
+#: 这几条会真的上传 / 下载 —— 要补 `--progress`，还要边跑边打进度
+PROGRESS_SUBS = ('push', 'fetch', 'pull', 'clone')
+
+
+#: 内嵌模式（界面里的 iframe）—— 这时候 stdout 是协议通道，进度不能往里 print。
+EMBEDDED = str(os.environ.get('MOSS_UI_EMBED') or '').strip().lower() in ('1', 'true', 'yes')
+
+
+# ---------------------------------------------------------------- 长任务（后台跑 + 界面看进度）
+#: 一次只跑一个长操作（推 / 拉 / 保存…）；界面拿 `id` 来轮询，能看到每一行进度的出处。
+_JOB = {'cur': None}
+_JOB_LOCK = threading.Lock()
+#: 没有任务在跑时说过的话（内嵌模式下没法 print，先攒着）—— 开任务时当前情补在前面
+_IDLE = collections.deque(maxlen=40)
+
+
+def _live(line):
+    """把一行进度交给"正在被看的那个任务"；没有任务就先攒着，等下开任务时补在前面。
+
+    ★ 为什么不直接 print：内嵌模式下 stdout 是**协议通道**（一行一个 JSON），
+      进度混进去宿主只会当垃圾丢弃 —— 用户那边就是"什么也看不到"。
+      所以进度先进任务缓冲，界面 `job_state` 一取就有；命令行跑的时候照样打印。
+
+    ★★ 这里**绝对不能再 print**（`_StdoutToProgress` 会把 print 转回本函数，
+       变成自己叫自己 —— 递归到 RecursionError）。内嵌模式下没有任务时，
+       攒进 `_IDLE` 就行：下次开任务会把它当作"前情"接在进度最前面。
+    """
+    text = str(line).rstrip()
+    if not text:
+        return
+    with _JOB_LOCK:
+        job = _JOB.get('cur')
+    if job is not None:
+        with job['lock']:
+            job['lines'].append(text)
+            job['beat'] = time.time()
+            if len(job['lines']) > 600:
+                del job['lines'][:200]
+    elif EMBEDDED:
+        _IDLE.append(text)
+        return
+    if EMBEDDED:
+        # ★ 到这儿就不能再 print 了：内嵌模式下 print 已经被 `_StdoutToProgress`
+        #   改回 `_live`，再 print 一次就是自己叫自己 —— 探针里那条
+        #   「同一行刷了 80 遍」就是它（不是显示问题，是真的在递归）。
+        return
+    print(text, flush=True)
+
+
+def _job_proc(proc):
+    """把正在跑的子进程挂到当前任务上 —— 界面点「停一下」时能真的杀掉它。"""
+    with _JOB_LOCK:
+        job = _JOB.get('cur')
+    if job is not None:
+        with job['lock']:
+            job['proc'] = proc
+
+
+def _job_cancelled():
+    """用户是不是点了「停一下」。
+
+    ★ 探针抓到的：光靠 `p.kill()` 不够 —— 读输出的那条线程可能还阻塞在管道上，
+      主循环于是继续一动不动地等（界面看着像"点了停也没停"）。所以主循环**自己**
+      查这个标志，一看到就主动收尾，不等管道。
+    """
+    with _JOB_LOCK:
+        job = _JOB.get('cur')
+    if job is None:
+        return False
+    with job['lock']:
+        return bool(job.get('cancel'))
+
+
+def _kill_tree(proc):
+    """连子孙一起杀（Windows 上 git 会拉起 git-remote-https 之类的小弟）。"""
+    if proc is None:
+        return
+    try:
+        if os.name == 'nt':
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                           capture_output=True, timeout=20,
+                           creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        else:
+            proc.kill()
+    except Exception:                                                    # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:                                                # noqa: BLE001
+            pass
+
+
+def log_write(text):
+    """往 sync.log 追加一段。**永不抛**（记日志不能拖累正事）。"""
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        old = []
+        try:
+            with open(SYNC_LOG, encoding='utf-8', errors='replace') as f:
+                old = [x for x in f.read().splitlines() if x.strip()]
+        except OSError:
+            old = []
+        # 一条记录以 "[时间]" 开头 —— 照它切条数，别把一条几行的记录拆散
+        rows, cur = [], []
+        for ln in old:
+            if ln.startswith('[') and cur:
+                rows.append(cur)
+                cur = []
+            cur.append(ln)
+        if cur:
+            rows.append(cur)
+        rows.append(str(text).splitlines())
+        rows = rows[-LOG_KEEP:]
+        data = '\n'.join('\n'.join(r) for r in rows) + '\n'
+        while len(data.encode('utf-8')) > LOG_MAX and len(rows) > 40:
+            rows = rows[len(rows) // 2:]
+            data = '\n'.join('\n'.join(r) for r in rows) + '\n'
+        with open(SYNC_LOG, 'w', encoding='utf-8') as f:
+            f.write(data)
+        return True
+    except Exception:                                                    # noqa: BLE001
+        return False
+
+
+def _sub(argv):
+    """argv 里的子命令（`git push -u origin main` → `push`）。"""
+    for a in list(argv)[1:]:
+        if not a.startswith('-'):
+            return a
+    return ''
+
+
+def log_cmd(argv, cwd, got, timeout=0, note=''):
+    """把一条命令的"耗时 / 退出码 / 输出尾巴"记进 sync.log。
+
+    ★ 只记**慢的（≥3 秒）和失败的**：正常命令一秒能跑几十条，全记会把有用的冲掉，
+      真卡住的时候反而翻不到那一条。
+    """
+    ms = int(got.get('ms') or 0)
+    if got.get('ok') and ms < 3000 and not note:
+        return
+    # 「探路」的命令天天失败（没配 upstream 时 rev-parse @{u} 必然 exit=128），
+    # 记下来只会把真正慢的那条挤掉 —— 跳过它。
+    joined = ' '.join(str(a) for a in argv)
+    if not got.get('ok') and ms < 3000 and ('@{u}' in joined or 'rev-parse' in joined
+                                            or 'symbolic-ref' in joined):
+        return
+    lines = ['[%s] %5.1fs exit=%s 超时上限=%ss'
+             % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), ms / 1000.0,
+                got.get('code'), timeout or '-'),
+             '    $ %s' % (got.get('cmd') or display(argv)),
+             '    目录 %s' % (cwd or os.getcwd())]
+    if note:
+        lines.append('    说明 %s' % note)
+    for t in [x.rstrip() for x in (got.get('out') or '').splitlines() if x.strip()][-10:]:
+        lines.append('    | ' + t[:300])
+    log_write('\n'.join(lines))
+
+
+def run_progress(argv, cwd=None, timeout=300, tick=5.0, label=''):
+    r"""跑一条会联网的命令：**边跑边把 git 的进度打出来**，每 tick 秒还报一次「还在跑」。
+
+    ★ 由来（真机反馈）：第一次 `git push` 要传 178MB，可输出被 `subprocess.run`
+      一口气攒到最后 —— 界面三十秒一个字都没有，人只能当成它死了。所以现在：
+      ① 有 `--progress` 就让 git 在非终端下也报百分比；
+      ② 逐块读输出、边读边打（git 的 `\r` 原地刷新改成一行一行）；
+      ③ 每 tick 秒没新输出就打一行「还在跑…已 N 秒」—— 卡住也看得出是在动还是死了；
+      ④ 整条命令记进 sync.log，事后能查。返回值跟 `run()` 完全一样。
+    """
+    t0 = time.time()
+    cmd = list(argv)
+    sub = _sub(cmd)
+    if sub in PROGRESS_SUBS and '--progress' not in cmd:
+        try:
+            cmd.insert(cmd.index(sub) + 1, '--progress')
+        except ValueError:
+            pass
+    env = dict(os.environ)
+    env.update({'GIT_TERMINAL_PROMPT': '0', 'GIT_PAGER': 'cat', 'PAGER': 'cat',
+                'GIT_PROGRESS_DELAY': '0',
+                'LC_ALL': env.get('LC_ALL') or 'C.UTF-8'})
+    title = label or display(cmd)
+    _live('▶ %s（最多等 %d 秒）' % (title, int(timeout)))
+    try:
+        p = subprocess.Popen(cmd, cwd=cwd or None, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                             text=True, encoding='utf-8', errors='replace',
+                             env=env, creationflags=NO_WINDOW)
+        _job_proc(p)                      # 挂上去，「停一下」才杀得掉
+    except FileNotFoundError:
+        got = {'ok': False, 'code': 127, 'ms': 0, 'cmd': display(cmd),
+               'out': '找不到命令：%s —— 装了吗？在 PATH 里吗？' % cmd[0]}
+        log_cmd(cmd, cwd, got, timeout)
+        return got
+    except Exception as e:                                               # noqa: BLE001
+        got = {'ok': False, 'code': 1, 'ms': 0, 'cmd': display(cmd),
+               'out': '%s: %s' % (type(e).__name__, e)}
+        log_cmd(cmd, cwd, got, timeout)
+        return got
+
+    lock = threading.Lock()
+    chunks, ended = [], [False]
+
+    def _read():
+        try:
+            while True:
+                bit = p.stdout.read(2048)
+                if not bit:
+                    break
+                with lock:
+                    chunks.append(bit)
+        except Exception:                                                # noqa: BLE001
+            pass
+        finally:
+            ended[0] = True
+
+    threading.Thread(target=_read, daemon=True).start()
+    out, last, killed = [], time.time(), False
+    while True:
+        time.sleep(0.25)
+        with lock:
+            fresh = ''.join(chunks)
+            chunks.clear()
+        if fresh:
+            out.append(fresh)
+            for seg in re.split(r'[\r\n]+', fresh):
+                seg = seg.strip()
+                if seg:
+                    _live('   ' + seg[:200])
+            last = time.time()
+        if ended[0] and p.poll() is not None:
+            break
+        if _job_cancelled():
+            # 用户点了「停一下」——别等管道，直接收掉
+            killed = True
+            _kill_tree(p)
+            break
+        if time.time() - t0 > timeout:
+            killed = True
+            try:
+                p.kill()
+            except Exception:                                            # noqa: BLE001
+                pass
+            break
+        if time.time() - last > tick:
+            _live('   …还在跑：已 %d 秒，还没有新输出（进程没死，就是慢）'
+                  % int(time.time() - t0))
+            last = time.time()
+    try:
+        code = p.wait(timeout=10)
+    except Exception:                                                    # noqa: BLE001
+        code = -1
+    text_out = ''.join(out).strip('\n')
+    if killed:
+        if _job_cancelled():
+            code = 130
+            text_out = (text_out + '\n你点了「停一下」，这一步已经中断。'
+                        '（已经传上去的部分不会坏，重新点一次会接着来）').strip('\n')
+        else:
+            code = 124
+            text_out = (text_out + '\n超时：%d 秒还没回来（网络慢 / 要你输密码？）'
+                        % timeout).strip('\n')
+    got = {'ok': code == 0, 'code': code, 'out': text_out,
+           'ms': int((time.time() - t0) * 1000), 'cmd': display(cmd)}
+    _live('%s %s（%.1f 秒，退出码 %s）'
+          % ('✓' if got['ok'] else '✗', title, got['ms'] / 1000.0, code))
+    log_cmd(cmd, cwd, got, timeout)
+    return got
+
+
+def _exec(argv, cwd=None, timeout=60, label=''):
+    """该看得见进度的走 run_progress（push / fetch / pull / clone），其余走 run。
+
+    `MOSS_GIT_PROGRESS=0` 可以关掉（脚本里想只要最后那段输出时用）。
+    """
+    if _sub(list(argv)) in PROGRESS_SUBS and \
+            str(os.environ.get('MOSS_GIT_PROGRESS', '1')).strip() != '0':
+        return run_progress(argv, cwd=cwd, timeout=timeout, label=label)
+    return run(argv, cwd=cwd, timeout=timeout)
 
 
 def git(path, *args, **kw):
@@ -893,6 +1184,17 @@ ACTIONS = {
                       cmd='git stash pop',
                       desc='把最近一次 stash 拿回来',
                       argv=lambda p, a: ['git', 'stash', 'pop']),
+    'untrack': dict(group='改', label='从版本库里去掉（文件留在磁盘）', danger=True,
+                    needArg='要剔除的目录或文件（如 .venv）', timeout=180,
+                    cmd='git rm -r --cached -- <路径>',
+                    desc='版本库里不该有的东西（虚拟环境、数据、大文件）用这个剔除：'
+                         '以后不再跟着提交，磁盘上一个文件都不删',
+                    argv=lambda p, a: ['git', 'rm', '-r', '-q', '--cached', '--', a]),
+    'amend': dict(group='改', label='并进上一条提交', danger=True, needArg=None, timeout=120,
+                  cmd='git commit --amend --no-edit',
+                  desc='把现在暂存的东西并进最后那条提交（不新增一版、说明不变）'
+                       ' —— 只在最后那条还没推到 GitHub 时用，推过就别动它了',
+                  argv=lambda p, a: ['git', 'commit', '--amend', '--no-edit']),
     'init': dict(group='改', label='初始化仓库', danger=False, needArg=None, timeout=30,
                  cmd='git init',
                  desc='把一个普通目录变成 git 仓库（不带 -b，免得老版本 git 不认这个参数）',
@@ -928,10 +1230,35 @@ ACTIONS = {
     'version': dict(group='本机', label='git 版本', danger=False, needArg=None, timeout=20,
                     cmd='git --version', desc='先确认 git 在不在、什么版本',
                     argv=lambda p, a: ['git', '--version']),
+    'bigfiles': dict(group='看', label='仓库体积排行（谁占地方）', danger=False,
+                     needArg=None, timeout=20, fake='bigfiles',
+                     cmd='（本机统计：git ls-files + 文件大小）',
+                     desc='推送慢得离谱时先看这个：哪些文件把仓库撑大了（虚拟环境 / 数据 / 视频）',
+                     argv=lambda p, a: []),
+    'precheck': dict(group='同步', label='推送前体检（会不会推不上去）', danger=False,
+                     needArg=None, timeout=20, fake='precheck',
+                     cmd='（本机统计：git ls-tree -r -l HEAD）',
+                     desc='推之前先看清楚：这一推多大、有没有 GitHub 装不下的文件（>100MB 一定失败）',
+                     argv=lambda p, a: []),
+    'shield': dict(group='改', label='屏蔽（不跟着提交）', danger=False,
+                   needArg='要屏蔽的目录或文件（如 .venv 或 backend/static/xxx/）', timeout=240,
+                   cmd='写入 .gitignore + git rm -r --cached -- <路径>',
+                   desc='把"不该进仓库"的东西一步处理干净：记进 .gitignore，已经跟踪的从库里去掉，'
+                        '磁盘上的文件一个都不删',
+                   argv=lambda p, a: []),
+    'ignore': dict(group='看', label='屏蔽清单（.gitignore）', danger=False,
+                   needArg=None, timeout=20, fake='ignore',
+                   cmd='（读 .gitignore）',
+                   desc='看一眼现在屏蔽了什么；哪一条其实还在库里（隐患）也会标出来',
+                   argv=lambda p, a: []),
+    'gitlog': dict(group='本机', label='同步日志（推送 / 拉取过程）', danger=False,
+                   needArg=None, timeout=10, cmd='（读 %s）' % SYNC_LOG,
+                   desc='推送卡住 / 失败时先看这个：每条慢命令的耗时、退出码和最后几行输出',
+                   argv=lambda p, a: []),
 }
 
 #: 这些动作不需要在 git 仓库里跑
-NO_REPO_NEEDED = ('disks', 'version', 'clone', 'gh_auth', 'init')
+NO_REPO_NEEDED = ('disks', 'version', 'clone', 'gh_auth', 'init', 'gitlog')
 
 
 def actions_payload():
@@ -943,7 +1270,73 @@ def actions_payload():
     return out
 
 
+def repo_size_rows(root, limit=20):
+    """版本库里**最占体积**的文件（按大小排前 N 个）+ 总共多少、多大。
+
+    ★ 为什么要有：推送"三十秒没反应"最常见的原因就是**仓库里有不该提交的大文件**
+      （虚拟环境、数据集、视频、模型权重）—— 首次推送要把它整个传上去。
+      以前只能靠猜；这一眼就能看出是哪个文件、多大。
+    """
+    got = git(root, 'ls-files', '-z', timeout=120)
+    names = [x for x in (got.get('out') or '').split('\0') if x.strip()]
+    if not got.get('ok') or not names:
+        return {'count': 0, 'bytes': 0, 'top': [], 'ok': False,
+                'why': (got.get('out') or '').strip()[:200]}
+    rows, total = [], 0
+    for n in names:
+        try:
+            sz = os.path.getsize(os.path.join(root, n.replace('/', os.sep)))
+        except OSError:
+            sz = 0
+        total += sz
+        rows.append((sz, n))
+    rows.sort(reverse=True)
+    return {'count': len(names), 'bytes': total, 'ok': True,
+            'top': [{'path': n, 'bytes': sz, 'size': human_size(sz)}
+                    for sz, n in rows[:limit]]}
+
+
 def _fake_out(name, path):
+    if name == 'precheck':
+        info = repo_info(path)
+        if not info:
+            return '这不是一个 git 仓库：%s' % path
+        r = Core(path).push_check({'path': path})
+        if not r.get('ok'):
+            return '读不出来：%s' % (r.get('why') or '')
+        out = ['这一推要传 %d 个文件，一共 %s（%d 个提交）。'
+               % (r['files'], r['size'], r['commits'])]
+        if not r['big']:
+            out.append('没有偏大的文件 —— 可以放心推。')
+            return '\n'.join(out)
+        out.append('')
+        out.append('★ 有 %d 个文件偏大：' % len(r['big']))
+        for b in r['big']:
+            out.append('  [%s] %s  %s' % ('推不上去' if b['level'] == 'block' else '偏大',
+                                          b['size'], b['path']))
+        if r['blocked']:
+            out.append('')
+            out.append('⇒ 这一推会失败（GitHub 单文件上限 %s）。先屏蔽掉那几个目录再推。'
+                       % r['limitHard'])
+        return '\n'.join(out)
+    if name == 'ignore':
+        return ''
+    if name == 'bigfiles':
+        info = repo_info(path)
+        if not info:
+            return '这不是一个 git 仓库：%s' % path
+        r = repo_size_rows(info['root'])
+        if not r['ok']:
+            return '读不出来：%s' % (r.get('why') or 'git ls-files 没答话')
+        out = ['版本库里一共 %d 个文件，%s' % (r['count'], human_size(r['bytes'])),
+               '其中最占体积的 %d 个：' % len(r['top'])]
+        for i, f in enumerate(r['top'], 1):
+            out.append('  %2d. %-10s %s' % (i, f['size'], f['path']))
+        if r['bytes'] > 50 * 1024 * 1024:
+            out.append('')
+            out.append('★ 超过 50MB 了 —— 推送会慢，甚至被 GitHub 拒（单文件上限 100MB）。')
+            out.append('  虚拟环境 / 数据 / 视频这类东西该用「从版本库里去掉」剔出去。')
+        return '\n'.join(out)
     if name == 'disks':
         # 一行一个盘（不做表格式对齐 —— 中英混排按列对齐一定歪）
         rows = []
@@ -1087,6 +1480,379 @@ class Core:
 
     def disks(self, params=None):
         return {'disks': list_disks()}
+
+    def untrack(self, params=None):
+        """把某个目录 / 文件从**版本库**里去掉：磁盘上的文件一个都不动。
+
+        ★ 为什么要有：`.venv`、数据目录、模型文件这类东西一旦被提交进去，每次
+          push 都要把它们整个再传一遍（真事：一个项目的初版提交里躺着一整个
+          虚拟环境，178MB —— 首次推送三十多秒没反应，看着像卡死）。
+          这里先数清楚"要剔除多少个文件、多大"，再只从索引里移除；文件留在原处，
+          删掉 `.gitignore` 里没写的话以后还会被 `git add` 收进来，所以顺手提醒一句。
+        """
+        p = params or {}
+        path = self._path(p)
+        info = repo_info(path)
+        if not info:
+            return {'ok': False, 'why': '这不是一个 git 仓库：%s' % path, 'steps': [], 'out': ''}
+        root = info['root']
+        rel = str(p.get('arg') or p.get('file') or '').strip().replace('\\', '/').strip('/')
+        cmd_text = 'git rm -r -q --cached -- %s' % (rel or '<路径>')
+        if not rel or rel.startswith('/') or '..' in rel.split('/'):
+            return {'ok': False, 'cmd': cmd_text, 'steps': [], 'out': '',
+                    'why': '只能填仓库里的相对路径，例如 .venv'}
+        ls = git(root, 'ls-files', '-z', '--', rel, timeout=90)
+        names = [x for x in (ls.get('out') or '').split('\0') if x.strip()]
+        if not names:
+            return {'ok': False, 'cmd': 'git ls-files -- ' + rel, 'steps': [], 'out': '',
+                    'why': '%s 现在没被版本库跟踪 —— 没东西可剔除。'
+                           '想让它以后也别被收进来，把 %s 写进 .gitignore 里'
+                           % (rel, rel)}
+        total = 0
+        for n in names:
+            try:
+                total += os.path.getsize(os.path.join(root, n.replace('/', os.sep)))
+            except OSError:
+                pass
+        got = self._step(root, ['git', 'rm', '-r', '-q', '--cached', '--', rel],
+                         '把 %s 从版本库去掉（磁盘上的文件留着）' % rel, 180)
+        out = self._finish(path, [got])
+        out['count'] = len(names)
+        out['bytes'] = total
+        out['label'] = '从版本库里去掉 %s' % rel
+        out['note'] = ('%s 里的 %d 个文件（%s）已从版本库去掉，磁盘上还在。'
+                       '记得把 %s 写进 .gitignore，否则下次「把改动收进来」又会收进去'
+                       % (rel, len(names), human_size(total), rel))
+        return out
+
+    def sync_log(self, params=None):
+        """把 sync.log 的尾巴读出来（命令行 `action=gitlog` 和界面都用它）。
+
+        ★ 为什么要有：推送卡住时，界面上只有一行"还在跑"，用户问"到底在干什么" ——
+          以前**没有任何记录**（push 的输出攒到最后才返回，进程被杀就全丢了）。
+          现在每条慢命令都落在这里，事后能看是谁慢、慢几秒、卡在哪一句。
+        """
+        p = params or {}
+        try:
+            n = int(p.get('n') or 80)
+        except (TypeError, ValueError):
+            n = 80
+        n = max(5, min(400, n))
+        rows = []
+        try:
+            with open(SYNC_LOG, encoding='utf-8', errors='replace') as f:
+                rows = [x.rstrip() for x in f.read().splitlines() if x.strip()]
+        except OSError:
+            rows = []
+        tail = rows[-n:]
+        return {'ok': True, 'path': SYNC_LOG, 'exists': bool(rows),
+                'lines': tail, 'total': len(rows),
+                'out': '\n'.join(tail) or
+                       '还没有日志 —— 先点一次「推送」或「同步」，之后这里就有了'}
+
+    # ---------------------------------------------------------------- 长任务：后台跑，界面看进度
+    def job_start(self, params=None):
+        """把一次长操作（保存 / 备份 / 同步 / 获取最新版…）**放到后台跑**，立刻返回一个号。
+
+        ★ 为什么要有（这是真机上"30 秒没反应"的根因之一）：
+          以前界面是「发一条 RPC，然后等它回来」 —— 而 `moss-embed.js` 里那条 RPC 的
+          上限写死 **30 秒**。首次推送 178MB 时，三十秒一到界面就报"后端 30 秒没回话"，
+          可 git 其实还在传，用户以为失败了，就又点一次…… 现在改成：
+            ① 这里只负责开跑、立刻返回 `id`（这条 RPC 一秒内就回，永远不会超时）；
+            ② 界面拿 `id` 去 `job_state` 轮询：进度、耗时、最后几行输出都看得到；
+            ③ 想停就 `job_cancel`（真的 kill 掉那个子进程）。
+        """
+        p = params or {}
+        method = str(p.get('method') or '').strip()
+        label = str(p.get('label') or method).strip() or method
+        args = p.get('params') or {}
+        if not isinstance(args, dict):
+            args = {}
+        args = dict(args)
+        args.setdefault('path', self._path(p))
+        fn = getattr(self, method, None)
+        if not method or method.startswith('_') or not callable(fn) or method in (
+                'job_start', 'job_state', 'job_cancel'):
+            return {'ok': False, 'why': '不认识的操作：%s' % (method or '(空)')}
+        with _JOB_LOCK:
+            cur = _JOB.get('cur')
+            if cur is not None and cur.get('state') == 'running':
+                return {'ok': False, 'why': '已经有一个操作在跑了：%s' % cur['label'],
+                        'id': cur['id'], 'running': True}
+            job = {'id': '%d' % int(time.time() * 1000), 'label': label, 'state': 'running',
+                   # 把"开任务之前说过的几句"接在前面：刚打开界面点一下，也能看到前因
+                   'lines': list(_IDLE) + ['▶ %s 开始' % label],
+                   'started': time.time(), 'beat': time.time(),
+                   'result': None, 'lock': threading.Lock(), 'proc': None, 'cancel': False}
+            _JOB['cur'] = job
+            _IDLE.clear()
+        threading.Thread(target=self._job_run, args=(job, fn, args), daemon=True).start()
+        return {'ok': True, 'id': job['id'], 'label': label, 'method': method}
+
+    def _job_run(self, job, fn, args):
+        """在后台线程里跑真正的活；异常也收进 result，别让它无声无息地没了。"""
+        try:
+            res = fn(args)
+            if not isinstance(res, dict):
+                res = {'ok': True, 'out': str(res)}
+        except Exception as e:                                          # noqa: BLE001
+            res = {'ok': False, 'why': '%s: %s' % (type(e).__name__, e), 'steps': []}
+            _live('✗ 出错了：%s: %s' % (type(e).__name__, e))
+        with job['lock']:
+            if job.get('cancel'):
+                res['ok'] = False
+                res['why'] = '你点了「停一下」，这次没做完（已经做完的部分都在，重新点一次会接着来）'
+            job['result'] = res
+            job['state'] = 'cancelled' if job.get('cancel') else 'done'
+            job['ended'] = time.time()
+            job['proc'] = None
+
+    def job_state(self, params=None):
+        """看一眼那个任务跑到哪了（界面每 0.4 秒问一次）。"""
+        p = params or {}
+        jid = str(p.get('id') or '')
+        with _JOB_LOCK:
+            job = _JOB.get('cur')
+        if not job or (jid and job['id'] != jid):
+            return {'ok': False, 'why': '这个任务不在了（可能已经跑完，或者窗口关过）'}
+        try:
+            n = int(p.get('n') or 80)
+        except (TypeError, ValueError):
+            n = 80
+        with job['lock']:
+            lines = job['lines'][-max(5, min(400, n)):]
+            beat = job['beat']
+            state = job['state']
+            res = job['result']
+        return {'ok': True, 'id': job['id'], 'label': job['label'], 'state': state,
+                'elapsed': round(time.time() - job['started'], 1),
+                # silent = 多少秒没有新动静 —— 界面靠它说"还在跑，只是慢"
+                'silent': round(time.time() - beat, 1),
+                'lines': lines, 'result': res}
+
+    def job_cancel(self, params=None):
+        """停掉正在跑的任务（真的 kill 子进程；已经跑完的返回"没在跑"）。"""
+        p = params or {}
+        jid = str(p.get('id') or '')
+        with _JOB_LOCK:
+            job = _JOB.get('cur')
+        if not job or (jid and job['id'] != jid):
+            return {'ok': False, 'why': '没有正在跑的任务'}
+        with job['lock']:
+            if job['state'] != 'running':
+                return {'ok': True, 'state': job['state'], 'why': '它已经跑完了'}
+            job['cancel'] = True
+            proc = job['proc']
+        _kill_tree(proc)
+        _live('■ 你点了「停一下」，正在收尾…')
+        return {'ok': True, 'state': 'cancelling',
+                'why': '已经让它停下了' if proc is not None else '正在收尾'}
+
+    # ---------------------------------------------------------------- 推之前先看清楚
+    def push_check(self, params=None):
+        """推送前体检：这一推大概多大、有没有 GitHub 装不下的文件。
+
+        ★ 为什么要有（真事）：一个项目的初版提交里躺着一个 **182MB** 的语音模型文件，
+          GitHub 单文件上限 100MB ⇒ 那一推**一定失败**，而且失败前先把 182MB 传一遍，
+          界面上三十秒没动静，人只会以为软件坏了。现在点「备份到云端」之前先扫一遍
+          版本库里的文件大小，先警告、先问，再决定屏蔽还是照推。
+        """
+        path = self._path(params or {})
+        info = repo_info(path)
+        if not info:
+            return {'ok': False, 'why': '这不是一个 git 仓库：%s' % path, 'big': []}
+        root = info['root']
+        files, total = [], 0
+        got = git(root, 'ls-tree', '-r', '-l', 'HEAD', timeout=120)
+        if got.get('ok'):
+            for ln in (got.get('out') or '').splitlines():
+                m = re.match(r'^\d+ \w+ ([0-9a-f]+)\s+(\d+)\t(.+)$', ln)
+                if not m:
+                    continue
+                sz = int(m.group(2))
+                total += sz
+                files.append((sz, m.group(3)))
+        else:
+            r = repo_size_rows(root)
+            files = [(f['bytes'], f['path']) for f in r.get('top', [])]
+            total = r.get('bytes') or 0
+        files.sort(reverse=True)
+        LIMIT_HARD, LIMIT_WARN = 100 * 1024 * 1024, 50 * 1024 * 1024
+        big = []
+        for sz, name in files:
+            if sz < LIMIT_WARN:
+                break
+            big.append({'path': name, 'bytes': sz, 'size': human_size(sz),
+                        'level': 'block' if sz >= LIMIT_HARD else 'warn',
+                        'why': ('%s —— GitHub 单个文件不能超过 100MB，这个一定推不上去'
+                                % human_size(sz)) if sz >= LIMIT_HARD else
+                               ('%s —— 偏大，推起来会慢' % human_size(sz)),
+                        # 屏蔽的时候整条目录屏蔽更省事（不然一个模型目录里有几十个文件）
+                        'pattern': (os.path.dirname(name).replace('\\', '/') + '/')
+                                   if os.path.dirname(name) else name})
+        ahead = 0
+        if info.get('upstream'):
+            n = git(root, 'rev-list', '--count', '%s..HEAD' % info['upstream'])
+            try:
+                ahead = int((n.get('out') or '0').strip() or 0)
+            except ValueError:
+                ahead = 0
+        else:
+            n = git(root, 'rev-list', '--count', 'HEAD')
+            try:
+                ahead = int((n.get('out') or '0').strip() or 0)
+            except ValueError:
+                ahead = 0
+        return {'ok': True, 'path': path, 'files': len(files), 'bytes': total,
+                'size': human_size(total), 'big': big,
+                'blocked': bool([b for b in big if b['level'] == 'block']),
+                'initial': not info.get('upstream'), 'commits': ahead,
+                'limitHard': human_size(LIMIT_HARD), 'limitWarn': human_size(LIMIT_WARN),
+                'gitignore': os.path.join(root, '.gitignore')}
+
+    # ---------------------------------------------------------------- 屏蔽某个目录 / 文件
+    def shield(self, params=None):
+        """「屏蔽」一步做完：写进 `.gitignore` + 把已经被跟踪的从版本库去掉（磁盘不动）。
+
+        参数 `patterns`：一条或几条要屏蔽的路径（目录结尾带 `/` 更清楚）。
+        """
+        p = params or {}
+        path = self._path(p)
+        info = repo_info(path)
+        if not info:
+            return {'ok': False, 'why': '这不是一个 git 仓库：%s' % path, 'steps': []}
+        root = info['root']
+        raw = p.get('patterns') or p.get('pattern') or []
+        if isinstance(raw, str):
+            raw = [raw]
+        pats = []
+        for x in raw:
+            s = str(x).strip().replace('\\', '/')
+            if not s or s.startswith('/') and '..' in s:
+                continue
+            s = s.lstrip('/').strip('/')
+            if s and s not in pats:
+                pats.append(s)
+        if not pats:
+            return {'ok': False, 'why': '没给要屏蔽的路径', 'steps': []}
+        gi = os.path.join(root, '.gitignore')
+        old = []
+        try:
+            with open(gi, encoding='utf-8', errors='replace') as f:
+                old = [x for x in f.read().splitlines()]
+        except OSError:
+            old = []
+        have = set(x.strip().strip('/') for x in old)
+        add = [x for x in pats if x not in have and (x + '/') not in have]
+        if add:
+            try:
+                os.makedirs(os.path.dirname(gi) or '.', exist_ok=True)
+                with open(gi, 'a', encoding='utf-8') as f:
+                    if old and old[-1].strip():
+                        f.write('\n')
+                    f.write('\n# moss：这些不跟着提交\n')
+                    f.write('\n'.join(add) + '\n')
+            except OSError as e:
+                return {'ok': False, 'why': '写不进 .gitignore：%s' % e, 'steps': []}
+        step = self._step(root, ['git', 'rm', '-r', '-q', '--cached', '--'] + pats,
+                          '把 %s 从版本库里去掉（磁盘上的文件都留着）' % '、'.join(pats), 240)
+        out = self._finish(path, [step])
+        out['added'] = add
+        out['patterns'] = pats
+        out['label'] = '屏蔽 %s' % '、'.join(pats)
+        return out
+
+    def ignore(self, params=None):
+        """`.gitignore` 的「看一眼 / 加一条 / 删一条」—— 界面上那张「屏蔽清单」。
+
+        op = list（默认）/ add（要 pattern）/ remove（要 pattern 或 line）。
+        ★ 为什么要有：以前"哪些东西没跟着提交"只写在某个隐藏文件里，普通人根本不知道
+          有这回事、更不知道当初屏蔽了什么；出了问题只能找 AI 翻 `.gitignore`。
+        """
+        p = params or {}
+        op = str(p.get('op') or 'list').strip()
+        path = self._path(p)
+        info = repo_info(path)
+        root = (info or {}).get('root') or path
+        gi = os.path.join(root, '.gitignore')
+        lines = []
+        try:
+            with open(gi, encoding='utf-8', errors='replace') as f:
+                lines = [x.rstrip() for x in f.read().splitlines()]
+        except OSError:
+            lines = []
+        if op in ('add', 'remove'):
+            pat = str(p.get('pattern') or '').strip().replace('\\', '/')
+            if not pat:
+                return {'ok': False, 'why': '没给要处理的规则', 'entries': []}
+            if op == 'add':
+                if pat.strip('/') in set(x.strip().strip('/') for x in lines if x.strip()):
+                    return {'ok': True, 'entries': [], 'kept': True,
+                            'why': '%s 已经在清单里了' % pat}
+                try:
+                    with open(gi, 'a', encoding='utf-8') as f:
+                        if lines and lines[-1].strip():
+                            f.write('\n')
+                        f.write(pat + '\n')
+                except OSError as e:
+                    return {'ok': False, 'why': '写不进 .gitignore：%s' % e, 'entries': []}
+            else:
+                keep = [x for x in lines if x.strip() and x.strip() != pat.strip()
+                        and x.strip().strip('/') != pat.strip().strip('/')]
+                try:
+                    with open(gi, 'w', encoding='utf-8') as f:
+                        f.write('\n'.join(keep) + ('\n' if keep else ''))
+                except OSError as e:
+                    return {'ok': False, 'why': '改不了 .gitignore：%s' % e, 'entries': []}
+            try:
+                with open(gi, encoding='utf-8', errors='replace') as f:
+                    lines = [x.rstrip() for x in f.read().splitlines()]
+            except OSError:
+                lines = []
+        return {'ok': True, 'path': path, 'file': gi, 'entries': self._ignore_rows(root, lines)}
+
+    def _ignore_rows(self, root, lines):
+        """每条规则现在还盖住哪些"已经被跟踪"的文件（这些才是隐患：屏蔽了但还在库里）。"""
+        stats = {}
+        tracked = []
+        ign = git(root, 'ls-files', '-z', '-ci', '--exclude-standard', timeout=120)
+        names = [x for x in (ign.get('out') or '').split('\0') if x.strip()][:300]
+        if names:
+            chk = git(root, 'check-ignore', '-v', '--', *names, timeout=120)
+            for ln in (chk.get('out') or '').splitlines():
+                m = re.match(r'^(.*?):(\d+):(.*)\t(.+)$', ln)
+                if not m:
+                    continue
+                no = int(m.group(2))
+                cur = stats.setdefault(no, {'count': 0, 'bytes': 0, 'files': []})
+                cur['count'] += 1
+                try:
+                    cur['bytes'] += os.path.getsize(os.path.join(root, m.group(4)))
+                except OSError:
+                    pass
+                if len(cur['files']) < 5:
+                    cur['files'].append(m.group(4))
+            tracked = names
+        rows = []
+        for i, ln in enumerate(lines, 1):
+            t = ln.strip()
+            if not t or t.startswith('#'):
+                continue
+            s = stats.get(i, {'count': 0, 'bytes': 0, 'files': []})
+            rows.append({'line': i, 'pattern': t, 'tracked': s['count'],
+                         'bytes': s['bytes'], 'size': human_size(s['bytes']),
+                         'files': s['files']})
+        return rows
+
+    def bigfiles(self, params=None):
+        """版本库里最占体积的文件（界面上「体积排行」用）。"""
+        path = self._path(params or {})
+        info = repo_info(path)
+        if not info:
+            return {'ok': False, 'why': '这不是一个 git 仓库：%s' % path, 'top': []}
+        r = repo_size_rows(info['root'], limit=int((params or {}).get('limit') or 20))
+        r.update({'ok': bool(r.get('ok')), 'path': path, 'size': human_size(r.get('bytes') or 0)})
+        return r
 
     def net_probe(self, params=None):
         path = self._path(params)
@@ -1729,6 +2495,18 @@ class Core:
         if spec.get('needArg') and not arg.strip():
             return {'ok': False, 'why': '这个动作要填：%s' % spec['needArg'],
                     'cmd': cmd_text, 'out': '', 'needArg': spec['needArg']}
+        if name == 'untrack':
+            return self.untrack({'path': path, 'arg': arg})
+        if name == 'shield':
+            pats = [x.strip() for x in re.split(r'[,;]', str(arg or '')) if x.strip()]
+            return self.shield({'path': path, 'patterns': pats})
+        if name == 'gitlog':
+            # 只是读日志文件：跟"是不是仓库"无关，也不用跑任何命令
+            got = self.sync_log({'n': 80})
+            print('[github] %s（最近 %d 行）' % (SYNC_LOG, len(got['lines'])), flush=True)
+            return {'ok': True, 'action': name, 'label': spec['label'], 'cmd': cmd_text,
+                    'out': got['out'], 'code': 0, 'ms': 0, 'path': path,
+                    'logPath': SYNC_LOG, 'lines': got['lines']}
         if name not in NO_REPO_NEEDED and not repo_info(path):
             return {'ok': False, 'cmd': cmd_text, 'out': '',
                     'why': '%s 不是一个 git 仓库 —— 先在「路径」里选一个仓库目录（或者用它 clone 一个）' % path}
@@ -1741,7 +2519,7 @@ class Core:
         argv = spec['argv'](ctx, arg.strip())
         if not any(argv):
             return {'ok': False, 'why': '缺可执行文件（gh 没装？）', 'cmd': cmd_text, 'out': ''}
-        got = run(argv, cwd=path, timeout=spec.get('timeout', 60))
+        got = _exec(argv, cwd=path, timeout=spec.get('timeout', 60), label=spec['label'])
         got.update({'action': name, 'label': spec['label'], 'path': path,
                     'danger': bool(spec.get('danger'))})
         if not got['ok']:
@@ -1778,7 +2556,7 @@ class Core:
 
     # ---- 一串步骤的公共件（界面要看到「每一步的等价命令」）
     def _step(self, cwd, argv, label, timeout=180):
-        got = run(argv, cwd=cwd, timeout=timeout)
+        got = _exec(argv, cwd=cwd, timeout=timeout, label=label)
         got['label'] = label
         print('[github] %s → %s（%d ms，退出码 %s）'
               % (label, got['cmd'], got['ms'], got['code']), flush=True)
@@ -2030,6 +2808,19 @@ class Core:
                           'label': '④ 核对：远端和本地是不是同一个提交',
                           'out': ver.get('msg') or '',
                           'why': '' if ver.get('same') else (ver.get('msg') or '')})
+        if len(steps) == 1 and not fetch['ok']:
+            # ★ 探针真跑出来的一条：fetch 报 `Recv failure: Connection was reset`，
+            #   本地又没有要推的东西 ⇒ 以前这里照样报 **成功**，理由写"本地和远端已经一致"。
+            #   可我们**根本没问到云端**（ahead/behind 是拿旧记录算的），说"一致"是瞎猜。
+            #   没问到就说没问到 —— 这也是"黑盒"的一种：报了成功，人下次才发现云端是旧的。
+            res = self._finish(path, steps)
+            first = (fetch.get('out') or '').splitlines()[:1]
+            res['ok'] = False
+            res['netFail'] = True
+            res['why'] = ('没连上 GitHub：%s　（本地没有要推的东西，但云端现在什么样'
+                          '也确认不了 —— 网络好了再点一次）'
+                          % (first[0] if first else '拉取远端信息失败'))
+            return res
         if len(steps) == 1 and steps[0]['ok'] and not info['ahead'] and not info['behind']:
             steps.append({'ok': True, 'cmd': '（无事可做）', 'ms': 0, 'label': '② / ③',
                           'out': '本地和远端已经一致：没有要拉的，也没有要推的。'})
@@ -2525,16 +3316,56 @@ def recent_payload():
 
 
 # ------------------------------------------------------------------ 内嵌模式（stdio）
+class _StdoutToProgress(object):
+    """内嵌模式下挡在 `sys.stdout` 前面：**print 出来的东西一律变成"进度"**。
+
+    ★ 为什么要有（探针真抓到的）：内嵌模式下 stdout 是**协议通道**（一行一个 JSON），
+      而这个文件里到处是 `print('…')`（每一步干了什么）。这些行一进通道，宿主只当
+      坏消息丢掉 —— 于是用户在界面上什么也看不见，只能问"它到底在干什么"。
+      以前是靠一条条改 print 解决，永远改不完；这里一次性全部改道：
+      走 `_live()` → 进当前任务的进度缓冲 → 界面的进度窗口能看见，协议也不会脏。
+    """
+
+    def __init__(self, real):
+        self._real = real
+
+    def write(self, s):
+        text = str(s or '')
+        for ln in text.splitlines():
+            if ln.strip():
+                try:
+                    _live(ln)
+                except Exception:                                        # noqa: BLE001
+                    pass
+        return len(text)
+
+    def flush(self):
+        return None
+
+    def isatty(self):
+        return False
+
+    @property
+    def encoding(self):
+        return 'utf-8'
+
+    def fileno(self):
+        raise OSError('内嵌模式下 stdout 已经改道（不再是协议通道）')
+
+
 class Embedded:
     """被嵌进 moss 的时候：**不开窗**，在 stdin/stdout 上一行一个 JSON 说话。"""
 
     def __init__(self):
         self.core = Core()
         self._lock = threading.Lock()
+        # 协议通道单独留一份；剩下的 print 全部改道成进度（见 _StdoutToProgress）
+        self._out = sys.stdout
+        sys.stdout = _StdoutToProgress(self._out)
 
     def send(self, obj):
-        sys.stdout.write(json.dumps(obj, ensure_ascii=False) + '\n')
-        sys.stdout.flush()
+        self._out.write(json.dumps(obj, ensure_ascii=False) + '\n')
+        self._out.flush()
 
     def loop(self):
         for line in sys.stdin:
@@ -2667,7 +3498,10 @@ def cli(action, path, arg='', extra=None):
                 'run_action', 'file_op', 'gh', 'set_path', 'forget_path', 'browse', 'disks',
                 'net_probe', 'remote_repo', 'mirror', 'stashes', 'drop_stash',
                 'delete_commit', 'env_check', 'install_tool', 'install_status',
-                'fix_identity', 'open_url', 'gh_login']
+                'fix_identity', 'open_url', 'gh_login',
+                # 长任务 + 把黑盒打开的那几个（界面全靠它们：进度、日志、体检、屏蔽）
+                'job_start', 'job_state', 'job_cancel',
+                'push_check', 'bigfiles', 'shield', 'ignore', 'sync_log']
         missing = [m for m in need if not callable(getattr(core, m, None))]
         print('[github] 界面用到但缺失的：%s' % (' '.join(missing) if missing else '（一个都不缺）'))
         # ★ 真正要验的是**独立窗口那层桥**（真机报的"后端没有这个方法"就出在那儿）：
@@ -2779,6 +3613,46 @@ def cli(action, path, arg='', extra=None):
                       'steps': [{'ok': s.get('ok'), 'label': s.get('label') or s.get('cmd')}
                                 for s in (got.get('steps') or [])],
                       'note': got.get('note') or ''})
+        return 0 if got.get('ok') else 1
+    if action in ('untrack', 'gitlog', 'shield', 'ignore'):
+        p = resolve_path(path)
+        _fn = {'gitlog': 'sync_log', 'untrack': 'untrack',
+               'shield': 'shield', 'ignore': 'ignore'}[action]
+        _kw = {'path': p}
+        if action in ('untrack', 'shield'):
+            _kw['arg'] = arg
+            _kw['patterns'] = [x for x in arg.replace(';', ',').split(',') if x.strip()]
+        if action == 'ignore':
+            _kw['pattern'] = arg
+            _kw['op'] = 'add' if arg else 'list'
+        got = getattr(core, _fn)(_kw)
+        if action == 'gitlog':
+            print('[github] 日志文件：%s' % got.get('path'))
+            print(got.get('out') or '')
+        elif action == 'ignore':
+            print('[github] 清单文件：%s' % got.get('file'))
+            for e in got.get('entries') or []:
+                mark = ('（还在库里 %d 个文件 / %s）' % (e['tracked'], e['size'])) if e.get('tracked') else ''
+                print('  %3d. %s %s' % (e.get('line'), e.get('pattern'), mark))
+            if not (got.get('entries') or []):
+                print('  （清单是空的 —— 什么过滤规则都还没写）')
+            if got.get('why'):
+                print('[github] %s' % got['why'])
+        else:
+            print('[github] 目录：%s' % p)
+            print('[github] 等价命令：%s' % got.get('cmd', ''))
+            for s in got.get('steps') or []:
+                print('[%s] %s' % ('✓' if s.get('ok') else '✗', s.get('label') or s.get('cmd') or ''))
+                out = (s.get('out') or '').strip()
+                if out and not s.get('ok'):
+                    print('    ' + out.replace('\n', '\n    ')[:800])
+            if got.get('note'):
+                print('[github] %s' % got['note'])
+            if not got.get('ok'):
+                print('[github] 没跑成：%s' % (got.get('why') or '见上面哪一步红了'))
+        write_result({'ok': bool(got.get('ok')), 'action': action, 'path': p,
+                      'cmd': got.get('cmd', ''), 'out': got.get('out', '')[:4000],
+                      'count': got.get('count'), 'note': got.get('note') or ''})
         return 0 if got.get('ok') else 1
     if action not in ACTIONS:
         names = '、'.join(ACTIONS.keys())

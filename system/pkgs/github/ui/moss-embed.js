@@ -69,7 +69,12 @@
      中间任何一环漏掉一条回复，界面就永远等下去 —— 真机上的表现是安装窗死死停在
      「正在启动 · 已经 0 秒」、点什么都没反应，而控制台里一个字都没有。
      有超时至少会 reject，让上层能把"等不到回话"画到界面上。 */
-  const CALL_TIMEOUT_MS = 30000;
+  /* ★ 90 秒（原来是 30 秒，这就是"三十秒没反应"那句话的出处）：
+     首次推送大仓库时它真的会跑上几分钟，30 秒一到界面就判死刑 —— 可 git 还在传，
+     人以为失败又点一次，越点越乱。长操作现在改走「后台任务 + 轮询」（见 app.js 的
+     job_start / job_state），那条路一秒内就回、根本用不到这个上限；
+     这里只是给普通调用留点余地。真超时了，提示里会告诉你去「同步日志」看。 */
+  const CALL_TIMEOUT_MS = 90000;
 
   function callViaHost(method, params) {
     return new Promise(function (resolve, reject) {
@@ -78,7 +83,8 @@
         if (!waiting[id]) return;
         delete waiting[id];
         reject(new Error('后端 ' + Math.round(CALL_TIMEOUT_MS / 1000) +
-                         ' 秒没回话（' + method + '）'));
+                         ' 秒没回话（' + method + '）—— 活儿可能还在后台跑，' +
+                         '别急着再点一次；去「更多功能 → 同步日志」看它走到哪了'));
       }, CALL_TIMEOUT_MS);
       waiting[id] = {
         resolve: function (v) { clearTimeout(timer); resolve(v); },

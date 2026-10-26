@@ -58,6 +58,417 @@ DETACHED = 0x00000008           # DETACHED_PROCESS
 DEVNULL = subprocess.DEVNULL
 
 
+# ================================================================ WebView2 运行时预检（`V-390`）
+# ★ 为什么这件事在**界面进程**里做，而不是宿主 `core/ui.py` 里：
+#   宿主是 nuitka 编出来的 exe，手边只有 ctypes / MessageBoxW；而"下载 + 进度条 + 重试"要
+#   图形工具包，tkinter 恰好只在**自带运行时**里是齐的（`system/runtimes/python/3.12`，
+#   tcl/tk/tk86t.dll 都在）。于是分工是：
+#       core/ui.py  --子进程 `--check-webview2`-->  这里      （判定逻辑只有这一份）
+#       system/ui/main.py  缺就弹框：下载 → 静默安装 → 复查 → 继续开界面
+#
+# ★ 症状（`V-390`，2026-10-24 远程装机踩到）：客户机没装 WebView2 时，pywebview 6 会
+#   **一声不响**退回 MSHTML（IE 内核）—— 窗口照样开，但页面只剩静态文字：图标一个都没有、
+#   插件列表空白、状态栏一行「“pywebview”未定义」。用户只会以为"程序坏了"。
+#   判据来自 `webview/platforms/winforms.py:_is_chromium()`：.NET Framework ≥ 4.6.2
+#   **且** 注册表里有 Edge WebView2 运行时，两条都满足才用 EdgeChromium。
+# ⚠️ 装 **Edge 浏览器** 不算（那条 GUID 是 `{56EB18F8-…}`，pywebview 不看）；Chrome 更不算
+#   —— pywebview 在 Windows 只有 WebView2 / MSHTML(IE) / CEF 三个后端，没有"外部浏览器"。
+_WEBVIEW2_PAGE = "https://developer.microsoft.com/microsoft-edge/webview2/"
+#: 独立安装包（MicrosoftEdgeWebView2RuntimeInstallerX64.exe，约 205 MB）—— 有真字节进度
+_WEBVIEW2_X64 = "https://go.microsoft.com/fwlink/p/?LinkId=2124701"
+#: 联机引导器（MicrosoftEdgeWebview2Setup.exe，约 2 MB）—— 独立包下不动时兜底
+_WEBVIEW2_BOOT = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+#: .NET Framework 4.8 下载页（WebView2 要 4.6.2+；太老的话装了运行时也白装）
+_NETFX_PAGE = "https://dotnet.microsoft.com/download/dotnet-framework/net48"
+
+#: pywebview 认这四个 EdgeUpdate 客户端（运行时 / Beta / Dev / Canary）
+_WV2_GUIDS = (
+    "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",      # Microsoft Edge WebView2 Runtime
+    "{2CD8A007-E189-409D-A2C8-9AF4EF3C72AA}",      # Beta
+    "{0D50BFEC-CD6A-4F9A-964C-C7416E3ACB10}",      # Dev
+    "{65C35B14-6C1D-4122-AC46-7148CC9D6497}",      # Canary
+)
+#: 86.0.622.0 以下 pywebview 不认（`_is_new_version('86.0.622.0', build)`）
+_WV2_MIN = (86, 0, 622, 0)
+#: .NET Framework 4.6.2 的 Release 号（pywebview 里那个 394802 就是它）
+_NETFX_462 = 394802
+
+
+def _ver4(text):
+    """'155.0.4283.62' → (155, 0, 4283, 62)，固定四段，能直接比大小。"""
+    out = []
+    for part in str(text).split("."):
+        if not part.isdigit():
+            break
+        out.append(int(part))
+    out = (out + [0, 0, 0, 0])[:4]
+    return tuple(out)
+
+
+def _netfx_release():
+    """`.NET Framework` 的 Release 号（没有就 0）。>= 394802 = 4.6.2+。"""
+    try:
+        import winreg                                               # noqa: PLC0415
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full") as k:
+            return int(winreg.QueryValueEx(k, "Release")[0] or 0)
+    except Exception:                                               # noqa: BLE001
+        return 0
+
+
+def _wv2_builds():
+    """登记在案的 WebView2 运行时版本号（HKLM 的 WOW6432Node 那份 + HKCU 那份）。
+
+    两份都要看：管理员装上的是 HKLM（WOW6432Node），**不提权装**的是 HKCU
+    （`%LOCALAPPDATA%\\Microsoft\\EdgeWebView`）—— 后者 pywebview 也认，所以没管理员权限
+    的机器照样能救。
+    """
+    try:
+        import winreg                                               # noqa: PLC0415
+    except Exception:                                               # noqa: BLE001
+        return []
+    found = []
+    for root, sub in ((winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node"),
+                      (winreg.HKEY_CURRENT_USER, r"SOFTWARE")):
+        for guid in _WV2_GUIDS:
+            try:
+                key = sub + r"\Microsoft\EdgeUpdate\Clients" + "\\" + guid
+                with winreg.OpenKey(root, key) as k:
+                    found.append(str(winreg.QueryValueEx(k, "pv")[0]))
+            except Exception:                                       # noqa: BLE001
+                pass
+    return found
+
+
+def webview2_status():
+    """(能不能用 Chromium 内核, 一句人话)。判据**照抄** pywebview 的 `winforms._is_chromium()`：
+
+        .NET Framework 的 Release >= 394802（4.6.2+）
+        **且** EdgeUpdate\\Clients 里有 WebView2（或 Beta/Dev/Canary）的 pv >= 86.0.622.0
+
+    ★ 为什么不直接 `import webview.platforms.winforms` 看 `wf.renderer`：那次 import 会把
+      CLR 拉起来，并**当场**把 renderer 定死；而我们装完还得让 pywebview 自己重新判一次
+      （装好就能用，不用重启 moss）。所以这里只读注册表，判据与它保持一致。
+    """
+    rel = _netfx_release()
+    builds = _wv2_builds()
+    best = max((_ver4(b) for b in builds), default=(0, 0, 0, 0))
+    if rel < _NETFX_462:
+        return False, ("缺 .NET Framework 4.6.2+（本机 Release=%s）" % (rel or "没读到"))
+    if best < _WV2_MIN:
+        if builds:
+            return False, "WebView2 运行时太旧（%s）" % builds[0]
+        return False, "缺 Microsoft Edge WebView2 运行时（装 Edge 浏览器不算）"
+    return True, "WebView2 %s（Chromium 内核）" % ".".join(str(x) for x in best)
+
+
+def _download(url, dest, on_progress=None, cancel=None, timeout=60):
+    """流式下载到 `dest`，每 256 KB 回调一次 `on_progress(已下字节, 总字节)`（总长度未知给 0）。
+
+    ★ 先落 `.part` 再改名：中途断网/被杀不能留下一个"看着像装好了"的半个安装包。
+    ★ `cancel` 是个 dict（`{"cancel": bool}`）而不是 Event —— 这里只需要一个能被外部
+      随时翻的旗子，tkinter 那边改它不需要锁。
+    """
+    import urllib.request                                           # noqa: PLC0415
+    part = str(dest) + ".part"
+    req = urllib.request.Request(url, headers={"User-Agent": "moss-setup"})
+    with urllib.request.urlopen(req, timeout=timeout) as r, open(part, "wb") as f:
+        try:
+            total = int(r.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            total = 0
+        done = 0
+        while True:
+            if cancel is not None and cancel.get("cancel"):
+                raise RuntimeError("已取消")
+            chunk = r.read(262144)
+            if not chunk:
+                break
+            f.write(chunk)
+            done += len(chunk)
+            if on_progress:
+                on_progress(done, total)
+    os.replace(part, str(dest))
+    size = dest.stat().st_size
+    if size < 100 * 1024:
+        raise RuntimeError("下载回来只有 %d 字节，像是被网络/代理拦了" % size)
+    return size
+
+
+def _run_installer(exe):
+    """静默安装 WebView2 运行时。返回"有没有发起成功"（装没装成由调用方复查注册表判定）。
+
+    ★ **不提权**跑就等于"装到当前用户"（`%LOCALAPPDATA%\\Microsoft\\EdgeWebView`），
+      pywebview 也查 HKCU 那份 —— 所以客户机没有管理员权限也能救。
+    ★ 提权那次是**兜底**：先按当前权限试，被拒/失败才 `ShellExecuteW("runas")`（会弹 UAC）。
+      `ShellExecuteW` 是异步的，这里只负责发起，结果照样靠后面的复查。
+    """
+    try:
+        p = subprocess.run([str(exe), "/silent", "/install"], timeout=900,
+                           creationflags=NO_WINDOW)
+        if p.returncode in (0, 3010):        # 3010 = 装好了但要重启；这里用不着重启
+            return True
+    except Exception:                                               # noqa: BLE001
+        pass
+    try:
+        import ctypes                                               # noqa: PLC0415
+        r = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", str(exe), "/silent /install", None, 1)
+        return int(r) > 32
+    except Exception:                                               # noqa: BLE001
+        return False
+
+
+def _webview2_dialog(detail):
+    """「缺 WebView2」对话框：下载（带进度）→ 静默安装 → 复查。
+
+    返回 True = 现在能用了（装好了），调用方接着开界面；False = 用户放弃/装失败。
+
+    ★ 线程规矩：下载/安装跑在**工作线程**里，**一个字都不碰 tkinter**（只往 queue 里放），
+      由界面线程 `after` 泵出来。跨线程直接改控件在这套 tk 上会随机崩。
+    """
+    try:
+        import queue                                                # noqa: PLC0415
+        import tempfile                                             # noqa: PLC0415
+        import tkinter as tk                                        # noqa: PLC0415
+        import webbrowser                                           # noqa: PLC0415
+        from tkinter import ttk                                     # noqa: PLC0415
+    except Exception as e:                                          # noqa: BLE001
+        # 连 tkinter 都起不来（理论上不会）：退回系统弹窗 —— 信息少，但**绝不静默**。
+        try:
+            import ctypes                                           # noqa: PLC0415
+            ctypes.windll.user32.MessageBoxW(
+                None,
+                "moss 的界面需要「Microsoft Edge WebView2 运行时」，这台电脑没有：\n"
+                "    %s\n\n请自己装一个（是运行时，不是 Edge 浏览器）：\n%s"
+                % (detail, _WEBVIEW2_PAGE),
+                "moss", 0x10)
+        except Exception:                                           # noqa: BLE001
+            print("[moss] 缺 WebView2 运行时（%s）：%s" % (detail, _WEBVIEW2_PAGE),
+                  file=sys.stderr, flush=True)
+        print("[moss] 对话框起不来：%r" % (e,), file=sys.stderr, flush=True)
+        return False
+
+    ACCENT, FG, FG2, DIM, BG, FIELD = ("#0071e3", "#1d1d1f", "#515154",
+                                       "#86868b", "#ffffff", "#f5f5f7")
+    FONT = ("Microsoft YaHei UI", 9)
+    FONT_H = ("Microsoft YaHei UI", 12, "bold")
+
+    res = {"ok": False, "cancel": False}
+    q = queue.Queue()
+
+    root = tk.Tk()
+    root.withdraw()                     # 布局算完再显示，免得先闪一下毛坯窗
+    root.title("moss · 需要 WebView2 运行时")
+    root.configure(bg=BG)
+    root.resizable(False, False)
+    w, h = 566, 344
+    root.geometry("%dx%d+%d+%d" % (w, h, max(0, (root.winfo_screenwidth() - w) // 2),
+                                   max(0, (root.winfo_screenheight() - h) // 3)))
+    try:
+        root.iconbitmap(default=str(HERE.parent / "icon" / "moss.ico"))
+    except Exception:                                               # noqa: BLE001
+        pass
+
+    box = tk.Frame(root, bg=BG, padx=22, pady=16)
+    box.pack(fill="both", expand=True)
+
+    tk.Label(box, text="moss 需要「Microsoft Edge WebView2 运行时」", bg=BG, fg=FG,
+             font=FONT_H, anchor="w").pack(fill="x")
+    body = ("这台电脑上没装它，界面就只能退回 IE 内核渲染 —— 表现是：窗口能开，但只有几行"
+            "静态文字，插件列表是空的，按钮点不动。\n\n"
+            "点下面的按钮，moss 会自己下载并安装（约 205 MB）；装完自动继续，不用重启 moss。")
+    tk.Label(box, text=body, bg=BG, fg=FG2, font=FONT, justify="left", anchor="w",
+             wraplength=520).pack(fill="x", pady=(8, 12))
+
+    # ★ 下半截全部 `side="bottom"` 自下而上堆：按钮 → 进度文字 → 进度条 → 状态条。
+    #   这样"富余的空白"只会落在正文和状态条之间，不会在进度条下面挖一个洞（第一版就是那样，
+    #   看着像少画了一块）。窗口高度也就能压到 340。
+    btns = tk.Frame(box, bg=BG)
+    btns.pack(fill="x", side="bottom")
+
+    foot = tk.Label(box, text="", bg=BG, fg=DIM, font=FONT, anchor="w", wraplength=520)
+    foot.pack(fill="x", side="bottom", pady=(6, 10))
+
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")             # vista 主题的进度条是系统绿，改不动颜色
+    except Exception:                                               # noqa: BLE001
+        pass
+    style.configure("Moss.Horizontal.TProgressbar", troughcolor="#ececf0",
+                    background=ACCENT, bordercolor="#ececf0", lightcolor=ACCENT,
+                    darkcolor=ACCENT, thickness=8)
+    prog = ttk.Progressbar(box, style="Moss.Horizontal.TProgressbar", orient="horizontal",
+                           mode="determinate", maximum=100, value=0)
+    prog.pack(fill="x", side="bottom")
+
+    # 状态条：检测结果 / 装完的结果都写在这儿（灰底，和界面里那些提示条一个长相）
+    bar = tk.Frame(box, bg=FIELD, padx=12, pady=8)
+    bar.pack(fill="x", side="bottom", pady=(14, 0))
+    said = tk.Label(bar, text="检测结果：" + detail, bg=FIELD, fg=FG2, font=FONT,
+                    anchor="w", justify="left", wraplength=492)
+    said.pack(fill="x")
+
+    def mk(text, cmd, primary=False):
+        b = tk.Button(btns, text=text, command=cmd, font=FONT, relief="flat", bd=0,
+                      highlightthickness=0, padx=14, pady=6, cursor="hand2")
+        if primary:
+            b.configure(bg=ACCENT, fg="#ffffff", disabledforeground="#d6e8ff",
+                        activebackground="#0063c8", activeforeground="#ffffff")
+        else:
+            b.configure(bg=FIELD, fg=FG2, activebackground="#ececf0", activeforeground=FG)
+        return b
+
+    def close(ok):
+        res["ok"] = bool(ok)
+        res["cancel"] = True
+        try:
+            root.destroy()
+        except Exception:                                           # noqa: BLE001
+            pass
+
+    def start():
+        b_run.configure(state="disabled", text="正在下载…")
+        b_page.configure(state="disabled")
+        foot.configure(fg=DIM, text="准备下载…")
+        threading.Thread(target=work, daemon=True).start()
+
+    def work():
+        """工作线程：下载 → 安装 → 复查。只往 queue 里放话，不碰任何控件。"""
+        tmp = Path(tempfile.gettempdir()) / "moss-webview2"
+        try:
+            tmp.mkdir(parents=True, exist_ok=True)
+        except OSError as e:                                        # noqa: BLE001
+            q.put(("fail", "建不了临时目录：%s" % e))
+            return
+        exe = tmp / "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+        last = None
+        okdl = False
+        # 独立包优先（进度是真的）；它下不动（代理/墙）就退回 2 MB 的联机引导器，
+        # 让安装器自己去下主体 —— 那条路只能显示"正在安装"，但至少有救。
+        for url, name in ((_WEBVIEW2_X64, "独立安装包（约 205 MB）"),
+                          (_WEBVIEW2_BOOT, "联机引导器（约 2 MB）")):
+            if res["cancel"]:
+                return
+            q.put(("say", "正在下载%s…" % name))
+            try:
+                _download(url, exe, lambda d, t: q.put(("pct", d, t)), res)
+                okdl = True
+                break
+            except Exception as e:                                  # noqa: BLE001
+                last = e
+        if not okdl:
+            q.put(("fail", "下载失败：%s\n可以直接点「打开下载页面」手动装。" % last))
+            return
+        if res["cancel"]:
+            return
+        q.put(("say", "下载好了，正在安装（1-3 分钟；中途可能弹 UAC 授权窗）…"))
+        q.put(("pulse",))
+        _run_installer(exe)
+        q.put(("say", "正在确认安装结果…"))
+        for _ in range(120):                # 注册表可能滞后，最多等 60 秒
+            if res["cancel"]:
+                return
+            if webview2_status()[0]:
+                q.put(("done", "装好了，正在打开界面…"))
+                return
+            time.sleep(0.5)
+        q.put(("fail", "装完没检测到 WebView2 —— 多半是 UAC 被拒或被安全软件拦了。\n"
+                       "点「打开下载页面」手动装一次，然后重开 moss。"))
+
+    def pump():
+        try:
+            while True:
+                msg = q.get_nowait()
+                kind = msg[0]
+                if kind == "say":
+                    prog.stop()
+                    prog.configure(mode="determinate")
+                    foot.configure(fg=DIM, text=msg[1])
+                elif kind == "pct":
+                    done, total = msg[1], msg[2]
+                    if total > 0:
+                        prog.configure(mode="determinate",
+                                       value=min(100.0, done * 100.0 / total))
+                        foot.configure(text="下载中 %.1f / %.1f MB（%d%%）"
+                                       % (done / 1048576.0, total / 1048576.0,
+                                          done * 100 // total))
+                    else:
+                        foot.configure(text="下载中 %.1f MB…" % (done / 1048576.0))
+                elif kind == "pulse":
+                    b_run.configure(text="正在安装…")
+                    prog.configure(mode="indeterminate")
+                    prog.start(14)
+                elif kind == "done":
+                    prog.stop()
+                    prog.configure(mode="determinate", value=100)
+                    foot.configure(fg="#0a7a2f", text=msg[1])
+                    said.configure(fg="#0a7a2f",
+                                   text="✔ " + (webview2_status()[1] or "已装好"))
+                    root.after(700, lambda: close(True))
+                    return
+                elif kind == "fail":
+                    prog.stop()
+                    prog.configure(mode="determinate", value=0)
+                    foot.configure(fg="#c0392b", text=msg[1])
+                    b_run.configure(state="normal", text="重试")
+                    b_page.configure(state="normal")
+                    b_quit.configure(text="退出")
+        except queue.Empty:
+            pass
+        root.after(120, pump)
+
+    b_run = mk("下载并安装", start, primary=True)
+    b_page = mk("打开下载页面", lambda: webbrowser.open(_WEBVIEW2_PAGE))
+    b_quit = mk("先不装，退出", lambda: close(False))
+    b_quit.pack(side="right")
+    b_run.pack(side="right", padx=(0, 8))
+    b_page.pack(side="right", padx=(0, 8))
+    if _netfx_release() < _NETFX_462:
+        # .NET 太老：单装 WebView2 也没用，直接把那条路摆在旁边
+        mk("先装 .NET 4.8", lambda: webbrowser.open(_NETFX_PAGE)).pack(side="left")
+
+    root.protocol("WM_DELETE_WINDOW", lambda: close(False))
+    try:
+        root.update_idletasks()
+        root.deiconify()
+        root.attributes("-topmost", True)      # 它是"拦路"的：别被别的窗口压在后面
+        root.after(400, lambda: root.attributes("-topmost", False))
+    except Exception:                                               # noqa: BLE001
+        root.deiconify()
+    root.after(120, pump)
+    root.mainloop()
+    return res["ok"]
+
+
+def _webview2_preflight():
+    """开窗之前先确认渲染内核能用（`V-390`）。三种走法：
+
+    · `--check-webview2`：只吐**一行 JSON** 就退出 —— 给宿主 `--selfcheck` 用，
+      判定逻辑只此一份（宿主自己不读注册表，免得以后 pywebview 换判据时漏改一处）。
+    · `MOSS_SKIP_WEBVIEW2_CHECK=1`：整段跳过（无头探针 / 没有图形环境时用）。
+    · 其余：能用就什么都不做；不能用就弹框（下载+进度+安装），装好了继续，放弃就退出。
+    """
+    if "--check-webview2" in sys.argv[1:]:
+        ok, detail = webview2_status()
+        # `ensure_ascii=True`：这一行要穿过命令行/管道，纯 ASCII 最省事（宿主那边 json 解回来）
+        print(json.dumps({"ok": ok, "detail": detail}, ensure_ascii=True), flush=True)
+        raise SystemExit(0)
+    if os.environ.get("MOSS_SKIP_WEBVIEW2_CHECK"):
+        return
+    ok, detail = webview2_status()
+    if ok:
+        return
+    print("[moss] 渲染内核：%s —— 弹框让用户装 WebView2" % detail,
+          file=sys.stderr, flush=True)
+    if not _webview2_dialog(detail):
+        raise SystemExit("[moss] 没有 WebView2 运行时，界面开不了"
+                         "（退回 IE 内核只会得到一页空白）。装一个再来：%s" % _WEBVIEW2_PAGE)
+
+
+_webview2_preflight()
+
+
 def _load_data():
     p = os.environ.get("MOSS_UI_DATA")
     if not p:
