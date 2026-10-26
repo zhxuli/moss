@@ -85,6 +85,7 @@ moss :github action=disks
 | `fetch` | `git fetch --all --prune` | 只更新远端账本（联网） |
 | `pull` | `git pull --ff-only` | 动代码（联网；只快进） |
 | `push` | `git push --progress`（没跟踪分支时 `-u origin <分支>`） | 动远端（联网） |
+| `loc` | （本机统计：按扩展名数行数） | 只看：多少行代码。两份口径（git 跟踪的 / 磁盘上全部） |
 | `precheck` | （本机统计 `git ls-tree -r -l HEAD`） | **只看**：这一推多大、有没有 GitHub 装不下的文件 |
 | `bigfiles` | （本机统计 `git ls-files` + 文件大小） | 只看：版本库里谁占体积 |
 | `gitlog` | （读 `state/github/sync.log`） | 只看：慢命令的耗时 / 退出码 / 输出尾巴 |

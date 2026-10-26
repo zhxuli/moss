@@ -1795,6 +1795,7 @@ function moreMenu() {
     ['stash', 'save', '找回收起的改动', '获取最新版时自动备份的那些'],
     ['ignores', 'x', '屏蔽清单（不跟着提交的东西）', '哪些东西不进仓库；哪条其实还在库里'],
     ['big', 'drive', '体积排行', '谁把仓库撑大了（大文件会让推送推不上去）'],
+    ['loc', 'command', '代码行数', '多少行代码（按文件行数，空行注释也算）'],
     ['synclog', 'command', '同步日志', '推送 / 拉取每一步花了多久、卡在哪一句'],
     ['precheck', 'eye', '推送前体检', '这一推多大、有没有 GitHub 装不下的文件'],
     ['clone', 'download', '从 GitHub 下载一份', '把云端仓库拷贝到这台电脑'],
@@ -1828,6 +1829,7 @@ function moreItem(w) {
   if (w === 'probe') { return dialogProbe(); }
   if (w === 'ignores') { return dialogIgnore(); }
   if (w === 'big') { return dialogBigfiles(); }
+  if (w === 'loc') { return dialogLoc(); }
   if (w === 'synclog') { return dialogSyncLog(); }
   if (w === 'precheck') { return dialogPrecheck(); }
   if (w === 'init') { closeModal(); return startRepo(); }
@@ -1911,6 +1913,63 @@ function pathDir(p) {
   var s = String(p || '').replace(/\\/g, '/');
   var i = s.lastIndexOf('/');
   return i > 0 ? (s.slice(0, i) + '/') : s;
+}
+
+/* 代码行数：两种口径并排（git 跟踪的 / 磁盘上全部），每种语言一行 */
+function dialogLoc() {
+  openModal('代码行数', '<div class="note" style="padding:12px 0">正在数…（文件多的话要几秒）</div>',
+    [{ text: '关闭', key: 'close', kind: 'ghost' }], true);
+  var libs = S.locLibs ? 1 : 0;
+  call('loc', { path: S.path, libs: libs }).then(function (r) {
+    var b = sub('.dlg-b');
+    if (!b || !el('modal').classList.contains('show')) { return; }
+    if (!r || !r.ok) {
+      b.innerHTML = '<div class="note">数不出来：' + esc((r && r.why) || '') + '</div>';
+      return;
+    }
+    var h = '<div class="note">按「一个文件有多少行就算多少行」数的 —— ' +
+      '<b>空行、注释都算</b>。只数代码，配置文件（json / ini / txt / md / yml）不算。</div>';
+    h += locBlock('跟着提交的（跟 GitHub 上一致）', r.tracked, 'tracked');
+    h += locBlock('磁盘上全部（含还没提交的）', r.all, 'all');
+    var top = ((r.all || {}).top || []).slice(0, 8);
+    if (top.length) {
+      h += '<div class="inst-loglabel" style="margin-top:10px">行数最多的文件</div>' +
+        '<div class="picklist" style="max-height:26vh">';
+      top.forEach(function (f, i) {
+        h += '<div class="pick-row"><span class="nm">' + (i + 1) + '. ' + esc(f.path) + '</span>' +
+          '<span class="hintline">' + esc(f.lang) + '　' + n0(f.lines) + ' 行</span></div>';
+      });
+      h += '</div>';
+    }
+    h += '<div class="row-btns" style="margin-top:10px">' +
+      '<button class="env-btn alt" data-act="loc-libs">' +
+      (libs ? '不数第三方库' : '连第三方库一起数') + '</button></div>';
+    h += '<div class="note">第三方库 = 别人写的 vue / bootstrap / 图标包那些；' +
+      '算进来数字会大很多，但那是「项目总共带了多少行」，不是「你写了多少行」。</div>';
+    b.innerHTML = h;
+  }).catch(fail);
+}
+
+function locBlock(title, d, key) {
+  d = d || {};
+  /* 没走完的那一份加「≥」——数字是数到哪儿算哪儿，不标就像数全了 */
+  var h = '<div class="inst-loglabel" style="margin-top:12px">' + esc(title) + '　' +
+    '<b>' + (d.cut ? '≥ ' : '') + n0(d.lines || 0) + '</b> 行　<span class="hintline">' +
+    n0(d.files || 0) + ' 个文件</span></div>';
+  if (d.cut) {
+    h += '<div class="note" style="color:#b45309">这一份没走完（' + esc(d.secs || '') +
+      ' 秒 / 目录太多就先停了）：这个项目里有海量素材目录（音频、图标、上传件），' +
+      '那些不是代码。要确定的数字看上面「跟着提交的」那一份。</div>';
+  }
+  var rows = d.byLang || [];
+  if (!rows.length) { return h + '<div class="note">没有代码文件。</div>'; }
+  h += '<div class="picklist" style="max-height:32vh">';
+  rows.forEach(function (x) {
+    h += '<div class="pick-row"><span class="nm">' + esc(x.lang) + '</span>' +
+      '<span class="hintline">' + n0(x.lines) + ' 行　' + n0(x.files) + ' 个文件</span></div>';
+  });
+  h += '</div>';
+  return h;
 }
 
 function dialogSyncLog() {
@@ -2456,6 +2515,10 @@ document.addEventListener('click', function (ev) {
     case 'shield-one':
       startJob('shield', { patterns: [d('pattern')] },
         '屏蔽 ' + d('pattern'), null, function () { dialogPrecheck(); });
+      break;
+    case 'loc-libs':
+      S.locLibs = !S.locLibs;
+      dialogLoc();
       break;
     case 'ignore-add': {
       var igv = ((el('igNew') || {}).value || '').trim();

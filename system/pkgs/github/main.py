@@ -1235,6 +1235,13 @@ ACTIONS = {
                      cmd='（本机统计：git ls-files + 文件大小）',
                      desc='推送慢得离谱时先看这个：哪些文件把仓库撑大了（虚拟环境 / 数据 / 视频）',
                      argv=lambda p, a: []),
+    'loc': dict(group='看', label='代码行数（有多少行代码）', danger=False,
+                needArg=None, timeout=180, fake='loc',
+                cmd='（本机统计：按扩展名数行数，空行注释都算）',
+                desc='数 .py / .html / .js / .css / .vue 这些代码文件有多少行；'
+                     '配置文件（json / ini / txt / md）不算。'
+                     '同时给两份：只算 git 跟踪的、和磁盘上所有的',
+                argv=lambda p, a: []),
     'precheck': dict(group='同步', label='推送前体检（会不会推不上去）', danger=False,
                      needArg=None, timeout=20, fake='precheck',
                      cmd='（本机统计：git ls-tree -r -l HEAD）',
@@ -1270,6 +1277,144 @@ def actions_payload():
     return out
 
 
+#: 数行数时**算作代码**的扩展名（→ 显示用的语言名）。配置 / 文本故意不在里面。
+LOC_LANG = {
+    'py': 'Python', 'pyw': 'Python',
+    'html': 'HTML', 'htm': 'HTML',
+    'js': 'JavaScript', 'mjs': 'JavaScript', 'cjs': 'JavaScript',
+    'jsx': 'JSX', 'ts': 'TypeScript', 'tsx': 'TSX',
+    'css': 'CSS', 'scss': 'SCSS', 'sass': 'Sass', 'less': 'Less',
+    'vue': 'Vue', 'svelte': 'Svelte',
+    'java': 'Java', 'kt': 'Kotlin', 'swift': 'Swift', 'dart': 'Dart',
+    'c': 'C', 'h': 'C/C++ 头', 'cpp': 'C++', 'cc': 'C++', 'cxx': 'C++',
+    'hpp': 'C++ 头', 'cs': 'C#', 'go': 'Go', 'rs': 'Rust',
+    'rb': 'Ruby', 'php': 'PHP', 'lua': 'Lua', 'sql': 'SQL',
+    'sh': 'Shell', 'bash': 'Shell', 'ps1': 'PowerShell', 'bat': 'Batch',
+}
+#: 扫磁盘时跳过的目录（虚拟环境、依赖、缓存、构建产物 —— 那不是"你写的代码"）
+LOC_SKIP_DIRS = {
+    '.git', '.hg', '.svn', '.venv', 'venv', 'env', '.env', 'node_modules',
+    '__pycache__', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.tox',
+    '.next', '.nuxt', 'dist', 'build', 'target', 'out', 'coverage',
+    'site-packages', '.idea', '.vscode', '.cache', 'bower_components',
+    # 素材 / 数据目录：里面全是照片音频和上传件，不是代码（真机上 media 一个目录 34 万文件）
+    'media', 'uploads', 'upload', 'apps_data', 'dataset', 'datasets', 'data',
+    'staticfiles', 'logs', 'tmp', 'temp',
+}
+
+
+def count_lines(fp):
+    """一个文件有多少行（**空行、注释行也算** —— 用户要的就是这个口径）。
+
+    怎么算"一行"：数换行符；文件末尾如果没有换行符，最后那截也算一行。
+    按块读（不整篇进内存），几十兆的生成文件也不会把内存吃掉。
+    """
+    n, last = 0, b'\n'
+    try:
+        with open(fp, 'rb') as f:
+            while True:
+                bit = f.read(262144)
+                if not bit:
+                    break
+                n += bit.count(b'\n')
+                last = bit[-1:]
+        if last not in (b'\n',):
+            n += 1                       # 最后一行没换行，也要算上
+        return n
+    except OSError:
+        return -1
+
+
+def loc_scan(root, names=None, limit=12, budget=8.0, keep_libs=False,
+             prune=4000, max_dirs=5000):
+    """数行数。`names` 给了就只数这些（git 跟踪的），给 None 就扫整个目录树。
+
+    ★ 为什么要 `budget` / `prune`（真机上量出来的）：这个项目里
+      `backend/media` 一个目录底下有 **34 万个文件**（29 万个 mp3）—— 全量 `os.walk`
+      光是走完就要 **200 秒**，界面看着就是"死了"。所以：
+        · 单个目录的条目数超过 `prune`（4000）⇒ 跳过，并记下"跳了谁、多少个"
+          （那种量级的目录一定是素材 / 数据，不是人写的代码）；
+        · 走过的目录数超过 `max_dirs`（5000）或时间超过 `budget`（8 秒）⇒ 收工，
+          **如实告诉用户"没数完"**，别装作数完了；
+        · 数据目录（media / uploads / data…）也在跳过名单里。
+      两条上限都留了余量：正常项目 1 秒内走完；真撞上了也会明说，不会假装数全了。
+      只数 git 跟踪的那份则完全不受影响（这个仓库 0.3 秒）。
+    """
+    by_lang, top = {}, []
+    files, total, skipped = 0, 0, 0
+    root = os.path.abspath(root)
+    t0 = time.time()
+    jumped, cut = [], False
+
+    def one(rel, fp):
+        nonlocal files, total, skipped
+        ext = os.path.splitext(fp)[1].lower().lstrip('.')
+        lang = LOC_LANG.get(ext)
+        if not lang:
+            skipped += 1
+            return
+        if not keep_libs and '.min.' in os.path.basename(fp).lower():
+            skipped += 1                    # 压缩产物：一个"行"顶几千字节，数它没意义
+            return
+        n = count_lines(fp)
+        if n < 0:
+            skipped += 1
+            return
+        files += 1
+        total += n
+        cur = by_lang.setdefault(lang, {'lang': lang, 'files': 0, 'lines': 0})
+        cur['files'] += 1
+        cur['lines'] += n
+        top.append({'path': rel.replace('\\', '/'), 'lines': n, 'lang': lang})
+
+    if names is not None:
+        for rel in names:
+            fp = os.path.join(root, rel.replace('/', os.sep))
+            if os.path.isfile(fp):
+                one(rel, fp)
+    else:
+        stack = [root]
+        dirs_done = 0
+        while stack:
+            if time.time() - t0 > budget:
+                cut = True
+                break
+            if dirs_done >= max_dirs:
+                # ★ 真机上量出来的：这个项目 `backend/app/AppSound/sound` 底下是
+                #   **11 万个按哈希分片的小目录**（每个才 1~3 个 mp3）。单目录条目数
+                #   只有 1 条，`prune` 根本挡不住 —— 全靠这一条"目录总数上限"兜住，
+                #   不然光走完就要 140 秒。
+                cut = True
+                jumped.append({'path': '（目录太多，走到 %d 个就先停了）' % max_dirs,
+                               'entries': 0})
+                break
+            cur_dir = stack.pop()
+            dirs_done += 1
+            try:
+                with os.scandir(cur_dir) as it:
+                    entries = list(it)
+            except OSError:
+                continue
+            if len(entries) > prune:
+                jumped.append({'path': (os.path.relpath(cur_dir, root) or '.').replace('\\', '/'),
+                               'entries': len(entries)})
+                continue
+            for e in entries:
+                try:
+                    if e.is_dir():
+                        if e.name.lower() not in LOC_SKIP_DIRS:
+                            stack.append(e.path)
+                    elif e.is_file():
+                        one(os.path.relpath(e.path, root), e.path)
+                except OSError:
+                    continue
+    top.sort(key=lambda x: -x['lines'])
+    return {'files': files, 'lines': total, 'skipped': skipped,
+            'byLang': sorted(by_lang.values(), key=lambda x: -x['lines']),
+            'top': top[:limit], 'jumped': jumped[:8], 'cut': cut,
+            'secs': round(time.time() - t0, 1), 'keepLibs': bool(keep_libs)}
+
+
 def repo_size_rows(root, limit=20):
     """版本库里**最占体积**的文件（按大小排前 N 个）+ 总共多少、多大。
 
@@ -1296,7 +1441,48 @@ def repo_size_rows(root, limit=20):
                     for sz, n in rows[:limit]]}
 
 
+def _loc_text(r, which):
+    """把一份行数结果排成给人看的几行。"""
+    d = (r or {}).get(which) or {}
+    # ★ 没走完的那一份加个 `≥`：数字是"数到哪儿算哪儿"，不标就像数全了（骗人）
+    head = ('%-6s %s%8s 行   %5s 个文件' %
+            ('git 跟踪的' if which == 'tracked' else '磁盘上全部',
+             '≥' if d.get('cut') else ' ',
+             '{:,}'.format(d.get('lines') or 0), d.get('files') or 0))
+    out = [head]
+    for x in (d.get('byLang') or [])[:8]:
+        out.append('        %-12s %8s 行  %5d 个文件'
+                   % (x['lang'], '{:,}'.format(x['lines']), x['files']))
+    return '\n'.join(out)
+
+
 def _fake_out(name, path):
+    if name == 'loc':
+        r = Core(path).loc({'path': path})
+        if not r.get('ok'):
+            return r.get('why') or '数不出来'
+        out = ['按「一个文件多少行就算多少行」数的（空行、注释都算），配置文件不算。', '']
+        out.append(_loc_text(r, 'tracked'))
+        out.append('')
+        out.append(_loc_text(r, 'all'))
+        top = ((r.get('all') or {}).get('top') or [])[:8]
+        if top:
+            out.append('')
+            out.append('行数最多的几个文件：')
+            for i, f in enumerate(top, 1):
+                out.append('  %2d. %-9s %6s 行  %s'
+                           % (i, '{:,}'.format(f['lines']), f['lang'], f['path']))
+        alld = r.get('all') or {}
+        if alld.get('cut'):
+            out.append('')
+            out.append('★ 「磁盘上全部」这一份**没走完**（%s 秒 / 目录太多就先停了）：'
+                       '这个项目里有海量素材目录（音频 / 图标 / 上传件），'
+                       '那些地方不是代码。要一个确定的数字，看上面「git 跟踪的」那一份。'
+                       % alld.get('secs'))
+        out.append('')
+        out.append('（跳过 .venv / node_modules / __pycache__ / dist / media 这些目录；'
+                   '压缩过的 *.min.js 也不算）')
+        return '\n'.join(out)
     if name == 'precheck':
         info = repo_info(path)
         if not info:
@@ -1853,6 +2039,51 @@ class Core:
         r = repo_size_rows(info['root'], limit=int((params or {}).get('limit') or 20))
         r.update({'ok': bool(r.get('ok')), 'path': path, 'size': human_size(r.get('bytes') or 0)})
         return r
+
+    def loc(self, params=None):
+        """数代码行数：**两种口径一起给**，互相对照。
+
+        * `tracked` —— 只用 git 跟踪的文件（跟着 `.gitignore` 走）。跟推到 GitHub 的内容一致。
+        * `all`     —— 磁盘上所有代码文件（含还没提交的），但跳过 `.venv` / `node_modules`
+          / `__pycache__` / `dist` 这类"根本不是人写的"目录。
+
+        ★ 口径按用户说的办：**一个文件有多少行就算多少行** —— 不去空行、不剔注释。
+          （剔注释要给每种语言各写一套规则，还容易错；他明确说不需要那么精细。）
+        ★ 只数程**代码**：`.py .html .js .css .vue` 这些；`.json .ini .txt .md .yml`
+          这类配置 / 文本不算（也是他明确排掉的）。
+        """
+        p = params or {}
+        path = self._path(p)
+        info = repo_info(path)
+        repo_root = (info or {}).get('root') or path
+        # ★ 数的是**你选的这个目录**，不是整个仓库（探针抓到过：选插件的子目录，
+        #   结果报出整个 moss 仓库的 94 万行 —— 因为 git 的根在上面几层）。
+        root = os.path.abspath(path)
+        if not os.path.isdir(root):
+            return {'ok': False, 'why': '这个目录不在了：%s' % root, 'tracked': None, 'all': None}
+
+        keep_libs = bool(p.get('libs'))
+        names = []
+        if info and os.path.isdir(repo_root):
+            got = git(repo_root, 'ls-files', '-z', timeout=180)
+            allnames = [x for x in (got.get('out') or '').split('\0') if x.strip()]
+            rel = os.path.relpath(root, repo_root).replace('\\', '/')
+            if rel in ('.', ''):
+                names = allnames
+            else:
+                names = [x for x in allnames if x == rel or x.startswith(rel + '/')]
+        scan_root = repo_root if names else root
+        tracked = loc_scan(scan_root, names, keep_libs=keep_libs) if names else {
+            'files': 0, 'lines': 0, 'byLang': [], 'top': [], 'skipped': 0,
+            'jumped': [], 'cut': False, 'secs': 0}
+        everything = loc_scan(root, None, keep_libs=keep_libs)
+        return {'ok': True, 'path': path, 'root': root, 'repoRoot': repo_root,
+                'isRepo': bool(info),
+                'tracked': tracked, 'all': everything, 'libs': keep_libs,
+                'exts': sorted(LOC_LANG.keys()),
+                'skipDirs': sorted(LOC_SKIP_DIRS),
+                'note': '按"一个文件多少行就算多少行"数的：不去空行、不剔注释。'
+                        '只数代码，配置文件（json / ini / txt / md / yml）不算。'}
 
     def net_probe(self, params=None):
         path = self._path(params)
