@@ -103,7 +103,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-file-preview",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "fanyi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
-          "ai-hist-live", "ai-switch-live", "list-autoscroll", "pkg-icon-fallback",
+          "ai-hist-live", "ai-switch-live", "ai-finish-away", "list-autoscroll", "pkg-icon-fallback",
           "perm-scope", "ai-follow",
           "ai-turn-edit", "ai-self-tools", "ai-ask",
           "pkg-docs", "embed-tab", "newpkg-form", "newpkg-manual", "newpkg-manual-go", "newpkg-ai",
@@ -631,6 +631,7 @@ MOCK_JS = r"""
       }
       M.aiN = Math.min(script.length, (M.aiN || 0) + 1);
       const running = M.aiN < script.length;
+      M.aiFinished = !running;
       // ★ `V-333`：**问答 / 求放行也是聊天记录里的一条** —— 真宿主由 `Loop.note()` 插进步骤流
       //   （`tool` = `ask` / `perm`，答完把 `done` / `answer` / `out` 写回同一条）。
       //   假宿主照着这个形状造一条，界面才画得出"它说的那条带按钮的气泡"。
@@ -682,7 +683,11 @@ MOCK_JS = r"""
     // `V-243`：任务记录（真后端存 **这个包自己的数据目录** `state/<包id>/ai/runs/`，重启还有个回顾）
     // `V-251`：带上 `workdir` + `cont`（能不能接着聊）—— 界面进来就认领这个包上次那条
     // ★ `V-307`：宿主那边**按 workdir 过滤**（只回这个包的会话）+ `interrupted`（上次没跑完）
-    ai_runs: async (limit, workdir) => ({ok: true,
+    ai_runs: async (limit, workdir) => ({
+      // 场景 `ai-finish-away`：模拟"刚跑完、记录还没落盘"的那一拍。
+      ...(M.aiHistLagUntil && Date.now() < M.aiHistLagUntil
+          ? {ok: true, scope: {kind: "pkg", id: "md5", label: "包 md5"}, runs: []}
+          : {ok: true,
       scope: {kind: "pkg", id: "md5", dir: state.home + "\\user_data\\state\\md5\\ai\\runs", label: "包 md5"},
       runs: [
       // ★ `V-383`：**正在跑的那一条也在列表里**（真宿主开工就落盘 `running=true`）——
@@ -717,7 +722,7 @@ MOCK_JS = r"""
        kind: "chat", workdir: state.home + "\\user_data\\pkgs\\calc",
        reason: "问答收工（没动文件，不用跑命令）", started_text: "2026-10-04 20:00:25",
        usage: {prompt_tokens: 2030, completion_tokens: 92, total_tokens: 2122},
-       files: [], summary: "底层是哪个模型我自己看不到；我是 moss 的写插件助手。"}]}),
+       files: [], summary: "底层是哪个模型我自己看不到；我是 moss 的写插件助手。"}]})}),
     // ★ `V-262`：**整条会话**（链头 → 这条）—— 界面进来认领/翻历史时用它，
     //   重启 moss 之后也要把前几轮摆出来（以前只 `ai_run` 最后一条 ⇒ 只看到最后一轮）
     ai_thread: async (id) => (id === "r-chat" ? {
@@ -5778,6 +5783,56 @@ MOCK_JS = r"""
          「AI 正在思考并执行...」照样亮着，可日志里一条步骤都不长（`turns` 空 ⇒ 没东西可画）。
          你那下"点历史里的会话"正是把那一轮重建了一次，于是又动了 —— 所以看着像"点一下就好"。
          这条场景就是那个现场：跑着 → 切到别的包（= 点左边另一行）→ 切回来 ⇒ 步骤必须继续涨。 */
+      /* ★ 跑着时切到别的包，**并且让它在外面跑完**，再切回来：最终结论卡必须直接出现，
+         不能只显示最后一步、非要再切走切回才被历史读出来。
+         真机现场：结果卡晚到的那一跳，活轮已经被换包清掉，旧代码只更新了 AIR.result，
+         而界面画的是 turn.result ⇒ 结论卡不见。 */
+      if (h === "ai-finish-away"){
+        M.aiLiveRow = true;
+        M.aiPad = 2;                    // 6 步左右；切走之后几秒内跑完
+        M.aiRun = null; M.aiN = 0; M.aiSnap = null;
+        const pA = state.packages.find(x => x.id === "md5") || state.packages[0];
+        const pB = state.packages.find(x => x.id === "first") || state.packages[1];
+        select(pA.id);
+        await sleep(300);
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(400);
+        const taskEl = document.querySelector("#pane-ai .ai-task");
+        if (taskEl){
+          taskEl.value = "跑完再切回来的结论卡";
+          taskEl.dispatchEvent(new Event("input", {bubbles: true}));
+        }
+        await sleep(80);
+        (document.querySelector("#pane-ai .ai-actions .btn.primary") || {click(){}}).click();
+        for (let i = 0; i < 30 && !document.querySelector("#pane-ai .ai-step"); i++) await sleep(120);
+        select(pB.id);                  // 人离开这个包
+        await sleep(5200);              // 让假宿主在"别的包"上跑到结束
+        // ★ 真机 race：刚跑完那一拍历史记录可能还没落盘。让 ai_runs 先空两秒，
+        //   证明结论卡不是靠"读历史"才出来的，而是 `pendingDone` 兜底直接补出来的。
+        M.aiHistLagUntil = Date.now() + 2500;
+        select(pA.id);                  // 再回来
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(1500);
+        const cards = [].slice.call(document.querySelectorAll("#pane-ai .ai-result"));
+        const texts = cards.map(c => String(c.textContent || "").replace(/\s+/g, " ").trim());
+        const hit = texts.filter(x => x.indexOf("给 :md5 加了 --dry-run") >= 0
+                                    && x.indexOf("没测中文参数") >= 0)[0] || "";
+        const stepN = document.querySelectorAll("#pane-ai .ai-step").length;
+        const ok = !!hit && !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n切包跑完再回来：结论卡 = " + cards.length + "，步骤 = " + stepN +
+          "\n命中正文 = " + JSON.stringify(hit.slice(0, 120)) +
+          "\n页内错误 = " + (window.__errors || []).length;
+        const _A = window.__AIR || {};
+        const _ts = (_A.turns || []).map(t => ({task: String(t.task || "").slice(0, 6),
+          steps: (t.steps || []).length, res: !!(t.result)})).slice(-3);
+        document.title = ok ? "READY"
+          : ("AIFINISHAWAY-FAIL 卡片=" + cards.length + " 步骤=" + stepN +
+             " turns=" + JSON.stringify(_ts) + " pend=" + !!_A.pendingDone +
+             " live=" + String(_A.liveKey || "") + " cur=" + _A.cur +
+             " 文本=" + JSON.stringify((hit || texts.join(" | ")).slice(0, 80)) +
+             " 错=" + (window.__errors || []).length);
+      }
       if (h === "ai-switch-live"){
         M.aiLiveRow = true;
         M.aiPad = 30;

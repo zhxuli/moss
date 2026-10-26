@@ -56,6 +56,10 @@ const AIR = Vue.reactive({
        · `liveTask`    这一跑的任务原文（切回实时时用来重建那一轮）
        · `liveListFor` 已经为哪个 run_id 刷新过历史列表（免得每跳都重读） */
   liveKey: "", liveRunId: "", liveTask: "", liveListFor: "",
+  /* ★ 当前这一跑最终结果的**兜底锚**：哪怕用户在别的页面/包，活的那一轮被清掉、
+     或历史上还没落盘，结果也先记在这里；回到对应包的 AI 页就立刻补一张结论卡。
+     {pkg, run_id, task, steps, result}（只放最近一次，跑完即消费）。 */
+  pendingDone: null,
   /* ★ 2026-10-22：这一跑是**哪个包**的（切包时靠它判断"活的那一轮该不该跟过来"）——
      见 `aiLivePkg()`。空 = 还没开工 / 认不出来。 */
   livePkg: "",
@@ -652,6 +656,9 @@ async function aiOpenThread(id, quiet){
       if (!quiet) toast("读不到这条会话", true);
       return false;
     }
+    // 用户已经亲手把这条会话翻出来了 ⇒ 同一跑的结果兜底不用再补一次。
+    if (AIR.pendingDone && String(AIR.pendingDone.run_id || "") === String(got.tail || id))
+      AIR.pendingDone = null;
     AIR.turns = got.turns.map((t, i) => ({
       key: "h" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1),
       // ★ `V-279`：**每一轮自己的记录 id** 得带上 —— 抬头那两颗「编辑 / 删除」按钮
@@ -733,6 +740,59 @@ function aiAttachLiveTurn(){
   return t;
 }
 
+/* ★ 跑完后的**结果兜底**：不管当前 cur 指到哪儿、活轮被清没清，都保证最终结论
+   有一张卡落在界面里。
+
+   真机现场：跑着时切到别的包 / 页面，活轮被 `aiScopeReset()` 清掉；如果刚好
+   在这一刻轮询收到 `running=false + result`，旧代码因为找不到 cur 只把结果塞进
+   `AIR.result` 镜像，而界面画的是 `turn.result` ⇒ 步骤还在、结论卡不见。
+   用户切走再切回来，历史上又已落盘，才被 `aiOpenThread()` 重新读出来。
+
+   这里用 `pendingDone` 把结果先握住；当前包的 AI 页一恢复就 `aiShowDone()`。 */
+function aiShowDone(done){
+  if (!done || !done.result) return false;
+  const here = (aiPackage() || {}).id || "";
+  if (done.pkg && here && done.pkg !== here) return false;   // 别的包的结果别摆过来
+  if (AIR.viewing) return false;                              // 正在翻历史，先别抢屏
+  let t = null;
+  if (done.run_id)
+    t = (AIR.turns || []).filter(x => x && String(x.id || "") === String(done.run_id))[0] || null;
+  if (!t && AIR.liveKey)
+    t = (AIR.turns || []).filter(x => x && x.key === AIR.liveKey)[0] || null;
+  if (!t && AIR.cur >= 0)
+    t = (AIR.turns || [])[AIR.cur] || null;
+  if (!t){
+    t = {key: "done" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1),
+         id: done.run_id || "",
+         task: done.task || AIR.liveTask || AIR.sentTask || "",
+         at: "跑完了 · " + new Date().toTimeString().slice(0, 8),
+         steps: done.steps || [], result: done.result,
+         folded: true, autoFolded: true,
+         note: (done.result && done.result.continue_note) || ""};
+    AIR.turns = (AIR.turns || []).concat([t]);
+  }
+  t.result = done.result;
+  t.id = t.id || done.run_id || "";
+  if (done.steps && done.steps.length) t.steps = done.steps;
+  t.note = (done.result && done.result.continue_note) || t.note || "";
+  if (!AIR.running){ t.folded = true; t.autoFolded = true; }
+  AIR.cur = (AIR.turns || []).indexOf(t);
+  AIR.steps = t.steps || [];
+  AIR.result = t.result;
+  // ★ 把"接着这条聊"也钉到这个刚跑完的 run 上：防止紧接着的 `aiLoadRuns`
+  //   因为盘上记录还没落盘而认领到**更早**的一条，反手把刚补出来的结论卡覆盖掉。
+  if (done.run_id){
+    AIR.lastAdopted = done.run_id;
+    AIR.lastId = done.run_id;
+    AIR.contId = done.run_id;
+    AIR.pickId = done.run_id;
+    if (t.task) AIR.contTask = t.task;
+  }
+  AIR.pendingDone = null;
+  AIR.rev++;
+  return true;
+}
+
 /* 点「看」：把那条历史的步骤流/结论load进来（只看，不重跑）。
    `quiet`（`V-251`）：进这一页时**自动认领**上次那条用的，别弹提示。 */
 async function aiOpenRun(id, quiet){
@@ -740,6 +800,8 @@ async function aiOpenRun(id, quiet){
     const got = await window.pywebview.api.ai_run(id);
     if (!got || !got.ok || !got.run){ if (!quiet) toast("读不到这条记录", true); return; }
     const r = got.run;
+    if (AIR.pendingDone && String(AIR.pendingDone.run_id || "") === String(id))
+      AIR.pendingDone = null;
     AIR.viewing = id;
     AIR.pickId = id;              // `V-254`：下拉跟着指到这份记录
     AIR.steps = r.steps || [];
@@ -937,6 +999,11 @@ async function aiPollOnce(){
   try {
     const got = await window.pywebview.api.ai_poll();
     if (!got || !got.ok) return;
+    // ★ 先把"这一跑是谁的 / 哪条 / 什么任务"抓住：下面会清 livePkg / liveRunId，
+    //   跑完那一刻再取就只剩空值，结果兜底会找不到归属。
+    const _pollPkg = aiLivePkg();
+    const _pollRunId = String(got.run_id || AIR.liveRunId || "");
+    const _pollTask = String(got.task || AIR.liveTask || AIR.task || "");
     // ★ `V-280`：**这一跑刚结束**（true → false）就重读一次"它自己的工具" —— 它很可能
     //   刚给自己造了一只，那条「等你允许」得立刻冒出来（不然你要等下次进这一页才看见）。
     const _wasRunning = AIR.running;
@@ -1028,6 +1095,12 @@ async function aiPollOnce(){
     // ★ `V-258`：这一轮的步骤/结论**落在它自己身上**（`AIR.steps` 还是"现在这轮"的镜像，
     //   底下那几个计算属性照旧读它）—— 关键：**前几轮的 steps 数组不被碰**。
     //   ★ `V-383`：`cur` 在上面按 `liveKey` 找过了，这里别再按下标取一遍。
+    if (got.result){
+      // ★ 结果先捏在手里（即使当前 cur 已经找不到）。这是"切页面/换包恰逢跑完"
+      //   结论卡不见的兜底：等回到对应包的 AI 页，tick 会把它补出来。
+      AIR.pendingDone = {pkg: _pollPkg, run_id: _pollRunId, task: _pollTask,
+                         steps: AIR.steps || [], result: got.result};
+    }
     if (cur){
       if (got.result){
         cur.result = got.result;
@@ -1041,6 +1114,9 @@ async function aiPollOnce(){
         }
       }
     }
+    // ★ 当前就在这个包的 AI 页 ⇒ 当场把结论卡补出来；不在这个包就留着 pendingDone，
+    //   等切回来那一跳再补。
+    if (got.result) aiShowDone(AIR.pendingDone);
     // ★ `V-249`：它干完活了、而且盘上真有文件变了 ⇒ 让「文件管理」那份缓存作废
     //   （你报的"AI 改完文件后「文件管理」页不自动刷新"，就是缺这一下）。
     //   只通知一次：结果会一直摆在 `ai_poll` 里（轮询每 700ms 一次），不认个号就会
@@ -1061,10 +1137,11 @@ async function aiPollOnce(){
         if ((res.files || []).length && typeof diskChanged === "function")
           diskChanged(res.files);
       }
-      // ★ `V-251`：跑完这一条就是"最新的那条会话" —— 下一次默认接着它聊
-      //   （`contId` 指向新记录，输入框旁边那行字跟着换）。列表也要重读一次
-      //   （新记录刚落盘）。
-      if (res.run_id && res.run_id !== AIR.lastAdopted){
+      // ★ "接着这条聊"只能钉在**同一个包**上：跑完那一刻用户若在别的包，
+      //   把旧包的 run_id 塞进新包的 contId，下一句就会去接错会话。
+      const _resHere = (aiPackage() || {}).id || "";
+      const _resMine = !_pollPkg || !_resHere || _pollPkg === _resHere;
+      if (_resMine && res.run_id && res.run_id !== AIR.lastAdopted){
         AIR.lastAdopted = res.run_id;
         AIR.lastId = res.run_id;
         AIR.contId = res.run_id;
@@ -1094,6 +1171,7 @@ async function aiStart(opt){
   if (!dir) { toast("先在左边选一个包（或者选「新建包」）。", true); return; }
   AIR.busy = true;
   AIR.result = null; AIR.steps = []; AIR.say = []; AIR.answeredQid = "";
+  AIR.pendingDone = null;              // 新任务：上一次的兜底结果不再回放
   AIR.killed = []; AIR.liveUsage = null; AIR.ask = null; AIR.askText = "";   // `V-307`/`V-308`
   AIR.stick = true;                                                          // `V-307`：新指令跟着滚
   AIR.viewing = "";              // `V-251`：这次是新跑的，结果卡不该再挂"历史记录"那块牌子
@@ -2528,6 +2606,9 @@ const MossAi = {
                  是**别的包的** ⇒ 照旧清干净（`V-383`：别的包的页面不该冒出人家的那一跑）。 */
         if (aiLiveHere()) aiAttachLiveTurn();
         else aiScopeReset();
+        // ★ 跑完那一刻若人在别的包，结果先挂在 `pendingDone`；切回这个包立刻补结论卡，
+        //   不依赖"历史记录是否已经落盘"（真机那个 race 就是落盘慢了一拍）。
+        if (AIR.pendingDone) aiShowDone(AIR.pendingDone);
         aiRefreshInfo();
         aiLoadRuns();
       }
