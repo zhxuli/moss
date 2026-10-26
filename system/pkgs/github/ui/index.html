@@ -71,11 +71,16 @@
             <p id="workStatus" class="node-sub amber">正在读取…</p>
           </div>
         </div>
-        <button id="filesBtn" class="count-pill" data-act="files-drawer" title="点开看看改了哪些文件">
-          <span class="ping"></span>
-          <span id="checkedCount" class="mono">0</span>
-          <span class="caret" id="drawerArrow"></span>
-        </button>
+        <div class="node-acts">
+          <!-- 统计：点开看这个文件夹一共有多少行代码（按文件行数，空行注释都算） -->
+          <button id="statBtn" class="ico-btn" data-act="loc-open"
+                  title="统计代码行数（多少行代码）"><span id="icoStat"></span></button>
+          <button id="filesBtn" class="count-pill" data-act="files-drawer" title="点开看看改了哪些文件">
+            <span class="ping"></span>
+            <span id="checkedCount" class="mono">0</span>
+            <span class="caret" id="drawerArrow"></span>
+          </button>
+        </div>
       </div>
 
       <div id="workBody" class="collapse open">

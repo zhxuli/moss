@@ -15,7 +15,9 @@
   硬锁（勾了 `*` 也写不了）：`core/`、`moss.exe`、`moss.py`、`venv/`、`.git/`、`backups/`。
   读不设"当前包"以外的特权（要读 `system/pkgs/skill` 当样板、要读契约），但读也框了范围。
 """
+import base64
 import json
+import mimetypes
 import os
 import sys
 from pathlib import Path
@@ -133,6 +135,57 @@ def check_readable(path, scope=None):
     return M.can_read(path, scope=scope)
 
 
+#: 视觉模型能直接吃的栅格图片（SVG 不算 —— 它不是像素图，多数视觉接口不收）。
+IMAGE_MIMES = {
+    "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp",
+}
+#: 和 loop 的附件上限保持一致：一张图太大就别往上下文里塞。
+IMAGE_DATA_CAP = 12 * 1024 * 1024
+
+
+def image_mime(path):
+    """看文件头认出**视觉模型能直接吃的图片**；不是图片回空串。
+
+    ★ 为什么不能只看扩展名：真机上图片常叫 `微信图片_xxx.jpg`，扩展名可信；
+      但用户也会拖来没扩展名 / 扩展名写错的图。先认 magic bytes，扩展名只做兜底。
+    ★ 为什么不把 SVG 算进来：视觉模型通常只吃像素，SVG 是文本；硬塞会白烧 token。
+    """
+    p = Path(path)
+    try:
+        with p.open("rb") as fh:
+            head = fh.read(64)
+    except OSError:
+        return ""
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if head.startswith(b"BM"):
+        return "image/bmp"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    guess = (mimetypes.guess_type(p.name)[0] or "").lower()
+    return guess if guess in IMAGE_MIMES else ""
+
+
+def image_data_url(path, cap=IMAGE_DATA_CAP):
+    """把图片读成 data URL。回 `(data_url, err)`；不是图片 / 太大 / 读不了都回 err。"""
+    p = Path(path)
+    mime = image_mime(p)
+    if not mime:
+        return None, "不是模型能直接看的图片（支持 png/jpg/gif/webp/bmp）：%s" % p
+    try:
+        size = p.stat().st_size
+        if size > int(cap or IMAGE_DATA_CAP):
+            return None, "图片太大（%d 字节，上限 %d）：%s" % (size, int(cap or IMAGE_DATA_CAP), p)
+        b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+    except OSError as e:
+        return None, "图片读不了：%s（%s）" % (p, e)
+    return "data:%s;base64,%s" % (mime, b64), None
+
+
 def read_text(path, offset=1, limit=400, scope=None):
     """带行号读一段（行号照 `read` 工具的习惯从 1 开始）。
 
@@ -150,6 +203,16 @@ def read_text(path, offset=1, limit=400, scope=None):
         raw = p.read_bytes()
     except OSError as e:
         return None, "读不了：%s" % e
+    # ★ 真机 bug：图片被 read_file 当文本解码，1652 行乱码灌进上下文，
+    #   一次就烧掉几万 token。图片有专门的路；其它二进制也不许按文本硬读。
+    mime = image_mime(p)
+    if mime:
+        return None, ("[拒绝] `%s` 是图片（%s），不是文本文件。要看图请用 `read_image` "
+                      "（它会直接把图片作为视觉输入交给模型；不要找 OCR、也不要再用 read_file）。"
+                      % (p, mime))
+    if b"\x00" in raw[:8192]:
+        return None, ("[拒绝] `%s` 看起来是二进制文件（检测到 NUL 字节），不能当文本读。"
+                      "如果它是图片，请用 `read_image`；其它二进制请用对应的工具。" % p)
     text = raw.decode("utf-8", "replace").replace("\r\n", "\n")
     lines = text.split("\n")
     start = max(1, int(offset or 1))

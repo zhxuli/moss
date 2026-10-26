@@ -26,6 +26,7 @@ var ICON = {
   arrowUp: '<path d="M12 19V6M12 6 7.5 10.5M12 6l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
   rotate: '<path d="M3.6 12a8.4 8.4 0 1 1 2.9 6.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M3.2 17.5V13h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
   x: '<path d="M4 4 12 12M12 4 4 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  chart: '<path d="M3 13.2V9.6M7.6 13.2V5.4M12.2 13.2V7.8M16.8 13.2V3.4"/>',
   warn: '<path d="M8 2.6 14.6 14H1.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 6.4v3.2M8 11.6v.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
   check: '<path d="M3 8.6 6.4 12 13 4.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
   link: '<path d="M6.6 9.4a2.6 2.6 0 0 1 0-3.7l1.6-1.6a2.6 2.6 0 1 1 3.7 3.7l-.9.9M9.4 6.6a2.6 2.6 0 0 1 0 3.7l-1.6 1.6a2.6 2.6 0 1 1-3.7-3.7l.9-.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
@@ -796,6 +797,8 @@ var S = {
 function boot() {
   put('icoLogo', 'feather'); put('icoFolder', 'folder'); put('icoScan', 'refresh');
   put('icoLaptop', 'laptop'); put('icoHistory', 'history'); put('icoCloud', 'cloud');
+  /* 本地工作区右上角那颗「统计」图标：点开就是代码行数面板 */
+  put('icoStat', 'chart');
   put('drawerArrow', 'chevronDown');
   put('icoDown', 'arrowDown'); put('icoDown2', 'arrowDown'); put('icoUp', 'arrowUp');
 
@@ -810,45 +813,75 @@ function boot() {
   bindEnvRecheck();          // 页面重新被看见 ⇒ 重查环境（见函数上那段说明）
 
   busyOn('正在准备…');
-  call('boot', {}).then(function (b) {
+  /* ★ 打开页面这一段原来是**一条链慢慢串下来**：
+       boot → actions → gh（各自等回话）→ loadAll（里面又串三个）→ refreshEnv
+     每个后端都要跑好几条 git（这台机器每条启进程 0.26 秒），加起来就是十几秒。
+     用户的原话："每次打开这个页面都特别慢，不知道哪里出了问题"。
+     现在：① boot/actions/gh 一起发；② 三个只读请求 loadAll 内部并行；
+           ③ **环境检查不再挡路** —— 它最慢，但界面不用等它，先画出来再说，
+              结果回来了往顶部那条提示里填（本来就有一条独立的提示条）。
+     加起来等待 ≈ 最慢那一个，而不是所有之和。 */
+  var pBoot = call('boot', {}).then(function (b) {
     S.boot = b;
     S.path = b.preferred || '';
-    return call('actions', {}).then(function (a) {
-      S.actions = a.actions || []; S.groups = a.groups || [];
-    });
-  }).then(function () {
-    return call('gh', {}).then(function (g) { S.gh = g; });
-  }).catch(function () { /* 没 gh 不影响主流程 */ })
-    .then(loadAll)
-    /* v14：数据画完之后立刻体检一次 —— 缺 git / 缺 gh / 没登录当场就说，
-       别等人点了按钮失败才发现（这条是这次的主要改动）。 */
-    .then(function () { return refreshEnv(); })
-    .then(function () { busyOff(); })
-    .catch(function () { busyOff(); });
+    return b;
+  });
+  var pActs = call('actions', {}).then(function (a) {
+    S.actions = a.actions || []; S.groups = a.groups || [];
+  }).catch(function () { /* 菜单没读到不影响主流程 */ });
+  var pGh = call('gh', {}).then(function (g) { S.gh = g; })
+    .catch(function () { /* 没 gh 不影响主流程 */ });
+
+  return pBoot.then(function () {
+    // 环境检查**和**数据加载一起发，谁也不等谁；界面的骨架立刻画出来
+    var pEnv = refreshEnv().catch(function () { return null; });
+    return loadAll().then(function () { busyOff(); }).catch(function () { busyOff(); })
+      .then(function () { return Promise.all([pActs, pGh]); })
+      .then(function () { return pEnv; });
+  }).catch(function () { busyOff(); });
 }
 
+/* 读全部状态。★ 三个请求**一起发**：
+   以前是 snapshot 回来才发 timeline、timeline 回来才发 cloud_versions ——
+   后端每个都要跑十几条 git（这台机器每条启进程 0.26 秒），串着等就是十几秒，
+   用户的原话是"每次打开这个页面都特别慢"。三个都是只读、互不依赖，并行发就行；
+   后端那边也改成并发处理只读请求了（Embedded.loop / PARALLEL_METHODS）。
+   谁先回谁先画，最后一起 syncUI。 */
 function loadAll() {
   busyOn('正在读取…');
-  return call('snapshot', { path: S.path }).then(function (s) {
+  var got = 0, want = 3;
+
+  function done() { got += 1; if (got >= want) { syncUI(); busyOff(); } }
+
+  var pSnap = call('snapshot', { path: S.path }).then(function (s) {
     S.snap = s; S.path = s.path || S.path;
     /* v12：刷新后旧的行内 Diff 缓存作废（文件可能已经变了） */
     S.diffs = {}; S.openDiff = {};
     renderHead();
-    if (!s.isRepo) { S.tl = null; S.cloud = null; syncUI(); return null; }
-    return call('timeline', { path: S.path, limit: S.limit }).then(function (t) {
-      S.tl = t;
-      // 云端版本列表（只读本地那份远端跟踪记录，不联网，所以很快）
-      return call('cloud_versions', { path: S.path, limit: 30 })
-        .then(function (c) { S.cloud = c; })
-        .catch(function (e) {
-          // ★ 拿不到就说清为什么（以前这里静默吞掉，界面上就是"什么都没有"，
-          //   根本看不出是后端没这个方法、还是仓库没数据）。
-          S.cloud = { ok: false, commits: [],
-                      why: '读不到云端版本：' + ((e && e.message) || e) +
-                           '（界面比后端新？把包重新运行一次）' };
-        });
-    }).then(function () { syncUI(); });
-  }).catch(fail).then(function () { busyOff(); });
+    if (!s.isRepo) { S.tl = null; S.cloud = null; syncUI(); got = want; busyOff(); }
+    return s;
+  });
+
+  var pTl = call('timeline', { path: S.path, limit: S.limit })
+    .then(function (t) { S.tl = t; })
+    .catch(function (e) { S.tl = S.tl || {}; fail(e); });
+
+  // 云端版本列表（只读本地那份远端跟踪记录，不联网，所以很快）
+  var pCloud = call('cloud_versions', { path: S.path, limit: 30 })
+    .then(function (c) { S.cloud = c; })
+    .catch(function (e) {
+      // ★ 拿不到就说清为什么（以前这里静默吞掉，界面上就是"什么都没有"，
+      //   根本看不出是后端没这个方法、还是仓库没数据）。
+      S.cloud = { ok: false, commits: [],
+                  why: '读不到云端版本：' + ((e && e.message) || e) +
+                       '（界面比后端新？把包重新运行一次）' };
+    });
+
+  return Promise.all([
+    pSnap.then(done).catch(function (e) { done(); return fail(e); }),
+    pTl.then(done),
+    pCloud.then(done)
+  ]);
 }
 
 /* 联网刷新云端信息（fetch），刷完再读一遍列表 */
@@ -1920,7 +1953,20 @@ function dialogLoc() {
   openModal('代码行数', '<div class="note" style="padding:12px 0">正在数…（文件多的话要几秒）</div>',
     [{ text: '关闭', key: 'close', kind: 'ghost' }], true);
   var libs = S.locLibs ? 1 : 0;
-  call('loc', { path: S.path, libs: libs }).then(function (r) {
+  /* ★ 两段加载（用户原话："每次都要等"）：
+     第一段只数「跟着提交的」那一份 —— 0.3 秒就回来，先让人看到数字；
+     第二段再去扫「磁盘上全部」—— 你这种项目里有几十万个素材文件，要好几秒。
+     不让用户对着一个空转圈等到最后才看见结果。 */
+  call('loc', { path: S.path, libs: libs, fast: 1 }).then(function (r0) {
+    var b0 = sub('.dlg-b');
+    if (b0 && el('modal').classList.contains('show') && r0 && r0.ok) {
+      b0.innerHTML = '<div class="note">按「一个文件有多少行就算多少行」数的 —— ' +
+        '<b>空行、注释都算</b>。只数代码，配置文件不算。</div>' +
+        locBlock('跟着提交的（跟 GitHub 上一致）', r0.tracked, 'tracked') +
+        '<div class="note" id="locAll">正在数「磁盘上全部」（这一份要几秒）…</div>';
+    }
+    return call('loc', { path: S.path, libs: libs });
+  }).then(function (r) {
     var b = sub('.dlg-b');
     if (!b || !el('modal').classList.contains('show')) { return; }
     if (!r || !r.ok) {
@@ -2515,6 +2561,9 @@ document.addEventListener('click', function (ev) {
     case 'shield-one':
       startJob('shield', { patterns: [d('pattern')] },
         '屏蔽 ' + d('pattern'), null, function () { dialogPrecheck(); });
+      break;
+    case 'loc-open':
+      dialogLoc();
       break;
     case 'loc-libs':
       S.locLibs = !S.locLibs;

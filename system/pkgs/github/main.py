@@ -13,6 +13,8 @@
 """
 import collections
 import json
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 import shutil
@@ -956,30 +958,91 @@ def parse_status(text):
     return rows, counts
 
 
-def repo_info(path):
-    """是这个仓库就回一份现成的信息；不是就回 None。"""
+def repo_info(path, ttl=None):
+    """是这个仓库就回一份现成的信息；不是就回 None。
+
+    ★ 带短缓存（默认 15 秒）。**为什么要**：这台机器每条 git 命令 0.25~0.6 秒，
+      这个函数要跑 9 条 = 2.7 秒；而界面打开一次会连着问三遍同一个仓库
+      （snapshot / timeline / cloud_versions）⇒ 光重复劳动 5.4 秒。
+      真机上"打开页面十几秒"大半是它。任何**会改仓库状态**的动作跑完都会
+      `repo_cache_clear()`（见 `_step`），所以不会拿旧状态糊人。
+    """
+    ttl = _REPO_TTL if ttl is None else ttl
+    key = os.path.abspath(path).lower()
+    if ttl > 0:
+        hit = _REPO_CACHE.get(key)
+        if hit and time.time() - hit[0] < ttl:
+            return hit[1]
+        got = repo_info_raw(path)
+        _REPO_CACHE[key] = (time.time(), got)
+        return got
+    return repo_info_raw(path)
+
+
+def gits_parallel(path, specs, timeout=25, workers=8):
+    """**同时**跑好几条 git，回 {名字: 结果}。
+
+    ★ 为什么要有（量出来的第一现场）：这台机器上**每条 git 命令光是启进程就要 0.26 秒**
+      （`git --version` 都 0.26，跟仓库多大无关），而 `repo_info` 要问 9 条
+      ⇒ 2.4 秒起步。这不是仓库大、也不是磁盘慢，是 Windows 上创建进程贵。
+      9 条命令彼此不依赖，串着跑=白等 8 次；并发跑，总耗时 ≈ 最慢那条。
+      单条耗时不变，但"打开页面"的体感从两秒多降到零点几秒 —— 就是用户要的"别慢"。
+    """
+    out = {}
+    if not specs:
+        return out
+    real = min(len(specs), max(1, workers))
+    with ThreadPoolExecutor(max_workers=real) as pool:
+        futs = {pool.submit(git, path, *argv, timeout=timeout): name
+                for name, argv in specs}
+        for f, name in list(futs.items()):
+            try:
+                out[name] = f.result()
+            except Exception as e:                                       # noqa: BLE001
+                out[name] = {'ok': False, 'code': -1, 'out': '%s: %s' % (type(e).__name__, e),
+                             'ms': 0, 'cmd': 'git ' + ' '.join(specs[name][0])}
+    return out
+
+
+def repo_info_raw(path):
+    """真的去问 git（没缓存）。能并发的都并发跑，见 `gits_parallel` 的说明。"""
     if not os.path.isdir(path):
         return None
-    top = git(path, 'rev-parse', '--show-toplevel', timeout=15)
+    # 第一批：这 8 条互不依赖，一起发出去
+    first = gits_parallel(path, [
+        ('top', ['rev-parse', '--show-toplevel']),
+        ('br', ['rev-parse', '--abbrev-ref', 'HEAD']),
+        ('up', ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']),
+        ('url', ['remote', 'get-url', 'origin']),
+        ('status', ['status', '--porcelain']),
+        ('log', ['log', '-1', '--pretty=format:%h\x1f%an\x1f%ar\x1f%s']),
+        ('stash', ['stash', 'list']),
+        ('tags', ['tag', '--sort=-creatordate']),
+    ])
+    top = first['top']
     if not top['ok']:
         return None
     root = (top['out'].splitlines() or [path])[-1].strip()
     if not os.path.isdir(root):
         return None
 
-    br = git(root, 'rev-parse', '--abbrev-ref', 'HEAD')
+    br = first['br']
     branch = br['out'].strip() if br['ok'] else ''
-    up = git(root, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')
+    up = first['up']
     upstream = up['out'].strip() if up['ok'] else ''
-    remote = git(root, 'remote', 'get-url', 'origin')
+    remote = first['url']
     rurl = remote['out'].strip() if remote['ok'] else ''
     if not rurl:
-        first = git(root, 'remote')
-        names = [n.strip() for n in (first['out'].splitlines() if first['ok'] else []) if n.strip()]
+        first2 = gits_parallel(root, [
+            ('names', ['remote']),
+        ])
+        names = [n.strip() for n in (first2['names']['out'].splitlines()
+                                     if first2['names']['ok'] else []) if n.strip()]
         if names:
             r2 = git(root, 'remote', 'get-url', names[0])
             rurl = r2['out'].strip() if r2['ok'] else ''
 
+    # 第二批：只有 ahead/behind 必须等 upstream 才知道，单独一条
     ahead = behind = 0
     if upstream:
         ab = git(root, 'rev-list', '--left-right', '--count', 'HEAD...@{u}')
@@ -988,18 +1051,18 @@ def repo_info(path):
             if len(parts) >= 2:
                 ahead, behind = int(parts[0]), int(parts[1])
 
-    st = git(root, 'status', '--porcelain')
+    st = first['status']
     changes, counts = parse_status(st['out'] if st['ok'] else '')
 
     last = {'hash': '', 'author': '', 'when': '', 'subject': ''}
-    lg = git(root, 'log', '-1', '--pretty=format:%h\x1f%an\x1f%ar\x1f%s', timeout=20)
+    lg = first['log']
     if lg['ok'] and lg['out']:
         bits = (lg['out'].splitlines()[0]).split('\x1f')
         if len(bits) >= 4:
             last = {'hash': bits[0], 'author': bits[1], 'when': bits[2], 'subject': bits[3]}
 
-    stash = git(root, 'stash', 'list')
-    tags = git(root, 'tag', '--sort=-creatordate')
+    stash = first['stash']
+    tags = first['tags']
     return {
         'root': root, 'name': os.path.basename(root.rstrip('\\/')) or root,
         'branch': branch or '(空仓库)', 'detached': branch == 'HEAD',
@@ -1011,6 +1074,31 @@ def repo_info(path):
         'stashCount': len([x for x in (stash['out'].splitlines() if stash['ok'] else []) if x.strip()]),
         'tagCount': len([x for x in (tags['out'].splitlines() if tags['ok'] else []) if x.strip()]),
     }
+
+
+#: repo_info 的短缓存。**为什么要有**：这台机器上每条 git 命令要 0.25~0.6 秒
+#: （`git status` 在 34 万文件的仓库里要 0.55 秒），而 repo_info 一次要跑 9 条 ——
+#: 也就是 2.7 秒。界面打开一次会连着问三个接口（snapshot / timeline / cloud_versions），
+#: 每个都算一遍 ⇒ **光重复劳动就 5.4 秒**。真机上量出来 "打开一次 12.7 秒" 就是这么来的。
+#: 现在 15 秒内同一个目录只算一次；任何会改仓库状态的动作之后必须 `repo_cache_clear()`。
+_REPO_CACHE = {}
+_REPO_TTL = 15.0
+
+
+def repo_cache_clear(path=None):
+    """改完仓库要立刻清掉，否则界面会拿旧状态糊人（"我明明保存了它还说没变"）。"""
+    if not path:
+        _REPO_CACHE.clear()
+        return
+    key = os.path.abspath(path).lower()
+    for k in list(_REPO_CACHE):
+        if k == key or key.startswith(k + os.sep) or k.startswith(key + os.sep):
+            _REPO_CACHE.pop(k, None)
+
+
+def repo_info_fast(path, ttl=None):
+    """老名字，留着给别处调（现在 `repo_info` 本身就带缓存了）。"""
+    return repo_info(path, ttl=ttl)
 
 
 def host_of(url):
@@ -1659,7 +1747,8 @@ class Core:
 
     def snapshot(self, params=None):
         path = self._path(params)
-        info = repo_info(path)
+        # 用缓存版：打开界面时 snapshot / timeline / cloud_versions 会连着问同一个仓库
+        info = repo_info_fast(path, ttl=0 if (params or {}).get('fresh') else None)
         return {'path': path, 'isRepo': bool(info), 'repo': info,
                 'net': net_info(path, info), 'recent': recent_payload(),
                 'at': now_text(), 'atTs': time.time()}
@@ -2076,7 +2165,9 @@ class Core:
         tracked = loc_scan(scan_root, names, keep_libs=keep_libs) if names else {
             'files': 0, 'lines': 0, 'byLang': [], 'top': [], 'skipped': 0,
             'jumped': [], 'cut': False, 'secs': 0}
-        everything = loc_scan(root, None, keep_libs=keep_libs)
+        # ★ `fast=1` 只算"跟着提交的"那一份（0.3 秒），界面先把它画出来，
+        #   再发一次完整的把"磁盘上全部"补上 —— 不让用户对着转圈干等 8 秒。
+        everything = None if p.get('fast') else loc_scan(root, None, keep_libs=keep_libs)
         return {'ok': True, 'path': path, 'root': root, 'repoRoot': repo_root,
                 'isRepo': bool(info),
                 'tracked': tracked, 'all': everything, 'libs': keep_libs,
@@ -2196,8 +2287,12 @@ class Core:
         #   每次都把 git/gh 全套跑一遍就是白等。
         fresh = bool((params or {}).get('fresh'))
         c = _ENV_CACHE
+        # ★ 缓存从 4 秒放到 60 秒（用户的原话："每次都检查环境，导致每次打开这个页面
+        #   都特别慢"）。界面有三个入口会触发它（打开页面 / 窗口重新可见 / 窗口拿到焦点），
+        #   切来切去就会连查好几遍。60 秒足够挡住这些重复；真要立刻看最新状态，
+        #   界面上的「再检查一次」传 fresh=1 就绕过缓存。
         if not fresh and c.get('path') == path and c.get('data') \
-                and time.time() - float(c.get('at') or 0) < 4:
+                and time.time() - float(c.get('at') or 0) < 60:
             return c['data']
         refresh_tools()
         # 刚装完东西的那几分钟里，gh 的 60 秒缓存必须作废（否则"装好了还说没装"）
@@ -2227,9 +2322,17 @@ class Core:
                     'nextText': '这台电脑上还没有 git，先把它装好，别的都免谈。',
                     'help': HELP_AI, 'at': now_text()}
 
-        gitv = run([GIT, '--version'], timeout=15)
-        idn = git_identity(path)
-        gh = self._gh()
+        # ★ 这 4 项互不依赖，一起发。这台机器每条命令光是启进程就要 0.26 秒，
+        #   串着跑 = 1 秒多；并发跑 ≈ 最慢那一个。环境检查是"打开页面"的关键路径。
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            f_gitv = pool.submit(run, [GIT, '--version'], timeout=15)
+            f_idn = pool.submit(git_identity, path)
+            f_gh = pool.submit(self._gh)
+            f_probe = pool.submit(repo_probe, path)
+            gitv = f_gitv.result()
+            idn = f_idn.result()
+            gh = f_gh.result()
+            probe_info = f_probe.result()    # 下面推不推得动、这个文件夹两处都用它
         items = [{
             'key': 'git', 'state': 'ok', 'label': 'Git（记录版本的工具）',
             'detail': (gitv['out'].splitlines() or ['已安装'])[0].strip(),
@@ -2272,7 +2375,6 @@ class Core:
         #   跟 gh 登录毫无关系。所以拆成两项：
         #     · push  = 能不能推送（只看 git：远端地址 + 凭证助手 / SSH 密钥）
         #     · login = 能不能"自动替你建仓库"（只看 gh，是**可选**的便利功能）
-        probe_info = repo_probe(path)          # 只跑一次，下面两处都用它
         ability = push_ability(path, probe_info)
         if ability['can']:
             items.append({'key': 'push', 'state': 'ok',
@@ -2789,6 +2891,9 @@ class Core:
     def _step(self, cwd, argv, label, timeout=180):
         got = _exec(argv, cwd=cwd, timeout=timeout, label=label)
         got['label'] = label
+        # ★ 跑过任何一条 git 命令，仓库状态就可能变了 —— 立刻把 repo_info 的缓存清掉。
+        #   不清的后果是"我明明保存了，界面还说没改动"（比慢更难受）。
+        repo_cache_clear(cwd)
         print('[github] %s → %s（%d ms，退出码 %s）'
               % (label, got['cmd'], got['ms'], got['code']), flush=True)
         return got
@@ -2859,24 +2964,36 @@ class Core:
             limit = 40
         limit = max(5, min(300, limit))
         rev = str(p.get('rev') or '').strip() or 'HEAD'
-        rows, _ = git_log_rows(root, limit + 1, rev)
+        # ★ 下面这 6 件事**互不依赖，一起发**（真机上量出来的：这台机器每条 git 光是
+        #   启进程就要 0.26 秒，原来一条接一条跑 = 1.4 秒；这是"打开页面特别慢"的一半）。
+        #   串行时：log → rev-list 上游 → for-each-ref → rev-parse → rev-list×2 → tag
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            f_rows = pool.submit(git_log_rows, root, limit + 1, rev)
+            f_pushed = pool.submit(_upstream_hashes, root, info['upstream'])
+            f_branch = pool.submit(branch_rows, root)
+            # ★ 「V-384」这种版本号：界面上要一个"每保存一次就 +1"的整数，用真实提交数来当。
+            #   本地总共多少个提交 / 云端追得上多少个 —— 两个数一减就是"待备份几个版本"。
+            f_total = pool.submit(_rev_count, root, 'HEAD')
+            f_uptotal = (pool.submit(_rev_count, root, info['upstream'])
+                         if info['upstream'] else None)
+            f_tags = pool.submit(tag_rows, root)
+            rows, _ = f_rows.result()
+            pushed, capped = f_pushed.result()
+            local, remote = f_branch.result()
+            total = f_total.result()
+            up_total = f_uptotal.result() if f_uptotal else 0
+            tags = f_tags.result()
         more = len(rows) > limit
         rows = rows[:limit]
-        pushed, capped = _upstream_hashes(root, info['upstream'])
         for r in rows:
             r['pushed'] = bool(pushed) and r['hash'] in pushed
-        local, remote = branch_rows(root)
-        # ★ 「V-384」这种版本号：界面上要一个"每保存一次就 +1"的整数，用真实提交数来当。
-        #   本地总共多少个提交 / 云端追得上多少个 —— 两个数一减就是"待备份几个版本"。
-        total = _rev_count(root, 'HEAD')
-        up_total = _rev_count(root, info['upstream']) if info['upstream'] else 0
         for i, r in enumerate(rows):
             r['ver'] = ('V-%d' % (total - i)) if total else ''
         return {'ok': True, 'path': path, 'root': root, 'head': info['branch'],
                 'detached': info['detached'], 'upstream': info['upstream'],
                 'ahead': info['ahead'], 'behind': info['behind'],
                 'commits': rows, 'more': more, 'branches': local, 'remoteBranches': remote,
-                'tags': tag_rows(root), 'pushedKnown': bool(pushed), 'capped': capped,
+                'tags': tags, 'pushedKnown': bool(pushed), 'capped': capped,
                 'total': total, 'upstreamTotal': up_total,
                 'ver': ('V-%d' % total) if total else '',
                 'cloudVer': ('V-%d' % up_total) if up_total else '',
@@ -2911,16 +3028,21 @@ class Core:
         except (TypeError, ValueError):
             limit = 30
         limit = max(5, min(200, limit))
-        rows, _ = git_log_rows(root, limit + 1, target)
+        # 这三条同样互不依赖，一起发（各自都要 0.3 秒左右的进程启动开销）
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            f_rows = pool.submit(git_log_rows, root, limit + 1, target)
+            f_total = pool.submit(_rev_count, root, target)
+            f_local = pool.submit(git, root, 'rev-list', 'HEAD', timeout=30)
+            rows, _ = f_rows.result()
+            total = f_total.result()
+            local_heads = (f_local.result() or {}).get('out', '').splitlines()
         more = len(rows) > limit
         rows = rows[:limit]
-        total = _rev_count(root, target)
         for i, r in enumerate(rows):
             r['ver'] = ('V-%d' % (total - i)) if total else ''
             r['pushed'] = True          # 它本来就在云端
         # 云端有、本地没有的（behind）：标出来，界面上一眼看出"这些还没拿下来"
         local_only = set()
-        local_heads = git(root, 'rev-list', 'HEAD', timeout=30)['out'].splitlines()
         local_hashes = set(x.strip() for x in local_heads if x.strip())
         for r in rows:
             r['inLocal'] = r['hash'] in local_hashes
@@ -3547,6 +3669,17 @@ def recent_payload():
 
 
 # ------------------------------------------------------------------ 内嵌模式（stdio）
+#: 内嵌模式下**可以并发跑**的方法（全是只读的：读状态、数文件、看日志）。
+#: 会改仓库的动作不在里面 —— 那些仍然串行，免得两条写操作撞在一起。
+#: ★ 别往里塞 `run_action` / `commit_all` / `sync` / `shield` 这类会动仓库的。
+PARALLEL_METHODS = frozenset((
+    'boot', 'actions', 'snapshot', 'timeline', 'cloud_versions', 'show_commit',
+    'gh', 'disks', 'net_probe', 'remote_repo', 'stashes', 'env_check',
+    'install_status', 'push_check', 'bigfiles', 'loc', 'ignore', 'sync_log',
+    'recent', 'settings', 'job_state',
+))
+
+
 class _StdoutToProgress(object):
     """内嵌模式下挡在 `sys.stdout` 前面：**print 出来的东西一律变成"进度"**。
 
@@ -3590,38 +3723,62 @@ class Embedded:
     def __init__(self):
         self.core = Core()
         self._lock = threading.Lock()
+        self._send_lock = threading.Lock()      # 只护着"往协议里写一行"
         # 协议通道单独留一份；剩下的 print 全部改道成进度（见 _StdoutToProgress）
         self._out = sys.stdout
         sys.stdout = _StdoutToProgress(self._out)
 
     def send(self, obj):
-        self._out.write(json.dumps(obj, ensure_ascii=False) + '\n')
-        self._out.flush()
+        # 并发跑请求之后要防两行 JSON 交错（写一半被另一条插进来 = 协议坏掉）
+        with self._send_lock:
+            self._out.write(json.dumps(obj, ensure_ascii=False) + '\n')
+            self._out.flush()
+
+    def _answer(self, mid, fn, params):
+        """跑一个请求并把结果发回去（可能在别的线程里跑）。"""
+        try:
+            result = fn(params)
+            self.send({'id': mid, 'ok': True, 'result': result})
+            return result
+        except Exception as e:                                           # noqa: BLE001
+            self.send({'id': mid, 'ok': False, 'error': '%s: %s' % (type(e).__name__, e)})
+            return None
 
     def loop(self):
-        for line in sys.stdin:
-            line = (line or '').strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-            except ValueError:
-                self.send({'event': 'error', 'data': {'why': '这不是 JSON：%s' % line[:80]}})
-                continue
-            mid, method = msg.get('id'), str(msg.get('method') or '')
-            if method == 'ping':
-                self.send({'id': mid, 'ok': True, 'result': {'pong': True, 'at': now_text()}})
-                continue
-            fn = getattr(self.core, method, None)
-            if not callable(fn) or method.startswith('_'):
-                self.send({'id': mid, 'ok': False, 'error': '没有这个方法：%s' % method})
-                continue
-            try:
-                with self._lock:
-                    result = fn(msg.get('params'))
-                self.send({'id': mid, 'ok': True, 'result': result})
-            except Exception as e:                                       # noqa: BLE001
-                self.send({'id': mid, 'ok': False, 'error': '%s: %s' % (type(e).__name__, e)})
+        # ★ 这里是"打开页面特别慢"的最后一块拼图（真机上量出来的）：
+        #   原来是 `for line in stdin:` + 一把大锁 —— **一条一条串着处理**。
+        #   而界面一打开会连着问 snapshot / timeline / cloud_versions / env_check，
+        #   每个后端都要跑十几条 git（这机器上每条启进程 0.26 秒）⇒ 排队累加，
+        #   十几秒就出来了。
+        #   现在：**只读**请求各自一个线程并发跑（互不影响，反正都是读），
+        #   会改仓库的（commit / push / add…）仍然串行，别让两条写操作撞一起。
+        #   线程数封顶 6：再多就没意义了（瓶颈是 git 启进程的 CPU）。
+        pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix='moss-gh')
+        try:
+            for line in sys.stdin:
+                line = (line or '').strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except ValueError:
+                    self.send({'event': 'error', 'data': {'why': '这不是 JSON：%s' % line[:80]}})
+                    continue
+                mid, method = msg.get('id'), str(msg.get('method') or '')
+                if method == 'ping':
+                    self.send({'id': mid, 'ok': True, 'result': {'pong': True, 'at': now_text()}})
+                    continue
+                fn = getattr(self.core, method, None)
+                if not callable(fn) or method.startswith('_'):
+                    self.send({'id': mid, 'ok': False, 'error': '没有这个方法：%s' % method})
+                    continue
+                if method in PARALLEL_METHODS:
+                    pool.submit(self._answer, mid, fn, msg.get('params'))
+                else:
+                    with self._lock:
+                        self._answer(mid, fn, msg.get('params'))
+        finally:
+            pool.shutdown(wait=False)
 
 
 # ------------------------------------------------------------------ 独立窗口

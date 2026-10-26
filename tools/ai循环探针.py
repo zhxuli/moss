@@ -379,6 +379,41 @@ def main():
 
     print()
     print("=" * 72)
+    print("G2：图片不许再被 read_file 当文本啃 —— 走 read_image，作为视觉输入进下一轮")
+    print("=" * 72)
+    imgf = fake_pkg / "需求截图.png" if "fake_pkg" in locals() else pkgs / "需求截图.png"
+    imgf.parent.mkdir(parents=True, exist_ok=True)
+    # 只验"图片识别 / 侧信道 / 消息结构"，不需要真能解码的像素。
+    imgf.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+    ti = T.Tools(workdir=str(imgf.parent))
+    got_img = ti.call("read_file", {"path": str(imgf), "why": "直接看图片"})
+    chk("G2 ★ 对图片调 read_file ⇒ 自动转 read_image，不再回 1652 行乱码",
+        "已读取图片" in got_img and "JFIF" not in got_img and len(got_img) < 500,
+        got_img.replace("\n", " ")[:100])
+    chk("G2 ★ 图片进了宿主侧信道（下一轮会变成 image_url）",
+        len(ti.pending_images) == 1
+        and str(ti.pending_images[0].get("data_url") or "").startswith("data:image/png;base64,"),
+        "pending=%d" % len(ti.pending_images))
+    got_plain = T.Tools(workdir=str(imgf.parent)).call("read_file", {"path": str(imgf)})
+    _got2, _err2 = E.read_text(imgf)
+    chk("G2 ★ 底层 read_text 也拒绝把图片当文本（双保险）",
+        bool(_err2) and "read_image" in str(_err2), str(_err2)[:100])
+    ld_img = T.Tools(workdir=str(imgf.parent)).call("list_dir", {"path": str(imgf.parent)})
+    chk("G2 list_dir 会把图片标出来并点名 read_image",
+        "[图片]" in ld_img and "read_image" in ld_img, ld_img.replace("\n", " ")[:120])
+    fmi = FakeModel([call("read_image", {"path": str(imgf), "why": "看需求截图"}),
+                     call("answer", {"text": "图里写的是测试需求。", "why": "收工"})])
+    loop_i = L.Loop(fmi, workdir=str(imgf.parent), max_steps=4, say=lambda *a, **k: None)
+    ri = loop_i.run("读图整理需求", snapshot=False)
+    last_msg = fmi.seen[-1][-1] if fmi.seen and fmi.seen[-1] else {}
+    parts_i = last_msg.get("content") if isinstance(last_msg.get("content"), list) else []
+    chk("G2 ★★ 下一轮真的带上了 image_url（不是让模型去 OCR）",
+        ri.get("ok") and any(x.get("type") == "image_url" for x in parts_i),
+        "roles=%s types=%s" % ([m.get("role") for m in (fmi.seen[-1] if fmi.seen else [])],
+                               [x.get("type") for x in parts_i]))
+
+    print()
+    print("=" * 72)
     print("H：`V-236` 快照 —— 动手前先存（`by=\"ai\"` + 任务原文），而且**只能清自己存的**")
     print("=" * 72)
     import ai_snap as S                                                   # noqa: E402

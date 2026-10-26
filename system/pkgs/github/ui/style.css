@@ -253,6 +253,20 @@ svg { display: block; }
 .count-pill .caret svg { width: 14px; height: 14px; transition: transform .3s; }
 .count-pill:empty { display: none; }
 
+/* 卡片右上角那排小动作（统计图标 + 文件数胶囊） */
+.node-acts { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.ico-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; flex: none; padding: 0;
+  border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg2, rgba(127, 127, 127, .06)); color: var(--mut1, #666);
+  cursor: pointer; font: inherit;
+  transition: background .2s, color .2s, transform .1s;
+}
+.ico-btn:hover { background: rgba(127, 127, 127, .16); color: var(--fg, #222); }
+.ico-btn:active { transform: scale(.94); }
+.ico-btn svg { width: 16px; height: 16px; }
+
 /* 版本号小胶囊 */
 .ver-pill {
   display: inline-flex; align-items: center; gap: 6px; flex: none;

@@ -211,6 +211,8 @@ def env_note(workdir=None, perm="", tmp="", allow=()):
             "用户看 `run_moss` 这种工具名看不懂你要干嘛。\n"
             "【拿不准就问】要动的东西有歧义、有不止一种做法、要删/覆盖东西 —— "
             "**先用 `ask` 工具问用户**（可以给选择题），别自己猜着往下冲。")
+    out += ("\n【图片】需要看 png/jpg/gif/webp/bmp 时用 `read_image`，它会作为视觉输入直接交给模型；"
+            "**不要用 read_file 读图片，也不要把 OCR 当第一选择**。列表里带 [图片] 的就是可以直接看的图。")
     # ★ `V-382`：把"备份"这件事作为**事实**告诉它 —— 以前提示词里一个字都没有，
     #   于是它（a）以为没备份、慌了去手动 `--snap save`；（b）收尾时把自动存的那条
     #   当垃圾清掉（`snap_clean` → "别占着用户地方"）。两头都是同一个坑：它不知道有退路。
@@ -942,9 +944,25 @@ class Loop:
                         "（改动之后跑的，或者你本来就没改、只是验证它能跑）。"
                         "如果这就是你要的结果，现在用 done(summary=…) 收工 —— "
                         "summary 里把「怎么用」也写清楚（用户要的是这个）。")
-            # ★ `V-247`：这一轮所有 tool 结果发完之后，再追加"人话"（顺序反了就是 HTTP 400）
-            for _note in pending_notes:
-                messages.append({"role": "user", "content": _note})
+            # ★ `read_image` 的图片走宿主侧信道：tool 消息只能是字符串，图片必须作为
+            #   下一条 user 多模态消息追加。它一定排在所有 tool 结果之后，不会破坏
+            #   assistant(tool_calls) → tool 的配对（否则网关会报 HTTP 400）。
+            imgs = self.tools.take_images()
+            if imgs:
+                bits = ["【你刚刚读取的图片】下面是视觉输入，直接看图里的内容继续。",
+                        "不要再说自己没有视觉能力，不要调用 OCR，也不要用 read_file 读图片。"]
+                bits.extend("图片 %d：%s（%s）" % (i + 1, im.get("name"), im.get("path"))
+                            for i, im in enumerate(imgs))
+                bits.extend(pending_notes)
+                parts = [{"type": "text", "text": "\n".join(bits)}]
+                parts.extend({"type": "image_url",
+                              "image_url": {"url": im.get("data_url") or ""}}
+                             for im in imgs if im.get("data_url"))
+                messages.append({"role": "user", "content": parts})
+            else:
+                # ★ `V-247`：这一轮所有 tool 结果发完之后，再追加"人话"（顺序反了就是 HTTP 400）
+                for _note in pending_notes:
+                    messages.append({"role": "user", "content": _note})
             result = {"ok": False, "reason": "步数用完了（%d 步）" % self.max_steps}
         # ★ `V-237`：**步数用完 ≠ 失败**。要是它其实已经验收通过（最后一次改动之后跑通过，
         #   或者没改动但真跑成功过），只是没来得及说 `done` —— 那就照实判通过，

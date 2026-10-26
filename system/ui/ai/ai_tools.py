@@ -51,13 +51,22 @@ TOOLS = [
             "required": []}}},
     {"type": "function", "function": {
         "name": "read_file",
-        "description": ("读一个文本文件（带行号）。**一次最多回 20000 字符**（约 400~500 行）"
+        "description": ("读一个**文本**文件（带行号）。**一次最多回 20000 字符**（约 400~500 行）"
                         "—— 想一次读完整个源文件就 `limit=400`；**别把同一个文件分好几次读**"
-                        "（第三次再读同一个文件时会把整篇给它）。"),
+                        "（第三次再读同一个文件时会把整篇给它）。"
+                        "★ 图片不是文本文件：直接用 `read_image`（read_file 也会自动转过去）。"),
         "parameters": {"type": "object", "properties": {
             "path": {"type": "string"},
             "offset": {"type": "integer", "description": "从第几行开始，默认 1"},
             "limit": {"type": "integer", "description": "读多少行，默认 200；读整个文件填 400"}},
+            "required": ["path"]}}},
+    {"type": "function", "function": {
+        "name": "read_image",
+        "description": ("直接看一张图片（png/jpg/gif/webp/bmp），把它作为**视觉输入**交给模型。"
+                        "需要从图片里读需求、截图、照片内容时用它；**不要用 read_file 读图片**，"
+                        "也不要把 OCR 当作第一选择。一次只读一张；多张就分别调用。"),
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string", "description": "图片绝对路径"}},
             "required": ["path"]}}},
     {"type": "function", "function": {
         "name": "grep", "description": "在目录里按正则搜文本，回「文件:行号: 内容」。",
@@ -312,6 +321,10 @@ class Tools:
         self.log = []              # [(工具名, 摘要)]，给人看的步骤流
         self.changed = []          # 这次任务**真动过**的文件（界面要拿它列"改了哪些"）
         self.reads = {}            # 每个文件读了几次（`V-237`：读第三回就提醒别再磨）
+        #: `read_image` 读到的图片先存这儿；loop 会把它们作为视觉输入附在下一轮消息后。
+        #: 工具结果本身只能是文本，塞不进 `image_url`，所以走这条宿主内的侧信道。
+        self.pending_images = []
+        self.images_read = 0
         self.greps = {}            # 每组 (路径, 正则) 搜了几次（`V-241`：同一组搜三回就喊停）
         self.grep_files = {}       # 每个文件被搜了几次（换正则也算 —— 那是"一行行刨文件"）
         #: ★ `V-382`：同一条 `run_moss` 命令跑了几次（第 3 回就顶一句"换个证据来源"）
@@ -498,16 +511,62 @@ class Tools:
             if it.is_dir():
                 rows.append("  [目录] %s/" % it.name)
             else:
-                rows.append("  %8d  %s" % (it.stat().st_size, it.name))
-        return "%s\n%s" % (p, "\n".join(rows) or "（空）")
+                # 把图片标出来：模型一眼就知道下一步该走 read_image，而不是 read_file。
+                mark = "  [图片]" if E.image_mime(it) else ""
+                rows.append("  %8d  %s%s" % (it.stat().st_size, it.name, mark))
+        out = "%s\n%s" % (p, "\n".join(rows) or "（空）")
+        if any("[图片]" in r for r in rows):
+            out += "\n（带 [图片] 的文件用 `read_image` 看；不要用 read_file，也不要找 OCR。）"
+        return out
 
     #: 一次 read_file 最多回多少字符（`V-243`：2200 只够 ~60 行、6000 只够 ~130 行，
     #  一个 400 行的源文件要分 3~4 次读 —— 这正是它"不停读同一个文件"的一半原因。
     #  现在给到 20000 字符 ≈ 400~500 行：**一个源文件基本能一次读完**。）
     READ_CHARS = 20000
 
+    def _t_read_image(self, args):
+        """把图片放进"下一轮视觉输入"队列；工具结果本身只回一句人话。
+
+        OpenAI Chat Completions 的 `tool` 消息内容只能是字符串，不能直接带图片。
+        所以这里把 data URL 暂存在宿主侧，loop 在所有 tool 结果发完后追加一条
+        user 多模态消息（text + image_url）。模型下一轮就能真正看见图。
+        """
+        p = self._path(args)
+        bad = E.check_readable(p, scope=self.workdir)
+        if bad:
+            return bad
+        if not p.is_file():
+            return "没有这个图片文件：%s" % p
+        mime = E.image_mime(p)
+        if not mime:
+            return ("不是模型能直接看的图片（支持 png/jpg/gif/webp/bmp）：%s\n"
+                    "如果它是别的二进制，请用对应工具；不要尝试当文本读。" % p)
+        if len(self.pending_images) >= 8:
+            return "这一轮已经挂了 8 张图，先看完这些，再继续读下一张。"
+        if self.images_read >= 32:
+            return "这次任务已经读了 32 张图片（上下文会爆），先基于已有图片继续。"
+        data_url, err = E.image_data_url(p)
+        if err:
+            return err
+        self.images_read += 1
+        self.pending_images.append({"name": p.name, "path": str(p),
+                                    "mime": mime, "data_url": data_url})
+        return ("已读取图片：%s（%s，%d 字节）。图片会作为**视觉输入**附在下一轮消息里；"
+                "直接根据图里的内容继续，**不要调用 OCR**，也不要用 read_file 反复读它。"
+                % (p, mime, p.stat().st_size))
+
+    def take_images(self):
+        """取走这一轮 `read_image` 攒下的图片（loop 在 tool 消息之后注入）。"""
+        got = list(self.pending_images)
+        self.pending_images.clear()
+        return got
+
     def _t_read_file(self, args):
         p = self._path(args)
+        # ★ 真机 bug：模型对 jpg 调 read_file，底层把二进制 decode 成乱码文本，
+        #   1652 行脏东西直接进上下文。这里自动转给 read_image；图片永远不按文本读。
+        if p.is_file() and E.image_mime(p):
+            return self._t_read_image(args)
         # 默认 200 行 / 单次最多 20000 字符（够读完一个源文件）。
         # ★ 读同一个文件到**第三回**时：干脆把整篇给它（到上限为止）—— 与其让它继续换
         #   offset 磨，不如一次给全（`V-243`）。
