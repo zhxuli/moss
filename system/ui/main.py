@@ -31,6 +31,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import uuid
 from pathlib import Path
 
@@ -1674,6 +1675,15 @@ class _EmbedHandler(http.server.SimpleHTTPRequestHandler):
         tk = _EMBED_SRV["token"]
         if tk and path.startswith("/" + tk + "/"):
             path = path[len(tk) + 1:]        # 去掉 token 那一段，剩下的才是真路径
+        # ★ 文件管理的 **HTML / MD 浏览模式**要能加载同目录下的 CSS / 图片 / JS。
+        #   这类页面里的相对地址会变成 `/…/abs/<绝对路径>`，这里把它映射回真实文件。
+        #   仍然要求随机 token（本机其它程序猜不到），和 pywebview 的 `fs_read` 是同一级信任。
+        raw = urllib.parse.unquote(str(path or "").split("?", 1)[0].split("#", 1)[0]).lstrip("/")
+        if raw.startswith("abs/"):
+            try:
+                return str(Path(raw[len("abs/"):]))
+            except OSError:
+                return ""
         return super().translate_path(path)
 
     def end_headers(self):
@@ -3466,6 +3476,20 @@ class Api:
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 
+    def ai_full_access(self, on=True):
+        """切「完全权限（无人值守）」：路径全开 + 危险操作不问 + 技能自动批准。
+
+        ★ 和清单里单独勾「任意路径」不同：那个只给文件系统权限；这个还要让
+          `skill_lib` 把 AI 新建 / 修改的技能动态判成已批准（不会写死进授权表，
+          关掉开关后就会回到按指纹授权）。
+        """
+        try:
+            M = self._ai_mode()
+            got = M.set_full_access(bool(on))
+            return dict(got, summary=M.summary(self._ai_last_workdir()))
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
     def ai_allow_pick(self):
         """**选一个文件夹**加进放行清单（点「+ 加目录」那颗按钮）。
 
@@ -4153,6 +4177,33 @@ class Api:
                 "writable": root["writable"], "encoding": enc, "bom": bom_hex,
                 "encoding_note": note,
                 "mtime": int(p.stat().st_mtime)}
+
+    def fs_preview_url(self, rel):
+        """给文件管理的**浏览模式**一个本地 URL（HTML / Markdown 预览用）。
+
+        ★ 为什么要经本地 HTTP 服务：WebView2 里 iframe 不能加载 `file://` 页面，
+          而且 HTML 里的 `./style.css`、`./img.png` 也得跟着能取到。
+        ★ 返回的 `base` 以 `/` 结尾，预览页塞进 `<base href="…">` 就能解析相对资源；
+          `url` 是这个文件本身（也可以直接给 iframe src）。
+        """
+        try:
+            _root, p = _resolve(rel)
+        except ValueError as e:
+            return {"ok": False, "msg": str(e)}
+        if not p.is_file():
+            return {"ok": False, "msg": "不是文件：%s" % rel}
+        port, token = _embed_server()
+        if not port:
+            return {"ok": False, "msg": token or "本地预览服务起不来"}
+        try:
+            ap = p.resolve().as_posix()
+        except OSError as e:
+            return {"ok": False, "msg": "路径解析失败：%s" % e}
+        quoted = urllib.parse.quote(ap, safe="/:")
+        url = "http://127.0.0.1:%d/%s/abs/%s" % (port, token, quoted)
+        base = url.rsplit("/", 1)[0] + "/"
+        return {"ok": True, "url": url, "base": base, "path": str(p),
+                "rel": _rel_page(p), "name": p.name}
 
     def fs_write(self, rel, text, encoding="utf-8", bom=""):
         """写回文件。三个根都能写（`system/` 也放开了，见文件头那段说明）。

@@ -1697,6 +1697,42 @@ def main():
     chk("S10 ★ 盘上那份**没被改写**（只纠读出来的那份，不偷偷动别人的记录）",
         str(_raw.get("workdir") or "") == str(_gone), "盘上还是：%s" % (_raw.get("workdir"),))
 
+    print()
+    print("=" * 72)
+    print("S11：完全权限 = 任意路径 + 技能自动批准（和单独的「任意路径」分开）")
+    print("=" * 72)
+    import skill_lib as SK                                                # noqa: E402
+    _sp = SK.skill_dir() / "fullprobe"
+    _sp.mkdir(parents=True, exist_ok=True)
+    (_sp / "pkg.json").write_text(json.dumps({
+        "spec": 1, "id": "fullprobe", "kind": "task", "name": "完全权限探针",
+        "desc": "probe", "entry": {"file": "run.py"},
+        "ai": {"expose": True, "why": "probe"}}, ensure_ascii=False), encoding="utf-8")
+    (_sp / "run.py").write_text("print(1)\n", encoding="utf-8")
+    (_sp / "icon.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"></svg>', encoding="utf-8")
+    MP.set_full_access(False)
+    MP.allow_set("*", read=True, write=True, why="只是任意路径", by="user")
+    _sk = SK.list_skills()["fullprobe"]
+    chk("S11 ★ 只勾「任意路径」⇒ 技能仍然待批准（两个概念不许混）",
+        (not MP.full_access()) and (not _sk["allowed"]), _sk["why_allow"])
+    MP.set_full_access(True)
+    _sk = SK.list_skills()["fullprobe"]
+    chk("S11 ★★ 打开「完全权限」⇒ 已有技能自动批准，且任意路径也开着",
+        MP.full_access() and MP.wildcard_write() and _sk["allowed"]
+        and "完全权限" in _sk["why_allow"], _sk["why_allow"])
+    (_sp / "run.py").write_text("print(2)\n", encoding="utf-8")
+    _sk2 = SK.list_skills()["fullprobe"]
+    chk("S11 ★★ 改了技能文件仍然自动批准（不会退回待批准）",
+        _sk2["allowed"] and "完全权限" in _sk2["why_allow"], _sk2["why_allow"])
+    chk("S11 ★ 给模型的说明里明确「不要停下来等用户点允许」",
+        "不要停下来等用户" in SK.note()
+        and "不要用 `ask` 等用户批准" in MP.perm_note(str(_v384pkg)), "")
+    MP.set_full_access(False)
+    _sk3 = SK.list_skills()["fullprobe"]
+    chk("S11 ★★ 关掉完全权限 ⇒ 没被真人批准过的技能回到待批准（不留永久副作用）",
+        (not MP.full_access()) and (not MP.wildcard_write()) and (not _sk3["allowed"]),
+        _sk3["why_allow"])
+
     shutil.rmtree(tmp, ignore_errors=True)
     print()
     print("=" * 72)

@@ -57,7 +57,10 @@ def path():
 
 
 def _blank():
-    return {"allow": []}
+    #: `full_access` 是**比"任意路径"更高一档**的无人值守开关：
+    #: 除了路径全开、危险操作不问，还包含"AI 新建/修改技能自动批准"。
+    #: 单独存一个字段（不靠 `*` 那一行的 why 猜），这样"任意路径"和"完全权限"是两个概念。
+    return {"allow": [], "full_access": False}
 
 
 def _norm_perm(it):
@@ -89,6 +92,9 @@ def load():
                 raw = got
     except Exception:                                                    # noqa: BLE001
         raw = {}
+    # ★ 老版本只有一个 `*` 行：勾上写、且 why 写着"完全权限"的，迁移成新语义。
+    #   之后"任意路径"单独勾写**不会**再自动升级成完全权限。
+    legacy_full = False
     for it in (raw.get("allow") or []):
         if isinstance(it, dict):
             one = _norm_perm(it)
@@ -97,6 +103,10 @@ def load():
             #   留着只会让清单越用越长（真机上攒了 6 个 `system/pkgs/*` 的出厂样板包）。
             if one and str(one.get("by") or "") != "auto":
                 cur["allow"].append(one)
+                if (one.get("path") == WILDCARD and one.get("write")
+                        and "完全权限" in str(one.get("why") or "")):
+                    legacy_full = True
+    cur["full_access"] = bool(raw.get("full_access", legacy_full))
     # 老文件里那个 `mode`（`V-307`~`V-315` 的三档）→ **翻译成清单里的勾选**，别让它悄悄失效
     old_mode = str(raw.get("mode") or "")
     if old_mode and not raw.get("seeded"):
@@ -112,7 +122,8 @@ def load():
 def save(d):
     """原子写（先 `.tmp` 再 `os.replace`）—— 和窗口几何 / 排序一个路子。"""
     d = d if isinstance(d, dict) else _blank()
-    out = {"allow": [x for x in (d.get("allow") or []) if isinstance(x, dict) and x.get("path")]}
+    out = {"allow": [x for x in (d.get("allow") or []) if isinstance(x, dict) and x.get("path")],
+           "full_access": bool(d.get("full_access"))}
     try:
         p = path()
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -127,6 +138,52 @@ def save(d):
 def _wildcard_row():
     return {"path": WILDCARD, "read": False, "write": False, "why": WILDCARD_LABEL,
             "by": "system", "at": "", "pending": False}
+
+
+def full_access():
+    """**完全权限（无人值守）** 开着没有。
+
+    ★ 和"任意路径"不是一回事：
+      · 任意路径 = 清单里 `*` 那一行 read/write 打开；
+      · 完全权限 = 任意路径 + **AI 新建/修改技能自动批准** + 危险操作不问。
+    旧版本把两者合成一个开关（靠 `*` 行的 why 区分）；这里读旧文件时已经自动迁移。
+    """
+    try:
+        return bool(load().get("full_access"))
+    except Exception:                                                # noqa: BLE001
+        return False
+
+
+def set_full_access(on=True):
+    """切**完全权限**：同时打开/关闭任意路径，并把技能授权交给动态规则。
+
+    技能授权本身不写进 `skills_allow.json` —— `skill_lib` 会读这里的 `full_access`，
+    动态判"已批准"。这样关掉完全权限之后，没有真正被人点过允许的技能会回到待批准，
+    不会留下"一次全开 = 永久授权"的副作用。
+    """
+    cur = load()
+    on = bool(on)
+    cur["full_access"] = on
+    rows = cur.get("allow") or []
+    star = _find(rows, WILDCARD)
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    if star is None:
+        star = {"path": WILDCARD, "read": False, "write": False, "why": WILDCARD_LABEL,
+                "by": "system", "at": "", "pending": False}
+        rows.append(star)
+    star["read"] = on
+    star["write"] = on
+    star["pending"] = False
+    star["at"] = now
+    star["by"] = "user"
+    star["why"] = "完全权限（无人值守）" if on else WILDCARD_LABEL
+    cur["allow"] = rows
+    got = save(cur)
+    got["msg"] = ("完全权限已开启：任意路径可读写；新建 / 修改技能自动批准；危险操作不再确认"
+                  if on else "完全权限已关闭：恢复按权限清单；技能重新按指纹授权")
+    got["full_access"] = on
+    got["item"] = dict(star)
+    return got
 
 
 def allow_list():
@@ -199,6 +256,10 @@ def allow_set(pth, read=None, write=None, why="", by="user", add=True, pending=N
             it["why"] = str(why)
         if by and it.get("by") in ("", "user"):
             it["by"] = str(by)
+    # ★ 清单里手动关掉 `*` 那一行 = 不再"任意路径"，当然也不再是完全权限。
+    #   反过来手动打开 `*` 只给路径权限，**不会**偷偷升级成"完全权限"（技能仍然要按指纹授权）。
+    if raw == WILDCARD and write is not None and not bool(write):
+        cur["full_access"] = False
     cur["allow"] = rows
     got = save(cur)
     # `V-367`：以前是日志式的一串「路径：读=开 写=关」—— 界面上每拨一次勾就弹一次
@@ -285,6 +346,8 @@ def allow_rm(pth):
     rows = [it for it in (cur.get("allow") or []) if _norm(it.get("path")) != key]
     if len(rows) == len(cur.get("allow") or []):
         return {"ok": False, "msg": "清单里没有这条"}
+    if _norm(pth) == WILDCARD:
+        cur["full_access"] = False       # 删掉任意路径那行，当然也不再是完全权限
     cur["allow"] = rows
     got = save(cur)
     got["msg"] = "从清单里删掉了（它现在读不了也写不了这里）"
@@ -758,6 +821,7 @@ def perm_note(workdir=""):
     rd = [it["path"] for it in rows
           if it.get("read") and it.get("path") != WILDCARD and it.get("path") != wd]
     star_w = wildcard_write()
+    full = full_access()
     out = []
     if cur is not None and cur_write:
         out.append("★ **这次干活的那个包** = `%s`：**默认就能读、能写**，不用申请"
@@ -765,11 +829,18 @@ def perm_note(workdir=""):
     elif cur is not None:
         out.append("★ **这次干活的那个包** = `%s`：用户把它的「写」**关掉了** —— "
                    "这一轮你只能读它，别改。" % wd)
-    if star_w:
-        out.append("🔓 **放手（完全权限）**：除硬锁路径外**哪儿都能写**，危险操作也不再问你。"
-                   "★ 这种时候**一次 `allow_path` 都不要调** —— 你要碰的地方本来就允许，"
-                   "申请只会白弹一张卡、白等一个人（真机上就是这么卡住的）。"
+    if full:
+        out.append("🔓 **完全权限（无人值守）**：除硬锁路径外**哪儿都能写**；"
+                   "你**新建或修改的技能会自动视为已批准**，不用停下来等用户点「允许」；"
+                   "危险操作 / 覆盖也不再问你。★ 这种时候**一次 `allow_path` 都不要调** —— "
+                   "你要碰的地方本来就允许，申请只会白弹一张卡、白等一个人。"
+                   "★ 技能**本次开工的工具表仍然是固定的**：新造/改过的技能本次不能直接变成工具，"
+                   "要试就跑 `run_moss(\":skill run <名字> …\")`；不要用 `ask` 等用户批准。"
                    "越是这样越要自己兜住：改之前想清楚，改完跑一遍。")
+    elif star_w:
+        out.append("🔓 **任意路径**：除硬锁路径外**哪儿都能写**，危险操作也不再问你。"
+                   "★ 这种时候**一次 `allow_path` 都不要调** —— 你要碰的地方本来就允许。"
+                   "★ 但技能授权仍是分开的：新建/修改技能仍需用户点一次「允许」。")
     elif wr:
         out.append("清单里另外勾了「写」的：%s" % "；".join("`%s`" % p for p in wr))
     elif not cur_write:
@@ -807,6 +878,7 @@ def summary(workdir=""):
     return {"ok": True,
             "allow": out,
             "wildcard": wildcard_write(),
+            "full_access": full_access(),
             # 界面上那颗「可写 N 处」胶囊数的是**清单里的**（"任意路径"那行不算）
             "writable_n": len([1 for it in out
                                if it.get("write") and it.get("path") != WILDCARD]),

@@ -296,7 +296,9 @@ async function fmOpenPage(rel){
     const r = await pywebview.api.fs_read(rel);
     if (!r.ok){ toast("✗ " + r.msg, true); return; }
     const name = rel.split("/").pop();
-    const meta = extOf({name: name, ext: (name.split(".").pop() || "").toLowerCase()});
+    const ext = (name.split(".").pop() || "").toLowerCase();
+    const meta = extOf({name: name, ext: ext});
+    const kind = previewKindOf(name);
     t = {rel: rel, name: name, lang: meta.l || "plaintext",
          text: r.text || "", original: r.text || "",
          binary: !!(r.binary || r.too_big),
@@ -305,6 +307,8 @@ async function fmOpenPage(rel){
          //   不然打开一个 GBK / UTF-16 的 txt 改一个字，整个文件就被转成 UTF-8 了。
          encoding: r.encoding || "utf-8", bom: r.bom || "",
          encodingNote: r.encoding_note || "",
+         // ★ HTML / Markdown 默认就是**浏览模式**；点工具栏那颗眼睛 / 代码按钮来回切。
+         previewKind: kind, preview: !!kind && !r.binary && !r.too_big, previewBase: "",
          factory: rel.split("/")[0] === "system"};
     s.tabs.push(t);
   }
@@ -592,6 +596,153 @@ function paintHl(t, code, win){
 /* 老名字（外面/老注释里还叫 `hlInto`）：整篇画一遍 —— 只在量不到视口时兜底 */
 function hlInto(t, code){ return paintHl(t, code, null); }
 
+/* ---------------------------------------------------------------- HTML / Markdown 浏览模式
+   ★ 用户要的不是"把 md / html 当代码看"，而是能在**浏览（渲染）**和**代码**之间来回切。
+   · Markdown：前端自己渲染（转义优先，不执行原文里的 HTML / JS）；
+   · HTML：放进 sandbox iframe，保留它自己的 CSS / JS；
+   · 相对路径靠宿主的 `fs_preview_url` 给一个本地 HTTP base，WebView2 才能加载。
+   文件本身仍是打开的那个 tab，保存按钮、编码、BOM 全按原逻辑走 —— 预览只是多一个视图。 */
+function previewKindOf(name){
+  const ext = String(name || "").split(".").pop().toLowerCase();
+  if (ext === "md" || ext === "markdown") return "md";
+  if (ext === "html" || ext === "htm") return "html";
+  return "";
+}
+
+function mdSafeUrl(u){
+  const s = String(u || "").trim();
+  return /^(javascript|vbscript|data:text\/html)/i.test(s) ? "#" : s;
+}
+
+/* 行内 Markdown。输入先整体转义，再只生成我们认识的标签 ⇒ 原文里的 HTML 不执行。 */
+function mdInline(text){
+  let s = esc(String(text || ""));
+  const codes = [];
+  s = s.replace(/`([^`]+)`/g, (m, t) => {
+    codes.push(t);
+    return "\u0000C" + (codes.length - 1) + "\u0000";
+  });
+  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,
+    (m, alt, u) => '<img src="' + mdSafeUrl(u) + '" alt="' + alt + '">');
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
+    (m, txt, u) => '<a href="' + mdSafeUrl(u) + '" target="_blank" rel="noopener noreferrer">' + txt + '</a>');
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+  s = s.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+  s = s.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+  s = s.replace(/_([^_\n]+)_/g, "<em>$1</em>");
+  s = s.replace(/\u0000C(\d+)\u0000/g, (m, i) => "<code>" + codes[+i] + "</code>");
+  return s;
+}
+
+/* 轻量 Markdown 块解析：标题 / 段落 / 列表 / 引用 / 代码块 / 分割线 / 表格。够看文档，不追求规范全实现。 */
+function renderMarkdown(src){
+  const lines = String(src || "").replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let i = 0, list = "";
+  const closeList = () => { if (list){ out.push("</" + list + ">"); list = ""; } };
+  const blockStart = (ln) => /^\s*(#{1,6}\s|>\s?|```|~~~|[-*+]\s|\d+\.\s|---|\*\*\*|___)/.test(ln);
+  while (i < lines.length){
+    const line = lines[i];
+    const fence = line.match(/^\s*(```+|~~~+)\s*([A-Za-z0-9_+.-]*)/);
+    if (fence){
+      closeList();
+      const mark = fence[1].charAt(0), lang = fence[2] || "";
+      const body = [];
+      i++;
+      while (i < lines.length && !new RegExp("^\\s*" + mark + "{3,}").test(lines[i])) body.push(lines[i++]);
+      if (i < lines.length) i++;
+      out.push('<pre><code' + (lang ? ' class="language-' + esc(lang) + '"' : "") + '>' +
+               esc(body.join("\n")) + '</code></pre>');
+      continue;
+    }
+    if (!line.trim()){ closeList(); i++; continue; }
+    const h = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (h){ closeList(); const n = h[1].length; out.push("<h" + n + ">" + mdInline(h[2]) + "</h" + n + ">"); i++; continue; }
+    if (/^\s*(?:---|\*\*\*|___)\s*$/.test(line)){ closeList(); out.push("<hr>"); i++; continue; }
+    if (/^\s*>\s?/.test(line)){
+      closeList();
+      const q = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) q.push(lines[i++].replace(/^\s*>\s?/, ""));
+      out.push("<blockquote>" + renderMarkdown(q.join("\n")) + "</blockquote>");
+      continue;
+    }
+    if (/^\s*[-*+]\s+/.test(line)){
+      if (list !== "ul"){ closeList(); out.push("<ul>"); list = "ul"; }
+      out.push("<li>" + mdInline(line.replace(/^\s*[-*+]\s+/, "")) + "</li>"); i++; continue;
+    }
+    if (/^\s*\d+\.\s+/.test(line)){
+      if (list !== "ol"){ closeList(); out.push("<ol>"); list = "ol"; }
+      out.push("<li>" + mdInline(line.replace(/^\s*\d+\.\s+/, "")) + "</li>"); i++; continue;
+    }
+    // 表格：本行有 |，下一行是 |---|:---:| 这种。
+    if (line.indexOf("|") >= 0 && i + 1 < lines.length &&
+        /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(lines[i + 1]) && lines[i + 1].indexOf("-") >= 0){
+      closeList();
+      const cells = (ln) => ln.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(x => x.trim());
+      const head = cells(line);
+      i += 2;
+      let html = "<table><thead><tr>" + head.map(x => "<th>" + mdInline(x) + "</th>").join("") + "</tr></thead><tbody>";
+      while (i < lines.length && lines[i].trim() && lines[i].indexOf("|") >= 0){
+        html += "<tr>" + cells(lines[i++]).map(x => "<td>" + mdInline(x) + "</td>").join("") + "</tr>";
+      }
+      html += "</tbody></table>";
+      out.push(html);
+      continue;
+    }
+    closeList();
+    const para = [line.trim()];
+    i++;
+    while (i < lines.length && lines[i].trim() && !blockStart(lines[i]) &&
+           !(lines[i].indexOf("|") >= 0 && i + 1 < lines.length &&
+             /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(lines[i + 1]))){
+      para.push(lines[i++].trim());
+    }
+    out.push("<p>" + para.map(mdInline).join(" ") + "</p>");
+  }
+  closeList();
+  return out.join("\n") || '<p class="pv-empty">（空文件）</p>';
+}
+
+function previewVars(){
+  const cs = getComputedStyle(document.documentElement);
+  return ["--bg","--panel","--panel2","--fg","--fg2","--dim","--accent","--line","--line2","--code-bg","--hover","--fill"]
+    .map(n => n + ":" + (cs.getPropertyValue(n) || "")).join(";");
+}
+
+function previewDocument(t, base){
+  if (!t) return "";
+  const kind = t.previewKind || previewKindOf(t.name);
+  const b = String(base || "");
+  if (kind === "md"){
+    const css = ":root{" + previewVars() + "}" +
+      "html,body{margin:0;background:var(--bg);color:var(--fg)}" +
+      "body{padding:24px 30px;font:14px/1.75 -apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif}" +
+      ".pv-body{max-width:980px;margin:0 auto;word-wrap:break-word}" +
+      "h1,h2,h3,h4,h5,h6{line-height:1.35;margin:1.4em 0 .55em;color:var(--fg)}" +
+      "h1{font-size:2em;border-bottom:1px solid var(--line2);padding-bottom:.3em}" +
+      "h2{font-size:1.55em;border-bottom:1px solid var(--line2);padding-bottom:.22em}" +
+      "p{margin:.7em 0}a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}" +
+      "code{font-family:Consolas,'Cascadia Code',monospace;font-size:.92em;background:var(--code-bg);padding:.12em .35em;border-radius:5px}" +
+      "pre{background:var(--code-bg);border:1px solid var(--line2);border-radius:10px;padding:14px 16px;overflow:auto}" +
+      "pre code{background:none;padding:0}" +
+      "blockquote{margin:.9em 0;padding:.2em 1em;border-left:3px solid var(--accent);color:var(--fg2);background:var(--panel2)}" +
+      "table{border-collapse:collapse;margin:1em 0;width:100%}th,td{border:1px solid var(--line2);padding:6px 10px;text-align:left}" +
+      "th{background:var(--panel2)}img{max-width:100%;height:auto;border-radius:6px}" +
+      "hr{border:0;border-top:1px solid var(--line2);margin:1.5em 0}.pv-empty{color:var(--dim)}";
+    const head = '<!doctype html><html><head><meta charset="utf-8">' +
+      (b ? '<base href="' + esc(b) + '">' : "") +
+      '<meta name="viewport" content="width=device-width,initial-scale=1"><style>' + css + '</style></head>';
+    return head + '<body><div class="pv-body">' + renderMarkdown(t.text) + '</div></body></html>';
+  }
+  let raw = String(t.text || "");
+  if (!b) return raw;
+  const tag = '<base href="' + esc(b) + '">';
+  if (/<head[^>]*>/i.test(raw)) return raw.replace(/<head[^>]*>/i, m => m + tag);
+  if (/<html[^>]*>/i.test(raw)) return raw.replace(/<html[^>]*>/i, m => m + "<head>" + tag + "</head>");
+  return tag + raw;
+}
+
 /* ================================================================ 界面（Vue 3 组件）
    三个组件，一个状态：父组件管子选项卡条和页面容器，两个子组件各画一页。
    `active` 而不是 `on` 当 prop 名 —— `on` 在 Vue 里是事件前缀那一族，别去蹭。
@@ -618,6 +769,10 @@ const MossFilePage = {
     <span v-if="t.encodingNote" class="encnote">{{ t.encodingNote }}</span>
     <span class="dirtydot" :hidden="!dirty" title="有未保存的改动"></span>
     <span style="flex:1"></span>
+    <button v-if="canPreview && !previewOn" class="iconbtn b-preview" title="浏览模式（渲染 Markdown / HTML）"
+            v-html='ico("eye", "i")' @click="togglePreview"></button>
+    <button v-if="canPreview && previewOn" class="iconbtn b-preview on" title="代码模式（继续编辑）"
+            v-html='ico("code", "i")' @click="togglePreview"></button>
     <button class="iconbtn b-save" title="保存（Ctrl+S）" :disabled="!dirty"
             v-html='ico("save", "i")' @click="save"></button>
     <button class="iconbtn b-revert" title="放弃改动，重新读一遍"
@@ -630,12 +785,16 @@ const MossFilePage = {
             v-html='ico("x", "i")' @click="close"></button>
   </div>
   <div class="note" v-if="note" v-html="note"></div>
-  <div class="editor">
+  <div class="editor" v-show="!previewOn">
     <pre aria-hidden="true" ref="pre"><code class="hljs" ref="code"></code></pre>
     <textarea spellcheck="false" wrap="off" ref="ta" :readonly="!!t.binary"
               :value="t.text" @input="onInput" @scroll="onScroll"
               @keydown="onKeydown"></textarea>
     <div class="gutter" ref="gutter" aria-hidden="true"></div>
+  </div>
+  <div class="previewpane" v-if="previewOn">
+    <iframe class="preview-frame" :srcdoc="previewDoc" title="浏览模式"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"></iframe>
   </div>
 </div>`,
   data(){
@@ -651,12 +810,16 @@ const MossFilePage = {
        （`clientHeight = 0`），窗口会算成"从第一行开始的一小段"。
        ★ `V-376`：补画那一下顺带 `syncScroll()`（见 `paintHl`）—— 藏着的时候三层都不能写
        scrollTop（会被夹成 0），所以"切回来"这一刻必须重新对一次。 */
-    active(v){ if (v) this.scheduleHl(); },
+    active(v){ if (v){ this.scheduleHl(); if (this.previewOn) this.ensurePreview(); } },
+    "t.preview"(v){ if (v) this.ensurePreview(); },
   },
   computed: {
     // 后缀 → 图标 / 颜色 / 语言（`core.js` 的 `EXT` / `NO_EXT`，只有一份）
     meta(){ return extOf({name: this.t.name, ext: (this.t.name.split(".").pop() || "").toLowerCase()}); },
     dirty(){ return isDirty(this.t); },
+    canPreview(){ return !!this.t.previewKind && !this.t.binary; },
+    previewOn(){ return !!this.t.preview && this.canPreview; },
+    previewDoc(){ return this.previewOn ? previewDocument(this.t, this.t.previewBase) : ""; },
     note(){
       if (this.t.binary) return ico("binary", "i") + " 二进制文件，编辑不了；要看就用「默认程序打开」";
       if (this.t.note) return ico("alert-triangle", "i") + " " + this.t.note;
@@ -677,6 +840,7 @@ const MossFilePage = {
     //   随便滚一下 `onScroll` 又把它对齐了 —— 所以这个 bug 只在"刚打开"那一会儿看得见。
     this.homeScroll();
     this.scheduleHl();
+    if (this.previewOn) this.ensurePreview();
     // 双击一个**已经开着**的文件也会走到这儿吗？不会 —— 那种情况组件早就挂着了，
     // 光标由 `fmFocusActiveSoon()` 负责（和原来的行为一致）。
   },
@@ -777,6 +941,25 @@ const MossFilePage = {
       if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s"){
         ev.preventDefault(); fmSave(this.t);
       }
+    },
+    /* ---- 浏览 / 代码切换 ---- */
+    async ensurePreview(){
+      const t = this.t;
+      if (!t || !this.canPreview || t.previewBase || t._pvLoading) return;
+      t._pvLoading = true;
+      try{
+        const got = await pywebview.api.fs_preview_url(t.rel);
+        if (got && got.ok){ t.previewBase = got.base || ""; }
+        else if (got && got.msg){ toast("预览资源加载不了：" + got.msg, true); }
+      }catch(e){ toast("预览资源加载不了：" + (e && e.message ? e.message : e), true); }
+      finally { t._pvLoading = false; }
+    },
+    togglePreview(){
+      this.t.preview = !this.t.preview;
+      if (this.t.preview) this.ensurePreview();
+      fmRender();
+      // 从浏览切回代码时编辑器刚从 `v-show=false` 恢复，量得到高度之后要补画一次高亮 / 滚动。
+      this.$nextTick(() => this.scheduleHl());
     },
     /* ---- 标题栏那三颗 + 关闭 ---- */
     save(){ fmSave(this.t); },

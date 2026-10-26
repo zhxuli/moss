@@ -99,7 +99,7 @@ const AIR = Vue.reactive({
       · `allow`    —— 清单（后端保证含 `*` 那一行 = 任意路径）
       · `wild`     —— `*` 那一行勾了写没有（= 放手）
       · `tmp`      —— 它的临时空间（按插件分）+ 一键清空 */
-  allow: [], wild: false, dropHot: false, newPath: "",
+  allow: [], wild: false, full: false, dropHot: false, newPath: "",
   /* ★ `V-319`：**待允许的目录**（它提出、还没被勾的那一条）—— 清单里那一行据此闪烁 */
   perm: null,
   /* ★ `V-321`：权限卡**默认折起来**（只留一行摘要，日志区更大）。
@@ -385,6 +385,8 @@ async function aiRefreshInfo(force){
       //   因为"它在跑的时候问你要不要放行"会当场改清单，界面得跟着变。
       if (AIR.info.allow) AIR.allow = AIR.info.allow;
       if (AIR.info.wildcard !== undefined) AIR.wild = !!AIR.info.wildcard;
+      // ★ 完全权限 = 比"任意路径"更高一档：额外包含"技能自动批准"。
+      if (AIR.info.full_access !== undefined) AIR.full = !!AIR.info.full_access;
       // ★ `V-252`：模型那一格的初值 —— 只在"没选过 / 选的那个这家没有了"时才跟着配置走，
       //   不然你每次刷新都被拨回第一个。
       const ms = AIR.info.models || [];
@@ -1413,7 +1415,8 @@ const MossAi = {
     allowOn(){ this.A.rev; return (this.A.allow || []).filter(x => x.write).length; },
     permBadge(){
       this.A.rev;
-      if (this.A.wild) return "已放手";
+      if (this.A.full) return "完全权限";
+      if (this.A.wild) return "任意路径";
       // ★ 2026-10-22：数的是**这一页摆出来的**那些（别的包的行收在下面，不算进来 ——
       //   不然"可写 5 处"跟眼睛看到的 2 条对不上）
       const n = this.allowSplit.mine.filter(x => x.write && x.path !== "*").length;
@@ -2143,15 +2146,15 @@ const MossAi = {
     setSelfTab(t){ AIR.selfTab = t; AIR.rev++; },
     async refreshSkills(){ await aiLoadSkills(); toast("技能列表已刷新"); },
     async toggleFullAccess(){
-      const want = !this.A.wild;
+      const want = !this.A.full;
       try{
-        const got = await window.pywebview.api.ai_allow("*", !!want, !!want,
-          want ? "完全权限（无人值守）" : "", "set");
+        const got = await window.pywebview.api.ai_full_access(!!want);
         if (!got || !got.ok){ toast((got && got.msg) || "切不了完全权限", true); return; }
-        toast(want ? "完全权限已开启：无人值守，不再弹权限 / 覆盖确认"
-                   : "完全权限已关闭：恢复按清单来");
+        toast(want ? "完全权限已开启：任意路径 + 技能自动批准 + 不再弹确认"
+                   : "完全权限已关闭：恢复按权限清单和技能指纹授权");
       }catch(e){ toast("切不了完全权限：" + (e && e.message ? e.message : e), true); }
       await aiRefreshInfo(true);
+      await aiLoadSkills();
     },
     skillOrigin(w){
       if (!w) return "";
@@ -3081,10 +3084,10 @@ const MossAi = {
                   <div class="ai-perm-full">
                     <div class="ai-perm-full-info">
                       <b>完全权限 <span class="ai-perm-full-sub">无人值守</span></b>
-                      <span>任意路径可读写；危险操作 / 覆盖不再弹确认</span>
+                      <span>任意路径可读写；新建 / 修改技能自动批准；危险操作 / 覆盖不再弹确认</span>
                     </div>
-                    <label class="switch-group ai-sw" :title="A.wild ? '关掉：恢复按权限清单来' : '打开：不再弹权限 / 覆盖确认'">
-                      <span class="switch"><input type="checkbox" :checked="!!A.wild"
+                    <label class="switch-group ai-sw" :title="A.full ? '关掉：恢复按权限清单和技能指纹授权' : '打开：任意路径 + 技能自动批准 + 不再弹确认'">
+                      <span class="switch"><input type="checkbox" :checked="!!A.full"
                         @change="toggleFullAccess()"><span class="slider"></span></span>
                     </label>
                   </div>

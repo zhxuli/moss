@@ -149,6 +149,30 @@ def allow_path():
     return user_data() / "ai" / "skills_allow.json"
 
 
+def full_access():
+    """读 AI 权限里的「完全权限」开关（`user_data/ai/mode.json`）。
+
+    ★ 为什么技能层要自己读：`system/ai/skill_lib.py` 是宿主和 `:skill` 插件共用的，
+      不能 import `system/ui/ai/ai_mode.py`；两边只共享这一份 JSON 数据。
+    ★ 完全权限 = 比"任意路径"更高一档：任意路径只开文件系统权限，完全权限还包含
+      "AI 新建 / 修改技能自动视为已批准"。旧文件没有 `full_access` 字段，回退看
+      `*` 行是否写着"完全权限"（兼容升级前那个合并开关）。
+    """
+    try:
+        raw = json.loads((user_data() / "ai" / "mode.json").read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return False
+        if "full_access" in raw:
+            return bool(raw.get("full_access"))
+        for it in (raw.get("allow") or []):
+            if (isinstance(it, dict) and str(it.get("path") or "") == "*"
+                    and it.get("write") and "完全权限" in str(it.get("why") or "")):
+                return True
+    except Exception:                                                  # noqa: BLE001
+        pass
+    return False
+
+
 def stats_path():
     """**调用统计**（每只被调了几次 + 最近一次调用时间）住这儿。
 
@@ -550,6 +574,11 @@ def _load(d, layer, kind, stats_in=None):
     fp = _fp(blobs, sid)
     if layer == "system":
         allowed, why_allow = True, "出厂技能（AI 写不到这个根，随版本走）"
+    elif full_access():
+        # ★ 完全权限：AI 现在有文件系统写权限，所以技能这一层也彻底放权。
+        #   动态判断而不写进 skills_allow.json —— 关掉开关后，没被人真正点过允许的
+        #   技能会立刻回到"待批准"，不会留下永久授权的副作用。
+        allowed, why_allow = True, "完全权限：自动批准（新建 / 修改也照此）"
     else:
         rec = allowed_map().get(sid) or {}
         if rec.get("fp") and rec.get("fp") == fp:
@@ -682,9 +711,16 @@ def note(got=None):
                        if isinstance(p, dict) and p.get("name"))
         rows.append("  · %s(%s) —— %s" % (name, ps or "无参数",
                                           it.get("desc") or it.get("why") or ""))
-    rows.append("  · 缺什么能力：先 `skill(\"self-tool\")` 看怎么写，然后照**插件契约**把一个包写到 "
-                "`%s/<名字>/`（id 小写字母开头、kind=task、带 icon.svg 和 `ai.why`）。"
-                "写完**要用户点一次「允许」**，下一次跑才生效。" % skill_dir())
+    if full_access():
+        rows.append("  · 缺什么能力：先 `skill(\"self-tool\")` 看怎么写，然后照**插件契约**把一个包写到 "
+                    "`%s/<名字>/`（id 小写字母开头、kind=task、带 icon.svg 和 `ai.why`）。"
+                    "★ 当前是**完全权限**：新建 / 修改技能会自动视为已批准，**不要停下来等用户点「允许」**。"
+                    "本次工具表仍是开工时定死的；要立即试跑就用 `run_moss(\":skill run <名字> …\")`。"
+                    % skill_dir())
+    else:
+        rows.append("  · 缺什么能力：先 `skill(\"self-tool\")` 看怎么写，然后照**插件契约**把一个包写到 "
+                    "`%s/<名字>/`（id 小写字母开头、kind=task、带 icon.svg 和 `ai.why`）。"
+                    "写完**要用户点一次「允许」**，下一次跑才生效。" % skill_dir())
     return "\n".join(rows)
 
 

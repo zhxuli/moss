@@ -90,7 +90,7 @@ BROWSERS = [
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
 ]
 
-SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-odd-dir",
+SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-file-preview", "pkg-odd-dir",
           "pkg-renamed-file", "pkg-align-file", "pkg-edit-id", "pkg-edit-bad-id",
           "btn-detail", "err-path", "args-clear", "pkg-auto", "backup", "backup-restore", "backup-sync", "backup-export", "backup-groups",
           "drop-hot", "drop-dir", "drop-file", "drop-ext", "console-input", "term-line", "term-iso", "embed", "pane-resize",
@@ -257,6 +257,13 @@ def mock_data():
     fs["bench"] = {"ok": True, "rel": "bench", "writable": True, "path": str(ROOT / "system/ui/js"),
                    "entries": [{"name": "big.js", "rel": "bench/big.js", "dir": False,
                                 "size": len(_big.encode("utf-8")), "mtime": 0, "ext": "js"}]}
+    # HTML / Markdown 浏览模式场景用的假文件。
+    fs["preview-docs"] = {"ok": True, "rel": "preview-docs", "writable": True, "path": "(预览)",
+                          "entries": [
+                              {"name": "README.md", "rel": "preview-docs/README.md", "dir": False,
+                               "size": 90, "mtime": 0, "ext": "md"},
+                              {"name": "page.html", "rel": "preview-docs/page.html", "dir": False,
+                               "size": 120, "mtime": 0, "ext": "html"}]}
 
     return {"payload": payload, "hist": hist, "fs": fs, "settings": settings, "ai": ai,
             "aiPresets": ai_presets, "bigJs": _big,
@@ -1288,6 +1295,18 @@ MOCK_JS = r"""
     //   回一段假的 python 代码，编辑清单那些场景解析出来就没有 id，
     //   假后端会照着 `F-26` 把这个包丢掉，整个场景看起来像"包没了"（踩过）。
     fs_read: async (rel) => {
+      // HTML / Markdown 浏览模式：给两份小而确定的样本，场景直接断言 iframe 里渲染出了什么。
+      if (rel === "preview-docs/README.md"){
+        M.readOk = rel;
+        return {ok: true, text: "# 预览标题\n\n这是 **Markdown** 预览。\n\n- 第一项\n- 第二项\n",
+                binary: false, too_big: false, rel: rel, path: rel, writable: true};
+      }
+      if (rel === "preview-docs/page.html"){
+        M.readOk = rel;
+        return {ok: true, text: "<!doctype html><html><head><title>P</title></head>" +
+                "<body><h1>HTML 预览标题</h1><p>hello</p></body></html>",
+                binary: false, too_big: false, rel: rel, path: rel, writable: true};
+      }
       // ★ `V-272`：高亮那条场景要真的大文件（`bench/big.js` = `system/ui/js/ai.js` 的真内容）
       if (rel === "bench/big.js"){
         M.readOk = rel;
@@ -1313,6 +1332,10 @@ MOCK_JS = r"""
       return {ok: true, text: text, binary: false, too_big: false,
               rel: rel, path: rel, writable: true};
     },
+    fs_preview_url: async (rel) => ({
+      ok: true, url: "http://127.0.0.1:1/" + rel,
+      base: "http://127.0.0.1:1/", path: rel, rel: rel, name: String(rel).split("/").pop()
+    }),
     // ★ 写 pkg.json 时真的改掉那份假 payload（模拟宿主重新扫盘）——
     //   这样才能验证"存了清单之后界面会重新解析"这条路。
     //   ★★ 注意这里**只改清单里的字段，不动目录**：真宿主就是这样 —— 手工把 id
@@ -1667,6 +1690,38 @@ MOCK_JS = r"""
                  " lang=" + (t0 ? t0.lang : "无页") + " span=" + spans + " hljs=" + hit);
             return;
           }
+        }
+        if (h === "pkg-file-preview"){
+          setTab("file");
+          await sleep(350);
+          await fmOpenPage("preview-docs/README.md");
+          await sleep(700);
+          let t = fmActiveTab();
+          let frame = document.querySelector(".fmpage.on .previewpane iframe");
+          let doc = frame && frame.contentDocument;
+          let h1 = doc && doc.querySelector(".pv-body h1");
+          const mdOk = !!(t && t.preview && h1 && h1.textContent.indexOf("预览标题") >= 0);
+          // 切到代码模式，再切回浏览模式。
+          let btn = document.querySelector(".outbar .b-preview.on");
+          if (btn) btn.click();
+          await sleep(250);
+          const _ed = document.querySelector(".editor");
+          const codeOk = !!(_ed && getComputedStyle(_ed).display !== "none" && document.querySelector(".editor textarea"));
+          btn = document.querySelector(".outbar .b-preview:not(.on)");
+          if (btn) btn.click();
+          await sleep(350);
+          // HTML 也要能渲染。
+          await fmOpenPage("preview-docs/page.html");
+          await sleep(650);
+          frame = document.querySelector(".fmpage.on .previewpane iframe");
+          doc = frame && frame.contentDocument;
+          const hh = doc && doc.querySelector("h1");
+          const htmlOk = !!(hh && hh.textContent.indexOf("HTML 预览标题") >= 0);
+          const ok = mdOk && codeOk && htmlOk;
+          document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+            " md=" + mdOk + " code=" + codeOk + " html=" + htmlOk;
+          document.title = ok ? "READY" : ("PREVIEW-FAIL md=" + mdOk + " code=" + codeOk + " html=" + htmlOk);
+          return;
         }
         if (h === "pkg-console") setTab("console");
         if (h === "edit-manifest" || h === "edit-manifest-detail"){

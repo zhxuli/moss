@@ -320,6 +320,11 @@ table.bk-tbl td.dim{color:var(--dim)}
 .editor > textarea{background:transparent;color:transparent;caret-color:var(--fg);
   resize:none;outline:none;user-select:text}
 .editor > textarea::selection{background:rgba(10,132,255,.30)}
+/* HTML / Markdown 浏览模式：和编辑器同一块地方，工具栏那颗眼睛 / 代码按钮来回切。 */
+.previewpane{flex:1;min-height:0;margin:10px 12px 12px;border:1px solid var(--line2);
+  border-radius:10px;overflow:hidden;background:var(--panel)}
+.preview-frame{display:block;width:100%;height:100%;border:0;background:var(--panel)}
+.outbar .b-preview.on{background:var(--fill);color:var(--accent)}
 .hljs-comment,.hljs-quote{color:var(--syn-comment);font-style:italic}
 .hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-section,
 .hljs-doctag,.hljs-type,.hljs-name,.hljs-tag{color:var(--syn-keyword)}
