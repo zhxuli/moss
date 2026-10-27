@@ -2,11 +2,10 @@
 """
 exec 插件的核心层：命令存储 + 执行。不含任何界面代码。
 
-数据位置遵循 QuickTools 规范：宿主 pa 注入 PA_PLUGIN_DATA_DIR
-（= pa_soft/user_data/exec），独立运行时退回插件自身目录。
+数据目录由宿主注入；独立运行时退回插件自身目录。
 
-执行模型刻意拆成两个正交维度，避免"类型"无限膨胀：
-  · runner  —— 怎么执行：python / pythonfile / powershell / shell（都 spawn 进程）
+执行模型刻意拆成两个正交维度：
+  · runner  —— 怎么执行：python / powershell / shell（都 spawn 进程）
   · builtin —— 宿主自己动手，不 spawn 进程：url / path / html
   · combo   —— 组合：按顺序调用已有命令
 """
@@ -27,9 +26,10 @@ if '__file__' in globals():
 else:
     PLUGIN_DIR = sys.path[0] if sys.path else os.getcwd()
 
-# 宿主 moss 注入的插件专属数据目录 (= user_data/state/exec)；老 pa 的 PA_* 与插件目录作兜底
-DATA_DIR = os.environ.get('MOSS_PLUGIN_DATA_DIR') or os.environ.get('PA_PLUGIN_DATA_DIR') or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
-             "user_data", "state", "exec")
+DATA_DIR = (os.environ.get('MOSS_PLUGIN_DATA_DIR')
+            or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
+                            "user_data", "state", "exec"))
+
 CMDS_DIR = os.path.join(DATA_DIR, 'cmds')
 PREVIEW_DIR = os.path.join(DATA_DIR, 'preview')     # HTML 页面落盘处
 OUTPUT_DIR = os.path.join(DATA_DIR, 'output')       # "输出存文件"落盘处
@@ -243,15 +243,9 @@ def _spec(type_id):
 
 
 def normalize(item):
-    """把任意输入规整成完整的一条命令（缺字段补默认值，向后兼容旧数据）。"""
+    """把一条命令补齐到当前字段形状。"""
     type_id = item.get('type')
     code = str(item.get('code') or '')
-
-    # 迁移已下线的类型：pythonfile 的语义等价于"用命令行跑 python <路径>"
-    if type_id == 'pythonfile':
-        type_id = 'shell'
-        if code.strip() and not code.strip().lower().startswith('python'):
-            code = 'python "%s"' % code.strip()
 
     if type_id not in TYPES:
         type_id = 'python'
@@ -538,10 +532,6 @@ def split_args(text):
     return out
 
 
-# 内部旧名，保持兼容
-_split_args = split_args
-
-
 # ---------------------------------------------------------------- 命令构造
 def build_command(item, args=None):
     """返回 (argv, use_shell, extra_argv)。
@@ -551,7 +541,7 @@ def build_command(item, args=None):
     """
     item = normalize(item)
     raw_args = args if isinstance(args, str) else ' '.join(args or [])
-    extra = _split_args(raw_args)
+    extra = split_args(raw_args)
     code = expand(item['code'], raw_args)
     substituted = '{args}' in item['code']
     tail = [] if substituted else extra
@@ -710,8 +700,8 @@ def run_in_console(item, args=None):
     argv, use_shell, _ = build_command(item, raw_args)
     try:
         subprocess.run(argv, shell=use_shell, cwd=run_cwd(item),
-                       env=make_env(item, {'PA_EXEC_ARGS': raw_args or '',
-                                           'PA_PLUGIN_ALIAS': item['alias']}))
+                       env=make_env(item, {'MOSS_EXEC_ARGS': raw_args or '',
+                                           'MOSS_EXEC_ALIAS': item['alias']}))
     except Exception as e:
         print("[错误] 执行期间发生异常: %s" % e)
         return 1
@@ -807,13 +797,12 @@ class RunSession(_BaseSession):
     def _env(self, raw_args):
         """给子进程的环境：额外塞两个宿主变量。
 
-        PA_EXEC_ARGS —— 用户原样输入的参数串。argv 里的引号在拆参数时就被吃掉了，
-                        插件想判断"用户是不是加了引号"只能靠这个。
-        PA_PLUGIN_ALIAS —— 当前命令的别名。
+        MOSS_EXEC_ARGS —— 用户原样输入的参数串（含引号）。
+        MOSS_EXEC_ALIAS —— 当前命令的别名。
         """
         return make_env(self.item, {
-            'PA_EXEC_ARGS': raw_args or '',
-            'PA_PLUGIN_ALIAS': self.item['alias'],
+            'MOSS_EXEC_ARGS': raw_args or '',
+            'MOSS_EXEC_ALIAS': self.item['alias'],
         })
 
     def _run_builtin(self, raw_args):
@@ -888,7 +877,7 @@ class RunSession(_BaseSession):
 def open_in_new_console(alias, args=None):
     """新开一个独立控制台窗口执行命令（给交互式命令用，比如 ping）。"""
     main_py = os.path.join(PLUGIN_DIR, 'main.py')
-    cmd = [sys.executable, main_py, '--run', alias] + _split_args(args)
+    cmd = [sys.executable, main_py, '--run', alias] + split_args(args)
     flags = getattr(subprocess, 'CREATE_NEW_CONSOLE', 0)
     try:
         subprocess.Popen(cmd, creationflags=flags)

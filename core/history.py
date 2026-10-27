@@ -109,9 +109,7 @@ def recent_unique(limit=MAX_SHOW, raw=READ_RAW):
     """去重后的最近记录（新的在前），最多 limit 条。
 
     为了凑够 limit 条**去重后**的记录，原始记录要多往回读一些（raw 条）。
-    ★ 只算**路径调用**（见 `should_record`）：插件调用不进列表。
-      老文件里已经写下的插件记录也在这里被滤掉 —— 不改动日志本身（日志是
-      追加写的账，不该回头重写），只是"看的时候不算它"。
+    ★ 只算**路径调用**（见 `should_record`）。
     ★ 被墓碑点名的（`forget`）同样在这里滤掉。
     """
     rows = recent(raw)
@@ -123,10 +121,8 @@ def recent_unique(limit=MAX_SHOW, raw=READ_RAW):
 def should_record(entry):
     """这条要不要进历史？**只记路径调用**（`moss zeen` 这种）。
 
-    ★ 为什么不记插件调用（`moss :img`）：插件**没有目录问题** —— 它永远能用
-      `moss :别名` 叫起来，跟当前目录无关，记下来只是噪声，还会把真正
-      有价值的那类（"必须先 cd 过去才能跑"的路径调用）淹掉（`V-21`）。
-    ★ 墓碑自己不是一条历史（它只是"某条别看了"的标记），同样不算。
+    ★ 为什么不记插件调用（`moss :img`）：插件没有目录问题，记下来只是噪声。
+    ★ 墓碑不是历史，只是删除标记。
     """
     return (entry.get("kind") or "") not in ("pkg", TOMBSTONE)
 
@@ -162,9 +158,6 @@ def match_keys(r):
       · 目标文件名与去扩展名 —— `moss main.py` / `moss main`
       · **cwd 的最后一段**   —— 例：`moss zeen` 叫起
         `main.py  cwd=D:\\python\\wwwroot\\ZeEn`
-
-    （原来还认"包 id"，但插件记录已经不进历史了，这一项自然消失，见
-    `should_record`。）
     """
     keys = set()
     t = r.get("target")

@@ -8,10 +8,6 @@ r"""目录树 —— 把一个目录按规则画成树，并印出来。
     moss :tree -a           连隐藏文件一起显示
     moss :tree -venv,dist   额外忽略 venv 和 dist（内置已忽略 venv/.git/__pycache__ 等）
 
-移植说明（2026-09-27）：原样搬自旧项目 `pa_soft\bin\cli\tree\main.py`，
-**画树、gitignore 解析、忽略表、连接符全部一字未改**。
-只改了一处宿主差异：参数来源（老 pa 拼进 argv；新宿主 moss 放在
-`MOSS_PKG_PARAMS` / `MOSS_ARGS` 里），并补了一个"不碰反斜杠"的拆词函数。
 """
 import os
 import sys
@@ -229,8 +225,8 @@ def _split_args(s):
 def _moss_args():
     """从宿主拿参数；拿不到返回 None（调用方退回 sys.argv）。
 
-    宿主 moss 把参数放在 `MOSS_PKG_PARAMS`（JSON，键是 pkg.json 里声明的参数名）
-    和 `MOSS_ARGS`（原始字符串）两个环境变量里。本包的 `args` 声明成
+    宿主把参数放在 `MOSS_PKG_PARAMS`（JSON，键是 pkg.json 里声明的参数名）。
+    本包的 `args` 声明成
     `rest: true`，意思是"包名后面的词全归我、我自己解析" —— 所以这里原样拆开
     再走下面那套老的解析逻辑（数字=深度、-a=显示隐藏、-xxx=额外忽略、其它=目标目录）。
     """
@@ -245,9 +241,6 @@ def _moss_args():
                 return _split_args(str(p["args"]))
         except Exception:
             pass
-    raw = _os.environ.get("MOSS_ARGS")
-    if raw:
-        return _split_args(raw)
     return None
 
 
@@ -258,8 +251,7 @@ def main():
     custom_ignore_set = set()
     target_subdir = None
 
-    # 获取所有参数。新宿主 moss 把参数放在 MOSS_PKG_PARAMS / MOSS_ARGS 里
-    # （老 pa 是拼进 argv）；读不到才退回 sys.argv，直接调试仍可用。
+    # 获取所有参数；宿主没给就退回 sys.argv，直接调试仍可用。
     args = _moss_args()
     if args is None:
         args = sys.argv[1:]

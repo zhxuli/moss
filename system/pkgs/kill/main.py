@@ -11,17 +11,6 @@
     上下键选一组回车 = 杀这一组；也可以选「清理以上全部进程」。
     terminate() 之后等最多 3 秒；进程赖着不退就算失败（不升级成 kill -9）。
 
-移植说明（2026-09-27，`D-14`）
-----------------------------
-原样搬自旧项目 `pa_soft\\bin\\cli\\kill\\main.py`（旧宿主里是 `pa :kill`）。
-**判定与杀进程的逻辑一字未改** —— 缓存、分组、菜单、超时全部照抄。
-只动了三处「宿主差异」，不是功能改动：
-  ① 参数来源：宿主 moss 把参数放在 `MOSS_PKG_PARAMS` / `MOSS_ARGS` 里
-     （老 pa 是把参数拼成字符串塞进 argv）。读不到这两个环境变量时
-     仍按 `sys.argv` 取，方便直接 `python main.py node` 调试。
-  ② 用法提示里的命令名：`python main.py x` → `moss :kill x`。
-  ③ 返回值：照抄原来的 `sys.exit(1)`（没给参数时），宿主只记退出码、不当报错打。
-
 依赖：`psutil`、`questionary` —— **都在自带运行时里**（`system/runtimes/python/3.12`），
 用户不需要自己装。
 """
@@ -66,9 +55,8 @@ def kill_processes(processes):
 def _query():
     """取出「要搜什么」这一个参数。
 
-    宿主 moss 把包参数放在 `MOSS_PKG_PARAMS`（JSON）里的 query 字段 ——
-    优先用它；没有就退回 `MOSS_ARGS`（原样字符串）；再没有才按 sys.argv 取，
-    这样 `python main.py node` 这种直接调试也照旧能用（见文件头的 ①）。
+    宿主把参数放在 `MOSS_PKG_PARAMS`（JSON）的 query 字段；没有就按 sys.argv 取，
+    方便直接 `python main.py node` 调试。
     """
     import json as _json
     import os as _os
@@ -81,9 +69,6 @@ def _query():
                 return str(q).strip()
         except Exception:
             pass
-    raw = _os.environ.get("MOSS_ARGS")
-    if raw:
-        return raw.strip()
     # 直接调试时的兜底：跳过脚本自己和那些解释器参数，取第一个真参数
     for arg in sys.argv[1:]:
         if arg in ("-c", "") or arg.endswith("main.py"):

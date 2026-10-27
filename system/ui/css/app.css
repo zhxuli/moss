@@ -92,8 +92,6 @@ header{display:flex;align-items:center;gap:10px;padding:9px 14px;
   transition:background .2s ease,box-shadow .2s ease}
 #q:focus{background:var(--panel);box-shadow:0 0 0 3px var(--field-focus)}
 #q::placeholder{color:var(--ph)}
-.meta{flex:1;color:var(--dim2);font-size:11.5px;overflow:hidden;
-  text-overflow:ellipsis;white-space:nowrap;text-align:right;letter-spacing:.01em}
 /* `position:relative` 是给"收起态那条浮动侧栏"当定位父级用的（`V-171` 起） */
 main{flex:1;display:flex;min-height:0;position:relative}
 /* `V-92`：能拖着调宽的那条细线（左侧列表 / 版本快照边栏各一条，见 `core.js` 的 `bindColResize`）。

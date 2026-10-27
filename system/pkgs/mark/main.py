@@ -16,8 +16,6 @@ r"""目录书签 —— 记录目录、按名字跳过去。
 
 数据放在**插件自己的数据目录**里：`user_data/state/mark/directories.json`。
 
-移植说明（2026-09-27）：原样搬自旧项目 `pa_soft\bin\cli\mark\main.py`，
-**匹配规则、菜单、GUI、数据格式全部一字未改**。只改一处宿主差异：参数来源。
 """
 import os
 import sys
@@ -32,11 +30,9 @@ else:
     # 依靠你启动命令中注入的 sys.path[0] 获取真实目录，或者退化为当前工作目录
     PLUGIN_DIR = sys.path[0] if sys.path else os.getcwd()
 
-# 宿主 pa 注入的插件专属数据目录 (user_data/<插件目录名>)；独立运行时退回插件目录
 DATA_DIR = (os.environ.get('MOSS_PLUGIN_DATA_DIR')
-            or os.environ.get('PA_PLUGIN_DATA_DIR')   # 老 pa，保留兜底
             or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
-              "user_data", "state", "mark"))
+                            "user_data", "state", "mark"))
 
 # 数据保存文件（与插件代码分离存放）
 DATA_FILE = os.path.join(DATA_DIR, 'directories.json')
@@ -67,9 +63,7 @@ def _split_args(s):
 def _moss_args():
     """从宿主拿参数；拿不到返回 None（调用方退回 sys.argv）。
 
-    新宿主 moss 把参数放在 `MOSS_PKG_PARAMS`（JSON，键是 pkg.json 里声明的参数名）
-    和 `MOSS_ARGS`（原始字符串）两个环境变量里，**不会**往 argv 塞用户参数 ——
-    而老 pa 是把参数拼进 argv 的。这就是移植时必须改的那一处。
+    宿主把参数放在 `MOSS_PKG_PARAMS`（JSON，键是 pkg.json 里声明的参数名）。
     """
     import json as _json
     import os as _os
@@ -82,9 +76,6 @@ def _moss_args():
                 return _split_args(str(p["args"]))
         except Exception:
             pass
-    raw = _os.environ.get("MOSS_ARGS")
-    if raw:
-        return _split_args(raw)
     return None
 
 
@@ -226,7 +217,7 @@ def run_gui():
 def main():
     data = load_data()
 
-    # 参数来源：新宿主 moss 放在 MOSS_PKG_PARAMS / MOSS_ARGS 里（老 pa 拼进 argv）。
+    # 参数来源：宿主放在 MOSS_PKG_PARAMS 里。
     # 本包只认**第一个**有效参数（--gui / list / 关键字），后面的忽略 —— 照旧行为。
     query_args = _moss_args()
     if query_args is None:

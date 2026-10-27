@@ -766,7 +766,6 @@ EMBED_STOPPED = set()
 #:   配置（明文 key）、快照库、命令历史、各包运行期数据没理由经一个 HTTP 端口发出去。
 #: 敏感路径一律不发（`V-170`）。★ `V-277`：界面那一页**不在这个名单里** —— 它现在只在内存里
 #: （虚拟地址 `__ui_live.html`，由 `_EmbedHandler._serve_live()` 直接答），所以原来那条
-#: "给 `user_data/state/_ui_inline.html` 开后门"的例外（`_EMBED_ALLOW`）**已经删掉了**。
 _EMBED_DENY = ("user_data/config.toml", "user_data/backups/", "user_data/history/",
                "user_data/state/", "user_data/trash/", "user_data/snapshot.ignore",
                "user_data/runners.json", ".git/", "core/", "venv/")
@@ -778,17 +777,12 @@ _EMBED_DENY = ("user_data/config.toml", "user_data/backups/", "user_data/history
 #:   而它**不知道 token**（token 在页面地址里，favicon 是浏览器自己拼的根路径），
 #:   于是以前一律 403，控制台里就留一行"没有 favicon.ico"的抱怨 —— 不是错误，
 #:   但看着像坏了。图标本身不是秘密（发行物里就有），放行这一个路径不损 `V-170`。
-#:   第二个名字是搬家前的老位置，纯兜底：老安装根里那份也认。
-_FAVICON_RELS = ("system/icon/moss.ico", "icon.ico")
+_FAVICON_REL = "system/icon/moss.ico"
 
 
 def _favicon_file():
-    """按新旧顺序找那份图标；一个都没有就返回 None。"""
-    for rel in _FAVICON_RELS:
-        f = HOME / rel
-        if f.is_file():
-            return f
-    return None
+    f = HOME / _FAVICON_REL
+    return f if f.is_file() else None
 
 #: 给包界面用的**本地 HTTP 服务**（`V-55` ✅）：`{httpd, port, token}`。
 #: ★ 为什么要这么绕一圈：**WebView2 里不能 iframe 一个 `file://` 页面**
@@ -3141,8 +3135,6 @@ class Api:
                 "model": str(getattr(client, "model", "") or ""),
                 "max_tokens": cap, "started": started,
                 "started_text": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)),
-                # `V-316`：这次是不是"放手"（清单里勾了任意路径的写）—— 记一条账
-                "mode": "free" if M.wildcard_write() else "limited",
                 "tmp_dir": str(tmp_dir or ""),
                 "scope": scope.get("kind"), "scope_id": scope.get("id") or "",
                 "asked_continue": cid, "continue_note": cont_note,
@@ -3240,19 +3232,13 @@ class Api:
 
             asker = self._ai_ask().Asker(publish=on_ask, stop_check=lambda: bool(AI.get("stop")))
             AI["asker"] = asker
-            # ★ `V-316`：权限**现读**（用户可能跑到一半去勾/取消勾）——`mode_fn` 只剩
-            #   "是不是放手"这一个问题，由清单里「任意路径」那一行回答。
-
-            def mode_now():
-                return "free" if M.wildcard_write() else "limited"
-
             def work():
                 loop = l.Loop(client, workdir=wd, max_tokens=cap,
                               compact_at=_at, retain_tokens=_retain,
                               on_step=on_step, say=say, on_phase=phase,
                               on_snapshot=on_snapshot,
                               stop_check=lambda: bool(AI.get("stop")),
-                              asker=asker, mode_fn=mode_now, on_journal=on_journal,
+                              asker=asker, on_journal=on_journal,
                               run_id=run_id, tmp_dir=str(tmp_dir or ""),
                               perm_gate=self._ai_perm_wait)
                 AI["loop"] = loop
@@ -3328,7 +3314,7 @@ class Api:
             # ★ 别在这儿假设 client 长什么样（`V-233` 探针用假模型时踩到）：
             #   线程已经起来了，这里再抛异常的话，页面会看到"起不来"而其实任务已经在跑。
             return {"ok": True, "workdir": wd, "model": str(getattr(client, "model", "") or ""),
-                    "run_id": run_id, "mode": mode_now(), "tmp": str(tmp_dir or ""),
+                    "run_id": run_id, "tmp": str(tmp_dir or ""),
                     "scope": scope.get("label") or ""}
 
     def ai_poll(self):
@@ -3381,7 +3367,6 @@ class Api:
                     "asker": bool(asker is not None and asker.busy()),
                     # ★ `V-319`：**待允许的目录**（左下角清单里那一行要闪烁）
                     "perm": perm,
-                    "mode": str(AI.get("mode") or ""),
                     "run_id": str(AI.get("run_id") or ""),
                     "tmp": str(AI.get("tmp") or ""),
                     "killed": list(st.get("killed") or []),
@@ -5714,7 +5699,6 @@ def _inline_html():
       ⇒ 界面半死不活。展开成一份之后，**子资源请求数变成 0**，它再抖也伤不到界面。
     ★ 源码仍然是拆开的多文件（`system/ui/css|js/*`）；这一步只是运行时的组装。
     ★ `V-277`（你提的）：**组装结果只放内存，不落盘** —— 以前写在
-      `user_data/state/_ui_inline.html`，可那是**界面的构建产物、不是用户数据**，
       放那儿名不正言不顺（还逼着服务在 `_EMBED_ALLOW` 里为它开一个例外）。
       现在由 `_EmbedHandler` 用一个虚拟地址（`__ui_live.html`）直接从内存发出去；
       `moss ui --debug` 时另外 dump 一份到 `%TEMP%` 供人打开看（那份不对外服务）。
@@ -5769,21 +5753,6 @@ _LIVE = {"html": ""}
 LIVE_NAME = "__ui_live.html"
 
 
-def _drop_legacy_inline():
-    """`V-277`：把老版本遗留在 `user_data/state/` 里的 `_ui_inline.html` 删掉（一次性）。
-
-    ★ 它在 `user_data/` 里不进 git、删了也不影响运行；只是别再让那个"看着像用户数据"的
-     856 KB 文件躺在那儿了（你提的：那个文件本来就不该在用户目录里）。
-    """
-    p = USER_DATA / "state" / "_ui_inline.html"
-    try:
-        if p.is_file():
-            p.unlink()
-            _note("page: 清掉了老位置的 _ui_inline.html（那份自包含页面现在只放内存）")
-    except OSError:
-        pass
-
-
 def _page_url():
     """界面这一页该从哪儿加载（`V-72`）。
 
@@ -5805,7 +5774,6 @@ def _page_url():
     if not port:
         _note("page: 本地服务起不来（%s），退回 file://" % token)
         return str(HERE / "index.html")
-    _drop_legacy_inline()
     # ★ 优先用"组装成一份"的页面（`V-78`）：子资源请求 0，那条会抖的传输碰不到它。
     #   `V-277`：这份**不落盘**，走一个虚拟地址、由 `_EmbedHandler` 从内存答。
     html = _inline_html()
@@ -5827,7 +5795,7 @@ def _dump_live_for_debug(html):
         return
     try:
         import tempfile                                               # noqa: PLC0415
-        p = Path(tempfile.gettempdir()) / "moss_ui_inline.html"
+        p = Path(tempfile.gettempdir()) / "moss_ui_debug.html"
         p.write_text(html, encoding="utf-8", newline="")
         _note("page: （--debug）这份自包含页面也存了一份到 %s" % p)
     except OSError:

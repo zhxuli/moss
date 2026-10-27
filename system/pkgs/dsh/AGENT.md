@@ -68,7 +68,7 @@ moss :dsh --set-password  更换本机二级密码
 | `dsh.log` | `--daemon` 模式下的日志 |
 | `dsh3080.log` | DSH 本体的输出（桥也从这里捡 DSH 的启动令牌交换 cookie） |
 
-没有东西写在自己的包目录里。老 pa 的 `PA_PLUGIN_DATA_DIR` 仍作兜底。
+没有东西写在自己的包目录里。
 
 ## 危险点
 
@@ -82,25 +82,6 @@ moss :dsh --set-password  更换本机二级密码
 - **凭据在配置里是明文**：`dsh_bridge.json` 里的 zeen token 不是加密存储，
   那份文件泄漏等于账号被顶。
 - **密码尝试有锁定**：5 次 / 30 秒窗口 → 锁 300 秒，别拿它做压测。
-
-## 来历
-
-从旧项目 `QuickTools/pa_soft/bin/soft/dsh/` **机械移植**而来（见 `pkg.json` 的
-`origin`）。除"宿主管道"外代码一字未改，具体改动（对着旧文件看）：
-
-1. 数据目录优先读 `MOSS_PLUGIN_DATA_DIR`，`PA_PLUGIN_DATA_DIR` 保留兜底。
-2. 依赖自举里那条写死的旧路径兜底，改成"以脚本自身所在目录为准"。
-3. 依赖自举的 venv 重执行：`MOSS_PLUGIN_DATA_DIR` 存在（= 跑在 moss 里）时
-   直接跳过，老宿主逻辑原样保留。
-4. 包参数改成优先读 `MOSS_PKG_PARAMS` / `MOSS_ARGS`，读不到才退回 `sys.argv`。
-5. 文案里的 `pa :dsh` 改成 `moss :dsh`。
-
-## 已知事项（移植遗留，待拍板）
-
-`file_viewer.html` 里对 `viewer/` 资源的引用写的是**旧项目的绝对路径**
-（`D:\python\two\QuickTools\pa_soft\bin\soft\dsh\viewer\...`）。移植时按"不动
-前端"的要求原样拷贝，因此显示页目前仍从旧目录取那 8 个资源文件；哪天旧目录
-没了就会掉样式/脚本。要修的话，把这 8 条 URL 的 path 参数改成运行时本包目录即可。
 
 ## 机制与坑（为什么这么写）
 
@@ -118,7 +99,7 @@ moss :dsh --set-password  更换本机二级密码
 **DSH 的工作目录就是它在 DSH 里的「工作区」。** 桥用 `Popen(..., cwd=DSH_CWD)` 拉起 DSH，
 DSH 按工作区给会话分仓（例如 `~/.dsh/sessions/--D-soft-deepseek-harness--`）。所以 `DSH_CWD`
 一改，会话仓就跟着搬、旧对话可能在新工作区里看不见。取值三级：环境变量 `DSH_BRIDGE_CWD`
-→ 老检出目录（**仅当它真的存在**）→ 你敲 `moss :dsh` 时所在的目录；日志里会写明用了哪一级。
+→ 你敲 `moss :dsh` 时所在的目录；日志里会写明用了哪一级。
 
 **参数从环境变量来，而且「空串」要当成没给。** 宿主 moss 把参数放在 `MOSS_PKG_PARAMS`
 （JSON，**顶层键就是参数名**）和 `MOSS_ARGS` 里，并**不会**往 argv 塞参数。坑在这里：这个变量
@@ -127,8 +108,7 @@ DSH 按工作区给会话分仓（例如 `~/.dsh/sessions/--D-soft-deepseek-harn
 `python main.py --help` 会被当成"无参数"而**启动桥**（真踩过）。所以空串一律继续往下走、最后退回 argv。
 
 **换解释器（只在缺依赖时才用）**：三级 —— 环境变量 `DSH_PYTHON` / `DSH_PYTHONW` → 当前运行时
-同目录的 `python.exe` / `pythonw.exe` → 老项目的 ZeEn venv（**仅当存在**）。moss 自带运行时里
-aiohttp / httpx / websockets 都齐，正常情况下这一段根本不会走到。
+同目录的 `python.exe` / `pythonw.exe`。moss 自带运行时里 aiohttp / httpx / websockets 都齐。
 
 **别人怎么用这个包**：不需要自己搭服务端 —— 在他们服务器的注册页（作者那边是
 `https://zeen.xin/user/reg`）注册一个账号，再回桥的设置页登录（用户名+密码+验证码 → `/user/login`）即可。

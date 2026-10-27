@@ -312,7 +312,7 @@ class Loop:
                  compact_after=6, keep_recent=12, compact_min=3,
                  compact_at=102400, retain_tokens=20480, stop_check=None,
                  soft_steps=0, max_tokens=100000000, on_phase=None, on_snapshot=None,
-                 asker=None, mode_fn=None, on_journal=None, run_id="", tmp_dir=None,
+                 asker=None, on_journal=None, run_id="", tmp_dir=None,
                  perm_gate=None):
         self.client = client
         # ★ `V-384`：快照**开工就存**（改一个已经存在的包的时候）；新建包那种还是
@@ -325,12 +325,8 @@ class Loop:
         self.snapshot_note = ""
         self.want_snapshot = True
         self.task = ""
-        #: ★ `V-307`：这次跑的 id / 临时目录 / 权限模式的**现读**入口
-        #:   （模式要能跑到一半改，所以是个 callable，不是常量）
         self.run_id = str(run_id or "")
         self.tmp_dir = str(tmp_dir or "")
-        #: 权限模式**现读**（不给就交给 `Tools` 自己读 `ai_mode` —— 探针/命令行那条路）
-        self.mode_fn = mode_fn or T.mode_now
         #: 每一步/每一小段落盘（`V-307`：强制重启那次丢记录，就是因为只在收尾写一次）
         self.on_journal = on_journal
         self._journal_t = 0.0
@@ -345,7 +341,7 @@ class Loop:
         self.tools_tokens = self._est(json.dumps(self.tool_table, ensure_ascii=False))
         self.tools = T.Tools(workdir=workdir, before_write=self._before_first_write,
                              self_tools=self.self_tools,
-                             stop_check=stop_check, asker=asker, mode_fn=self.mode_fn,
+                             stop_check=stop_check, asker=asker,
                              run_id=self.run_id, perm_gate=perm_gate, client=client)
         #: 现在在干什么（`V-242`：界面上显示"等模型回话 12s / 执行工具"，
         #  免得"模型在想"看起来像"卡死了"）
@@ -1026,7 +1022,7 @@ class Loop:
                # ★ `V-307`：这次跑的"账" —— 临时目录 / 权限模式 / 杀掉了哪些进程。
                #   `procs_killed` 是给用户看的证据：不再有孤儿进程堆在任务管理器里。
                "run_id": self.run_id, "tmp_dir": self.tmp_dir,
-               "mode": str(self.mode_fn()), "procs_killed": list(self.tools.killed),
+               "procs_killed": list(self.tools.killed),
                "edited": self.tools.edit_seq}
         self._journal(force=True)
         return got
@@ -1038,17 +1034,14 @@ def run_cli(argv=None):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         print("用法：ai_loop.py \"<任务>\" [--workdir 目录] [--max-steps N] [--soft-steps N] "
-              "[--max-tokens N] [--model 模型] [--mode consult|limited|free]")
+              "[--max-tokens N] [--model 模型]")
         return 0 if argv else 2
     task, workdir, max_steps, soft_steps, max_tokens, model = argv[0], None, 200, 50, 0, None
-    mode = ""
     i = 1
     while i < len(argv):
         a = argv[i]
         if a == "--workdir" and i + 1 < len(argv):
             workdir = argv[i + 1]; i += 2
-        elif a == "--mode" and i + 1 < len(argv):        # `V-307`：consult/limited/free
-            mode = argv[i + 1]; i += 2
         elif a == "--max-steps" and i + 1 < len(argv):
             max_steps = int(argv[i + 1]); i += 2
         elif a == "--soft-steps" and i + 1 < len(argv):
@@ -1070,11 +1063,8 @@ def run_cli(argv=None):
     print("预算：硬顶 %d 步、每 %d 步提醒一次%s"
           % (max_steps, soft_steps, ("、token 闸 %d" % max_tokens) if max_tokens else ""))
     t0 = time.time()
-    if mode:
-        print("权限模式：%s（临时：`ai_mode.set_mode` 覆盖）" % mode)
-    _fn = (lambda: mode) if mode else None
     got = Loop(client, workdir=workdir, max_steps=max_steps, soft_steps=soft_steps,
-               max_tokens=max_tokens, mode_fn=_fn).run(task)
+               max_tokens=max_tokens).run(task)
     print()
     print("=" * 68)
     print("%s —— %s" % ("💬 回答" if got.get("kind") == "chat"

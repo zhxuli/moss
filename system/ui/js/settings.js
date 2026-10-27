@@ -67,14 +67,12 @@ const MossSettings = {
             <div class="ai-view active" id="ai-view-list" v-if="ai.mode === 'list'">
               <div class="ai-scroll">
               <div class="ai-vhead">
-                <h3 class="ai-vtitle">AI 服务配置</h3>
-                <p class="ai-vdesc">管理你接入的各个大语言模型服务，支持多组配置切换。</p>
+                <h3 class="ai-vtitle">AI 配置</h3>
               </div>
 
               <div class="ai-empty" id="ai-empty" v-if="!ai.profiles.length">
                 <span class="ai-eico" v-html="aiSvg('user')"></span>
-                <h4>暂无 AI 配置</h4>
-                <p>请点击下方按钮，添加并配置你的第一个 AI 引擎</p>
+                <h4>暂无配置</h4>
               </div>
 
               <div class="ai-list" id="ai-list" v-else>
@@ -110,10 +108,7 @@ const MossSettings = {
               <button class="ai-back" id="ai-back" type="button" title="返回列表"
                       aria-label="返回列表" @click="aiList()"
                       v-html="aiSvg('back')"></button>
-              <div class="ai-vhead">
-                <h3 class="ai-vtitle">选择服务商</h3>
-                <p class="ai-vdesc">选择一个预设模板以快速填入接口信息，或选择自定义。</p>
-              </div>
+              <div class="ai-vhead"><h3 class="ai-vtitle">服务商</h3></div>
               <div class="ai-tplgrid" id="ai-tplgrid">
                 <div v-for="p in ai.presets" :key="p.name" class="ai-tpl" :data-preset="p.name"
                      @click="aiUsePreset(p)">
@@ -122,7 +117,7 @@ const MossSettings = {
                 </div>
                 <div class="ai-tpl" data-preset="自定义" id="ai-blank" @click="aiBlank()">
                   <span class="ai-tico">＋</span>
-                  <span class="ai-tinfo"><b>自定义</b><i>手动填写基地址</i></span>
+                  <span class="ai-tinfo"><b>自定义</b></span>
                 </div>
               </div>
               </div>
@@ -143,14 +138,14 @@ const MossSettings = {
               <div class="ai-frow">
                 <div class="ai-fgroup" data-ai="name">
                   <label class="ai-flabel" for="ai-in-name"
-                         title="只给自己看。改了名字保存 = 给这一组改名。">配置名称别名</label>
+                         title="改了名字保存 = 给这一组改名。">名称</label>
                   <input class="ai-input" id="ai-in-name" :data-ai="'name'" type="text"
                          spellcheck="false" autocomplete="off" placeholder="例如：主用 DeepSeek"
                          :value="aiVal('name')" @input="aiSet('name', $event.target.value)">
                 </div>
                 <div class="ai-fgroup" data-ai="base_url">
                   <label class="ai-flabel" for="ai-in-url"
-                         title="OpenAI 兼容的地址，填到 /v1 为止。">接口地址 (Base URL)</label>
+                         title="OpenAI 兼容地址，填到 /v1。">Base URL</label>
                   <input class="ai-input" id="ai-in-url" type="text" spellcheck="false"
                          autocomplete="off" placeholder="https://api..."
                          :value="aiVal('base_url')" @input="aiSet('base_url', $event.target.value)">
@@ -159,7 +154,7 @@ const MossSettings = {
 
               <div class="ai-fgroup" data-ai="api_key">
                 <label class="ai-flabel" for="ai-in-key"
-                       title="明文存在 user_data/config.toml；留空 = 不修改。">API Key (密钥)</label>
+                       title="留空 = 不修改">API Key</label>
                 <div class="ai-keywrap" :class="{nokey: !aiVal('api_key')}">
                   <input class="ai-input" id="ai-in-key" :type="ai.showKey ? 'text' : 'password'"
                          spellcheck="false" autocomplete="off" :placeholder="aiKeyPh()"
@@ -173,7 +168,6 @@ const MossSettings = {
               </div>
 
               <div class="ai-fgroup ai-query" data-ai="query" v-if="aiCanQuery()">
-                <label class="ai-flabel">快捷操作</label>
                 <div class="ai-query-btns">
                   <button class="ai-query-btn" id="ai-fetch-models" type="button"
                           :disabled="ai.busy" @click="aiFetchModels"
@@ -190,7 +184,7 @@ const MossSettings = {
 
               <div class="ai-fgroup" data-ai="model">
                 <label class="ai-flabel" for="ai-in-models"
-                       title="一行一个，第一个当默认；跑包时注入 MOSS_AI_MODEL / MOSS_AI_MODELS。">可用模型列表 (换行分割)</label>
+                       title="一行一个，第一个当默认">模型</label>
                 <textarea class="ai-input ai-textarea" id="ai-in-models" spellcheck="false"
                           placeholder="输入模型名称..." :value="aiVal('model')"
                           @input="aiSet('model', $event.target.value)"></textarea>
@@ -262,10 +256,7 @@ const MossSettings = {
 
           <!-- 快捷命令那页：底下一条预览行（宿主算的那句话） -->
           <div v-if="g.live" class="set-live" id="set-live" :class="{bad: /^⚠/.test(live || '')}">
-            <b>预览：</b> {{ live }}
-            <!-- ★ V-275：改动还没保存时，这段预览是**上一次问宿主**（打开面板那次）算的 ——
-                 老实说一句，别让它看着像"实时反映你刚才的改动"。 -->
-            <span v-if="changed.length" style="opacity:.65">（改动还没保存，预览还是上一次的）</span>
+            {{ live }}
           </div>
 
           </template>
@@ -275,8 +266,7 @@ const MossSettings = {
           <div class="acc-card" id="set-acc" v-if="isAccess(g)">
             <div class="acc-row">
               <div class="acc-info">
-                <h4 class="acc-title">加入系统 PATH</h4>
-                <p class="acc-desc">开启后，可在任何终端直接通过 <code>moss</code> 命令唤起本程序。</p>
+                <h4 class="acc-title">系统 PATH</h4>
               </div>
               <div class="acc-ctrl">
                 <span class="acc-state" :class="{on: !!values['path.moss']}">{{ values['path.moss'] ? "已开启" : "未开启" }}</span>
@@ -289,10 +279,9 @@ const MossSettings = {
             <div class="acc-row">
               <div class="acc-info">
                 <h4 class="acc-title">终端 CD 增强
-                  <span class="set-info" title="子进程不能改父 shell 的目录（系统限制）。不装：moss 用注入按键，屏幕上会显示那条 cd 命令、还会进历史；装了（推荐）：往 PowerShell 配置写个小函数，moss 只把路径交给 shell 自己切，屏幕无回显、不进历史。"
+                  <span class="set-info" title="用 PowerShell 函数无痕切换目录"
                         v-html="icon('info')"></span>
                 </h4>
-                <p class="acc-desc">实现原生级别的无痕目录切换，终端屏幕不留多余回显。</p>
               </div>
               <div class="acc-ctrl">
                 <span class="acc-state" :class="{on: cd.any}">{{ cd.busy ? "处理中…" : (cd.any ? "已开启" : "未开启") }}</span>
@@ -305,9 +294,9 @@ const MossSettings = {
             <div class="acc-sub" id="acc-cd-sub" :class="{off: !cd.any}">
               <div class="acc-warn">
                 <span class="acc-wico" v-html="icon('circle-alert')"></span>
-                <span><b>卸载必读：</b>若准备彻底删除本软件，请务必先在这里<b>关掉这个开关（执行卸载）</b>，清掉终端里留下的配置。</span>
+                <span>卸载前先关掉这里，清掉终端配置。</span>
               </div>
-              <div class="acc-subtitle">受控子环境列表</div>
+              <div class="acc-subtitle">环境</div>
               <div class="acc-env" v-for="p in cd.profiles" :key="p.path">
                 <span>{{ p.label }}</span>
                 <span class="acc-envstat" :class="{on: p.installed}">{{ p.installed ? "已注入" : "未注入" }}</span>
@@ -352,7 +341,7 @@ const MossSettings = {
             </div>
 
             <div class="sc-preview" id="set-sc-preview">
-              <div class="sc-ph">开启后长这样（新开一个终端才生效）</div>
+              <div class="sc-ph">新开终端后生效</div>
               <div class="sc-cols">
                 <div class="sc-col">
                   <div class="sc-coltitle">原来</div>

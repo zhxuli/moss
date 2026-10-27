@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "moss/pkg.schema.json",
   "title": "moss 插件清单 pkg.json（spec 1）",
-  "description": "moss 插件的声明文件。规则：只许加字段，不许改语义（V-09）。未知字段必须被保留（F-21）—— 所以这里 additionalProperties 一律为 true。",
+  "description": "moss 插件的声明文件。开发阶段允许破坏性改格式；读取只接受当前字段形状。未知字段保留，additionalProperties 为 true。",
   "type": "object",
   "required": ["id", "kind", "version", "name", "runner", "entry"],
   "additionalProperties": true,

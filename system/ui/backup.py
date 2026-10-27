@@ -767,9 +767,6 @@ class BackupStore:
             os.replace(tmp, dest)                   # ★ 原子：对象要么完整、要么没有
             return
 
-    # 兼容老调用（有人在用 `_put_object(src, fp)` 这种两参写法的话）
-    # —— 现在一律走分组版本，这里不再留旧签名。
-
     # ---------------------------------------------------------------- 读清单
     def manifest(self, bid, group=None):
         if group is not None:

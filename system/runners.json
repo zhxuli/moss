@@ -38,7 +38,7 @@
     "priority": 5,
     "ext": [".go"],
     "markers": ["go.mod", "go.sum"],
-    "interpreters": ["PATH:go"],
+    "interpreters": {"package": ["PATH:go"], "path": ["PATH:go"]},
 
     "_runTargetWhy": "go run <文件> 只编译那一个文件，多文件项目会 undefined；有 go.mod 时必须 go run . 跑整个包。反过来，没有 go.mod 时 go run . 会报 go.mod not found，只能跑单文件。所以按有没有 go.mod 分两种。",
     "launch": ["{interpreter}", "run", "{runTarget}"],
@@ -62,7 +62,7 @@
     "priority": 2,
     "ext": [".ps1"],
     "markers": [],
-    "interpreters": ["PATH:powershell", "PATH:pwsh"],
+    "interpreters": {"package": ["PATH:powershell", "PATH:pwsh"], "path": ["PATH:powershell", "PATH:pwsh"]},
     "launch": ["{interpreter}", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "{entry}"]
   },
 
@@ -71,7 +71,7 @@
     "priority": 1,
     "ext": [".bat", ".cmd"],
     "markers": [],
-    "interpreters": ["PATH:cmd"],
+    "interpreters": {"package": ["PATH:cmd"], "path": ["PATH:cmd"]},
     "launch": ["{interpreter}", "/c", "{entry}"]
   },
 

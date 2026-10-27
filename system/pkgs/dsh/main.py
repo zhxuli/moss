@@ -60,57 +60,8 @@ try:
     import httpx    # noqa: F401
     import websockets  # noqa: F401
 except ImportError:
-    import os
-    import subprocess
-    # ★ moss 宿主判断：moss 跑包用的是**自带运行时**（system/runtimes/python/3.12/，
-    #   里面 aiohttp / httpx / websockets 都装好了），并且按契约一定会注入
-    #   MOSS_PLUGIN_DATA_DIR。所以只要这个变量在，就说明跑在 moss 里 —— 此时
-    #   **绝不能**再去用旧项目的 ZeEn venv 重新执行自己：那是另一个解释器，会把
-    #   MOSS_* 环境契约丢掉，还可能一直套娃下去。直接把缺依赖的 ImportError 抛出去，
-    #   报错里会写清缺的是哪个模块。老 pa 没有这个变量，下面的老逻辑照旧生效。
-    if os.environ.get("MOSS_PLUGIN_DATA_DIR"):
-        raise
-    # pa 用 exec(open(...).read()) 方式执行，__file__ 不可用。
-    # pa 执行前会 sys.path.insert(0, 插件目录)，用它定位本工具（改文件夹名也不会失效）。
-    _DIR = ""
-    for _p in sys.path:
-        if _p and os.path.isdir(_p) and os.path.exists(os.path.join(_p, "main.py")):
-            _DIR = _p
-            break
-    if not _DIR:
-        # 最后兜底：以**脚本自身所在目录**为准（moss 用 runpy.run_path 执行，
-        # __file__ 一定可用；这段本来在旧宿主里也到不了，因为 pa 会先把插件目录
-        # 塞进 sys.path）。原来写死的那个旧项目路径已随迁移作废，不能再指回去。
-        _DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
-    _THIS = os.path.join(_DIR, "main.py")
-    # 换哪个解释器来跑（三级，`P-15`）：
-    #   ① 环境变量 DSH_PYTHON —— 想指定就用它，这是最明确的做法
-    #   ② 当前解释器同目录的 python.exe（moss 自带运行时就在这，依赖是齐的）
-    #   ③ 老项目的 ZeEn venv —— **仅当它真的存在**才用（旧机器上的兜底；
-    #      迁移前这里写死的就是它，现在降级成最后一级，不再是无条件依赖）
-    # 三级都不行就报清楚缺什么、该怎么办，而不是甩一个 NameError/FileNotFound。
-    _CANDIDATES = []
-    _env_py = os.environ.get("DSH_PYTHON")
-    if _env_py:
-        _CANDIDATES.append(("环境变量 DSH_PYTHON", _env_py))
-    _CANDIDATES.append(("当前解释器同目录",
-                        os.path.join(os.path.dirname(os.path.abspath(sys.executable or "")),
-                                     "python.exe")))
-    _CANDIDATES.append(("老项目的 ZeEn venv（兜底）",
-                        r"D:\python\wwwroot\ZeEn\venv\Scripts\python.exe"))
-    _VENV_PY = ""
-    for _why, _p in _CANDIDATES:
-        if _p and os.path.isfile(_p) and os.path.abspath(_p) != os.path.abspath(sys.executable or ""):
-            _VENV_PY = _p
-            print("检测到当前解释器缺依赖(aiohttp/httpx/websockets)，改用【%s】的解释器: %s"
-                  % (_why, _p))
-            break
-    if not _VENV_PY:
-        print("缺少依赖(aiohttp/httpx/websockets)，且没有可换的解释器。")
-        print("  办法：设环境变量 DSH_PYTHON 指向一个装了这些库的 python.exe，")
-        print("        或用 moss 自带运行时跑（moss :dsh 本来就是这么跑的）。")
-        sys.exit(1)
-    sys.exit(subprocess.call([_VENV_PY, _THIS] + sys.argv[1:]))
+    print("缺少依赖 aiohttp / httpx / websockets。请用 moss 自带运行时运行本包。")
+    raise
 
 import argparse
 import asyncio
@@ -143,13 +94,8 @@ LOG = logging.getLogger("dsh_bridge")
 # 本地设置向导端口（仅本机访问）
 SETUP_PORT = 8788
 
-# ---- 数据目录：宿主 moss 注入的插件专属目录 (user_data/state/<包id>)；
-#      PA_ 是老 pa 的变量，保留兜底；都没有时（独立运行/调试）退回脚本目录 ----
-# ★ `V-133`：兜底**不再用"脚本自己所在目录"** —— 那样独立跑（或被 pa 跑）时会把
-#   `dsh.pid` / `dsh3080.log` 写进 **包目录**（仓库里！实测已经发生了）。按 moss 的数据方案：
-#   优先宿主注入的插件专属目录，其次老 pa，最后退到**用户目录**（永远不往代码目录里写）。
+# ---- 数据目录：宿主注入；独立运行时退回用户目录，绝不写进包目录 ----
 DATA_DIR = (os.environ.get("MOSS_PLUGIN_DATA_DIR")
-            or os.environ.get("PA_PLUGIN_DATA_DIR")
             or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
                             "user_data", "state", "dsh"))
 
@@ -1553,21 +1499,13 @@ def ensure_single_instance() -> None:
 def spawn_daemon() -> int:
     """--daemon：转为后台守护运行（pythonw 无窗口，日志写 dsh.log）。"""
     log_path = os.path.join(DATA_DIR, "dsh.log")
-    # 无窗口解释器：优先用**当前运行时自己的** pythonw.exe —— 自带运行时
-    # (system/runtimes/python/3.12) 里就有一个，依赖 aiohttp/httpx/websockets 也齐。
-    # 旧代码写死的是旧项目那台 venv 里的 pythonw.exe，迁移后它指向外面、
-    # 别人机器上根本没有 —— 所以降级成兜底（老宿主下行为不变）。
-    # 无窗口解释器（三级，`P-15`）：① 环境变量 DSH_PYTHONW
-    #                              ② 当前运行时同目录的 pythonw.exe（自带运行时里就有）
-    #                              ③ 老项目的 ZeEn venv —— 仅当它存在才用（兜底）
+    # 无窗口解释器：优先 DSH_PYTHONW，否则用当前运行时同目录的 pythonw.exe。
     venv_py = os.environ.get("DSH_PYTHONW") or ""
     if not (venv_py and os.path.isfile(venv_py)):
         venv_py = os.path.join(os.path.dirname(sys.executable or ""), "pythonw.exe")
     if not os.path.isfile(venv_py):
-        _legacy_pw = r"D:\python\wwwroot\ZeEn\venv\Scripts\pythonw.exe"
-        if os.path.isfile(_legacy_pw):
-            LOG.warning("没有 pythonw.exe，退回 ZeEn venv: %s", _legacy_pw)
-            venv_py = _legacy_pw
+        print("[dsh] 找不到 pythonw.exe；请设置 DSH_PYTHONW，或改用 moss 自带运行时。")
+        return 1
     flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
@@ -1617,8 +1555,6 @@ def find_dsh_launchers() -> list:
     # 3) npx 兜底
     if shutil.which("npx"):
         cmds.append(["npx", "@deepseek-ai/dsh", "web"])
-    # 最后兜底（依赖 PATH，尽力而为）
-    cmds.append(["npx", "@deepseek-ai/dsh", "web"])
     return cmds
 
 
@@ -1626,28 +1562,11 @@ DSH_LAUNCHERS = find_dsh_launchers()
 
 
 def _dsh_cwd() -> str:
-    r"""拉起 DSH 本体时，用哪个目录当它的工作目录（= DSH 那边看到的"工作区"）。
-
-    旧代码写死成这台机器上 DSH 的检出目录（`D:\soft\deepseek-harness`，**本机就是靠它**）。
-    写死在别人机器上就跑不起来，所以改成三级，**本机行为一个字不变**：
-      ① 环境变量 `DSH_BRIDGE_CWD`（想固定工作区就设它 —— 这是最明确的做法）
-      ② 老路径还存在 → 就用它（本机命中这一条，和迁移前完全一样）
-      ③ 都没有 → 从探测到的 DSH 启动器反推它自己的安装目录（可移植兜底）
-
-    注意 ③ 的含义：它给的是「DSH 装在哪」，**不一定**是「你想让它以哪个目录为工作区」。
-    所以换到别的机器上，建议用 ① 明确指定，别指望 ③ 猜对。
-    """
+    """拉起 DSH 本体时使用的工作目录。"""
     env = os.environ.get("DSH_BRIDGE_CWD")
     if env and os.path.isdir(env):
         LOG.info("DSH 工作目录 = %s（来自环境变量 DSH_BRIDGE_CWD）", env)
         return env
-    legacy = r"D:\soft\deepseek-harness"
-    if os.path.isdir(legacy):
-        # 这台机器上 DSH 的检出目录；**本机就走这一条**，行为与迁移前一致。
-        return legacy
-    # ③ 别人机器上的兜底：用「你敲 moss :dsh 时所在的那个目录」。
-    #    为什么不从启动器反推：那会得到 node_modules\@deepseek-ai\dsh 这种安装目录，
-    #    拿它当工作区既怪又难找；而「我在哪个目录启动的」是命令行工具的通用直觉。
     cwd = os.getcwd()
     LOG.info("DSH 工作目录 = %s（当前目录）", cwd)
     return cwd
@@ -1859,11 +1778,8 @@ async def watch_3080(bridge: "Bridge") -> None:
 def _moss_args():
     """从宿主环境变量里取「包参数」（写法照抄 system/pkgs/exec/main.py 的 _moss_args）。
 
-    moss 宿主**不会**把用户参数塞进 sys.argv（core/cli.py build_pkg_inv 里
-    args 恒为 []），参数按 pkg.json 的 params 解析好，以 JSON 放进
-    MOSS_PKG_PARAMS；MOSS_ARGS 是原始串（包调用时通常是空串）。
-    有就返回切好的参数表，没有返回 None —— 那就走原来的 sys.argv 逻辑，
-    所以 `python main.py --status` 这种直接调试照旧能用。
+    宿主把参数按 pkg.json 的 params 解析好，以 JSON 放进 MOSS_PKG_PARAMS。
+    有就返回切好的参数表，没有返回 None —— 走 sys.argv，直接调试照旧能用。
     """
     # ★ 只有"宿主确实给了参数"才算数：**空串要当成没给**，继续往下走、最后退回
     #   sys.argv。踩过的坑（2026-09-27）：moss 起子进程时会注入 MOSS_PKG_PARAMS，
@@ -1879,9 +1795,6 @@ def _moss_args():
                 return got.split()
         except Exception:
             pass
-    raw = (os.environ.get("MOSS_ARGS") or "").strip()
-    if raw:
-        return raw.split()
     return None
 
 

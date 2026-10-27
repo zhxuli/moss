@@ -144,7 +144,7 @@
     "界面改成 exec 那种 WebView 外观（pywebview + WebView2 + CSS 设计令牌），Tkinter 界面保留为退路。",
     "业务逻辑抽到 core.py：界面、命令行共用同一份实现，不再各自抄一遍。日志不再用全局 sys.stdout 重定向。",
     "ico 生成改为多分辨率：默认 16/24/32/48/64/128/256 全要，也可 -s 指定。旧版只写一个尺寸，等于把 ico 当单张图用。",
-    "数据目录从 PA_PLUGIN_DATA_DIR 改为 MOSS_PLUGIN_DATA_DIR（两个都认）。"
+    "数据目录统一为 MOSS_PLUGIN_DATA_DIR。"
   ],
   "_dropWhy": "ext = 只收这几种扩展名（V-183）：拖一个 .txt / .exe 进 moss 窗口时，img 不该亮起来（md5 那种不限扩展名的才亮）。这份清单和 core.py 的 SUPPORTED_EXTS 一字不差 —— 声明必须跟代码的事实一致，不许多收（多收了就是把处理不了的文件塞进来白跑一趟）。dir 那边不写 ext：文件夹没有扩展名。",
   "drop": {

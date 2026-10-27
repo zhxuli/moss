@@ -1,11 +1,7 @@
 # -*- coding: utf-8 -*-
 """MD5 计算 —— 算字符串 / 文件 / 文件夹的 MD5
 
-★ 从旧项目的 exec 命令迁移而来：
-    QuickTools/user_data/exec/cmds/md5.json
-
-  迁移时只改了【参数的取法】，业务逻辑一行没动（照抄原则 E-20）。
-  末尾追加了一段结构化返回（纯增量）。
+输入：MOSS_PKG_PARAMS 里的 `target`；输出一份给人看的结果和一份结构化结果。
 """
 
 import json
@@ -14,7 +10,6 @@ import sys
 import hashlib
 
 # 参数：moss 通过 MOSS_PKG_PARAMS 传 JSON（类型化参数通道）。
-# 旧版（exec 命令）读的是 PA_EXEC_ARGS —— 那套在新系统里已经不存在了。
 try:
     _params = json.loads(os.environ.get("MOSS_PKG_PARAMS") or "{}")
 except Exception:

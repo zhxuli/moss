@@ -10,8 +10,7 @@
     · 解析零依赖：Python 3.11+ 标准库自带 `tomllib`（只读），自带运行时是 3.12。
     · 宿主**只需要读**：写只发生在"文件不存在时生成默认"，那时直接写那份带注释的
       模板字符串即可 —— Python 标准库没有 TOML 写入库，这里也不需要。
-  旧的 `config.json` **不做兼容**（尚未发布，直接换）：现在只认 `.toml`，
-  老文件留在磁盘上也不会被读。
+配置文件只有一种格式：`user_data/config.toml`。
 
 ★ 字段名与默认值照抄 pa.py:53-78（`E-20` 照抄原则），一个不改：
   `symbols` / `output` / `search` / `ctrl_c` 四组齐全。
@@ -42,7 +41,7 @@ SYMBOL_BAD = set('&|<>^%!*?()$`"\'=#@,;[]{}')
 #:   （你的话：「其他的可以由程序根据需求来设置 不必遵守这些规矩」）：那些是**每次调用**
 #:   该由代码当场定的东西，摆在设置面板里只会让普通用户看不懂 —— 面板上只留
 #:   「连哪儿、拿什么钥匙、这个服务有哪些模型」。
-#: ★ `model` **可以是多个**（TOML 里写成数组，第一个当默认）；旧配置里写成字符串照样读得动。
+#: `model` 永远是数组，第一个是默认模型。
 AI_FIELDS = ("base_url", "api_key", "model")
 
 #: 常见服务商**预制参数**（`V-139`）：名字 + 接口地址 + 模型清单，点一下就把这几样填进面板，
@@ -69,16 +68,11 @@ AI_PRESETS = [
 
 
 def ai_models(prof):
-    """一组里的模型清单 —— **永远是列表**（旧配置里写成字符串的也认）。
-
-    为什么要有这个函数：`model` 有两种历史写法（字符串 / 数组），凡是用到它的地方
-    （注入环境变量、测试连接、面板）都得先归一化，各写一遍早晚不一致。
-    """
+    """一组里的模型清单；`model` 不是数组时按空处理。"""
     v = (prof or {}).get("model")
-    if isinstance(v, (list, tuple)):
-        return [str(x).strip() for x in v if str(x).strip()]
-    s = str(v or "").strip()
-    return [s] if s else []
+    if not isinstance(v, (list, tuple)):
+        return []
+    return [str(x).strip() for x in v if str(x).strip()]
 
 DEFAULT_CONFIG = {
     # ★ `V-137`：AI 那几组（`[ai] active` + `[ai.profiles.<组名>]`）—— **不声明在这里，
@@ -179,7 +173,7 @@ force_kill = true
 [ui]
 # 界面自己的开关。**关掉 moss 界面**（右上角 × / 任务栏关闭 / 界面里退出）时，
 # 要不要把还在后台跑的**插件进程**一并结束掉（连它拉起的子孙进程）。
-#   false（默认）= 保持老行为：插件继续在后台跑（长驻服务那种就靠这个）。
+#   false（默认）= 插件继续在后台跑（长驻服务那种就靠这个）。
 #   true         = 关界面顺手收干净，不留后台孤儿（服务型的包会被一起收掉，所以默认没开）。
 # ★ 界面进程直接读这个文件，改完**下一次关界面**就生效（不用重启 moss、也不用重打包）。
 kill_pkgs_on_exit = false
@@ -401,11 +395,6 @@ def _live_lines(after):
     return "\n".join(out)
 
 
-def _live_line(after):
-    """旧名字（调用点还在用）—— 直接转给多行那版。"""
-    return _live_lines(after)
-
-
 def _notes_for(after):
     """每一行底下那句「现在这样」（宿主算、界面只显示）：键 → 一句话。"""
     notes = {}
@@ -557,7 +546,7 @@ def settings_check(values=None):
     return {"ok": not any(p["level"] == "error" for p in problems),
             "problems": problems,
             "notes": _notes_for(after),
-            "live": _live_line(after)}
+            "live": _live_lines(after)}
 
 
 def settings_problems():
@@ -685,34 +674,6 @@ def _split_comment(rest):
     return rest, ""
 
 
-def _ensure_sections(raw, sections):
-    """把用户文件里缺的段按默认值补到末尾（**只增不改**，原有的字一个不动）。
-
-    为什么要它（`V-298`）：`config.toml` 是"首次运行按模板建的"，而模板后来会长出新段
-    （这次是 `[shortcut]`）—— 老用户的文件里没有它，可 `set_values` 是**按行找键**改值的，
-    找不到那一行就直接报错。补上之后，新设置项对老用户也存得进去。
-    """
-    have = set()
-    for line in raw.splitlines():
-        s = line.strip()
-        if s.startswith("[") and s.endswith("]"):
-            have.add(s[1:-1].strip())
-    add = [s for s in sections if s and s not in have]
-    if not add:
-        return raw
-    nl = "\r\n" if "\r\n" in raw else "\n"
-    block = ["", "# ---- 下面是程序新增的段（保留你原来的内容，只补缺的） ----"]
-    for section in add:
-        block.append("[%s]" % section)
-        for name, val in (DEFAULT_CONFIG.get(section) or {}).items():
-            kind = "bool" if isinstance(val, bool) else ("int" if isinstance(val, int) else "text")
-            block.append("%s = %s" % (name, _toml_literal(val, kind)))
-    text = raw
-    if text and not text.endswith(("\n", "\r")):
-        text += nl
-    return text + nl.join(block) + nl
-
-
 def set_values(values, path=None):
     # ★ `V-137`：`ai.*` 单独处理 —— `ai.profiles` 是**表**，通用那条"逐键写 TOML"的路子会把它写成
     #   一个字符串，下次读就崩（`ai_profiles()` 拿到的不是 dict）。所以：
@@ -750,12 +711,6 @@ def set_values(values, path=None):
     except OSError as e:
         return {"ok": False,
                 "problems": [{"key": "", "why": "读不了配置文件：%s" % e, "level": "error"}]}
-
-    # ★ `V-298`：老配置缺段时先补上（只增不改），否则新设置项永远"找不到那一行"存不进去。
-    try:
-        raw = _ensure_sections(raw, [_split_key(k)[0] for k in values])
-    except Exception:                                                     # noqa: BLE001
-        pass
 
     nl = "\r\n" if "\r\n" in raw else "\n"
     section = ""
@@ -967,8 +922,7 @@ def ai_profile_set(name, fields, path=None):
     for k, v in (fields or {}).items():
         if k not in AI_FIELDS:
             continue
-        # ★ `model` 一律**存成列表**（`V-139`：可以多个）。字符串也接受（命令行 / 手写），
-        #   顺手把逗号 / 换行拆开并去掉空的 —— 不然 `model="a,b"` 会变成一个叫 "a,b" 的模型名。
+        # 命令行里的 `model=a,b` 在入口处拆成数组，写盘时永远是数组。
         if k == "model":
             if isinstance(v, (list, tuple)):
                 cur[k] = [str(x).strip() for x in v if str(x).strip()]
@@ -1020,28 +974,6 @@ def ai_rename(old, new, path=None):
     active = ai_active_name(path)
     _write_ai_section(profs, new if active == old else active, path)
     return new
-
-
-def ai_import_legacy(path=None, legacy=None):
-    """把老的 `user_data/state/ai/config.json` 导成一组（`V-137` 的迁移）。"""
-    f = Path(legacy) if legacy else (paths.USER_DIR / "state" / "ai" / "config.json")
-    if not f.is_file():
-        return None
-    try:
-        import json as _json
-        j = _json.loads(f.read_text(encoding="utf-8"))
-    except Exception:                                                   # noqa: BLE001
-        return None
-    fields = {}
-    if j.get("BASE_URL"):
-        fields["base_url"] = j["BASE_URL"]
-    if j.get("MODEL"):
-        fields["model"] = j["MODEL"]
-    if j.get("API_KEY"):
-        fields["api_key"] = j["API_KEY"]
-    fields["note"] = "从旧的 state/ai/config.json 导进来的"
-    name, _ = ai_profile_set("legacy-ai", fields, path)
-    return name
 
 
 def load():

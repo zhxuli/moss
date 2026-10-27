@@ -45,17 +45,10 @@ import sys
 
 main_py = os.environ["MOSS_SELFTEST_MAIN"]
 path0 = sys.path[0] if sys.path else None
-# ★ `V-277`：先在 `user_data/state/` 里**放一个假的** `_ui_inline.html`，看 main.py 装载时
-#   会不会把它清掉（那份自包含页面现在只放内存、不落盘了）。
-import pathlib
-_legacy = pathlib.Path(os.environ["MOSS_USER_DATA_DIR"]) / "state" / "_ui_inline.html"
-_legacy.parent.mkdir(parents=True, exist_ok=True)
-_legacy.write_text("（探针放的假货：main.py 装载时应该把它删掉）", encoding="utf-8")
 spec = importlib.util.spec_from_file_location("moss_ui_main", main_py)
 main = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(main)
 out = {"path0": path0, "path_after": sys.path[:2], "here": str(main.HERE)}
-out["legacy_deleted"] = not _legacy.exists()
 try:
     import backup
     out["sibling_import"] = "OK SPEC=%s" % getattr(backup, "SPEC", "?")
@@ -105,15 +98,9 @@ try:
 except Exception as e:
     out["live_head"] = "FAIL %r" % (e,)
 try:
-    old = "/%s/user_data/state/_ui_inline.html" % token
-    out["old_path"] = _req("GET", old)[0]
-except Exception as e:
-    out["old_path"] = "FAIL %r" % (e,)
-try:
     out["multifile"] = _req("GET", "/%s/system/ui/index.html" % token)[0]
 except Exception as e:
     out["multifile"] = "FAIL %r" % (e,)
-out["no_file_after"] = not _legacy.exists()
 print(json.dumps(out, ensure_ascii=False))
 '''
 
@@ -195,16 +182,13 @@ def main():
     print("ai_presets()                : %s" % info.get("ai_presets"))
     print("-" * 64)
     print("★ `V-277` 自包含页面（虚拟地址 + 内存，不落盘）：")
-    print("  老位置那个文件被清掉了        : %s" % info.get("legacy_deleted"))
     print("  内存里那份                   : %s KB · 带图标表=%s · 带说明=%s"
           % (info.get("live_kb"), info.get("live_has_icons"), info.get("live_has_note")))
     print("  GET  虚拟地址 __ui_live.html : %s（%s）字节一致=%s"
           % (info.get("live_get"), info.get("live_ctype"), info.get("live_same")))
     print("  HEAD 虚拟地址                : %s · Content-Length 对得上=%s"
           % (info.get("live_head"), info.get("live_head_len")))
-    print("  老路径 user_data/state/…     : %s（该是 403 —— 例外已经删了）" % info.get("old_path"))
-    print("  多文件那条路 index.html      : %s（兜底照样能发）" % info.get("multifile"))
-    print("  发完之后也没落盘             : %s" % info.get("no_file_after"))
+    print("  多文件那条路 index.html      : %s" % info.get("multifile"))
     ok = (str(info.get("sibling_import", "")).startswith("OK")
           and info.get("backup_list") == "ok=True"
           # ★ `V-138` / `V-139`：AI 那几个接口要能**壳到 exe**（界面进程不许 import core）——
@@ -212,14 +196,11 @@ def main():
           and info.get("ai_config") == "ok=True"
           and info.get("ai_presets") == "ok=True"
           and str(UI) in [str(p) for p in (info.get("path_after") or [])]
-          # ★ `V-277`：自包含页面 = 内存 + 虚拟地址；老文件被清、老路径被挡、多文件兜底还在
-          and info.get("legacy_deleted") is True
           and info.get("live_has_icons") is True and info.get("live_has_note") is True
           and info.get("live_get") == 200 and "text/html" in str(info.get("live_ctype"))
           and info.get("live_same") is True
           and info.get("live_head") == 200 and info.get("live_head_len") is True
-          and info.get("old_path") == 403 and info.get("multifile") == 200
-          and info.get("no_file_after") is True)
+          and info.get("multifile") == 200)
     print("=" * 64)
     print("✅ 真启动环境下界面后端可用" if ok else "✗ 有问题：看上面几行")
     return 0 if ok else 1

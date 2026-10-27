@@ -3400,7 +3400,7 @@ MOCK_JS = r"""
         const addTxt = addBtn ? addBtn.textContent.trim() : "";
         const formOn = !!document.querySelector("#ai-view-form.active");
         const ok = before === 3 && cards === 0 && M.ai.profiles.length === 0 && !listBox &&
-                   !!empty && /暂无 AI 配置/.test(emptyTxt) && eico &&
+                   !!empty && /暂无配置/.test(emptyTxt) && eico &&
                    addTxt === "添加新的 AI 配置" && !formOn;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 删前=" + before + " 删后=" + cards +
@@ -5271,7 +5271,7 @@ MOCK_JS = r"""
         const foldTxt = (foldBar ? foldBar.textContent : "").replace(/\s+/g, " ").trim();
         const folded0 = !!permPanel0 && permPanel0.classList.contains("folded") &&
                         !document.querySelector("#pane-ai .ai-perm-i") &&
-                        /(权限控制|目录权限控制)/.test(foldTxt) && /可写 1 处/.test(foldTxt);
+                        /权限/.test(foldTxt) && /可写 1 处/.test(foldTxt);
         // 上下结构：权限卡在输入区**上面**（同一列）
         const footEl = document.querySelector("#pane-ai .ai-foot");
         const permTop = document.querySelector("#pane-ai .ai-foot .ai-perm");
@@ -5384,7 +5384,7 @@ MOCK_JS = r"""
                       detPre.some(x => /"summary"/.test(x)) && detPre.some(x => /收到/.test(x));
         // ★ 新页签：切到「查看源码」应能看到高亮 JSON 树（键 / 折叠节点）。
         const srcTab = [].slice.call(document.querySelectorAll("#pane-ai .ai-modal-tab"))
-                              .filter(b => /查看源码/.test(b.textContent))[0];
+                              .filter(b => /源码/.test(b.textContent))[0];
         let jsonOk = false;
         if (srcTab){
           srcTab.click();
@@ -5993,7 +5993,7 @@ MOCK_JS = r"""
         await sleep(400);
         const rmOk = !!(M.allowCall && M.allowCall.action === "rm");
         const ok = paths.length === 3 && !leaked.length && badge === "可写 1 处" &&
-                   !!fold && /别的包/.test(foldTxt) && otherRow0 === 0 && otherRow1 === 1 &&
+                   !!fold && /其他/.test(foldTxt) && otherRow0 === 0 && otherRow1 === 1 &&
                    new RegExp(String((otherPkg || {}).id || "@@")).test(otherTxt) && rmOk &&
                    !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
