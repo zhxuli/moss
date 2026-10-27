@@ -280,11 +280,16 @@ def list_runtimes():
 
 # ---------------------------------------------------------------- 探测
 def interpreter_specs(spec, kind="path"):
-    """取某个调用类型下的解释器候选列表。"""
+    """取某个调用类型下的解释器候选列表。
+
+    支持分组写法，也兼容旧的扁平列表：
+        "interpreters": { "package": [...], "path": [...] }
+        "interpreters": [ ... ]        ← 旧写法，两组都用它
+    """
     interp = spec.get("interpreters")
-    if not isinstance(interp, dict):
-        return []
-    return interp.get(kind) or interp.get("package") or []
+    if isinstance(interp, dict):
+        return interp.get(kind) or interp.get("path") or []
+    return interp or []
 
 
 def _interp_candidates(spec, ctx, kind):

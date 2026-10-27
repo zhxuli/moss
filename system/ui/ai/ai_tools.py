@@ -276,6 +276,19 @@ def child_env(run_id="", workdir=""):
         return env
 
 
+def mode_now():
+    """**现在**能不能"放手写"（现读权限清单；读不到就当不能 —— 最保守）。
+
+    ★ `V-316`：以前这里是"三档模式"，现在只有一份清单：`*`（任意路径）那一行勾了**写**
+      才叫放手 —— 那时**危险操作也不再问**（`ai_mode.needs_confirm`）。
+    """
+    try:
+        import ai_mode as M                                        # noqa: PLC0415
+        return "free" if M.wildcard_write() else "limited"
+    except Exception:                                              # noqa: BLE001
+        return "limited"
+
+
 class Tools:
     """工具执行器。`workdir` 是这次任务的默认目录（通常是那个包的目录）。
 
@@ -292,7 +305,7 @@ class Tools:
     """
 
     def __init__(self, workdir=None, before_write=None, self_tools=None,
-                 stop_check=None, asker=None, run_id="", perm_gate=None,
+                 stop_check=None, asker=None, mode_fn=None, run_id="", perm_gate=None,
                  client=None):
         self.workdir = Path(workdir) if workdir else E.write_root()
         self.client = client                # 联网搜索要复用当前 AI 组的 DeepSeek Key
@@ -319,6 +332,7 @@ class Tools:
         # ---- `V-307`：停止 / 进程 / 提问 ----
         self.stop_check = stop_check or (lambda: False)
         self.asker = asker
+        self.mode_fn = mode_fn or mode_now
         #: ★ `V-319`/`V-323`：**权限请求走的闸**（宿主给的）—— `perm_gate(path, why, need)` 会让
         #:   权限卡**上半段**那一条请求显示出来（琥珀底 + 允许 / 拒绝）、**阻塞**到他点一下，
         #:   回 `{granted, read, write, reason}`。没有它（命令行 / 探针）就当"没人可问"。

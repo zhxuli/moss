@@ -391,7 +391,7 @@ def list_runs(limit=30, with_steps=False, scope=None, everywhere=False):
                                        "snapshot_note",
                                        "started_text", "finished", "model", "max_tokens",
                                        "kind", "stopped", "continued_from", "running",
-                                       "updated")}
+                                       "updated", "mode")}
         row["cont"] = bool(rec.get("messages"))
         row["msgs"] = len(rec.get("messages") or [])
         row["steps"] = len(rec.get("steps") or [])

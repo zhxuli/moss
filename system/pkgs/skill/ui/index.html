@@ -52,7 +52,7 @@
     <!-- ============================================================ 头部 -->
     <header class="site-head">
       <div class="head-left">
-        <h1 class="page-title">技能</h1>
+        <h1 class="page-title">技能中心</h1>
         <!-- 状态字（`#status`）：**没读到数据之前一个字都不写**（你说"别闪一下读不出来"），
              **真失败过（`tries > 0`）**才写这句。读出来了也留空。
              ★ 探针按这一段判生死，文案别改；它必须是个 <p>（探针正则按 </p> 收尾）。 -->
@@ -73,7 +73,7 @@
         <!-- 搜索：平时只有一颗放大镜，聚焦 / 有内容时向右展开 -->
         <div class="search-wrapper" :class="{ 'is-open': query }">
           <input ref="search" class="search-input" v-model="query" type="text"
-                 spellcheck="false" autocomplete="off" placeholder="搜索技能">
+                 spellcheck="false" autocomplete="off" placeholder="搜索技能名称或标签…">
           <span class="search-icon" v-html="ico('search')"></span>
         </div>
 
@@ -97,14 +97,16 @@
            拆成独立的布尔量之后，谁该出现谁出现，一眼能对上。 -->
       <div class="empty" v-if="noMatch">
         <span class="orb" v-html="ico('search')"></span>
-        <h2>没有匹配结果</h2>
+        <h2>没有找到匹配的技能</h2>
+        <p>「{{ query || '这个筛选' }}」在 {{ all.length }} 只技能里没有对上的。</p>
         <button type="button" class="btn" @click="clearFind">清掉筛选</button>
       </div>
 
       <div class="empty" v-if="noSkills">
         <span class="orb" v-html="ico('spark')"></span>
         <h2>还没有技能</h2>
-        <p>AI 造出的工具会出现在这里；第一次使用前需要允许。</p>
+        <p>技能是 AI 干活时缺一个能力、自己造出来的"手" —— 它缺什么就会自己造一只放到这儿。</p>
+        <p>造好之后你点一下「允许」，它下一次跑就能用了。</p>
       </div>
 
       <div class="empty" v-if="notReady">

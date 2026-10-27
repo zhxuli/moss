@@ -8,10 +8,14 @@
 独立窗口时走 pywebview 的 `js_api`。**改注册表、读写备份全在这个文件里** ——
 界面只负责显示，所以"是不是 Python 在干活"看一眼命令行那页的 print 就知道。
 
-★ 数据放哪：`MOSS_PLUGIN_DATA_DIR`（= `user_data/state/path/`）下面的
-  `data/backups/path_backup_<时间戳>.txt`，一行一个路径。
+★ 数据放哪（`V-200`）：`MOSS_PLUGIN_DATA_DIR`（= `user_data/state/path/`）下面的
+  `data/backups/path_backup_<时间戳>.txt`，**一行一个路径**。老位置
+  `.path_editor/path_bak/` 仍然**认**（能列出来、能恢复、能删），但**不再往里写**。
 ★ 只改**当前用户**的 PATH（注册表 `HKCU\\Environment` 的 `Path`，`REG_EXPAND_SZ`），
-  不需要管理员；改完广播 `WM_SETTINGCHANGE`，已开着的终端不会变。
+  不需要管理员；改完广播 `WM_SETTINGCHANGE`（**已经开着的**终端不会变，新开的才看得到）。
+★ 上一版是 tkinter 界面（`PathEditorApp` / `RestoreWindow`，还依赖 `windnd` 收拖放）——
+  按契约"界面写成网页、别用 Tk 写新包"换掉了：现在一份网页两份环境通用，
+  并且**不再需要 windnd**（拖文件夹进来的事由 moss 那边负责）。
 """
 import ctypes
 import json
@@ -48,11 +52,14 @@ def _ui_file():
 
 UI_FILE = _ui_file()
 
-#: 宿主注入的插件数据目录；独立运行时按 `MOSS_HOME/user_data/state/path` 找。
+#: 宿主注入的插件数据目录；独立运行时（直接 `python main.py` / 打包的 exe）按这个顺序退：
+#: `PA_PLUGIN_DATA_DIR` → `MOSS_HOME/user_data/state/path` → **打包的 exe 就放在自己旁边**
+#: → 最后才是家目录（并说一声数据放哪了，免得用户找不到备份）。
 def _data_dir():
-    v = os.environ.get('MOSS_PLUGIN_DATA_DIR')
-    if v:
-        return Path(v)
+    for env in ('MOSS_PLUGIN_DATA_DIR', 'PA_PLUGIN_DATA_DIR'):
+        v = os.environ.get(env)
+        if v:
+            return Path(v)
     home = os.environ.get('MOSS_HOME')
     if home:
         return Path(home) / 'user_data' / 'state' / 'path'
@@ -66,6 +73,8 @@ DATA_DIR = _data_dir()
 
 #: 备份放这儿（`V-200`：按契约用 `data/`——持久、要备份的东西放这里）
 BACKUP_DIR = DATA_DIR / 'data' / 'backups'
+#: 老位置：只读认，不再写
+LEGACY_BACKUP_DIR = DATA_DIR / '.path_editor' / 'path_bak'
 
 TITLE = 'PATH 管理'
 
@@ -80,6 +89,7 @@ class BackupManager:
 
     def __init__(self):
         self.backup_dir = BACKUP_DIR
+        self.legacy_dir = LEGACY_BACKUP_DIR
         self.backup_prefix = "path_backup_"
         self.time_format = "%Y%m%d_%H%M%S"
 
@@ -110,11 +120,12 @@ class BackupManager:
     def _resolve(self, filepath):
         """只认自己那两个目录里的文件（别让界面通过这条路动别的文件）。"""
         p = Path(str(filepath or "")).resolve()
-        try:
-            if p.parent.resolve() == self.backup_dir.resolve() and p.is_file():
-                return p
-        except OSError:
-            pass
+        for folder in (self.backup_dir, self.legacy_dir):
+            try:
+                if p.parent.resolve() == folder.resolve() and p.is_file():
+                    return p
+            except OSError:
+                continue
         return None
 
     # ---- 写
@@ -163,8 +174,14 @@ class BackupManager:
         except OSError:
             return []
 
-    def _scan(self, folder):
-        """扫一个目录里的备份，名字取文件名，时间取文件修改时间。"""
+    def _scan(self, folder, legacy):
+        """扫一个目录里的备份。
+
+        ★ `V-209` 起**不再要求文件名里有时间戳**：以前是 `glob("path_backup_*.txt")` 再
+          `strptime`，解析不出来就 `continue` —— 那样"用户起了名字"的备份会**在列表里凭空消失**
+          （写了文件、界面看不见，最坏的一种 bug）。现在：一个目录里的 `.txt` 都算，
+          时间取**文件的修改时间**，名字里能解析出时间戳的就当默认名、解析不出的当自定义名。
+        """
         out = []
         try:
             files = sorted(folder.glob("*.txt"))
@@ -175,17 +192,24 @@ class BackupManager:
                 mtime = datetime.fromtimestamp(f.stat().st_mtime)
             except OSError:
                 continue
+            stem = f.stem
+            custom, when = stem, mtime
+            if stem.startswith(self.backup_prefix):
+                try:                                    # 老格式：名字里就是时间
+                    when = datetime.strptime(stem[len(self.backup_prefix):], self.time_format)
+                    custom = ""                         # 默认名 → 卡片上只显示时间
+                except ValueError:
+                    pass
             paths = self.read(str(f))
-            out.append({"file": str(f), "name": f.stem,
-                        "time": mtime.strftime("%Y-%m-%d %H:%M:%S"),
-                        "sort": mtime.strftime(self.time_format), "total": len(paths),
-                        "paths": paths})
+            out.append({"file": str(f), "name": custom, "time": when.strftime("%Y-%m-%d %H:%M:%S"),
+                        "sort": when.strftime(self.time_format), "total": len(paths),
+                        "paths": paths, "legacy": bool(legacy)})
         return out
 
     def list_backups(self, current_paths):
         """所有备份，新的在前。带上"与现在比会新增/移除几条"（恢复前先看清楚）。"""
         cur = {os.path.normpath(p).lower() for p in current_paths}
-        out = self._scan(self.backup_dir)
+        out = self._scan(self.backup_dir, False) + self._scan(self.legacy_dir, True)
         for b in out:
             bset = {os.path.normpath(p).lower() for p in b["paths"]}
             b["add"] = len(bset - cur)
@@ -335,6 +359,7 @@ class Api:
             "self_registered": PATHM.is_registered(SELF_DIR),
             "data_dir": str(DATA_DIR),
             "backup_dir": str(BACKUPM.backup_dir),
+            "legacy_dir": str(BACKUPM.legacy_dir),
             "missing": [p for p in paths if '%' not in p and not os.path.isdir(p)],
         }
 
@@ -693,7 +718,7 @@ def _split_args(s):
 
 
 def _moss_args():
-    """从宿主拿参数（`MOSS_PKG_PARAMS`）；拿不到返回 None（退回 sys.argv）。
+    """从宿主拿参数（`MOSS_PKG_PARAMS` / `MOSS_ARGS`）；拿不到返回 None（退回 sys.argv）。
 
     `args` 在 pkg.json 里声明成 `rest: true`（包名后面那一整串全归我），所以这里原样拆开。
     """
@@ -705,6 +730,9 @@ def _moss_args():
                 return _split_args(str(p["args"]))
         except ValueError:
             pass
+    raw = os.environ.get("MOSS_ARGS")
+    if raw:
+        return _split_args(raw)
     return None
 
 

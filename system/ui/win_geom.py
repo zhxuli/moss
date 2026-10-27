@@ -9,7 +9,7 @@
 
 存在哪 / 存什么
 ---------------
-`user_data/state/_ui_window.json`：
+`user_data/state/_ui_window.json`（跟 `_ui_http.log`、`_ui_inline.html` 同一个地方）：
 `{"x": …, "y": …, "width": …, "height": …, "maximized": bool}`。
 
 ★ 坐标是**虚拟屏**的：副屏摆在主屏左边时整片都是**负数**（实测这台机器：主屏 `0..3840`、

@@ -30,7 +30,7 @@ import core                                                          # noqa: E40
 
 
 def _moss_args():
-    """moss 把包参数放在 `MOSS_PKG_PARAMS` 里。"""
+    """moss 把包参数放在 `MOSS_PKG_PARAMS` / `MOSS_ARGS` 里（跟 exec 同一套读法）。"""
     import json as _json
     raw = os.environ.get("MOSS_PKG_PARAMS")
     if raw:
@@ -40,7 +40,7 @@ def _moss_args():
                 return got
         except Exception:                                              # noqa: BLE001
             pass
-    return ""
+    return (os.environ.get("MOSS_ARGS") or "").strip()
 
 
 def main():

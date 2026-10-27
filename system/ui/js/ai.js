@@ -1078,6 +1078,7 @@ async function aiPollOnce(){
     AIR.perm = permNow;
     if (permKey !== permKeyOld) aiRefreshInfo(true);
     if ((got.killed || []).length) AIR.killed = got.killed;
+    if (got.mode && got.mode !== AIR.mode) AIR.mode = got.mode;
     // ★ `V-308`：它问你的话（那张卡片）。★ 你正在那张卡上打字时**别把你的字冲掉**。
     const ask = got.ask || null;
     const sameAsk = ask && AIR.ask && ask.qid === AIR.ask.qid;
@@ -1431,6 +1432,23 @@ const MossAi = {
       this.A.rev;
       const id = this.A.pickId || "";
       return this.sessChains.filter(c => c.head.id !== id && c.tail.id !== id);
+    },
+    /* ★ `V-253`/`V-258`：日志现在是**按轮**渲染的（见模板里的 `A.turns` 那一段），
+       这个 `logCards` 留着只为兼容老场景 —— 它把**最后一轮**拍平。 */
+    logCards(){
+      this.A.rev;
+      const out = [];
+      const t = (this.A.turns || [])[this.A.turns.length - 1];
+      if (!t) return out;
+      out.push({key: "user", kind: "user", icon: "message-circle",
+                color: "var(--aib-primary)", action: "用户指令", tool: "",
+                meta: t.at || "", path: t.task || ""});
+      (this.visSteps(t.steps)).forEach((s, i) => {
+        out.push({key: "s" + i, kind: "step", icon: this.stepIcon(s.tool),
+                  color: this.kindColor(s.tool), action: this.stepTitle(s), tool: s.tool,
+                  meta: this.stepMeta(s), path: this.stepPath(s)});
+      });
+      return out;
     },
     /* ★ 底部状态条（`lastText` / `lastIcon` / `lastColor` / `tokLine`）整段删了 ——
        那条状态条已并进输入区工具行（token 进度条 + 快照在聊天记录里回退），界面上不再有它。 */
@@ -2987,7 +3005,9 @@ const MossAi = {
             </div>
         </div>
 
-        <p class="ai-empty" v-if="!A.turns.length">还没有任务。</p>
+        <p class="ai-empty" v-if="!A.turns.length">
+          还没有跑过。写下你要它做什么 —— 它会读代码、动手改、跑一遍验证，然后把结果摆在这儿。
+        </p>
 
         <!-- 思考中指示器（永远在最下方）——照稿子：一个呼吸点 + 一行字。
              进度（秒/步/token）塞进 title，别往那行字里加东西（稿子就那一句）。 -->
@@ -2997,7 +3017,7 @@ const MossAi = {
                      (curFolded ? (' · 已折叠 ' + curFolded + ' 条旧结果') : '') +
                      (A.promptTokens ? (' · 上下文 ' + humanTokens(A.promptTokens) + ' / ' +
                                         humanTokens(A.compactAt) + '（' + ctxPct + '%）') : '')) : ''">
-          <div class="pulse-dot"></div> 执行中…
+          <div class="pulse-dot"></div> AI 正在思考并执行...
         </div>
 
         <!-- ★ V-307：**你往上翻的时候它不许把你拽回底部**（你报的那条）。
@@ -3036,18 +3056,18 @@ const MossAi = {
             <textarea class="prompt-textarea ai-task" ref="ta" v-model="A.task" spellcheck="false"
               :disabled="A.running" @input="autoGrow" @focus="focused = true" @blur="focused = false"
               @keydown="onKey" @paste="onPaste"
-              placeholder="输入指令，Enter 发送"></textarea>
+              placeholder="在此输入指令... (按 Enter 发送，Shift+Enter 换行)"></textarea>
           </div>
 
           <div class="toolbar">
             <div class="toolbar-left">
               <!-- 提示词：只留图标 -->
               <button class="trigger-btn ai-mini ai-messages-icon" @click="openMessages()"
-                      title="查看提示词"
+                      title="查看这条会话的完整提示词历史"
                       v-html='ico("file-text", "i")'></button>
               <button class="trigger-btn ai-mini ai-paste-file" :class="{active: A.pasteAsFile}"
                       @click="togglePasteAsFile()"
-                      :title="A.pasteAsFile ? '粘贴为附件；点击改为直接粘贴' : '直接粘贴；点击改为收成附件'"
+                      :title="A.pasteAsFile ? '大段文本粘贴：收成附件（点击改成直接粘进输入框）' : '大段文本粘贴：直接粘进输入框（点击改成收成附件）'"
                       v-html='ico("clipboard-paste", "i")'></button>
 
             </div>
@@ -3056,7 +3076,7 @@ const MossAi = {
               <!-- Token：消耗 / 上限（单位一律"百万"），进度条当背景；上限数字可直接改 -->
               <span class="tool-text ai-bud token-pill" role="progressbar"
                     :aria-valuenow="tokenPct" aria-valuemin="0" aria-valuemax="100"
-                    :title="tokTip">
+                    :title="tokTip + '；点击上限数字可编辑（单位：百万）'">
                 <span class="token-pill-fill" :style="{width: tokenPct + '%'}"></span>
                 <span class="token-pill-text">{{ tokenUsedMillions }} /
                   <input class="ai-token-limit ai-bud-n" type="number" min="0.5" max="20000" step="10"
@@ -3067,7 +3087,9 @@ const MossAi = {
               <div class="popover-wrapper ai-model-pick">
                 <button type="button" class="ai-model-btn" :class="{active: A.modelOpen}"
                         :disabled="A.running || !models.length" @click.stop="toggleModelOpen()"
-                        :title="'当前服务商：' + currentProvider">
+                        :title="'这次用哪个模型。当前「' + currentProvider + '」，'
+                                + '共 ' + modelGroups.length + ' 家 / ' + models.length + ' 个模型。'
+                                + '选别家的模型会自动把那家设为当前。'">
                   <span v-html='ico("sparkles", "i")'></span>
                   <span class="ai-model-txt">{{ A.model || "（还没配 AI）" }}</span>
                   <span class="ai-model-prov" v-if="modelGroups.length > 1">{{ currentProvider }}</span>
@@ -3075,14 +3097,14 @@ const MossAi = {
                 </button>
                 <div class="popover-panel ai-model-pop" :class="{show: A.modelOpen}"
                      v-if="A.modelOpen" @click.stop>
-                  <div class="popover-title">模型
-                    <span class="popover-hint">{{ models.length }} 个<span
-                          v-if="A.running"> · 跑完才能换</span></span>
+                  <div class="popover-title">选择模型
+                    <span class="popover-hint">{{ modelGroups.length }} 家 · {{ models.length }} 个<span
+                          v-if="A.running">（跑完才能换）</span></span>
                   </div>
                   <label class="ai-model-q" v-if="models.length > 6">
                     <span v-html='ico("search", "i")'></span>
                     <input ref="modelQ" v-model="A.modelQ" spellcheck="false" autocomplete="off"
-                           placeholder="筛选模型"
+                           placeholder="筛一下：模型名 / 服务商"
                            @keydown.esc.stop.prevent="closeModelPop()">
                   </label>
                   <div class="ai-model-list">
@@ -3106,12 +3128,12 @@ const MossAi = {
               <!-- 历史会话（点开才出） -->
               <div class="popover-wrapper ai-hist-wrap">
                 <button ref="histBtn" class="trigger-btn ai-hist" :class="{active: A.histOpen}" @click.stop="toggleHist()"
-                        :title="'当前：' + ((sessCurrent && sessCurrent.head && sessCurrent.head.task) || '新会话')">
-                  <span v-html='ico("history", "i")'></span> 历史
+                        :title="'历史会话（只列这个包的）。现在：' + ((sessCurrent && sessCurrent.head && sessCurrent.head.task) || '新会话')">
+                  <span v-html='ico("history", "i")'></span> 历史会话
                   <span class="badge" v-if="sessChains.length">{{ sessChains.length }}</span>
                 </button>
                 <div ref="histPanel" class="popover-panel ai-hist-list" :class="{show: A.histOpen}" v-if="A.histOpen" @click.stop>
-                  <div class="popover-title">历史<span class="popover-hint">点一条切换</span></div>
+                  <div class="popover-title">当前包的历史<span class="popover-hint">点一条就切过去</span></div>
                   <div class="history-list">
                     <div class="history-item ai-hist-i" v-for="c in sessChains" :key="c.head.id"
                          :class="{active: sessCurrent && (sessCurrent.head.id === c.head.id),
@@ -3134,16 +3156,16 @@ const MossAi = {
               <!-- 目录权限（点开才出） -->
               <div class="popover-wrapper ai-perm-wrap ai-perm" :class="{folded: !A.permPop}">
                 <button ref="permBtn" class="trigger-btn ai-perm-fold" :class="{active: A.permPop}" @click.stop="togglePermPop()"
-                        title="读写权限">
-                  <span v-html='ico("file-lock", "i")'></span> 权限
+                        title="管理它读写哪些目录（点开看清单）">
+                  <span v-html='ico("file-lock", "i")'></span> 权限控制
                   <span class="badge ai-perm-badge">{{ permBadge }}</span>
                   <span class="dim ai-perm-foldw" v-if="A.perm">· 它想用「{{ permPendingLabel }}」</span>
                 </button>
                 <div ref="permPanel" class="popover-panel ai-perm-body" :class="{show: A.permPop}" v-if="A.permPop" @click.stop>
                   <div class="ai-perm-full">
                     <div class="ai-perm-full-info">
-                      <b>完全权限</b>
-                      <span>路径全开；技能自动批准；危险操作不再确认</span>
+                      <b>完全权限 <span class="ai-perm-full-sub">无人值守</span></b>
+                      <span>任意路径可读写；新建 / 修改技能自动批准；危险操作 / 覆盖不再弹确认</span>
                     </div>
                     <label class="switch-group ai-sw" :title="A.full ? '关掉：恢复按权限清单和技能指纹授权' : '打开：任意路径 + 技能自动批准 + 不再弹确认'">
                       <span class="switch"><input type="checkbox" :checked="!!A.full"
@@ -3152,7 +3174,7 @@ const MossAi = {
                   </div>
                   <div class="popover-header ai-perm-add" :class="{hot: A.dropHot, bad: addPathBad || !!A.newPathErr}">
                     <input v-model="A.newPath" spellcheck="false"
-                           placeholder="目录路径，或拖入文件夹"
+                           placeholder="粘一个目录路径（或把文件夹拖到这一页）"
                            :title="addPathBad ? ('这不是一个路径 —— ' + addPathHint) : '粘一个目录的完整路径'"
                            @input="A.newPathErr = ''" @keydown.enter.prevent="allowAdd()">
                     <button class="btn" @click="allowPick()" title="用系统对话框选一个目录加进来"
@@ -3210,7 +3232,7 @@ const MossAi = {
                       <button type="button" class="ai-perm-other-t" @click.stop="toggleOtherPerm()"
                               title="这些行指向别的包（或已经不在的包），跟当前这个包无关 —— 点开可以看、可以删">
                         <span v-html='ico("folder-tree", "i")'></span>
-                        其他 <b>{{ allowOther.length }}</b> 条权限
+                        另有 <b>{{ allowOther.length }}</b> 条别的包的权限
                         <span class="dim">{{ A.otherOpen ? "收起" : "展开 / 清掉" }}</span>
                       </button>
                       <button type="button" class="btn-delete ai-perm-other-x" v-if="A.otherOpen"
@@ -3219,7 +3241,8 @@ const MossAi = {
                               v-html='ico("trash-2", "i") + " 全清掉"'></button>
                     </div>
                     <p class="ai-perm-other-w">
-                      与当前包无关的授权记录。
+                      以前在别的包里干活时批准过的目录，跟当前这个包没关系、也不影响它 ——
+                      想收拾就删掉；这个包真要读写别的包，它会当场来问你。
                     </p>
                     <div class="path-list" v-if="A.otherOpen">
                       <div class="path-item ai-perm-i other" v-for="it in allowOther" :key="it.path">
@@ -3273,16 +3296,16 @@ const MossAi = {
           <div class="ai-modal-tabs">
             <button class="ai-modal-tab" type="button"
                     :class="{active: A.modalTab === 'detail'}"
-                    @click="setModalTab('detail')">详情</button>
+                    @click="setModalTab('detail')">查看详情</button>
             <button class="ai-modal-tab" type="button"
                     :class="{active: A.modalTab === 'source'}"
-                    @click="setModalTab('source')">源码</button>
+                    @click="setModalTab('source')">查看源码</button>
           </div>
           <div class="ai-modal-body">
             <template v-if="A.modalTab === 'detail'">
               <template v-if="A.stepOpen.tool === '(思考)'">
                 <div class="ai-thought-content">
-                  <span class="ai-thought-hint">思考记录</span>
+                  <span class="ai-thought-hint">原始思考记录（展开）：</span>
                   <p class="ai-thought-text">{{ A.stepOpen.out || "（这次没有思考过程）" }}</p>
                 </div>
               </template>
@@ -3305,7 +3328,7 @@ const MossAi = {
                 </div>
               </template>
               <template v-else>
-                <p class="ai-detail-w" v-if="A.stepOpen.why">目的：{{ A.stepOpen.why }}</p>
+                <p class="ai-detail-w" v-if="A.stepOpen.why">它说这一步是为了：{{ A.stepOpen.why }}</p>
                 <div class="ai-modal-sec">
                   <h4>参数</h4>
                   <pre class="ai-msg-t">{{ A.stepOpen.args || "（这一步没有参数）" }}</pre>

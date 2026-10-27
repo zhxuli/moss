@@ -38,6 +38,7 @@ TITLE = '快捷翻译'
 
 # 宿主注入的插件专属数据目录（= user_data/state/fanyi）；没注入时兜底到 MOSS_HOME 下
 DATA_DIR = (os.environ.get('MOSS_PLUGIN_DATA_DIR')
+            or os.environ.get('PA_PLUGIN_DATA_DIR')
             or os.path.join(os.environ.get('MOSS_HOME') or os.path.expanduser('~'),
                             'user_data', 'state', 'fanyi'))
 CACHE_DIR = os.environ.get('MOSS_PLUGIN_CACHE_DIR') or os.path.join(DATA_DIR, 'cache')
@@ -84,6 +85,10 @@ def _key(text, target):
     return text + '\x1f' + target
 
 
+#: 老 v1 缓存文件（`DATA_DIR/translation_cache.txt`，一行 `a | b`）
+LEGACY_CACHE = os.path.join(DATA_DIR, 'translation_cache.txt')
+
+
 def _guess_lang(text):
     """粗判语种：优先假名（日语）、谚文（韩语）、西里尔（俄语），最后才认汉字。
 
@@ -112,12 +117,39 @@ def _guess_lang(text):
     return 'en'
 
 
+def _import_legacy():
+    """把 v1 的 `translation_cache.txt` 一次性导进 JSON 行缓存（双向各一条）。"""
+    if not os.path.isfile(LEGACY_CACHE):
+        return 0
+    n = 0
+    try:
+        with open(LEGACY_CACHE, 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split('|')
+                if len(parts) != 2:
+                    continue
+                a, b = parts[0].strip(), parts[1].strip()
+                if not (a and b):
+                    continue
+                cache_store(a, _guess_lang(b), b, '')   # 翻 a → b（b 的语言当 target）
+                cache_store(b, _guess_lang(a), a, '')   # 翻 b → a
+                n += 2
+    except Exception as e:                                              # noqa: BLE001
+        print('[fanyi] 导入旧缓存失败：%s' % e, flush=True)
+        return 0
+    if n:
+        print('[fanyi] 已从旧缓存 %s 导入 %d 条' % (LEGACY_CACHE, n), flush=True)
+    return n
+
+
 def cache_load():
     """从磁盘读缓存（一行一条 JSON）。返回加载条数。"""
     global _cache, _history
     _cache, _history = {}, []
     if not os.path.isfile(CACHE_FILE):
-        return 0
+        if not _keep_history:                 # 关了「保留历史」就别把旧缓存导进来
+            return 0
+        return _import_legacy()               # 首次运行：旧版缓存顺手导过来
     n = 0
     try:
         with open(CACHE_FILE, 'r', encoding='utf-8') as f:

@@ -1,5 +1,18 @@
 # -*- coding: utf-8 -*-
-"""图片工具的业务层。WebView / Tk 两套界面都只调用这里。"""
+"""图片工具 —— 业务逻辑（与界面无关，唯一实现处）。
+
+界面有两个，都只调用这里，**不许各自再实现一遍业务**：
+    gui_web.py   WebView 界面（首选，照抄 exec 的做法）
+    gui_tk.py    Tkinter 界面（WebView 起不来时的退路）
+
+★ 迁移说明：本文件是旧版 `QuickTools/bin/soft/img/main.py` 里
+  「核心处理逻辑」那一段的搬家，**行为与提示文案逐字保持一致**；
+  界面代码从业务里剥出去，是为了让两套界面共用同一份实现。
+
+★ 旧版用 `sys.stdout = TextRedirector(...)` 把日志抓进控件 ——
+  那是**全局替换**，两套界面并存会互相打架。这里改成把 `log` 回调
+  显式传进来，不动 `sys.stdout`。
+"""
 import json
 import os
 import sys
@@ -10,7 +23,11 @@ import uuid
 from PIL import Image
 
 # --- 数据目录 ---
+# ★ 迁移说明：旧版是 QuickTools 插件，宿主 pa 注入 PA_PLUGIN_DATA_DIR；
+#   新版是 moss 包，宿主注入 MOSS_PLUGIN_DATA_DIR（= user_data/state/<包 id>）。
+#   两个都认，脚本被单独跑时退回脚本自身目录。
 DATA_DIR = (os.environ.get('MOSS_PLUGIN_DATA_DIR')
+            or os.environ.get('PA_PLUGIN_DATA_DIR')
             or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
                             "user_data", "state", "img"))
 CONFIG_FILE = os.path.join(DATA_DIR, 'config.json')
@@ -50,7 +67,10 @@ def _noop(text):
 # ==============================================================================
 
 def normalize_config(cfg):
-    """把任意来源的配置补齐成当前字段形状。"""
+    """把任意来源的配置补齐成一份可用的配置。
+
+    旧配置里的 `ico_size`（单个整数）**故意忽略** —— 那正是被修掉的 bug。
+    """
     out = dict(DEFAULT_CONFIG)
     if not isinstance(cfg, dict):
         return out

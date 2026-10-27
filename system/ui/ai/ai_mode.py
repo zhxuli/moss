@@ -1,15 +1,37 @@
 # -*- coding: utf-8 -*-
-"""AI 的目录权限清单与临时空间。
+"""AI 的**权限（读 / 写）+ 临时空间**（`V-316`：把原来那套"三档模式 + 独立放行开关"合并掉）。
 
-状态只存在 `user_data/ai/mode.json`：
+用户 2026-10-07 的原话（这一版就是照它重做的）：
+  · 「比如我打开 github 这个插件 然后点 ai 那么 我就是要改它 所以这种情况下 放行这里
+     理应就应该已经有它了 并且默认给他放手权限才对」
+  · 「它这个放行列表 里面的列表 应该和我们这个权限设置是一体的才对 而不是一个单独的开关
+     我们没有必要用2个开关来控制一件事情」
+  · 「我们用 读 写 两个权限复选框来设置就可以了 这样我们的界面就更简洁
+     我们就不需要那个单独的权限设置了」
 
-    {"allow": [{"path": "...", "read": true, "write": true,
-                "pending": false, "why": "...", "by": "user", "at": "..."}],
-     "full_access": false}
+于是**只有一个模型**：一份清单，每条 `{path, read, write}`。
+  · **能不能读 / 能不能写，就看清单里那一行勾没勾**（外加几处"基础设施"永远可用，见下）；
+  · **当前这个包**（`user_data/pkgs/<一个包>` 或 `system/pkgs/<一个包>`）**读写都默认开着**
+    —— 它不是清单里的一条记录，是**算出来的默认**（`_scope_allows` / `_current_row`，`V-343`）；
+    出厂包也一样（`V-347`：用户说了"去掉这个限制 让用户可以自己修改 自由 DIY"）；
+  · 「只想咨询、别改我代码」= 把那一行的**写**取消勾选（一键，不需要另一个"模式"）；
+  · 「放手」= 把 `*`（任意路径）那一行的**写**打开 —— 那时**危险操作也不再问你**
+    （你都已经说"随便写"了，再拦就是多一个开关控同一件事）。
 
-`allow` 里一条记录对应一个目录；`*` 代表任意路径。当前正在编辑的包默认读写都开，
-不需要在清单里落一条记录。`full_access` 是无人值守开关：路径全开，并让技能修改自动获批。
-硬锁路径始终拒绝：`core/`、`moss.exe`、`moss.py`、`venv/`、`.git/`、`user_data/backups/`。
+状态存在 `user_data/ai/mode.json`（换了内里的形状，但**文件名保留**，老文件会自动迁移）：
+
+    {"allow": [{"path": "...", "read": true, "write": true, "why": "当前这个包",
+                "by": "auto", "at": "..."},
+               {"path": "*", "read": false, "write": false, "why": "任意路径（硬锁除外）",
+                "by": "system"}],
+     "seeded": ["github"]}       ← 已经自动加过清单的包 id（用户删了就不再自动加回来）
+
+★ 硬锁（**永远是拒绝**，勾了 `*` 也拦）：`core/`、`moss.exe`、`moss.py`、`venv/`、`.git/`、
+  `user_data/backups/`。前四个是"编进 exe / 构建链"，改了会让人以为改了源码（`K-10`）；
+  `backups/` 是 AI 自己那条退路，不许它删自己的救生圈。
+★ 永远可用的几处（不算权限，算"它的工具"）：它自己的临时空间（`state/<id>/ai/tmp`、
+  `user_data/ai/tmp`）、它自己造的手（`user_data/state/skill/`）、契约（`system/spec`，
+  而且**只能用 `spec` 工具读**）、样板包（`system/pkgs/`，照它抄）。
 """
 import json
 import os
@@ -42,29 +64,58 @@ def _blank():
 
 
 def _norm_perm(it):
+    """把一条读成 `{path, read, write, why, by, at}`（**认老的 `on` 字段**，迁移用）。"""
     pth = str(it.get("path") or "").strip()
     if not pth:
         return None
-    return {"path": pth, "read": bool(it.get("read")), "write": bool(it.get("write")),
+    if "read" in it or "write" in it:
+        rd, wr = bool(it.get("read", True)), bool(it.get("write", True))
+    else:                                     # 老形状（`V-307`~`V-315`）：一个 `on` 管读写
+        rd = wr = bool(it.get("on", True))
+    return {"path": pth, "read": rd, "write": wr,
+            # ★ `V-319`/`V-323`：`pending` = "AI 提出请求、用户还没点允许/拒绝" ——
+            #   它只是**闸的登记本**，界面上**不画**（请求只在权限卡上半段那一条里问）
             "pending": bool(it.get("pending", False)),
             "why": str(it.get("why") or ""), "by": str(it.get("by") or "user"),
             "at": str(it.get("at") or "")}
 
 
 def load():
-    """读当前清单；文件缺失或损坏时返回空清单。"""
+    """读清单（没有 / 读坏了 ⇒ 出厂形状；**不抛**）。老形状自动迁移（见 `_norm_perm`）。"""
     cur = _blank()
+    raw = {}
     try:
         p = path()
         if p.is_file():
             got = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(got, dict):
-                cur["allow"] = [x for x in
-                                (_norm_perm(it) for it in (got.get("allow") or [])
-                                 if isinstance(it, dict)) if x]
-                cur["full_access"] = bool(got.get("full_access"))
-    except (OSError, ValueError, TypeError):
-        return _blank()
+                raw = got
+    except Exception:                                                    # noqa: BLE001
+        raw = {}
+    # ★ 老版本只有一个 `*` 行：勾上写、且 why 写着"完全权限"的，迁移成新语义。
+    #   之后"任意路径"单独勾写**不会**再自动升级成完全权限。
+    legacy_full = False
+    for it in (raw.get("allow") or []):
+        if isinstance(it, dict):
+            one = _norm_perm(it)
+            # ★ `V-343`：`by="auto"` 那批是"打开 AI 页就把当前这个包写进清单"那个时代的产物 ——
+            #   现在"当前这个包"改成**算出来的默认**（见 `_scope_allows`），这些行是纯垃圾：
+            #   留着只会让清单越用越长（真机上攒了 6 个 `system/pkgs/*` 的出厂样板包）。
+            if one and str(one.get("by") or "") != "auto":
+                cur["allow"].append(one)
+                if (one.get("path") == WILDCARD and one.get("write")
+                        and "完全权限" in str(one.get("why") or "")):
+                    legacy_full = True
+    cur["full_access"] = bool(raw.get("full_access", legacy_full))
+    # 老文件里那个 `mode`（`V-307`~`V-315` 的三档）→ **翻译成清单里的勾选**，别让它悄悄失效
+    old_mode = str(raw.get("mode") or "")
+    if old_mode and not raw.get("seeded"):
+        if old_mode == "consult":
+            for it in cur["allow"]:
+                it["write"] = False
+        elif old_mode == "free":
+            for it in cur["allow"]:
+                it["write"] = True
     return cur
 
 
@@ -92,7 +143,10 @@ def _wildcard_row():
 def full_access():
     """**完全权限（无人值守）** 开着没有。
 
-    任意路径只放开目录读写；完全权限还包含"AI 新建/修改技能自动批准"。
+    ★ 和"任意路径"不是一回事：
+      · 任意路径 = 清单里 `*` 那一行 read/write 打开；
+      · 完全权限 = 任意路径 + **AI 新建/修改技能自动批准** + 危险操作不问。
+    旧版本把两者合成一个开关（靠 `*` 行的 why 区分）；这里读旧文件时已经自动迁移。
     """
     try:
         return bool(load().get("full_access"))
@@ -228,7 +282,7 @@ def _is_abs_path(raw):
         return False
 
 
-def path_problem(pth):
+def path_problem(pth, must_exist=True):
     """这个路径**能不能进清单**：`None` = 能；否则回一句**给人看的话**。
 
     ★ `V-328`（用户报的："目录权限这里 我可以随便打字 哪怕不是一个路径 就可以点添加"）：
@@ -236,6 +290,8 @@ def path_problem(pth):
         ① 必须是**绝对路径**（`D:\\项目\\我的包` / UNC `\\\\主机\\共享`；`*` = 任意路径）；
         ② 必须**存在**（打错一个字母 / 拿猜的路径来问，都挡在这儿）；
         ③ 必须是**目录**（一个文件的路径放进"目录权限"里没有意义）。
+    `must_exist=False` 只判形状（给"老清单里已经有的那一条"用 —— 那个盘可能拔了，
+    但不能因此连"把它关掉"都不让改）。
     """
     raw = str(pth or "").strip().strip('"').strip()
     if not raw:
@@ -247,11 +303,12 @@ def path_problem(pth):
         return bad
     if not _is_abs_path(raw):
         return ("要填**完整的绝对路径**（像 D:\\项目\\我的包 那样）——「%s」不是一个路径" % raw)
-    p = Path(raw)
-    if not p.exists():
-        return "这个目录不存在：%s（先确认路径对不对）" % raw
-    if not p.is_dir():
-        return "这不是目录（这份清单管的是目录）：%s" % raw
+    if must_exist:
+        p = Path(raw)
+        if not p.exists():
+            return "这个目录不存在：%s（先确认路径对不对）" % raw
+        if not p.is_dir():
+            return "这不是目录（这份清单管的是目录）：%s" % raw
     return None
 
 
@@ -594,6 +651,10 @@ def danger_of(tool, args):
             if w in line:
                 return "这条命令看起来会**动盘 / 动系统**：`moss %s`（命中「%s」）" % (
                     str(a.get("args") or "")[:60], w.strip())
+        return None
+    if name == "snap_clean":
+        # `V-382`：工具表里已经没有它了（AI 不许删快照）。这份留着只为"老会话里的名字
+        # 还能被认出来"，不再产生任何危险等级。
         return None
     return None
 

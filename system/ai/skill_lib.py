@@ -155,13 +155,22 @@ def full_access():
     ★ 为什么技能层要自己读：`system/ai/skill_lib.py` 是宿主和 `:skill` 插件共用的，
       不能 import `system/ui/ai/ai_mode.py`；两边只共享这一份 JSON 数据。
     ★ 完全权限 = 比"任意路径"更高一档：任意路径只开文件系统权限，完全权限还包含
-      "AI 新建 / 修改技能自动视为已批准"。
+      "AI 新建 / 修改技能自动视为已批准"。旧文件没有 `full_access` 字段，回退看
+      `*` 行是否写着"完全权限"（兼容升级前那个合并开关）。
     """
     try:
         raw = json.loads((user_data() / "ai" / "mode.json").read_text(encoding="utf-8"))
-        return isinstance(raw, dict) and bool(raw.get("full_access"))
+        if not isinstance(raw, dict):
+            return False
+        if "full_access" in raw:
+            return bool(raw.get("full_access"))
+        for it in (raw.get("allow") or []):
+            if (isinstance(it, dict) and str(it.get("path") or "") == "*"
+                    and it.get("write") and "完全权限" in str(it.get("why") or "")):
+                return True
     except Exception:                                                  # noqa: BLE001
-        return False
+        pass
+    return False
 
 
 def stats_path():
@@ -611,6 +620,8 @@ def list_skills(roots_in=None):
 
     `roots_in` 只给探针用（造一组合成的根，别去动仓库里那两份出厂件）。
     """
+    if roots_in is None:
+        migrate_dashes()                     # `V-284`：老的 `--名字` 改成不带前缀（幂等）
     stats = load_stats()                     # 调用统计读一次，喂给每个 `_load`（别一个技能读一遍盘）
     out = {}
     for d, layer, kind in (roots_in if roots_in is not None else roots()):
@@ -724,6 +735,7 @@ def _env(args, sid):
     env["MOSS_PKG_PARAMS"] = json.dumps(args or {}, ensure_ascii=False)
     env["MOSS_PLUGIN_DATA_DIR"] = str(user_data() / "state" / str(sid))
     env["MOSS_VIA"] = "ai"
+    env["MOSS_ARGS"] = " ".join("%s=%s" % (k, v) for k, v in (args or {}).items())
     env.setdefault("PYTHONIOENCODING", "utf-8")
     # ★ `V-302`：**不缓冲输出** —— 交互式运行时（界面「运行测试」）输出是**流式**读的，
     #   子进程要是把 stdout 攒在缓冲区里，界面就一直"正在跑却什么都没有"（要等进程结束才吐）。
@@ -1013,6 +1025,51 @@ def _row(it, with_files=False):
     if with_files:
         row["files"] = it.get("files") or []
     return row
+
+
+def migrate_dashes():
+    """`V-284`：把早期带 `--` 前缀的技能目录**改名成不带前缀的**（只做一次，之后无操作）。
+
+    为什么还要这一步：`--` 是上一轮加的，你这次说「不需要再添加 -- 了」—— 那已经存在的
+    `--shot` 就得跟着改，不然界面上会留着一只"名字带两个短横"的怪东西。顺手把
+    `pkg.json` 里的 `id` 和授权记录里的键一起搬过来（**不重算指纹**：文件内容没变，
+    只是名字变了；指纹里含名字，所以这里按新名字重算一次）。
+    """
+    moved = []
+    root = skill_dir()
+    if not root.is_dir():
+        return moved
+    d = allowed_map()
+    changed = False
+    for sub in sorted(root.iterdir()):
+        if not (sub.is_dir() and sub.name.startswith("--")):
+            continue
+        want = sub.name.lstrip("-")
+        dst = root / want
+        if not NAME_RE.match(want) or dst.exists():
+            continue                       # 新名字不合法 / 已经有一个同名的：留着别动（下面会点名）
+        try:
+            sub.rename(dst)
+        except OSError:
+            continue
+        try:
+            pj = dst / "pkg.json"
+            pkg = json.loads(pj.read_text(encoding="utf-8"))
+            pkg["id"] = want
+            pkg["aliases"] = [a for a in (pkg.get("aliases") or []) if str(a) != sub.name]
+            pj.write_text(json.dumps(pkg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except Exception:                                              # noqa: BLE001
+            pass
+        rec = d.pop(sub.name, None)
+        got = _load(dst, "user", "skill")
+        if rec:
+            rec["fp"] = got.get("fp") or ""
+            d[want] = rec
+            changed = True
+        moved.append(sub.name + " → " + want)
+    if changed:
+        _save_allow(d)
+    return moved
 
 
 def doc(sid, roots_in=None):

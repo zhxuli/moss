@@ -8,7 +8,7 @@
   moss :exec <别名> [参数]  直接在控制台执行该命令
 
 数据位置：宿主 moss 注入的 MOSS_PLUGIN_DATA_DIR/cmds/<别名>.json
-（= user_data/state/exec/cmds）；独立运行时退回插件自身目录。
+（= user_data/state/exec/cmds）；老 pa 的 PA_* 与插件自身目录作兜底。
 
 界面说明：**一份界面两种跑法**（`V-48` / `V-222`）——
   · 内嵌进 moss 的「界面」选项卡：宿主用 `MOSS_UI_EMBED=1` 把它起成后端进程，
@@ -60,9 +60,13 @@ def run_gui():
     run_web()
 
 def _moss_args():
-    """从宿主注入的 MOSS_PKG_PARAMS 取参数；没有就返回 None，交给 sys.argv。"""
+    """moss 宿主把包参数放在 MOSS_PKG_PARAMS / MOSS_ARGS 里（老 pa 是拼在 argv 里）。
+    有就返回解析好的参数表，没有返回 None —— 那就走原来的 sys.argv 逻辑。"""
     import json as _json
     import os as _os
+    # ★ 空串要当成"宿主没给参数"，继续往下走、最后退回 sys.argv（同一个坑：
+    #   moss 注入的 MOSS_PKG_PARAMS 会留在整个子进程树里，值通常是 {"args": ""}；
+    #   旧写法直接返回 []，于是 sys.argv 永远轮不到 —— 见 dsh/main.py 里的长注释）。
     raw = _os.environ.get("MOSS_PKG_PARAMS")
     if raw:
         try:
@@ -71,6 +75,9 @@ def _moss_args():
                 return core.split_args(got)
         except Exception:
             pass
+    raw = (_os.environ.get("MOSS_ARGS") or "").strip()
+    if raw:
+        return core.split_args(raw)
     return None
 
 

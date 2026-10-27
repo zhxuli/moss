@@ -57,6 +57,7 @@ USAGE = """moss —— 多语言启动器
   moss --ai-test [组]           **测试连接**：流式发一个最小请求，报状态码和第一个增量
   moss --ai-models [组]          **获取可用模型**：GET `{base_url}/models`，回一份模型清单
   moss --ai-balance [组]         **查询余额**：DeepSeek / Kimi / OpenRouter / 硅基流动等已知接口
+  moss --ai-import-legacy       把旧的 user_data/state/ai/config.json 导成一组
   moss --snap …                版本快照（备份 / 恢复 / 导出 / 差异）—— 给人和 AI 用；
                                `moss --snap --help` 看全部子命令（会动磁盘的要 --yes）
   moss --spec                  打印「插件契约」：怎么写一个插件（写插件 / AI 调用前请先读）
@@ -1885,6 +1886,10 @@ def main(argv):
         return cmd_ai_models(rest)
     if first == "--ai-balance":
         return cmd_ai_balance(rest)
+    if first == "--ai-import-legacy":
+        nm = config.ai_import_legacy()
+        out.print_cyan(("导进来了，组名 %s" % nm) if nm else "没找到旧的 state/ai/config.json")
+        return 0
     if first in ("--snap", "--snapshot"):
         # 版本快照（`V-100`）：备份 / 恢复 / 导出 / 差异 —— 给人和 AI 的一条通道。
         # 实现在 `core/snap.py`，底层借用界面那份存储（`system/ui/backup.py`）。

@@ -338,7 +338,7 @@ class Api:
         if not got:
             return {"ok": False, "msg": "没有这只技能：%s" % sid}
         r = S.run_detail(got["name"], args)
-        r["msg"] = r.get("text") or ""
+        r["msg"] = r.get("text") or ""       # 兼容旧界面 / toast 那一行
         return r
 
     # ---------------------------------------------------------------- 交互式运行（`V-302`）

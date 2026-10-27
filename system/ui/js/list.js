@@ -29,7 +29,8 @@ function setSide(which){
   $("#list").hidden = which !== "pkg";
   $("#hist").hidden = which !== "hist";
   $("#btn-newpkg").hidden = which !== "pkg";   // 新建的是**包**，历史这边不该有这个按钮
-  $("#q").placeholder = which === "pkg" ? "搜索包" : "搜索历史";
+  $("#q").placeholder = which === "pkg" ? "搜索包名 / 说明 / 标签…"
+                                        : "搜索历史（名字 / 参数 / 目录）…";
   if (which === "hist") loadHist().then(renderHist); else renderList();
 }
 
@@ -671,11 +672,16 @@ function renderDetailHTML(){
         '<h1 title="' + esc(p.name) + '">' + esc(p.name) +
           '<span class="dp-badges dmeta">' +
             '<span class="dp-badge">' + esc(PSYM + p.id) + '</span>' +
+            '<span class="dp-badge">v' + esc(p.version || "?") + '</span>' +
+            '<span class="dp-badge">' + esc(p.kind || "task") + '</span>' +
             layerBadge(p) +
             (p.shadowed ? '<span class="dp-badge">遮住了 ' + esc(p.shadowed) + ' 层的同名包' +
                           '</span>' : '') +
           '</span></h1>' +
-        (p.desc ? '<div class="dp-desc">' + esc(p.desc) + '</div>' : '') +
+        (p.desc
+          ? '<div class="dp-desc dp-tip" data-tip="此说明将被列在 moss 的包列表里，方便快速识别。">' +
+            esc(p.desc) + '<span class="dp-tip-ico">' + ico("info", "i") + '</span></div>'
+          : '') +
         '<div class="dp-divider"></div>' +
         // 路径栏（稿子的 .path-display）：包的目录 + 复制 + 打开目录
         '<div class="dp-path">' +
@@ -693,7 +699,7 @@ function renderDetailHTML(){
   // 属性区（稿子的 .props-grid）：别名 / 标签 / AI / 参数
   const props = [];
   if ((p.aliases || []).length)
-    props.push(prop("别名", (p.aliases || []).map(a => '<span class="mono">:' + esc(a) +
+    props.push(prop("别名 (Alias)", (p.aliases || []).map(a => '<span class="mono">:' + esc(a) +
       '</span>').join('&nbsp; ')));
   if ((p.tags || []).length)
     props.push(prop("标签", (p.tags || []).map(t => '<span class="tag">' + esc(t) +
@@ -719,7 +725,8 @@ function renderDetailHTML(){
   const dirBase = (String(p.dir || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop()) || "";
   const oddDir = dirBase && dirBase !== p.id;
   if (oddDir)
-    props.push(prop("目录名", '<span class="mono">' + esc(dirBase) + '</span>'));
+    props.push(prop("目录名", '<span class="mono">' + esc(dirBase) + '</span>' +
+      '<span class="soft">· 与 id 不同（右边可以一键统一）</span>'));
   if (props.length)
     html += '<div class="dp-props">' + props.join("") + '</div>';
   html += '</div></div>';
@@ -759,7 +766,7 @@ function renderDetailHTML(){
   // 这里另外给一排可点的药丸 **只在有例子时**出现（稿子没有这一块，默认不占版面）
   const exs = (p.examples || []).map(x => String(x || "")).filter(x => x.trim());
   if (exs.length){
-    html += '<div class="dp-hint">常用参数<span class="chips">' +
+    html += '<div class="dp-hint">常用的参数（点一下填进上面的框）：<span class="chips">' +
       exs.map(e => '<button class="chip" data-args="' + esc(e) + '">' + esc(e) +
         '</button>').join("") + '</span></div>';
   }
@@ -790,9 +797,10 @@ function renderDetailHTML(){
       '<div class="dp-item">' +
         '<div class="dp-item-info">' +
           '<span class="dp-item-ico">' + ico("text-cursor-input", "i") + '</span>' +
-          '<div class="dp-item-text"><h4>包 ID' +
-            '<span class="dp-tip dp-tip-ico" data-tip="同步修改包目录名、数据目录及清单中的 id">' +
-              ico("circle-alert", "i") + '</span></h4></div>' +
+          '<div class="dp-item-text"><h4>更改标识符' +
+            '<span class="dp-tip dp-tip-ico" data-tip="将同步修改包目录名、数据目录及清单中的 id">' +
+              ico("circle-alert", "i") + '</span></h4>' +
+            '<p>修改插件的唯一 ID 和文件夹名称</p></div>' +
         '</div>' +
         '<div class="dp-item-acts">' +
           (oddDir
@@ -810,9 +818,10 @@ function renderDetailHTML(){
       '<div class="dp-item">' +
         '<div class="dp-item-info">' +
           '<span class="dp-item-ico danger">' + ico("trash-2", "i") + '</span>' +
-          '<div class="dp-item-text"><h4 class="danger">卸载' +
-            '<span class="dp-tip dp-tip-ico" data-tip="永久删除：包本体 + 数据，无法撤销">' +
-              ico("circle-alert", "i") + '</span></h4></div>' +
+          '<div class="dp-item-text"><h4 class="danger">卸载此插件' +
+            '<span class="dp-tip dp-tip-ico" data-tip="永久删除：包本体 + 数据">' +
+              ico("circle-alert", "i") + '</span></h4>' +
+            '<p>将永久抹除数据，此操作无法撤销</p></div>' +
         '</div>' +
         '<button class="dp-ghost danger" id="btn-remove" title="卸载这个包（moss --remove）">' +
           ico("trash-2", "i") + '<span>卸载</span></button>' +
@@ -1187,9 +1196,10 @@ function renderDetailHistHTML(it){
       '<div class="dp-icon">' + histIconHTML(it, "") + '</div>' +
       '<div class="dp-info">' +
         '<h1 title="' + esc(it.name) + '">' + esc(it.name) +
-          (it.exists === false
-            ? '<span class="dp-badges dmeta"><span class="dp-badge">文件不在了</span></span>'
-            : '') + '</h1>' +
+          '<span class="dp-badges dmeta">' +
+            '<span class="dp-badge">历史</span>' +
+            (it.exists === false ? '<span class="dp-badge">文件不在了</span>' : '') +
+          '</span></h1>' +
         '<div class="dp-divider"></div>' +
         '<div class="dp-path">' +
           '<span class="dp-path-ico">' + ico("file-text", "i") + '</span>' +
@@ -1233,7 +1243,8 @@ function renderDetailHistHTML(it){
       '<div class="dp-item">' +
         '<div class="dp-item-info">' +
           '<span class="dp-item-ico">' + ico("folder-open", "i") + '</span>' +
-          '<div class="dp-item-text"><h4>打开所在目录</h4></div>' +
+          '<div class="dp-item-text"><h4>打开所在目录</h4>' +
+            '<p>用资源管理器打开它当初跑的那个目录</p></div>' +
         '</div>' +
         '<button class="dp-ghost" id="btn-opendir" title="用 Windows 资源管理器打开它所在的目录">' +
           ico("folder-open", "i") + '<span>打开</span></button>' +
@@ -1241,7 +1252,8 @@ function renderDetailHistHTML(it){
       '<div class="dp-item">' +
         '<div class="dp-item-info">' +
           '<span class="dp-item-ico danger">' + ico("trash-2", "i") + '</span>' +
-          '<div class="dp-item-text"><h4 class="danger">删除记录</h4></div>' +
+          '<div class="dp-item-text"><h4 class="danger">删除这条记录</h4>' +
+            '<p>只删这条记录，那个文件本身不动</p></div>' +
         '</div>' +
         '<button class="dp-ghost danger" id="btn-forget" title="从历史里删掉这条记录">' +
           ico("trash-2", "i") + '<span>删除</span></button>' +
@@ -1448,7 +1460,8 @@ const MossHist = {
     emptyHTML(){
       this.R.rev;              // 同上：`HIST` 也是普通数组，得靠举牌信号才会重算
       return HIST.length ? "没有匹配的历史"
-        : "还没有历史。";
+        : ('还没有历史。<br>这里记的是<b>直接跑文件</b>的那种调用（<span class="mono">moss zeen</span>）；'
+           + '<br>跑插件不进历史。');
     },
   },
   methods: {

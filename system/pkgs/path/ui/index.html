@@ -21,7 +21,7 @@
       <header class="hdrow">
         <div class="title">
           <h1><i v-html="ic('layers')"></i>PATH 管理</h1>
-          <p><span class="mono">{{ pathCount }}</span> 条<template
+          <p>当前用户的环境变量管理 · <span class="mono">{{ pathCount }}</span> 条<template
             v-if="missingN"> · <span class="warn">{{ missingN }} 条目录不存在</span></template></p>
         </div>
         <div class="hdact">
@@ -163,6 +163,7 @@
                       @dblclick="startRename(b)">{{ b.name || '默认名（时间戳）' }}</span>
               </div>
               <div class="bmeta">
+                <span class="chip" v-if="b.legacy" title="老位置 .path_editor/path_bak 里的备份，只能读">老位置</span>
                 <span v-if="b.add" class="plus">+{{ b.add }}</span>
                 <span v-if="b.remove" class="minus">-{{ b.remove }}</span>
                 <span v-if="!b.add && !b.remove" class="dim">和现在一样</span>

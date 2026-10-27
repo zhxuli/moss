@@ -221,17 +221,17 @@
       if (navigator.clipboard && navigator.clipboard.writeText) {
         var p = navigator.clipboard.writeText(text);
         if (p && typeof p.then === 'function') {
-          p.then(function () { finish(true); }, function () { finish(fallbackCopy(text)); });
+          p.then(function () { finish(true); }, function () { finish(legacyCopy(text)); });
         } else {
           finish(true);
         }
         return;
       }
     } catch (e) { /* 往下走 */ }
-    finish(fallbackCopy(text));
+    finish(legacyCopy(text));
   }
 
-  function fallbackCopy(text) {
+  function legacyCopy(text) {
     try {
       var ta = document.createElement('textarea');
       ta.value = text;
