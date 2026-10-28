@@ -69,7 +69,13 @@ DEFAULT_EXCLUDES = [".*", "__pycache__", "*.pyc", "*.pyo", ".git", ".venv", "ven
 
 #: 路径级排除：这些目录**整棵**不备份（相对页面 rel）。
 #: `trash` 是回收站（`main.py` 的"删除 = 挪进 trash"），备份它没意义。
-PATH_EXCLUDES = ["user/trash"]
+#: `state` 是**运行时状态**（包的数据库 / AI 跑出来的 Edge 配置 / 每次运行的图 / 缓存）——
+#: 它随每次运行都在变，进了快照只会白占地方，而且回退它也没意义（回退代码才要紧）。
+#: 真机账（boxsize）：包目录 11 个文件 56 KB，`user/state/boxsize` 却有 6400+ 个文件
+#: 190 MB ⇒ 一次快照 0.03 秒变 8 秒、内容库白涨 100 多 MB。想临时存某个状态目录的，
+#: 在 `user_data/snapshot.ignore` 里写 `!` 反向也放不回来（内置规则只能加不能减）——
+#: 那种情况请改用「导出」或者手工拷，别指望快照。
+PATH_EXCLUDES = ["user/trash", "user/state"]
 
 #: 用户自己维护的过滤文件（和 `.gitignore` 一个用法）——放在 `user_data/` 下，
 #: 存储根（`user_data/backups`）的上一级就是它，所以不用另配路径。
@@ -97,7 +103,8 @@ IGNORE_TEMPLATE = r"""# moss 版本快照的过滤规则 —— 写法照 .gitig
 #
 # ★ 内置那几条永远生效，你只能"再加"，不能把它们放回来：
 #   __pycache__ / *.pyc / *.pyo / .git / .venv / venv / node_modules /
-#   .DS_Store / Thumbs.db / *.tmp / user/trash
+#   .DS_Store / Thumbs.db / *.tmp / user/trash / user/state
+#   （user/state = 运行时状态：包的数据库、AI 的 Edge 配置、每次运行的图、缓存）
 """
 
 

@@ -212,7 +212,12 @@ function bkScopeRels(){
     const roots = [];
     const rel = pkgRel(p);
     if (rel) roots.push(rel);
-    roots.push("user/state/" + p.id);
+    /* ★ 只存**包的代码目录**，不再顺手带上 `user/state/<包id>`。
+       以前这两行是 `roots.push("user/state/" + p.id)` —— 于是给 boxsize 存一次快照
+       实际扫的是 6400+ 个文件 / 190 MB（AI 跑出来的 Edge 配置 `ai/tmp/**`、
+       每次运行的 `data/runs/*.png`），实测 6~8 秒；包本身只有 11 个文件、0.03 秒。
+       数据目录是**运行时状态**（缓存 / 中间产物 / 日志），不进版本快照 ——
+       `backup.py` 的 `PATH_EXCLUDES` 里也把 `user/state` 整棵排掉了（双保险）。 */
     return roots;
   }
   if (isHistKey(key)){
