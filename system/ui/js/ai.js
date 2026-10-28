@@ -35,7 +35,7 @@ function stickAfterScroll(st, m){
 }
 
 const AIR = Vue.reactive({
-  rev: 0, curId: "", curDir: "", info: null, err: "",
+  rev: 0, curId: "", curDir: "", info: null, infoTryAt: 0, err: "",
   task: "", running: false, steps: [], say: [], result: null,
   seconds: 0, busy: false, tick: null,
   maxTokens: 100000000, warnTokens: 80000000,   // `V-240`：token 上限（存 user_data/ai/budget.json）
@@ -146,11 +146,28 @@ const AIR = Vue.reactive({
   /* ★ 附件：粘贴图片 / 拖入文件 / 大段文本转成附件。都是本机内存里的轻量元数据，
      图片用 data_url、文本直接带原文，路径附件交给宿主去读。 */
   attachments: [], pasteAsFile: true, inputDropHot: false, inputDropAt: 0,
+  /* ★ 调色盘：只影响"它正在工作时"的聊天区背景，停止时自动回到无色。
+     颜色本身记在 user_data/state/_ai_ui.json（随机端口下 localStorage 不可靠）。 */
+  paletteColor: "", paletteOpen: false,
+  /* ★ 余额：只在打开 AI 页 / 手动点击时查，不轮询、不落盘。
+     服务商不支持时 text 显示 "?"，完整原因放 title。 */
+  balance: null, balanceLoading: false,
+  pageVisible: false,
 });
 
 /* 大段文本到多少字就转附件；图片/文件多大就别贴（避免把请求撑爆）。 */
 const ATTACH_TEXT_MIN = 1000;
 const ATTACH_FILE_MAX = 12 * 1024 * 1024;
+
+/* 调色盘预制色：偏柔和、在白色气泡底上不抢文字。点一下立即生效，再点「无颜色」恢复默认。 */
+const AI_PALETTE_PRESETS = [
+  {name: "雾蓝", color: "#60A5FA"},
+  {name: "薄荷", color: "#34D399"},
+  {name: "紫雾", color: "#A78BFA"},
+  {name: "晚霞", color: "#FB7185"},
+  {name: "暖橙", color: "#FBBF24"},
+  {name: "青碧", color: "#22D3EE"},
+];
 
 
 function aiPackage(){ return cur && cur.id ? cur : null; }
@@ -396,12 +413,90 @@ async function aiRefreshInfo(force){
       const ms = AIR.info.models || [];
       if (AIR.info.model && (!AIR.model || (ms.length && ms.indexOf(AIR.model) < 0)))
         AIR.model = AIR.info.model;
+      /* 页面已经打开、但 info 比第一次余额查询晚到时，补查一次（仍只在这一页打开期间查）。 */
+      const prof = String(AIR.info.profile || "");
+      if (AIR.pageVisible && prof && (!AIR.balance || AIR.balance.provider !== prof))
+        aiRefreshBalance(false);
     }
     AIR.err = "";
   } catch (e) {
     AIR.err = "读不到 AI 状态：" + (e && e.message ? e.message : e);
   }
   AIR.rev++;
+}
+
+/* ---- AI 页轻量偏好（调色盘）--------------------------------------------- */
+async function aiLoadUiState(){
+  try{
+    const api = await aiWaitApi(3000);
+    if (!api || !api.ai_ui_state) return;
+    const r = await api.ai_ui_state();
+    if (r && r.ok){
+      const c = String(r.palette || "");
+      AIR.paletteColor = /^#[0-9a-fA-F]{6}$/.test(c) ? c : "";
+      AIR.rev++;
+    }
+  }catch(e){ /* 偏好读不到不影响主流程 */ }
+}
+async function aiSaveUiState(values){
+  try{
+    const api = await aiWaitApi(3000);
+    if (!api || !api.ai_ui_state_set) return null;
+    return await api.ai_ui_state_set(values || {});
+  }catch(e){ return null; }
+}
+
+/* ---- 余额：打开页面自动查一次，之后只有点它才刷新 ----------------------- */
+function aiShortBalance(raw){
+  /* 宿主那句「余额：CNY 45.52（充值 …） · 账户可用」只在 tooltip 里展开；
+     按钮里只留金额，避免把整条工具栏挤爆。 */
+  const s = String(raw || "").replace(/^余额[:：]\s*/, "").trim();
+  const m = s.match(/([A-Za-z]{3})\s*([-+]?\d+(?:\.\d+)?)/);
+  if (m){
+    const cur = m[1].toUpperCase();
+    const sign = cur === "CNY" ? "¥" : (cur === "USD" ? "$" : (cur + " "));
+    return sign + m[2];
+  }
+  const n = s.match(/[-+]?\d+(?:\.\d+)?/);
+  return n ? n[0] : (s ? s.slice(0, 18) : "?");
+}
+
+async function aiRefreshBalance(auto){
+  if (AIR.balanceLoading) return;
+  const provider = String((AIR.info && AIR.info.profile) || "");
+  if (!provider){
+    AIR.balance = {ok: false, text: "?", msg: "还没配置 AI 服务商", provider: ""};
+    AIR.rev++;
+    return;
+  }
+  AIR.balanceLoading = true;
+  AIR.rev++;
+  try{
+    const api = await aiWaitApi(5000);
+    if (!api || !api.ai_balance){
+      AIR.balance = {ok: false, text: "?", msg: "宿主桥没连上，暂时查不了余额", provider: provider};
+      return;
+    }
+    const r = await api.ai_balance(provider, {});
+    const ok = !!(r && r.ok);
+    const full = String((r && r.msg) || (ok ? "余额已更新" : "这家不支持查询余额"));
+    AIR.balance = {
+      ok: ok,
+      text: ok ? aiShortBalance(full) : "?",
+      full: full,
+      msg: full,
+      detail: String((r && r.detail) || ""),
+      provider: provider,
+      at: Date.now(),
+      auto: !!auto,
+    };
+  }catch(e){
+    AIR.balance = {ok: false, text: "?", msg: "查余额失败：" + (e && e.message ? e.message : e),
+                   provider: provider, at: Date.now(), auto: !!auto};
+  }finally{
+    AIR.balanceLoading = false;
+    AIR.rev++;
+  }
 }
 
 /* ★ `V-316`：**没有"模式"了** —— 权限就是那份清单（读/写两个勾）。
@@ -1477,6 +1572,31 @@ const MossAi = {
              (u.completion_tokens || 0) + " · 合计 " + (u.total_tokens || 0) + " token" +
              (u.estimated ? "（网关没回 usage，这是按字数估的）" : "");
     },
+    /* ★ 余额只在打开页面 / 点击时查：按钮里只放短结果，完整原因放 title。 */
+    balanceText(){
+      this.A.rev;
+      if (this.A.balanceLoading) return "…";
+      const b = this.A.balance;
+      if (!b) return "?";
+      const t = String(b.text || "?").trim();
+      return t || "?";
+    },
+    balanceTitle(){
+      this.A.rev;
+      const b = this.A.balance;
+      if (this.A.balanceLoading) return "正在查询当前服务商余额…";
+      if (!b) return "点击查询当前服务商余额";
+      const who = b.provider ? ("服务商「" + b.provider + "」") : "当前服务商";
+      /* 成功时不再把原始 JSON 塞进 tooltip；失败时只补一句短原因。 */
+      return who + "\n" + (b.full || b.msg || "点击刷新余额") +
+             "\n点击刷新（不点不会自动轮询）";
+    },
+    palettePresets(){ return AI_PALETTE_PRESETS; },
+    paletteCurrentName(){
+      this.A.rev;
+      const hit = AI_PALETTE_PRESETS.filter(x => x.color.toLowerCase() === String(this.A.paletteColor || "").toLowerCase())[0];
+      return hit ? hit.name : (this.A.paletteColor || "无颜色");
+    },
     /* ★ `V-319`：**待允许那一行**显示什么（目录尾巴 + 它要读还是要写） */
     permPendingLabel(){
       this.A.rev;
@@ -1493,8 +1613,10 @@ const MossAi = {
     allowOn(){ this.A.rev; return (this.A.allow || []).filter(x => x.write).length; },
     permBadge(){
       this.A.rev;
-      if (this.A.full) return "完全权限";
-      if (this.A.wild) return "任意路径";
+      const bits = [];
+      if (this.A.full) bits.push("完全权限");
+      if (this.A.wild) bits.push("任意路径");
+      if (bits.length) return bits.join(" + ");
       // ★ 2026-10-22：数的是**这一页摆出来的**那些（别的包的行收在下面，不算进来 ——
       //   不然"可写 5 处"跟眼睛看到的 2 条对不上）
       const n = this.allowSplit.mine.filter(x => x.write && x.path !== "*").length;
@@ -1720,11 +1842,14 @@ const MossAi = {
       const panel = which === "hist" ? this.$refs.histPanel : this.$refs.permPanel;
       const host  = which === "hist" ? this.$refs.histBtn : this.$refs.permBtn;
       if (!panel || !host) return;
+      const pane = document.querySelector("#pane-ai") || this.$el || document.body;
+      const bounds = pane.getBoundingClientRect();
       const vw = document.documentElement.clientWidth || window.innerWidth || 0;
-      if (!vw) return;
+      if (!vw || !bounds.width) return;
       const hr0 = host.getBoundingClientRect();
-      // ★ 位置没变就别白算（这个函数会被 700ms 那一跳顺手叫一下）—— 省掉强制重排
-      const key = vw + "|" + Math.round(hr0.left) + "|" + Math.round(hr0.right);
+      // 位置没变就别白算（这个函数会被 700ms 那一跳顺手叫一下）—— 省掉强制重排
+      const key = vw + "|" + Math.round(bounds.left) + "|" + Math.round(bounds.right) +
+                  "|" + Math.round(hr0.left) + "|" + Math.round(hr0.right);
       if (!this._fitKeys) this._fitKeys = {};
       if (this._fitKeys[which] === key) return;
       this._fitKeys[which] = key;
@@ -1732,20 +1857,20 @@ const MossAi = {
       panel.style.left = "";
       panel.style.right = "";
       panel.style.width = "";
-      const avail = Math.max(260, vw - pad * 2);
+      /* 不能按整个窗口算：AI 页左边还有插件列表，按窗口夹会把浮层塞到侧栏底下。
+         这里以 #pane-ai 的实际左右边界为准，保证整块浮层始终留在 AI 内容区。 */
+      const leftBound = bounds.left + pad;
+      const rightBound = bounds.right - pad;
+      const avail = Math.max(220, rightBound - leftBound);
       let w = panel.offsetWidth || 0;
       if (w > avail){ w = avail; panel.style.width = w + "px"; }
-      const hr = host.getBoundingClientRect();
-      if (which === "perm" || which === "hist"){
-        // ★ 权限 / 历史浮层都挂在工具栏右侧：**贴右边缘、向左展开**，不再死定 left:0 往右出屏。
-        panel.style.right = "0px";
-        panel.style.left = "auto";
-        return;
-      }
-      let left = 0;                                     // 相对 .popover-wrapper
-      if (hr.left + w > vw - pad) left = (vw - pad) - (hr.left + w);   // 往左挪
-      if (hr.left + left < pad) left = pad - hr.left;   // 左边也夹住
-      panel.style.left = Math.round(left) + "px";
+      const wrap = (host.closest && host.closest(".popover-wrapper")) || host;
+      const wr = wrap.getBoundingClientRect();
+      let leftViewport = hr0.left;                       // 从按钮左边向右展开
+      if (leftViewport + w > rightBound) leftViewport = rightBound - w;  // 右边不越界
+      if (leftViewport < leftBound) leftViewport = leftBound;            // 左边不进侧栏
+      panel.style.right = "auto";
+      panel.style.left = Math.round(leftViewport - wr.left) + "px";
     },
     /* V-340: permission popover (opened from the toolbar button) */
     togglePermPop(){
@@ -2234,6 +2359,51 @@ const MossAi = {
       await aiRefreshInfo(true);
       await aiLoadSkills();
     },
+    /* 上传附件 / 图片：系统对话框选真实路径，loop 能直接读（非图片也能作为 path 附件）。 */
+    async pickAttachment(images){
+      if (AIR.running){ toast("它正在跑，等这一轮结束再加附件", true); return; }
+      try{
+        const api = await aiWaitApi(5000);
+        if (!api || !api.ai_pick_attachments){
+          toast("宿主桥没连上，暂时不能打开文件选择框", true);
+          return;
+        }
+        const r = await api.ai_pick_attachments(!!images);
+        if (!r || !r.ok){
+          if (!(r && r.cancelled)) toast((r && r.msg) || "没选到文件", true);
+          return;
+        }
+        const n = aiAttachPaths(r.files || []);
+        if (n) toast("已添加 " + n + (images ? " 张图片" : " 个附件"));
+        else toast("没有可添加的文件", true);
+      }catch(e){ toast("挑附件失败：" + (e && e.message ? e.message : e), true); }
+    },
+    togglePalette(){
+      AIR.paletteOpen = !AIR.paletteOpen;
+      AIR.rev++;
+    },
+    setPaletteColor(color){
+      const c = String(color || "").trim();
+      if (c && !/^#[0-9a-fA-F]{6}$/.test(c)){ toast("颜色格式不对（要 #RRGGBB）", true); return; }
+      AIR.paletteColor = c;
+      AIR.paletteOpen = false;
+      AIR.rev++;
+      aiSaveUiState({palette: c});
+      toast(c ? ("工作时聊天背景：把 " + c + " 变成缓慢呼吸的圆润色块")
+              : "已恢复无颜色（工作时不再显示呼吸背景）");
+    },
+    async refreshBalance(){
+      await aiRefreshBalance(true);
+    },
+    /* 供 setTab 调用：每次真正切到 AI 页时查一次余额；切走只记状态，不查。 */
+    setPageVisible(on){
+      const vis = !!on;
+      if (vis && !AIR.pageVisible){
+        if (!AIR.info) aiRefreshInfo();
+        aiRefreshBalance(false);
+      }
+      AIR.pageVisible = vis;
+    },
     skillOrigin(w){
       if (!w) return "";
       if (w.kind === "pkg") return "【插件】";
@@ -2370,6 +2540,7 @@ const MossAi = {
       if (r && r.ok){
         toast("已切到「" + want + "」，这次用 " + m + " 跑（" + (r.msg || "已记住") + "）");
         await aiRefreshInfo(true);
+        await aiRefreshBalance(false);
       } else {
         toast("切到「" + want + "」没成功：" + ((r && r.msg) || "宿主没说什么"), true);
       }
@@ -2584,10 +2755,21 @@ const MossAi = {
   mounted(){
     aiRefreshInfo();
     aiStartPage();
+    aiLoadUiState();
     /* 700ms 一跳：① 选中的包换了就重读信息；② 正在跑就拉步骤流。
        要不要改成事件驱动？不用 —— 命令行那一页也是轮询（run_poll 200ms），
        而且 loop 一步可能几秒，这个频率足够"看着它在动"。 */
     AIR.tick = setInterval(() => {
+      /* 每次从别的页签切回 AI 页 = 自动查一次余额；停留在本页时绝不轮询。 */
+      const pageOn = !!(this.$el && this.$el.classList && this.$el.classList.contains("on"));
+      if (pageOn && !AIR.pageVisible) aiRefreshBalance(false);
+      AIR.pageVisible = pageOn;
+      /* 启动时宿主桥可能比 Vue 晚一点就绪：info 空着就低频重试，绝不把"还没加载"
+         误判成"没配 AI"。 */
+      if (pageOn && !AIR.info && Date.now() - Number(AIR.infoTryAt || 0) > 2500){
+        AIR.infoTryAt = Date.now();
+        aiRefreshInfo();
+      }
       const p = aiPackage();
       const id = (p && p.id) || "";
       /* ★ `V-251`：**换了干活的地方 = 换了一条会话** —— 会话是"一个包一条"，
@@ -2699,6 +2881,8 @@ const MossAi = {
       if (AIR.permPop && !(t && t.closest && t.closest(".ai-perm-wrap"))) AIR.permPop = false;
       // ★ `V-386`：模型面板同理（点别处就收起来）
       if (AIR.modelOpen && !(t && t.closest && t.closest(".ai-model-pick"))) AIR.modelOpen = false;
+      // 调色盘
+      if (AIR.paletteOpen && !(t && t.closest && t.closest(".ai-palette-wrap"))) AIR.paletteOpen = false;
       if (!AIR.altOn) return;
       if (t && t.closest && t.closest(".ai-jump")) return;
       AIR.altOn = false;
@@ -2722,10 +2906,9 @@ const MossAi = {
   <div class="aiwrap" @dragover.prevent="dropEnter()" @dragleave="dropLeave($event)">
     <div class="ai-workspace">
 
-
-
       <p class="ai-warn" v-if="A.err">⚠ {{ A.err }}</p>
-      <p class="ai-warn" v-else-if="!ready">⚠ {{ (info && info.why) || "还没配好 AI —— 去「设置 → AI」挑一家、把 key 填上。" }}</p>
+      <p class="ai-warn loading" v-else-if="!info">正在读取 AI 配置…</p>
+      <p class="ai-warn" v-else-if="!ready">⚠ {{ info.why || "还没配好 AI —— 去「设置 → AI」挑一家、把 key 填上。" }}</p>
       <p class="ai-warn" v-if="missing.length">⚠ 提示词文件缺了：{{ missing.join("、") }}（不补也能跑，只是少了那几条规矩）。</p>
       <p class="ai-warn" v-if="target && !canWrite">
         ⚠ 这个包现在<b>只读</b> —— 权限清单里它那一行的<b>「写」没勾</b>。想让它动手：
@@ -2852,6 +3035,14 @@ const MossAi = {
            视口外了）。所以按钮挪到**滚动容器外面**、由这层定位。（它以前还压根没有 CSS，
            渲染成通栏大白块 —— 见 ai.css 末尾。） -->
       <div class="ai-logwrap">
+      <!-- 调色盘背景：只在「设了颜色 + 正在工作」时亮起；停止后自动淡回默认无色。
+           不是整屏硬涂 —— 是几团圆润、会移动的柔和色块在聊天窗后面缓慢呼吸。 -->
+      <div class="ai-breath-bg" :class="{on: A.paletteColor && A.running}"
+           :style="{'--ai-palette': A.paletteColor || '#93C5FD'}" aria-hidden="true">
+        <span class="ai-blob ai-blob-1"></span>
+        <span class="ai-blob ai-blob-2"></span>
+        <span class="ai-blob ai-blob-3"></span>
+      </div>
       <main class="log-container ai-log" ref="log">
         <!-- ★ V-258/263：日志按轮排 —— 一轮 = 我说的那句 + 它的动作 + 它的结论。
              ★ 「V-333」（你原话："整体改成那种微信气泡泡的风格 把我说的 和ai说的 以及 其他内容信息
@@ -3040,6 +3231,109 @@ const MossAi = {
              @dragenter.prevent="inputDragEnter"
              @dragleave="inputDragLeave($event)"
              @drop="inputDrop">
+          <!-- 新设计：输入框上方的控制台（新会话 / 历史 / Token / 余额 / 调色盘） -->
+      <div class="ai-console-top">
+        <div class="ai-console-left">
+          <button type="button" class="ai-console-new" @click="pickNewChat()"
+                  title="新建空白会话（下一条不带之前的对话）">
+            <span v-html='ico("moss-plus", "i")'></span><span>新会话</span>
+          </button>
+              <!-- 历史会话（点开才出）：只留图标 + 数量 -->
+              <div class="popover-wrapper ai-hist-wrap ai-console-hist-wrap">
+                <button ref="histBtn" class="trigger-btn ai-hist ai-console-hist" :class="{active: A.histOpen}" @click.stop="toggleHist()"
+                        :title="'历史会话（只列这个包的）。现在：' + ((sessCurrent && sessCurrent.head && sessCurrent.head.task) || '新会话')">
+                  <span v-html='ico("list-ul", "i")'></span>
+                  <span class="ai-console-history-label">历史会话</span>
+                  <span class="badge">{{ sessChains.length }}</span>
+                </button>
+                <div ref="histPanel" class="popover-panel ai-hist-list" :class="{show: A.histOpen}" v-if="A.histOpen" @click.stop>
+                  <div class="popover-title">当前包的历史<span class="popover-hint">点一条就切过去</span></div>
+                  <div class="history-list">
+                    <div class="history-item ai-hist-i" v-for="c in sessChains" :key="c.head.id"
+                         :class="{active: sessCurrent && (sessCurrent.head.id === c.head.id),
+                                  live: isLiveChain(c)}"
+                         :title="(c.head.task || '') + '　' + chainMeta(c)"
+                         @click="pickChain(c)">
+                      <div class="history-item-left">
+                        <span class="status-dot"></span>
+                        <span class="history-item-title ai-hist-t">{{ chainTitle(c) }}</span>
+                      </div>
+                      <div class="history-item-right">
+                        <span class="ai-hist-m">{{ chainMeta(c) }}</span>
+                        <button class="btn-delete ai-hist-x" @click.stop="delChain(c)" title="删除这次会话（它下面所有轮次）"
+                                v-html='ico("trash-2", "i")'></button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+        </div>
+        <div class="ai-console-right">
+              <!-- Token：本次会话已用 / 本次会话总上限（M = 百万）；进度条当背景，文字始终在条内 -->
+              <span class="tool-text ai-bud token-pill" role="progressbar"
+                    :aria-valuenow="tokenPct" aria-valuemin="0" aria-valuemax="100"
+                    :aria-valuetext="tokenUsedMillions + 'M / ' + tokenLimitMillions + 'M'"
+                    :title="tokTip + '；这是当前一次会话的 token 总上限，点击数字可改（单位：M = 百万）'">
+                <span class="token-pill-fill" :style="{width: tokenPct + '%'}"></span>
+                <span class="token-pill-bar" :style="{width: tokenPct + '%'}"></span>
+                <span class="token-pill-text">
+                  <span class="token-pill-used">{{ tokenUsedMillions }}M</span>
+                  <span class="token-pill-sep">/</span>
+                  <span class="token-pill-limit-group">
+                    <input class="ai-token-limit ai-bud-n" type="number" min="0.5" max="20000" step="10"
+                           :size="String(A.maxMillions || '').length || 1"
+                           v-model.number="A.maxMillions" :disabled="A.running" @change="saveBudget()"
+                           @wheel.prevent
+                           title="当前一次会话的 token 总上限（M = 百万）。烧到 80% 时劝它收尾，到顶就停手。"
+                           aria-label="当前一次会话的 token 总上限（M，百万）">
+                    <span class="token-pill-unit">M</span>
+                  </span>
+                </span>
+              </span>
+              <!-- 余额：打开 AI 页自动查一次，之后点它才刷新；不支持的服务商只显示 ? -->
+              <button type="button" class="trigger-btn ai-mini ai-balance-btn ai-console-balance"
+                      :class="{ok: !!(A.balance && A.balance.ok), bad: !!(A.balance && !A.balance.ok)}"
+                      :disabled="A.balanceLoading" @click.stop="refreshBalance()"
+                      :title="balanceTitle" :aria-label="'账户余额：' + balanceText">
+                <span v-html='ico("coins", "i")'></span>
+                <span class="ai-balance-text">{{ balanceText }}</span>
+              </button>
+          <span class="ai-console-divider" aria-hidden="true"></span>
+              <!-- 调色盘：预制色 + 自选色 + 恢复无色；选择记进 user_data/state/_ai_ui.json -->
+              <div class="popover-wrapper ai-palette-wrap ai-console-palette">
+                <button type="button" class="trigger-btn ai-mini ai-palette-btn"
+                        :class="{active: A.paletteOpen, colored: !!A.paletteColor}"
+                        @click.stop="togglePalette()"
+                        :title="'聊天背景调色盘 · 当前：' + paletteCurrentName + '（只在 AI 工作时呼吸显示）'">
+                  <span v-html='ico("paint-roller", "i")'></span>
+                  <span class="ai-palette-dot" v-if="A.paletteColor" :style="{background: A.paletteColor}"></span>
+                </button>
+                <div class="popover-panel ai-palette-pop" :class="{show: A.paletteOpen}"
+                     v-if="A.paletteOpen" @click.stop>
+                  <div class="popover-title">工作时背景
+                    <span class="popover-hint">{{ paletteCurrentName }}</span>
+                  </div>
+                  <div class="ai-palette-grid">
+                    <button type="button" class="ai-swatch" v-for="c in palettePresets" :key="c.color"
+                            :class="{on: A.paletteColor.toLowerCase() === c.color.toLowerCase()}"
+                            :style="{background: c.color}" :title="c.name + ' · ' + c.color"
+                            @click="setPaletteColor(c.color)"></button>
+                  </div>
+                  <div class="ai-palette-actions">
+                    <label class="ai-palette-custom" title="自己挑一个颜色">
+                      <input type="color" :value="A.paletteColor || '#60A5FA'"
+                             @change="setPaletteColor($event.target.value)">
+                      <span>自定义</span>
+                    </label>
+                    <button type="button" class="ai-palette-none" @click="setPaletteColor('')">
+                      无颜色
+                    </button>
+                  </div>
+                  <p class="ai-palette-note">只在它工作的时候出现；停下来就回到平常的白色背景。</p>
+                </div>
+              </div>
+        </div>
+      </div>
           <div class="ai-atts" v-if="A.attachments.length">
             <div class="ai-at" v-for="(a, i) in A.attachments" :key="a.key"
                  :class="{img: attachmentIcon(a) === 'file-image'}">
@@ -3059,38 +3353,14 @@ const MossAi = {
               placeholder="在此输入指令... (按 Enter 发送，Shift+Enter 换行)"></textarea>
           </div>
 
-          <div class="toolbar">
-            <div class="toolbar-left">
-              <!-- 提示词：只留图标 -->
-              <button class="trigger-btn ai-mini ai-messages-icon" @click="openMessages()"
-                      title="查看这条会话的完整提示词历史"
-                      v-html='ico("file-text", "i")'></button>
-              <button class="trigger-btn ai-mini ai-paste-file" :class="{active: A.pasteAsFile}"
-                      @click="togglePasteAsFile()"
-                      :title="A.pasteAsFile ? '大段文本粘贴：收成附件（点击改成直接粘进输入框）' : '大段文本粘贴：直接粘进输入框（点击改成收成附件）'"
-                      v-html='ico("clipboard-paste", "i")'></button>
-
-            </div>
-
-            <div class="toolbar-right ai-actions">
-              <!-- Token：消耗 / 上限（单位一律"百万"），进度条当背景；上限数字可直接改 -->
-              <span class="tool-text ai-bud token-pill" role="progressbar"
-                    :aria-valuenow="tokenPct" aria-valuemin="0" aria-valuemax="100"
-                    :title="tokTip + '；点击上限数字可编辑（单位：百万）'">
-                <span class="token-pill-fill" :style="{width: tokenPct + '%'}"></span>
-                <span class="token-pill-text">{{ tokenUsedMillions }} /
-                  <input class="ai-token-limit ai-bud-n" type="number" min="0.5" max="20000" step="10"
-                         v-model.number="A.maxMillions" :disabled="A.running" @change="saveBudget()"
-                         title="token 上限（单位：百万）：这次任务最多烧多少 token。烧到 80% 时劝它收尾，到顶就停手。" aria-label="token 上限（百万）"> 百万</span>
-              </span>
-
+          <div class="toolbar ai-input-toolbar">
+            <div class="toolbar-left ai-input-tools">
               <div class="popover-wrapper ai-model-pick">
                 <button type="button" class="ai-model-btn" :class="{active: A.modelOpen}"
                         :disabled="A.running || !models.length" @click.stop="toggleModelOpen()"
                         :title="'这次用哪个模型。当前「' + currentProvider + '」，'
                                 + '共 ' + modelGroups.length + ' 家 / ' + models.length + ' 个模型。'
                                 + '选别家的模型会自动把那家设为当前。'">
-                  <span v-html='ico("sparkles", "i")'></span>
                   <span class="ai-model-txt">{{ A.model || "（还没配 AI）" }}</span>
                   <span class="ai-model-prov" v-if="modelGroups.length > 1">{{ currentProvider }}</span>
                   <span class="ai-model-cv" v-html='ico("chevron-down", "i")'></span>
@@ -3125,40 +3395,17 @@ const MossAi = {
                   </div>
                 </div>
               </div>
-              <!-- 历史会话（点开才出） -->
-              <div class="popover-wrapper ai-hist-wrap">
-                <button ref="histBtn" class="trigger-btn ai-hist" :class="{active: A.histOpen}" @click.stop="toggleHist()"
-                        :title="'历史会话（只列这个包的）。现在：' + ((sessCurrent && sessCurrent.head && sessCurrent.head.task) || '新会话')">
-                  <span v-html='ico("history", "i")'></span> 历史会话
-                  <span class="badge" v-if="sessChains.length">{{ sessChains.length }}</span>
-                </button>
-                <div ref="histPanel" class="popover-panel ai-hist-list" :class="{show: A.histOpen}" v-if="A.histOpen" @click.stop>
-                  <div class="popover-title">当前包的历史<span class="popover-hint">点一条就切过去</span></div>
-                  <div class="history-list">
-                    <div class="history-item ai-hist-i" v-for="c in sessChains" :key="c.head.id"
-                         :class="{active: sessCurrent && (sessCurrent.head.id === c.head.id),
-                                  live: isLiveChain(c)}"
-                         :title="(c.head.task || '') + '　' + chainMeta(c)"
-                         @click="pickChain(c)">
-                      <div class="history-item-left">
-                        <span class="status-dot"></span>
-                        <span class="history-item-title ai-hist-t">{{ chainTitle(c) }}</span>
-                      </div>
-                      <div class="history-item-right">
-                        <span class="ai-hist-m">{{ chainMeta(c) }}</span>
-                        <button class="btn-delete ai-hist-x" @click.stop="delChain(c)" title="删除这次会话（它下面所有轮次）"
-                                v-html='ico("trash-2", "i")'></button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
               <!-- 目录权限（点开才出） -->
               <div class="popover-wrapper ai-perm-wrap ai-perm" :class="{folded: !A.permPop}">
-                <button ref="permBtn" class="trigger-btn ai-perm-fold" :class="{active: A.permPop}" @click.stop="togglePermPop()"
-                        title="管理它读写哪些目录（点开看清单）">
-                  <span v-html='ico("file-lock", "i")'></span> 权限控制
-                  <span class="badge ai-perm-badge">{{ permBadge }}</span>
+                <button ref="permBtn" class="trigger-btn ai-perm-fold"
+                        :class="{active: A.permPop, full: A.full, wild: A.wild}"
+                        @click.stop="togglePermPop()"
+                        :title="'权限控制 · ' + permBadge + '（点开看清单）'">
+                  <span class="ai-perm-shield" v-html='ico(A.full ? "shield-check" : "shield", "i")'></span>
+                  <span class="ai-perm-flags" v-if="A.full || A.wild">
+                    <span class="ai-perm-flag full" v-if="A.full" title="完全权限"></span>
+                    <span class="ai-perm-flag wild" v-if="A.wild" title="任意路径"></span>
+                  </span>
                   <span class="dim ai-perm-foldw" v-if="A.perm">· 它想用「{{ permPendingLabel }}」</span>
                 </button>
                 <div ref="permPanel" class="popover-panel ai-perm-body" :class="{show: A.permPop}" v-if="A.permPop" @click.stop>
@@ -3262,20 +3509,34 @@ const MossAi = {
                   </div>
                 </div>
               </div>
-              <div class="action-group">
-                <button class="action-group-btn btn-new-chat" @click="pickNewChat()"
-                        title="新建空白会话（下一条不带之前的对话）"
-                        v-html='ico("moss-plus", "i")'></button>
-                <button class="action-group-btn btn-send-main btn primary"
-                        :disabled="!A.running && (A.busy || !ready)"
-                        @click="A.running ? stop() : start()"
-                        @mouseenter="stopHover = !!A.running"
-                        @mouseleave="stopHover = false"
-                        :title="A.running ? '停止' : '发送 (Enter)'"
-                        v-html='A.running ? (stopHover ? ico("square", "i") : ico("loader-2", "i spin")) : ico("send", "i")'></button>
-              </div>
+              <!-- 提示词历史 -->
+              <button class="trigger-btn ai-mini ai-messages-icon" @click="openMessages()"
+                      title="查看这条会话的完整提示词历史"
+                      v-html='ico("book-open", "i")'></button>
+
+              <span class="ai-toolbar-divider" aria-hidden="true"></span>
+
+              <!-- 上传附件 / 图片 / 大段文本附件 -->
+              <button type="button" class="trigger-btn ai-mini ai-upload-btn"
+                      :disabled="A.running" @click.stop="pickAttachment(false)"
+                      title="上传附件（可多选；代码 / 文本 / 图片都行）"
+                      v-html='ico("folder-plus", "i")'></button>
+              <button type="button" class="trigger-btn ai-mini ai-upload-btn"
+                      :disabled="A.running" @click.stop="pickAttachment(true)"
+                      title="上传图片（可多选，交给模型直接看）"
+                      v-html='ico("file-image", "i")'></button>
             </div>
+
+            <!-- 圆形发送按钮 -->
+            <button type="button" class="ai-send-circle"
+                    :disabled="!A.running && (A.busy || !ready)"
+                    @click="A.running ? stop() : start()"
+                    @mouseenter="stopHover = !!A.running"
+                    @mouseleave="stopHover = false"
+                    :title="A.running ? '停止' : '发送 (Enter)'"
+                    v-html='A.running ? (stopHover ? ico("square", "i") : ico("loader-2", "i spin")) : ico("arrow-up", "i")'></button>
           </div>
+
         </div>
       </footer>
 

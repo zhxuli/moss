@@ -5599,6 +5599,101 @@ class Api:
                                          % (r.get("code"), (" —— " + tail) if tail else ""))}
         return data
 
+    def ai_pick_attachments(self, images=False):
+        """给 AI 输入框挑本地附件 / 图片（系统文件对话框，**可多选**）。
+
+        为什么不走页面的 `<input type=file>`：WebView 里拿到的只是浏览器 File 对象，
+        非图片附件没法把真实路径交给 loop 去读。这里直接回真实路径，图片由 loop 现读并
+        embed，文本 / 代码附件也照常当 path 附件处理 —— 两种上传按钮因此都是真能用的。
+        """
+        try:
+            import webview as _wv
+            wins = list(getattr(_wv, "windows", None) or [])
+            if not wins:
+                return {"ok": False, "msg": "窗口还没准备好，稍一下再试"}
+            win = wins[0]
+            if not hasattr(win, "create_file_dialog"):
+                return {"ok": False, "msg": "这个环境没有文件选择框"}
+            fd = getattr(_wv, "FileDialog", None)
+            kind = getattr(fd, "OPEN", None) if fd is not None else None
+            if callable(kind):
+                kind = kind()
+            if kind is None:
+                kind = getattr(_wv, "OPEN_DIALOG", None)
+            if callable(kind):
+                kind = kind()
+            if not kind:
+                return {"ok": False, "msg": "这个 pywebview 版本不支持挑文件"}
+            types = (("图片 (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.svg;*.avif)",
+                      "所有文件 (*.*)") if images else ("所有文件 (*.*)",))
+            try:
+                res = win.create_file_dialog(kind, allow_multiple=True, file_types=types)
+            except TypeError:
+                try:
+                    res = win.create_file_dialog(kind, allow_multiple=True)
+                except TypeError:
+                    res = win.create_file_dialog(kind)
+            if not res:
+                return {"ok": False, "cancelled": True, "msg": "没选（取消了）"}
+            paths = [res] if isinstance(res, str) else list(res)
+            out = []
+            for raw in paths:
+                path = str(raw or "").strip()
+                if not path:
+                    continue
+                try:
+                    size = os.path.getsize(path)
+                except OSError:
+                    size = 0
+                out.append({"path": path, "name": os.path.basename(path), "size": size})
+            if images:
+                out = [x for x in out if re.search(
+                    r"\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$", x["path"], re.I)]
+            return {"ok": True, "files": out, "count": len(out)}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": "挑附件失败：%s: %s" % (type(e).__name__, e)}
+
+    def ai_ui_state(self):
+        """读 AI 页自己的轻量偏好（当前只有调色盘颜色）。
+
+        ★ 不用 localStorage：`_page_url` 每次启动都带随机端口 / token，源会变
+          （和 `_ui_order.json` 同一个坑），所以照旧存进 user_data/state。
+        """
+        f = USER_DATA / "state" / "_ai_ui.json"
+        try:
+            data = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+        except Exception:                                               # noqa: BLE001
+            data = {}
+        palette = str((data or {}).get("palette") or "") if isinstance(data, dict) else ""
+        if not re.match(r"^#[0-9a-fA-F]{6}$", palette):
+            palette = ""
+        return {"ok": True, "palette": palette}
+
+    def ai_ui_state_set(self, values=None):
+        """保存 AI 页偏好。只认白名单键，颜色必须是 `#RRGGBB` 或空串。"""
+        try:
+            src = values if isinstance(values, dict) else {}
+            f = USER_DATA / "state" / "_ai_ui.json"
+            try:
+                data = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+            except Exception:                                           # noqa: BLE001
+                data = {}
+            if not isinstance(data, dict):
+                data = {}
+            if "palette" in src:
+                palette = str(src.get("palette") or "").strip()
+                if palette and not re.match(r"^#[0-9a-fA-F]{6}$", palette):
+                    return {"ok": False, "msg": "颜色格式不对（要 #RRGGBB）"}
+                data["palette"] = palette
+            d = USER_DATA / "state"
+            d.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_name(f.name + ".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            os.replace(str(tmp), str(f))
+            return {"ok": True, "palette": str(data.get("palette") or "")}
+        except Exception as e:                                          # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+
     # ------------------------------------------------------------ 更名跟随（`V-355`）
     #   界面每 2.5 秒问一次："包表变了吗 / 谁改名了"。**纯读盘、不起进程** ——
     #   起一次 `moss.exe` 要 1 秒，这种轮询绝不能走那条路。

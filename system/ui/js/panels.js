@@ -23,6 +23,11 @@ function setTab(name){
   //   否则 `setTab("ai")` 会把**四个都关掉**（名字对不上任何一个），页面看着像"点了没反应"。
   ["detail", "console", "file", "ai", "embed"].forEach(t =>
     $("#pane-" + t).classList.toggle("on", t === name));
+  /* AI 页：每次切回来都让组件查一次余额（组件内部的 700ms tick 只是兜底）。 */
+  try{
+    if (window.__aiVm && typeof window.__aiVm.setPageVisible === "function")
+      window.__aiVm.setPageVisible(name === "ai");
+  }catch(e){}
   hideCtx();
   // 回到详情时对一下"在不在跑 / 有没有窗口"（历史条目没有包状态，不用问）
   if (name === "detail" && cur) refreshPkgState(cur);
