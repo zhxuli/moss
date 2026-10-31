@@ -308,7 +308,7 @@ def build_user_content(task, env_text, attachments=None):
 class Loop:
     """一个任务一次 loop。`client` 只要有 `.chat(messages, tools)` 这个方法就行（探针会塞假模型进来）。"""
 
-    def __init__(self, client, workdir=None, max_steps=200, on_step=None, say=print,
+    def __init__(self, client, workdir=None, max_steps=0, on_step=None, say=print,
                  compact_after=6, keep_recent=12, compact_min=3,
                  compact_at=102400, retain_tokens=20480, stop_check=None,
                  soft_steps=0, max_tokens=100000000, on_phase=None, on_snapshot=None,
@@ -358,10 +358,14 @@ class Loop:
         #: `V-270`：现在这一轮的序号（重试那行要用它）—— `_on_retry` 里读
         self.cur_n = 0
         # ★ `V-239`（你定的）：预算**按 token 算**，不再让你算步数。
-        #   步数那两样（`soft_steps` 软提醒 / `max_steps` 硬顶）**退居幕后当兜底** ——
-        #   防的是"一直调工具但几乎不烧 token"那种死循环，不是你要调的旋钮。
-        #   `max_tokens` 才是主闸：到 80% 劝收尾、到 100% 停手汇报。
-        self.max_steps = int(max_steps or 200)
+        # ★ `V-425`（你定的）：**步数闸整个取消** —— 你的原话："都有 token 上限了，
+        #   这么设置毫无意义"。真机那一跑就是被它掐死的：17.4M / 100M token（才一成七）
+        #   干到第 200 步突然判"没通过"，而活其实做到一半。
+        #   现在 `max_steps=0` = **不限**（界面 / 命令行都走这条），唯一的主闸是 `max_tokens`：
+        #   到 80% 劝一次收尾、到 100% 停手汇报；其余出口照旧（用户按停止 / done / answer /
+        #   连着不调工具）。
+        #   正数还留着 —— 探针要"有限步"的确定性（`max_steps=3` 那种），只有显式传才生效。
+        self.max_steps = int(max_steps or 0)
         self.soft_steps = int(soft_steps or 0)
         self.max_tokens = int(max_tokens or 0)
         self.warned_token = False
@@ -752,8 +756,15 @@ class Loop:
         self._snap_at_start = ""
         if self.want_snapshot:
             self._snapshot_at_start()
-        nudges, result = 0, {"ok": False, "reason": "步数用完了（还没验收通过）"}
-        for n in range(1, self.max_steps + 1):
+        nudges, result = 0, {"ok": False, "reason": "还没收工就停了"}
+        # ★ `V-425`：不再"数到 200 就停" —— `max_steps=0` 时这一圈是 `while True`，
+        #   靠 token 闸 / 用户停止 / 它自己收工来结束；只有显式给了正数才当硬顶（探针用）。
+        n = 0
+        while True:
+            n += 1
+            if self.max_steps and n > self.max_steps:
+                result = {"ok": False, "reason": "步数用完了（%d 步）" % self.max_steps}
+                break
             if self.stop_check and self.stop_check():
                 return self._finish(False, "用户按了停止", used, missing)
             # ★ `V-239`：**先劝后拦**（都按 token 算）。
@@ -776,12 +787,15 @@ class Loop:
                                  "要么一句话说清卡在哪、还需要什么 —— 别再做新的探索性读取了。"
                                  % (total, self.max_tokens)})
             if self.soft_steps and n > 1 and (n - 1) % self.soft_steps == 0:
+                # `V-425`：没有硬顶时别提"硬顶是多少步"（那是 0，看着像 bug）
                 self._step(n, "(提醒)", "已经第 %d 步了 —— 催它收尾" % (n - 1), "软提醒")
                 messages.append({"role": "user", "content":
-                                 "★ 已经第 %d 步了（这次任务的硬顶是 %d 步）。**请收尾**："
+                                 "★ 已经第 %d 步了%s。**请收尾**："
                                  "要么现在 done(summary=…) 说清你改了什么、怎么验的；"
                                  "要么一句话说清卡在哪、还需要什么 —— 别再做新的探索性读取了。"
-                                 % (n - 1, self.max_steps)})
+                                 % (n - 1,
+                                    ("（这次任务的硬顶是 %d 步）" % self.max_steps)
+                                    if self.max_steps else "")})
             folded = self._compact(messages)
             if folded:
                 # 不再当成"一步"打进步骤流（`V-241`）：它是后台整理，不是 AI 干的活。
@@ -963,8 +977,8 @@ class Loop:
                 # ★ `V-247`：这一轮所有 tool 结果发完之后，再追加"人话"（顺序反了就是 HTTP 400）
                 for _note in pending_notes:
                     messages.append({"role": "user", "content": _note})
-            result = {"ok": False, "reason": "步数用完了（%d 步）" % self.max_steps}
-        # ★ `V-237`：**步数用完 ≠ 失败**。要是它其实已经验收通过（最后一次改动之后跑通过，
+        # ★ `V-237`：**步数用完 ≠ 失败**（`V-425` 之后只有显式设了步数硬顶才走得到这儿）。
+        #   要是它其实已经验收通过（最后一次改动之后跑通过，
         #   或者没改动但真跑成功过），只是没来得及说 `done` —— 那就照实判通过，
         #   并在原因里写清"它没来得及收工"。真机那次（`calc` 本来就支持指数）就卡在这儿。
         if not result["ok"] and self.tools.verified():
@@ -1037,10 +1051,12 @@ def run_cli(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
-        print("用法：ai_loop.py \"<任务>\" [--workdir 目录] [--max-steps N] [--soft-steps N] "
-              "[--max-tokens N] [--model 模型] [--mode consult|limited|free]")
+        print("用法：ai_loop.py \"<任务>\" [--workdir 目录] [--max-steps N（0 = 不限，默认）] "
+              "[--soft-steps N] [--max-tokens N] [--model 模型] [--mode consult|limited|free]")
         return 0 if argv else 2
-    task, workdir, max_steps, soft_steps, max_tokens, model = argv[0], None, 200, 50, 0, None
+    # ★ `V-425`：命令行也**默认不限步数**；token 闸没给就按界面那份预算（`budget.json`）——
+    #   总得留一道闸，而那道闸是钱（token），不是步数。
+    task, workdir, max_steps, soft_steps, max_tokens, model = argv[0], None, 0, 0, None, None
     mode = ""
     i = 1
     while i < len(argv):
@@ -1060,6 +1076,12 @@ def run_cli(argv=None):
         else:
             print("不认识这个参数：%s" % a)
             return 2
+    if max_tokens is None:              # `V-425`：默认用界面那份 token 上限（唯一的闸）
+        try:
+            import ai_budget as _B                                        # noqa: PLC0415
+            max_tokens = int(_B.load().get("max_tokens") or 0)
+        except Exception:                                                 # noqa: BLE001
+            max_tokens = 0
     try:
         client = C.Client.from_env(model=model)
     except C.AiError as e:
@@ -1067,8 +1089,10 @@ def run_cli(argv=None):
         return 2
     print("模型：%s（%s）" % (client.model, client.base_url))
     print("任务：%s" % task)
-    print("预算：硬顶 %d 步、每 %d 步提醒一次%s"
-          % (max_steps, soft_steps, ("、token 闸 %d" % max_tokens) if max_tokens else ""))
+    print("预算：%s、步数%s"
+          % (("token 闸 %d" % max_tokens) if max_tokens else "不设 token 闸",
+             ("硬顶 %d 步（每 %d 步提醒一次）" % (max_steps, soft_steps)) if max_steps
+             else "不限（只有 token 这一道闸）"))
     t0 = time.time()
     if mode:
         print("权限模式：%s（临时：`ai_mode.set_mode` 覆盖）" % mode)

@@ -721,6 +721,26 @@ def main():
     got8b = L.Loop(free, workdir=pkgs, max_steps=3, max_tokens=0, say=lambda s: None).run("列目录")
     chk("J max_tokens=0 ⇒ 不设闸（走到步数兜底为止）",
         "token" not in got8b["reason"], got8b["reason"][:40])
+    # ★ `V-425`：**步数闸取消了**（你的原话："都有 token 上限了，这么设置毫无意义"）——
+    #   真机那一跑：17.4M / 100M token（才一成七），却死在第 200 步。所以这里**不传 max_steps**，
+    #   硬要它干过 230 步：旧版到 200 就判"步数用完了"，新版只可能被停止 / token 到顶 / 收工拦住。
+    _box = {}
+
+    def _stop_after_230():
+        _lp = _box.get("lp")
+        return bool(_lp) and len([x for x in _lp.steps if x["tool"] == "list_dir"]) >= 230
+
+    endless = FakeModel([call("list_dir", {"path": str(pkgs)})] * 300)
+    _lp = L.Loop(endless, workdir=pkgs, max_tokens=0, say=lambda s: None,
+                 stop_check=_stop_after_230)
+    _box["lp"] = _lp
+    got12 = _lp.run("一直列目录")
+    _ran = len([x for x in got12["steps"] if x["tool"] == "list_dir"])
+    chk("J ★★ 不设步数上限 ⇒ **干过 200 步也不被掐**（旧版到 200 就死）",
+        _ran >= 230 and "步数用完" not in got12["reason"],
+        "%d 步 · %s" % (_ran, got12["reason"][:40]))
+    chk("J ★ 步数不限时，收场只来自「停止 / token 到顶 / 收工」",
+        got12["ok"] is False and "停止" in got12["reason"], got12["reason"][:40])
     # token 闸：烧到上限就停手（步数 ≠ 钱，这个才贴"花多少"）
     rich = FakeModel([call("list_dir", {"path": str(pkgs)})] * 12)
     got8 = L.Loop(rich, workdir=pkgs, max_steps=10, soft_steps=0, max_tokens=200,

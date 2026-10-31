@@ -9,6 +9,10 @@
  *   · **验收硬闸在 loop 里**（`ai_tools.Tools.verified`）：这一页不许"看它说完成了"就当完成，
  *     结果卡上直接写"✅ 验收通过"还是"✗ 没通过（为什么）"。
  *   · **每步显示 token**：把"啰嗦/费"变成看得见的数字（这是跟 DSH 对比的尺子）。
+ *   · **收尾不变量（V-423，反复踩过）**：后端一旦回 `running=false`，同一份
+ *     `ai_poll` payload 里必须已经有最终 `result`。页面只在 `running=true` 时轮询；
+ *     若"结束"和"结果"分两拍到达，中间那一拍会让页面永远停问，结论卡不出现，
+ *     只能点历史会话才读得回来。改后端收尾顺序、或改下面那个轮询门槛时，先确认这条。
  *
  * ★ 举牌信号 `AIR.rev`：`cur` 是 core.js 里的**普通变量**（不是响应式的），
  *   所以"选中的包换了"要靠定时器比对 + 改一个响应式字段来通知 Vue 重画
@@ -56,6 +60,11 @@ const AIR = Vue.reactive({
        · `liveTask`    这一跑的任务原文（切回实时时用来重建那一轮）
        · `liveListFor` 已经为哪个 run_id 刷新过历史列表（免得每跳都重读） */
   liveKey: "", liveRunId: "", liveTask: "", liveListFor: "",
+  /* ★ `V-423`：**收尾宽限轮询**。宿主把「running=false」和「result」分成两拍时
+     （尤其是最终记录很大、写盘要几秒），页面以前只认 `running=true` 才轮询 ——
+     最后一拍看到"结束了但结果还是 null"就停问，结论卡永远不出现。这里允许在
+     停止后再补问几跳，直到结果真的回来（最多约 8 秒）。 */
+  doneWait: 0,
   /* ★ 当前这一跑最终结果的**兜底锚**：哪怕用户在别的页面/包，活的那一轮被清掉、
      或历史上还没落盘，结果也先记在这里；回到对应包的 AI 页就立刻补一张结论卡。
      {pkg, run_id, task, steps, result}（只放最近一次，跑完即消费）。 */
@@ -1103,6 +1112,11 @@ async function aiPollOnce(){
     //   刚给自己造了一只，那条「等你允许」得立刻冒出来（不然你要等下次进这一页才看见）。
     const _wasRunning = AIR.running;
     AIR.running = !!got.running;
+    /* ★ `V-423`：跑完那一拍若只拿到 `running=false`、`result` 还没来（宿主要先
+       把最终记录写盘），别立刻停问 —— 再补问几跳；结果一到就清零。 */
+    if (AIR.running) AIR.doneWait = 0;
+    else if (_wasRunning && !got.result) AIR.doneWait = 12;
+    else if (got.result || got.idle) AIR.doneWait = 0;
     // ★ `V-383`：**"现在这一跑"的 id**（宿主每跳都给）。它有两个用处，都是用户报的那个
     //   bug（"点开历史里当前那条，界面就不更新了，可状态还显示在跑"）：
     //     ① 让"当前"那一行在历史列表里高亮（`pickId` 指过去）；
@@ -1267,6 +1281,7 @@ async function aiStart(opt){
   AIR.busy = true;
   AIR.result = null; AIR.steps = []; AIR.say = []; AIR.answeredQid = "";
   AIR.pendingDone = null;              // 新任务：上一次的兜底结果不再回放
+  AIR.doneWait = 0;                    // `V-423`：新任务清掉上一跑的收尾宽限
   AIR.killed = []; AIR.liveUsage = null; AIR.ask = null; AIR.askText = "";   // `V-307`/`V-308`
   AIR.stick = true;                                                          // `V-307`：新指令跟着滚
   AIR.viewing = "";              // `V-251`：这次是新跑的，结果卡不该再挂"历史记录"那块牌子
@@ -1312,8 +1327,9 @@ async function aiStart(opt){
        ③ 都没有 → 新会话
      ★ 例外：正在**翻历史记录**（`viewing`）时别自动接 —— 那只是"看看"。 */
   try {
-    // ★ `V-237` 把 14 提到 24（读一个 395 行的文件就花了 11 步）；`V-238` 再按你的定夺改成
-    //   **硬顶 200 + 每 50 步提醒一次**（都在上面那两格里，随手可改）。
+    // ★ `V-237` 把 14 提到 24（读一个 395 行的文件就花了 11 步）；`V-238` 改成硬顶 200 步；
+    //   ★ `V-425` **把步数闸整个拆了**（你的原话："都有 token 上限了，这么设置毫无意义"）——
+    //   现在只有 token 这一道闸，就是上面那个 `AIR.maxTokens`（存 user_data/ai/budget.json）。
     const got = await window.pywebview.api.ai_start(task, dir, AIR.maxTokens, cont, AIR.model || "", atts);
     if (!got || !got.ok) { toast((got && got.msg) || "起不来。", true); AIR.busy = false; return; }
     AIR.running = true;
@@ -1340,7 +1356,10 @@ async function aiStop(){
     toast((got && got.msg) || "已停止。", !(got && got.ok));
     // ★ `V-307`：立刻把"执行中"那颗按钮摘掉（宿主那边被杀的子进程 + 掐断的请求都会让
     //   loop 尽快收工；下次轮询拿到 running=false 就彻底一致了）。
-    if (got && got.done) { AIR.running = false; AIR.stopping = false; }
+    if (got && got.done) {
+      AIR.running = false; AIR.stopping = false;
+      AIR.doneWait = 12;                 // `V-423`：再补问几跳，确保收尾结果落进界面
+    }
   } catch (e) { /* 无妨 */ }
   AIR.rev++;
 }
@@ -2794,7 +2813,12 @@ const MossAi = {
         aiRefreshInfo();
         aiLoadRuns();
       }
-      if (AIR.running) aiPollOnce();
+      /* ★ `V-423`：**别把条件收窄回 `if (AIR.running)`**。收尾写盘大记录时，
+         `running=false` 可能比 `result` 先到；`doneWait` 就是给这段空窗补问用的。 */
+      if (AIR.running || AIR.doneWait > 0){
+        if (!AIR.running && AIR.doneWait > 0) AIR.doneWait--;
+        aiPollOnce();
+      }
       /* ★ `V-385`：**刚从"藏着"变成"看得见"时补一次** —— 典型就是切回 AI 页签：
          它藏着的时候量出来全是 0 高度，滚动监听什么也判断不了，回来时位置就停在老地方。
          ⚠️ 只在"可见性刚变化"那一下补，**不能每跳都补** —— 每跳补就会跟"用户正往上翻"

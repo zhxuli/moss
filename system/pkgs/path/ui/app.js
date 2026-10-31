@@ -16,6 +16,19 @@ createApp({
     const paths = ref([]);            // 草稿（顺序 = 保存时写回注册表的顺序 = PATH 的优先级）
     const saved = ref([]);            // 注册表里那一份
     const missing = ref([]);
+    /* 机器级（系统）PATH —— `V-388` 起看得见、`V-389` 起改得动。
+       ★ 它和上面那份**不是一份东西**：`sysSaved` 是注册表里现在那一份，`sysDraft` 是这儿的草稿，
+         保存要走一次 UAC（管理员）——所以**草稿、脏没脏、保存按钮全都各算各的**，
+         绝不会因为上面点了「保存修改」就顺手把机器级也写了。 */
+    const sysSaved = ref([]);
+    const sysDraft = ref([]);
+    const sysMissing = ref([]);
+    const sysBackupDir = ref("");
+    const sysEditing = ref(-1);       // 正在就地改第几条（双击行）
+    const sysEditVal = ref("");
+    const sysInput = ref("");         // 「加一条到系统级」那个框
+    const sysDragFrom = ref(null);    // 系统块里的拖动排序
+    const sysDragOver = ref(-1);
     const selfDir = ref("");
     const dataDir = ref("");
     const backupDir = ref("");
@@ -29,6 +42,9 @@ createApp({
     const pinned = ref("");           // 被"固定住"的那份（点了「对比」就不随鼠标收起来）
     const showAllMap = reactive({});  // 每张卡片各自的"显示全部 / 仅看差异"
     const toasts = ref([]);           // 底部那串提示
+    /* 备份抽屉：备份是低频操作，常驻一栏的代价是"平时一直是块空地"。
+       所以收进抽屉，按需拉出来（顶栏那颗带份数）。 */
+    const drawer = ref(false);
     // 备份起名 / 改名（`V-209`）
     const naming = ref(false);
     const bkName = ref("");
@@ -60,11 +76,22 @@ createApp({
         toasts.value = toasts.value.filter((t) => t !== old);
       }
       const item = { id: ++toastSeq, text: s, type: kind, t: 0 };
-      toasts.value = toasts.value.concat([item]).slice(-3);      // 最多留 3 条，别糊一屏
+      /* 最多留 2 条（`V-391`）：连点几下时原来会堆三条黑块把列表糊住。
+         而且**同类替换**：新的 info 进来就把上一条 info 顶掉 —— 那只是"我刚做了一步"，
+         不需要历史；错误则单独留一条。 */
+      // 新的同类顶掉旧的；而且**结果一出来，先前那句"等一下…"就该消失**
+      //（它只是过程提示，不该跟结果并排挂着）
+      const keep = toasts.value.filter((t) => t.type !== kind &&
+                                             (kind === "info" || t.type !== "info"));
+      toasts.value = keep.concat([item]).slice(-2);
       item.t = setTimeout(() => { toasts.value = toasts.value.filter((t) => t.id !== item.id); },
                           kind === "error" ? 4200 : 2500);
     }
     const say = (m, bad) => toast(m, bad ? "error" : "success");
+    /* ★ 两档反馈，别混（`V-391`）：`say` = **真的落盘了**（绿勾）或出错了（红）；
+       `note` = 只是改了草稿 / 顺序（中性，无勾无红）。原来"加进草稿了"也顶个绿勾，
+       一屏里绿勾闪三次，等于什么都没说。 */
+    const note = (m) => toast(m, "info");
 
     const pathCount = computed(() => paths.value.length);
     const savedKeys = computed(() => saved.value.map(keyOf));
@@ -85,6 +112,28 @@ createApp({
     const dirty = computed(() => workKeys.value.join("\n") !== savedKeys.value.join("\n"));
     const isFresh = (p) => !has(saved.value, p);       // 还没保存过的新条目 ⇒ 亮着
     const isMissing = (p) => missing.value.some((m) => keyOf(m) === keyOf(p));
+    // ---- 系统级那一段的"脏没脏 / 差几处"（和用户级同一套算法，只是各算各的）
+    const sysCount = computed(() => sysDraft.value.length);
+    const sysDirty = computed(
+      () => sysDraft.value.map(keyOf).join("\n") !== sysSaved.value.map(keyOf).join("\n"));
+    const sysPendingN = computed(() => {
+      const tally = (ks) => {
+        const m = new Map();
+        ks.forEach((k) => m.set(k, (m.get(k) || 0) + 1));
+        return m;
+      };
+      const s = tally(sysSaved.value.map(keyOf)), w = tally(sysDraft.value.map(keyOf));
+      let n = 0;
+      w.forEach((c, k) => { n += Math.max(0, c - (s.get(k) || 0)); });
+      s.forEach((c, k) => { n += Math.max(0, c - (w.get(k) || 0)); });
+      return n;
+    });
+    const isSysMissing = (p) => sysMissing.value.some((m) => keyOf(m) === keyOf(p));
+    const shortSysBak = computed(() => {
+      const d = sysBackupDir.value || "";
+      const parts = d.replace(/\\/g, "/").split("/").filter(Boolean);
+      return parts.length <= 3 ? d : "…/" + parts.slice(-2).join("/");
+    });
     const missingN = computed(() => paths.value.filter(isMissing).length);
     const hasMissing = computed(() => missingN.value > 0);
     const hasDup = computed(() => new Set(workKeys.value).size !== workKeys.value.length);
@@ -121,14 +170,35 @@ createApp({
       saved.value = s.paths || [];
       if (force || !dirty.value) paths.value = saved.value.slice();   // 有草稿就别覆盖它
       missing.value = s.missing || [];
+      sysSaved.value = s.sys_paths || [];
+      // 系统级那份草稿也"有改动就别覆盖"（force=保存成功 / 首次载入时才换）
+      if (force || !sysDirty.value) {
+        sysDraft.value = sysSaved.value.slice();
+        sysEditing.value = -1;
+      }
+      sysMissing.value = s.sys_missing || [];
+      sysBackupDir.value = s.sys_backup_dir || "";
       selfDir.value = s.self_dir || "";
       dataDir.value = s.data_dir || "";
       backupDir.value = s.backup_dir || "";
     }
+    /* 把（可能带着 Vue Proxy 的）参数拍平成纯数据：JSON 一个来回就够。
+       ★ 别用 `structuredClone` / 展开运算符代替：展开只拆第一层，数组元素还是代理；
+         `structuredClone` 对 Proxy 一样会抛。 */
+    function plain(v) {
+      if (v === undefined || v === null) return {};
+      try { return JSON.parse(JSON.stringify(v)); } catch (e) { return {}; }
+    }
+
     async function call(method, params, quiet) {
       if (!quiet) busy.value = true;
       try {
-        return await window.moss.call(method, params || {});
+        /* ★ 参数必须是**纯数据**（`V-390`）：Vue 的 `ref([...])` 拿出来的是 Proxy，
+           内嵌模式过 postMessage（结构化克隆）会被当场拒掉 ——
+           「Failed to execute 'postMessage': [object Object] could not be cloned」，
+           界面上看着就是"点保存没反应 / 提示调后端失败"。所以在这儿统一拆一层：
+           JSON 一个来回，Proxy 变普通对象/数组，顺带挡住函数之类根本传不过去的东西。 */
+        return await window.moss.call(method, plain(params));
       } catch (e) {
         say("调后端失败：" + (e && e.message ? e.message : e), true);
         return null;
@@ -143,15 +213,15 @@ createApp({
       if (!v) return { ok: false, msg: "先给一个目录" };
       if (has(paths.value, v)) return { ok: false, msg: "这条已经在列表里了：" + v };
       paths.value.push(v);
-      return { ok: true, msg: "加进列表了（还没保存）：" + v };
+      return { ok: true, msg: "加进列表了（还没保存）" };   // 路径就在行上，别在提示里再念一遍
     }
     function remove(p) {
       if (leaving.value) return;
-      leaving.value = p;                                  // 先播"消失"动画（设计稿那 300ms）
+      leaving.value = p;                                  // 先播"消失"动画
       setTimeout(() => {
         paths.value = paths.value.filter((x) => keyOf(x) !== keyOf(p));
         leaving.value = "";
-        say("从列表里去掉了（点「保存修改」才写进 PATH）：" + p);
+        note("从列表里去掉了（还没保存）");
       }, 300);
     }
     function dedup() {
@@ -162,28 +232,128 @@ createApp({
         if (seen.has(k)) { n++; continue; }
         seen.add(k); keep.push(p);
       }
-      if (!n) return say("没有重复项", true);
+      if (!n) return note("没有重复项");
       paths.value = keep;
-      say("去掉 " + n + " 条重复项（点「保存修改」才写进 PATH）");
+      note("去掉 " + n + " 条重复项（还没保存）");
     }
     function dropMissing() {
       const gone = paths.value.filter((p) => isMissing(p));
-      if (!gone.length) return say("没有失效的目录", true);
+      if (!gone.length) return note("没有失效的目录");
       const drop = new Set(gone.map(keyOf));
       paths.value = paths.value.filter((p) => !drop.has(keyOf(p)));
-      say("摘掉 " + gone.length + " 条目录已经不存在的");
+      note("摘掉 " + gone.length + " 条目录已经不存在的（还没保存）");
     }
     function revert() {
-      if (!dirty.value) return say("没有没保存的改动");
+      if (!dirty.value) return note("没有没保存的改动");
       paths.value = saved.value.slice();
       armed.value = false;
-      say("已撤销 —— 回到注册表里现在的样子");
+      note("已撤销 — 回到注册表里现在的样子");
     }
     async function save() {
       const r = await call("save", { paths: paths.value });
       if (!r) return;
       applyState(r.state, r.ok);       // 写成功了才用后端那份覆盖草稿（高亮随之全灭）
       armed.value = false;
+      say(r.msg, !r.ok);
+    }
+
+    // ---- 系统级（机器级）那一段：加 / 删 / 双击改 / 拖动排序，全在草稿上（`V-389`）
+    /* ★ 和上面那套一模一样地"先改后存"，唯一的区别在**保存**：要走一次 UAC。
+         所以这里给它一套自己的按钮，绝不和上面那颗「保存修改」混在一起 ——
+         一次点击只改一级，不会"我只想改用户级，结果系统级也被写了"。 */
+    function sysAdd() {
+      const v = String(sysInput.value || "").trim().replace(/^"(.*)"$/, "$1");
+      if (!v) return note("先给一个目录");
+      if (sysDraft.value.some((x) => keyOf(x) === keyOf(v))) return note("系统里已经有这条了");
+      sysDraft.value = sysDraft.value.concat([v]);
+      sysInput.value = "";
+      note("加进系统级了（还没保存）");
+    }
+    function sysRemove(i) {
+      sysDraft.value = sysDraft.value.filter((_, k) => k !== i);
+      sysEditing.value = -1;
+      note("从系统级去掉了（还没保存）");
+    }
+    function sysBeginEdit(i) {
+      sysEditing.value = i;
+      sysEditVal.value = sysDraft.value[i];
+      Vue.nextTick(() => { const el = document.querySelector(".srow .sin"); if (el) { el.focus(); el.select(); } });
+    }
+    function sysCommitEdit(i) {
+      if (sysEditing.value !== i) return;
+      sysEditing.value = -1;
+      const v = String(sysEditVal.value || "").trim().replace(/^"(.*)"$/, "$1");
+      if (!v) return note("空的不算，这一条没改");
+      if (sysDraft.value.some((x, k) => k !== i && keyOf(x) === keyOf(v))) return note("改完就和另一条重复了，没改");
+      const arr = sysDraft.value.slice();
+      arr[i] = v;
+      sysDraft.value = arr;
+      note("改好了（还没保存）");
+    }
+    function sysDragStart(p, e) {
+      sysDragFrom.value = p;
+      sysEditing.value = -1;
+      try { e.dataTransfer.setData("text/plain", String(p)); e.dataTransfer.effectAllowed = "move"; }
+      catch (err) { /* 无所谓 */ }
+    }
+    function sysDragOverAt(i, e) {
+      if (sysDragFrom.value === null) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = "move"; } catch (err) { /* 无所谓 */ }
+      sysDragOver.value = i;
+    }
+    function sysDropAt(i, e) {
+      e.preventDefault();
+      const from = sysDraft.value.indexOf(sysDragFrom.value);
+      if (from < 0) return sysDragEnd();
+      const to = from < i ? i - 1 : i;
+      if (to !== from) {
+        const arr = sysDraft.value.slice();
+        const [it] = arr.splice(from, 1);
+        arr.splice(to, 0, it);
+        sysDraft.value = arr;
+        note("系统级的先后变了（还没保存）");
+      }
+      sysDragEnd();
+    }
+    function sysDragEnd() { sysDragFrom.value = null; sysDragOver.value = -1; }
+    /* 草稿一变，就问一次"这些目录还在不在"（`V-389` / `V-391`）。
+       ★ 为什么必须有：行上的「不存在」红标原来只来自 `state` —— 那是**注册表里**那一份。
+         刚加进草稿的、刚双击改完的还没进注册表，红标就跟不上，于是"加了一条根本不存在的
+         目录，界面看着一点事都没有"。
+       ★ 两条清单一起问（一次往返），并且**共用一个防抖**：分开写会让每次改动都发两次
+         `scan`，白跑。`deep` 不能省 —— `push / splice` 改的是数组内部，不是 `.value` 本身。 */
+    let scanTimer = 0;
+    function scheduleScan() {
+      clearTimeout(scanTimer);
+      scanTimer = setTimeout(async () => {
+        const all = paths.value.concat(sysDraft.value);
+        const r = await call("scan", { paths: all }, true);
+        if (!r || !r.missing) return;
+        const gone = new Set(r.missing.map(keyOf));
+        missing.value = paths.value.filter((p) => gone.has(keyOf(p)));
+        sysMissing.value = sysDraft.value.filter((p) => gone.has(keyOf(p)));
+      }, 250);
+    }
+    Vue.watch(paths, scheduleScan, { deep: true });
+    Vue.watch(sysDraft, scheduleScan, { deep: true });
+
+    function sysRevert() {
+      if (!sysDirty.value) return note("系统级没有未保存的改动");
+      sysDraft.value = sysSaved.value.slice();
+      sysEditing.value = -1;
+      note("已撤销 — 回到系统里现在的样子");
+    }
+    async function sysSave() {
+      if (!sysDirty.value) return say("系统级没有未保存的改动");
+      busy.value = true;
+      toast("等一下 UAC 弹窗：点「是」才会改系统 PATH", "info");
+      const r = await call("sys_save", { paths: sysDraft.value }, true);
+      busy.value = false;
+      if (!r) return;
+      applyState(r.state, false);      // 系统级存成了就跟着换；**别动**上面那份用户级草稿
+      // 在 UAC 上点「取消」= "这次不改"，不是失败 —— 不报红
+      if (!r.ok && /取消/.test(r.msg || "")) return toast(r.msg, "info");
       say(r.msg, !r.ok);
     }
     // 复制一条路径（设计稿每行第一颗按钮）
@@ -209,7 +379,8 @@ createApp({
       input.value = String(p);
       inputWarn.value = "";
       paths.value = paths.value.filter((x) => keyOf(x) !== keyOf(p));
-      say("已拿出来改：改好点「添加」放回去，再点「保存修改」");
+      note("填到上面了：改完点「添加」放回去");
+      Vue.nextTick(() => { const el = document.getElementById("path-input"); if (el) { el.focus(); el.select(); } });
     }
 
     // ---- 列表里拖动排序（= 调 PATH 优先级；同样只改草稿）
@@ -235,7 +406,7 @@ createApp({
         const [it] = arr.splice(from, 1);
         arr.splice(to, 0, it);
         paths.value = arr;
-        say("顺序变了（点「保存修改」才写进 PATH）");
+        note("顺序变了（还没保存）");
       }
       dragEnd();
     }
@@ -249,7 +420,7 @@ createApp({
     async function load() {                       // 「刷新」按钮：有草稿先问一声
       if (dirty.value && !armed.value) {
         armed.value = true;
-        return say("有 " + pendingN.value + " 处改动没保存 —— 再点一下「刷新」就丢掉它们", true);
+        return note("有 " + pendingN.value + " 处改动没保存 — 再点一下「刷新」就丢掉它们");
       }
       armed.value = false;
       await fetchState();
@@ -298,8 +469,9 @@ createApp({
       if (!r) return;
       if (!r.ok) { inputWarn.value = r.msg; return say(r.msg, true); }   // 不存在：报错，输入框不动
       const a = addLocal(r.path);
-      if (a.ok && r.kind === "file") say(r.msg + "（还没保存）");
-      else say(a.msg, !a.ok);
+      if (a.ok && r.kind === "file") note("加进列表了（拖的是文件，取的是它所在的目录；还没保存）");
+      else if (a.ok) note(a.msg);
+      else note(a.msg);
       if (a.ok) { input.value = ""; inputWarn.value = ""; }
     }
     function clearInput() { input.value = ""; inputWarn.value = ""; }
@@ -333,10 +505,11 @@ createApp({
         if (addLocal(r.path).ok) added++; else dup++;
       }
       const bits = [];
-      if (added) bits.push("加进列表 " + added + " 条（记得点「保存修改」）");
+      if (added) bits.push("加进列表 " + added + " 条（还没保存）");
       if (dup) bits.push("跳过 " + dup + " 条重复");
       if (bad) bits.push("跳过 " + bad + " 条目录不存在");
-      say(bits.join("；") || "没拿到可用的目录", !added);
+      if (added) note(bits.join("；"));
+      else toast(bits.join("；") || "没拿到可用的目录", "error");
     }
 
     // ---- 备份
@@ -378,8 +551,15 @@ createApp({
       if (r.ok) renaming.value = null;
       await openBackups();
     }
+    /* 抽屉：开的时候顺手刷一遍清单（份数就在顶栏那颗上，进页面时也要有数）。 */
+    async function openDrawer() {
+      drawer.value = true;
+      await openBackups();
+    }
+    function closeDrawer() { drawer.value = false; }
+
     async function openBackups() {
-      const r = await call("backup_list");
+      const r = await call("backup_list", {}, true);   // 只刷清单，别让整页按钮闪一下
       if (!r) return;
       backups.value = r.items || [];
       applyState(r.state);
@@ -439,12 +619,28 @@ createApp({
       });
       window.addEventListener("drop", (e) => { e.preventDefault(); dragOn.value = false; depth = 0; });
 
+      /* Esc：先收起抽屉，再收掉正在改的那一行 / 起名框 —— 一次退一层。 */
+      window.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        if (drawer.value) { closeDrawer(); return; }
+        if (sysEditing.value >= 0) { sysEditing.value = -1; return; }
+        if (naming.value) naming.value = false;
+      });
+
       try { Object.assign(info, await window.moss.call("info", {})); } catch (e) { /* 无妨 */ }
       await fetchState();
-      await openBackups();          // 右边那一栏一进来就有东西看
+      await openBackups();          // 顶栏那颗按钮上的份数要一进来就是真的
+      // 首屏扫一遍：草稿里（可能带 %VAR%）哪些目录已经不在盘上了
+      const sc = await call("scan", { paths: paths.value }, true);
+      if (sc && sc.missing) missing.value = sc.missing;
     });
 
     return { paths, saved, missing, selfDir, dataDir, backupDir, info, input, inputWarn, busy,
+             drawer, openDrawer, closeDrawer,
+             sysSaved, sysDraft, sysMissing, sysCount, isSysMissing, keyOf,
+             sysDirty, sysPendingN, sysEditing, sysEditVal, sysInput, sysDragFrom, sysDragOver,
+             shortSysBak, sysAdd, sysRemove, sysBeginEdit, sysCommitEdit, sysRevert, sysSave,
+             sysDragStart, sysDragOverAt, sysDropAt, sysDragEnd,
              dragOn, backups, hovered, pinned, toasts, pathCount, pendingN, dirty, missingN,
              hasDup, hasMissing, anyAction, diffsOf, showAllOf, isOpen, hoverOn, hoverOff, togglePin,
              shortData, ic,
@@ -452,6 +648,6 @@ createApp({
              load, save, revert, add, remove, dedup, dropMissing, clearInput, copyPath, editPath,
              dragStart, dragOverRow, dropAt, dragEnd,
              startBackup, doBackup, startRename, doRename, openBackups, toggleAll,
-             restore, delBackup, isMissing, isFresh, same };
+             restore, delBackup, isMissing, isFresh, same, note };
   },
 }).mount("#app");

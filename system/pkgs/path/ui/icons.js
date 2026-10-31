@@ -33,6 +33,9 @@ const ICONS = {
   "rotate-ccw": "<path d='M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8' /> <path d='M3 3v5h5' />",
   "check-circle-2": "<circle cx='12' cy='12' r='10' /> <path d='m16 9-5.5 5.5L8 12' />",
   "x-circle": "<circle cx='12' cy='12' r='10' /> <path d='m15 9-6 6' /> <path d='m9 9 6 6' />",
+  "chevron-down": "<path d='m6 9 6 6 6-6' />",
+  "chevron-right": "<path d='m9 18 6-6-6-6' />",
+  "lock": "<rect width='18' height='11' x='3' y='11' rx='2' ry='2' /> <path d='M7 11V7a5 5 0 0 1 10 0v4' />",
 };
 
 /* 用法：icon("folder-plus") → 一段 <svg> 字符串（和 moss 主界面的 `ico()` 同一个路子） */

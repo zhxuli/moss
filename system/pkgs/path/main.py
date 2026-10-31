@@ -20,6 +20,7 @@
 import ctypes
 import json
 import os
+import shutil
 import sys
 import threading
 import winreg
@@ -76,6 +77,13 @@ BACKUP_DIR = DATA_DIR / 'data' / 'backups'
 #: 老位置：只读认，不再写
 LEGACY_BACKUP_DIR = DATA_DIR / '.path_editor' / 'path_bak'
 
+#: **系统级 PATH 的备份**单独放（`V-389`）：右栏那串"历史备份"是用户级的，「恢复」直接写
+#: `HKCU` —— 系统级的备份要是混进去，一个手滑就把机器级那十几条灌进用户 PATH 了。
+#: 格式一样（一行一个路径，记事本就能看能拼）。
+SYS_BACKUP_DIR = DATA_DIR / 'data' / 'backups_system'
+#: 提权写系统 PATH 的那个小工人（`V-389`）：被 UAC 单独调起，只负责"把这一串写进 HKLM"。
+SYS_WRITER = Path(SELF_DIR) / 'syswrite.py'
+
 TITLE = 'PATH 管理'
 
 
@@ -90,6 +98,7 @@ class BackupManager:
     def __init__(self):
         self.backup_dir = BACKUP_DIR
         self.legacy_dir = LEGACY_BACKUP_DIR
+        self.sys_backup_dir = SYS_BACKUP_DIR
         self.backup_prefix = "path_backup_"
         self.time_format = "%Y%m%d_%H%M%S"
 
@@ -148,6 +157,26 @@ class BackupManager:
             return True, "已备份 %d 条到 %s" % (len(paths), f.name), str(f)
         except OSError as e:
             return False, "备份失败：%s" % e, ""
+
+    def create_sys_backup(self, paths, tag=""):
+        """存一份**系统级** PATH 的备份（改之前 / 改之后各一份）。返回 (ok, 文件路径)。
+
+        ★ 为什么不复用 `create_backup`：那个目录里的一切都会出现在右栏「历史备份」里，
+          而那颗「恢复」是往**用户级** `HKCU` 写的 —— 系统级的备份混进去就是个坑
+          （恢复一下就把机器级那十几条灌进用户 PATH）。所以另开一个目录、同样的纯文本格式。
+        """
+        if paths is None:
+            return False, ""
+        stamp = datetime.now().strftime(self.time_format)
+        stem = "sys_path_backup_%s%s" % (stamp, ("_" + tag) if tag else "")
+        try:
+            self.sys_backup_dir.mkdir(parents=True, exist_ok=True)
+            f = self._unique(self.sys_backup_dir, stem)
+            with open(f, 'w', encoding='utf-8') as fh:
+                fh.write("\n".join(paths) + ("\n" if paths else ""))
+            return True, str(f)
+        except OSError:
+            return False, ""
 
     def rename(self, filepath, name):
         """给一份备份**改名**（同目录、同格式，只换文件名）。返回 (ok, 说明, 新路径)。"""
@@ -237,9 +266,106 @@ class BackupManager:
 
 
 # ---------------------------------------------------------------- PATH（注册表）
+def dir_state(p):
+    """一条 PATH 在盘上到底在不在 → `'ok'` / `'missing'` / `'unknown'`。
+
+    ★ 为什么要有它（两处判定都调它，免得"用户级不标红、系统级标红"这种自相矛盾）：
+      · 带 `%VAR%` 的**得展开再看** —— `%SystemRoot%\\system32` 是系统 PATH 里最常见的一条，
+        不展开就会当成"目录不存在"集体标红；
+      · 但**变量没定义**的（`%PyCharm%` 这种）展开完还留着 `%` ⇒ 判 `'unknown'`，
+        **不标红**：宁可不说，也别把它误伤成"目录不存在"（这比漏报烦人得多）。
+    """
+    try:
+        real = os.path.expandvars(p)
+    except Exception:                                      # noqa: BLE001
+        return 'unknown'
+    if '%' in real:                                        # 还有没展开的变量 ⇒ 不下结论
+        return 'unknown'
+    return 'ok' if os.path.isdir(real) else 'missing'
+
+
+#: `ShellExecuteExW` 的参数结构（只要够拿到进程句柄、能等它退出就行）
+class _SEI(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong), ("fMask", ctypes.c_ulong),
+                ("hwnd", ctypes.c_void_p), ("lpVerb", ctypes.c_wchar_p),
+                ("lpFile", ctypes.c_wchar_p), ("lpParameters", ctypes.c_wchar_p),
+                ("lpDirectory", ctypes.c_wchar_p), ("nShow", ctypes.c_int),
+                ("hInstApp", ctypes.c_void_p), ("lpIDList", ctypes.c_void_p),
+                ("lpClass", ctypes.c_wchar_p), ("hkeyClass", ctypes.c_void_p),
+                ("dwHotKey", ctypes.c_ulong), ("hIcon", ctypes.c_void_p),
+                ("hProcess", ctypes.c_void_p)]
+
+
+SEE_MASK_NOCLOSEPROCESS = 0x00000040
+ERROR_CANCELLED = 1223
+#: 自己的 dll 实例：`use_last_error=True` 才拿得到 `ShellExecuteExW` 的 1223（用户点了取消）
+_shell32 = ctypes.WinDLL('shell32', use_last_error=True)
+_kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+
+
+def _pyw():
+    """提权跑 `syswrite.py` 用哪个解释器：优先 `pythonw.exe`（不闪黑框）。
+
+    ★ 打包成 exe 之后 `sys.executable` 是那个 exe，它跑不了 `.py` —— 这时退到 PATH 里的
+      python；两边都没有就如实报错（别提权起一个"什么都没干"的进程）。
+    """
+    exe = sys.executable or ''
+    base = os.path.basename(exe).lower()
+    if base.startswith('python'):
+        folder = os.path.dirname(exe)
+        for name in ('pythonw.exe', 'python.exe'):
+            cand = os.path.join(folder, name)
+            if os.path.isfile(cand):
+                return cand
+        return exe
+    return shutil.which('pythonw.exe') or shutil.which('python.exe') or exe
+
+
+def run_elevated(exe, script, args, timeout=180):
+    """用 UAC **只提权这一次**，跑 `exe script args…` 并等它退出。返回 (退出码, 说明)。
+
+    ★ 为什么不是"整个程序以管理员跑"（`V-389`）：那是把整个界面进程提到管理员 —— 看得见的
+      界面从此什么都能改，风险大得多，而且每开一次界面都得点一次 UAC。这里只把"写这一串
+      注册表值"这一件事交给一个**短命**的高权限子进程：它跑完就退，界面还是普通权限。
+    ★ 用户在弹窗上点「取消」⇒ 错误码 1223 ⇒ 返回 `(None, …)`：调用方要当成"这次不改"，
+      **不是失败**，不该报红、更不该重试。
+    """
+    params = '"%s"%s' % (script, ''.join(' "%s"' % a for a in args))
+    sei = _SEI()
+    sei.cbSize = ctypes.sizeof(_SEI)
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS
+    sei.lpVerb = 'runas'
+    sei.lpFile = exe
+    sei.lpParameters = params
+    sei.nShow = 0                                   # SW_HIDE：别闪一下黑框
+    try:
+        ok = _shell32.ShellExecuteExW(ctypes.byref(sei))
+    except OSError as e:
+        return None, '提权失败：%s' % e
+    if not ok:
+        code = ctypes.get_last_error()
+        if code == ERROR_CANCELLED:
+            return None, '你在 UAC 弹窗里点了「取消」，系统 PATH 一个字没动'
+        return None, '提权没起来（错误码 %s）—— 这次什么都没改' % (code or '未知')
+    if not sei.hProcess:
+        return None, '提权起来了但拿不到进程句柄 —— 这次不确定改没改，请点「刷新」看一眼'
+    try:
+        _kernel32.WaitForSingleObject(ctypes.c_void_p(sei.hProcess), int(timeout) * 1000)
+        code = ctypes.c_ulong()
+        _kernel32.GetExitCodeProcess(ctypes.c_void_p(sei.hProcess), ctypes.byref(code))
+        return int(code.value), ''
+    finally:
+        _kernel32.CloseHandle(ctypes.c_void_p(sei.hProcess))
+
+
 class PathManager:
     ENV_REG_KEY = winreg.HKEY_CURRENT_USER
     ENV_REG_SUBKEY = 'Environment'
+    #: **机器级（系统）PATH**（`V-388` 起可见、`V-389` 起可改）。
+    #: ★ 改它要管理员、而且一改影响这台机器上所有用户 —— 所以写动作**不在主进程**做：
+    #:   内容交给 `syswrite.py`，由 UAC 提权后单独跑一次（见 `write_system()`）。
+    SYS_REG_KEY = winreg.HKEY_LOCAL_MACHINE
+    SYS_REG_SUBKEY = 'SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment'
     HWND_BROADCAST = 0xFFFF
     WM_SETTINGCHANGE = 0x001A
 
@@ -249,8 +375,11 @@ class PathManager:
             self.HWND_BROADCAST, self.WM_SETTINGCHANGE, 0, ctypes.c_wchar_p('Environment'))
 
     def get_user_path_list(self):
-        """当前用户的 PATH（拆成一条一条，去掉空的）。系统 PATH 在这个键里看不到 —— 那在
-        `HKLM`，我们**不动**它（用户级就够用，也不用管理员）。"""
+        """当前用户的 PATH（拆成一条一条，去掉空的）。
+
+        ★ 这里只有**用户级**那一条（`HKCU\\Environment`）。机器级那条在 `HKLM`，见
+          `get_system_path_list()` —— 那是**只读**的（`V-388`）。
+        """
         try:
             with winreg.OpenKey(self.ENV_REG_KEY, self.ENV_REG_SUBKEY) as key:
                 value, _ = winreg.QueryValueEx(key, 'Path')
@@ -259,6 +388,72 @@ class PathManager:
             return []
         except OSError:
             return []
+
+    def get_system_path_list(self):
+        """**机器级**（系统）PATH —— 只读，原样返回（`%SystemRoot%` 这类变量不展开，注册表里
+        长什么样就什么样；界面要看"目录在不在磁盘上"时自己展开）。
+
+        ★ 为什么还是要读它（`V-388`）：用户装的东西经常是通过安装器写进**系统** PATH 的
+          （比如 mingw 装完自己在 HKLM 里加了一条）。原来界面只显示用户级那 13 条，于是
+          "我明明装了，列表里怎么没有" 成了最常问的一句话 —— 不是没注册，是**注册在另一级**。
+          读一眼就能看全，而且读 HKLM 不需要管理员。
+        """
+        try:
+            with winreg.OpenKey(self.SYS_REG_KEY, self.SYS_REG_SUBKEY) as key:
+                value, _ = winreg.QueryValueEx(key, 'Path')
+            return [p.strip() for p in str(value).split(';') if p.strip()]
+        except FileNotFoundError:
+            return []
+        except OSError:
+            return []
+
+    def write_system(self, paths):
+        """把整串写进**机器级** PATH（`HKLM`）—— 要 UAC 提权，只提这一次。返回 (ok, 说明)。
+
+        ★ 真正动手的是 `syswrite.py`（那个小工人）：主进程是普通权限，直接 `SetValueEx`
+          会 `PermissionError`，所以**不能**在这儿写。内容先落到临时文件，写不进去就不写。
+        ★ 用户点了「取消」⇒ 返回 `(False, "…取消了…")`：一个字都没动，这是**正常结果**。
+        """
+        try:
+            payload = json.dumps({'paths': list(paths)}, ensure_ascii=False)
+        except (TypeError, ValueError) as e:
+            return False, '要写的内容不对：%s' % e
+        writer = Path(SYS_WRITER)
+        if not writer.is_file():
+            return False, '缺了提权写注册表的小工人：%s' % writer
+        exe = _pyw()
+        if not exe:
+            return False, '找不到能跑提权脚本的 Python 解释器'
+        tmp = DATA_DIR / 'tmp'
+        try:
+            tmp.mkdir(parents=True, exist_ok=True)
+            tag = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+            pf = tmp / ('syswrite_%s.json' % tag)
+            rf = tmp / ('syswrite_%s.result.json' % tag)
+            pf.write_text(payload, encoding='utf-8')
+        except OSError as e:
+            return False, '写临时文件失败：%s' % e
+        try:
+            code, why = run_elevated(exe, str(writer), [str(pf), str(rf)])
+            if code is None:
+                return False, why
+            try:
+                res = json.loads(rf.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                res = {}
+            if res.get('ok'):
+                self._broadcast_change()
+                return True, (res.get('msg') or '已写入系统 PATH：%d 条' % len(paths)
+                              ) + '（已经开着的程序不会变，新开的才看得到）'
+            if res.get('msg'):
+                return False, res['msg']
+            return False, '提权进程退出了（%s）却没留下结果 —— 请点「刷新」看一眼现在是什么' % code
+        finally:
+            for f in (pf, rf):
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
 
     def is_registered(self, path):
         want = os.path.normpath(path).lower()
@@ -351,6 +546,7 @@ class Api:
           等于**一存就把用户的 PATH 重排了一遍**（改"先改后存"时才发现的）。
         """
         paths = PATHM.get_user_path_list()
+        sys_paths = PATHM.get_system_path_list()
         return {
             "ok": True,
             "count": len(paths),
@@ -360,7 +556,14 @@ class Api:
             "data_dir": str(DATA_DIR),
             "backup_dir": str(BACKUPM.backup_dir),
             "legacy_dir": str(BACKUPM.legacy_dir),
-            "missing": [p for p in paths if '%' not in p and not os.path.isdir(p)],
+            # 两边都调用 `dir_state`：带 `%VAR%` 的先展开再判，变量没定义的不下结论（不标红）
+            "missing": [p for p in paths if dir_state(p) == 'missing'],
+            # 机器级那一条：**只读**，界面灰着列在用户那份下面（`V-388`）。
+            "sys_paths": sys_paths,
+            "sys_count": len(sys_paths),
+            "sys_missing": [p for p in sys_paths if dir_state(p) == 'missing'],
+            # 系统级改动前后那两份备份落在哪（`V-389`）—— 界面上直接写出来，别让人找不着
+            "sys_backup_dir": str(BACKUPM.sys_backup_dir),
         }
 
     def probe_path(self, params=None):
@@ -379,6 +582,18 @@ class Api:
             d = os.path.dirname(p)
             return {"ok": True, "kind": "file", "path": d, "msg": "这是文件，加的是它所在的目录：%s" % d}
         return {"ok": False, "kind": "none", "path": p, "msg": "这个路径不存在：%s" % p}
+
+    def scan(self, params=None):
+        """批量判：这一串路径里哪些在盘上已经不存在了 —— 只读，不碰注册表。
+
+        ★ 为什么要有它（`V-389`）：界面里的"目录不存在"红字来自 `state`，而 `state` 报的是
+          **注册表里现在那份**。用户刚加进草稿、刚双击改完的那几条还没进注册表，红字就跟不上 ——
+          加了一条根本不存在的目录，界面上看起来却一切正常。这里让界面在草稿一变就问一次。
+        ★ 带 `%VAR%` 的按环境展开；变量本身没定义的**不下结论**（不报红），见 `dir_state`。
+        """
+        items = [str(p or "").strip() for p in ((params or {}).get("paths") or [])]
+        items = [p for p in items if p]
+        return {"ok": True, "missing": [p for p in items if dir_state(p) == 'missing']}
 
     def save(self, params=None):
         """把界面那份**清单**整串写回注册表（`V-211`：先改后存）。
@@ -401,6 +616,35 @@ class Api:
         ok, msg = PATHM.write(out, "已保存 %d 条到当前用户的 PATH（已广播）" % len(out))
         print('[path] %s（Python 改的注册表）' % msg, flush=True)
         return {"ok": ok, "msg": msg, "state": self.state()}
+
+    def sys_save(self, params=None):
+        """把界面那份清单整串写进**系统级（机器级）PATH**（`V-389`）。
+
+        ★ 顺序就是优先级，**照界面给的写**：不排序、不替用户去重（和 `save()` 同一套规矩）。
+        ★ 写之前备一份、写成功之后再备一份，都落在 `data/backups_system/`（一行一个路径）。
+        ★ 整件事要过一次 UAC：用户点了「取消」⇒ **一个字都不动**，回一句话就完，不重试。
+        ★ 影响这台机器上**所有用户** —— 界面上那颗按钮刻意做得比较"重"。
+        """
+        raw = list((params or {}).get("paths") or [])
+        out = []
+        for it in raw:
+            p = str(it or "").strip().strip('"')
+            if p:
+                out.append(os.path.normpath(p))
+        cur = PATHM.get_system_path_list()
+        same = ([os.path.normpath(x).lower() for x in out] ==
+                [os.path.normpath(x).lower() for x in cur])
+        if same:
+            return {"ok": False, "msg": "和现在一模一样，没动它", "state": self.state()}
+        ok_b, before = BACKUPM.create_sys_backup(cur, "改动前")
+        ok, msg = PATHM.write_system(out)
+        if ok:
+            ok_a, after = BACKUPM.create_sys_backup(out, "改动后")
+            tail = "；备份：%s" % (Path(after).name if ok_a else "改动后那份没存上")
+        else:
+            tail = "；改动前那份还在：%s" % (Path(before).name if ok_b else "（改动前那份也没存上）")
+        print('[path] 系统 PATH —— %s%s' % (msg, tail), flush=True)
+        return {"ok": ok, "msg": msg + tail, "state": self.state()}
 
     def info(self, params=None):
         """自证：这些数字是 Python 报的（`V-54` 那条"让后端证明它在干活"）。"""
@@ -743,12 +987,15 @@ PATH 管理 —— 命令行用法
   moss :path                  打开界面（不带参数）
   moss :path add [目录]       把目录加进**当前用户**的 PATH（别名 register / reg）
   moss :path remove [目录]    从 PATH 里移除（别名 unregister / del）
+  moss :path list             把两级 PATH 都打出来（只读）
   moss :path help             这条帮助
 
   · 省略 [目录] 时用**这个包自己的目录**。
-  · 只改当前用户（注册表 HKCU\\Environment\\Path），不需要管理员。
+  · add / remove 只改当前用户（HKCU\\Environment\\Path），不需要管理员。
+  · **系统级**（机器级，HKLM）的增删改在**界面**里做：保存时弹一次 UAC，
+    提权只用于写那一个值，写完就退；改动前后各备份一份。
   · 改完广播一次系统消息 —— **已经开着的**终端不会变，新开的才看得到。
-  · 备份在 user_data/state/path/data/backups/（界面里有备份 / 恢复 / 对比）。
+  · 备份：用户级在 data/backups/，系统级在 data/backups_system/。
 """)
 
 
@@ -764,10 +1011,13 @@ def parse_cli_args():
         return None, None
     COMMANDS = {'add': ['add', 'register', 'reg'],
                 'remove': ['remove', 'unregister', 'del'],
+                'list': ['list', 'ls', 'show'],
                 'help': ['help', '?', '-h', '--help']}
     first = args[0].lower()
     if first in COMMANDS['help']:
         return 'help', None
+    if first in COMMANDS['list']:
+        return 'list', None
     for kind in ('add', 'remove'):
         for alias in COMMANDS[kind]:
             if first.startswith(alias + ' '):
@@ -782,6 +1032,38 @@ def parse_cli_args():
     return first, " ".join(args[1:])
 
 
+def print_paths():
+    """`moss :path list` —— 把两级 PATH 原样打出来（只读，一个字都不写）。
+
+    ★ 为什么要有这条命令：界面里"我装的东西怎么不在列表里"最常见的原因就是**它注册在系统那一级**。
+      终端里一条命令就能自己看清，不用开界面、也不用猜（`V-388`）。
+    """
+    pm = PathManager()
+    user = pm.get_user_path_list()
+    sysl = pm.get_system_path_list()
+    def dump(title, items):
+        print("%s：%d 条" % (title, len(items)))
+        gone = 0
+        for i, p in enumerate(items, 1):
+            st = dir_state(p)
+            mark = '   ← 目录不存在' if st == 'missing' else ''
+            gone += 1 if st == 'missing' else 0
+            print("  %2d. %s%s" % (i, p, mark))
+        return gone
+
+    gone_user = dump("用户级 PATH（HKCU\\Environment，能改）", user)
+    print("")
+    gone_sys = dump("系统级 PATH（HKLM，机器级 —— 改它要管理员）", sysl)
+    if gone_user or gone_sys:
+        print("")
+        print("· 盘上已经不存在的：用户级 %d 条、系统级 %d 条（界面里也能一键标出来）。"
+              % (gone_user, gone_sys))
+    print("")
+    print("· 程序真正能搜到的是「用户级 + 系统级」拼起来的那条。")
+    print("· 带 %VAR% 的按当前环境展开后再看盘上有没有；变量本身没定义的就不下结论。")
+    return 0
+
+
 def main():
     if str(os.environ.get('MOSS_UI_EMBED') or '').strip() in ('1', 'true', 'yes'):
         return Embedded().loop()          # 内嵌：不开窗口，在 stdio 上答话
@@ -791,6 +1073,8 @@ def main():
     if command == 'help':
         print_cli_help()
         return 0
+    if command == 'list':
+        return print_paths()
     pm = PathManager()
     target = path or SELF_DIR
     if command == 'add':

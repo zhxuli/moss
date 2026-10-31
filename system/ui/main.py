@@ -3001,6 +3001,12 @@ class Api:
     def ai_start(self, task="", workdir="", max_tokens=None, continue_id="", model="", attachments=None):
         """开始一次任务（后台线程跑 loop，界面靠 `ai_poll` 拿步骤流）。
 
+        ★ **收尾不变量（`V-423`，用户反复报过）**：`state["running"]` 不许在最终
+          `state["result"]` 就绪之前改成 `False`。页面只在 `running=true` 时轮询；
+          如果先报"结束"、过一会儿才写入结果，页面会在中间那一拍停问，最终结论卡
+          永远不出现（只能点历史会话从盘上读回来）。收尾写盘慢（几十 MB 记录）时
+          这个空窗很容易被撞上，所以两件事必须在同一把锁里一起发布。
+
         `workdir`：这次在哪儿干活 —— 当前选中的包目录（`user_data/pkgs/<包>` 或
             `system/pkgs/<包>`），或者 `user_data/pkgs`（新建包）。
         `max_tokens`：这次任务的 token 上限（不给就读 `user_data/ai/budget.json`，默认 20 万）。
@@ -3278,10 +3284,18 @@ class Api:
                         pass
                     AI["loop"] = None
                     with AI_LOCK:
-                        AI["state"]["running"] = False     # ★ 已经到底了就别再显示"执行中"
+                        # ★ `V-423`：**先别把 running 落回 False**。
+                        #   收尾还要把最终记录写盘；大记录（几十 MB）可能要好几秒。
+                        #   以前这里先报 running=false、result 仍是 None，而页面只在
+                        #   running=true 时轮询 ⇒ 那一跳之后再也不问，结论卡永远不出现，
+                        #   只能去点历史会话把它从盘上读回来。结果和 running 必须
+                        #   **在同一把锁里一起交出去**（见下面最后那段）。
                         AI["state"]["ask"] = None
                         AI["state"]["stopping"] = False
-                    asker.cancel("finished")
+                    try:
+                        asker.cancel("finished")
+                    except Exception:                                      # noqa: BLE001
+                        pass
                     try:
                         M.clear_temp()                     # "只允许这一次"随这次跑结束
                     except Exception:                                      # noqa: BLE001
@@ -3319,6 +3333,8 @@ class Api:
                     got["run_id"] = run_id
                     got["save_error"] = "%s: %s" % (type(exc).__name__, exc)
                 with AI_LOCK:
+                    # ★ `V-423`：最终结果和 `running=false` **同一拍**交给页面。
+                    #   分开写的那段空窗，正好会让"结束但没结论卡"复现。
                     AI["state"]["result"] = got
                     AI["state"]["running"] = False
 
@@ -3333,6 +3349,10 @@ class Api:
 
     def ai_poll(self):
         """当前这次任务的进度（步骤流 + 结果）。界面每半秒问一次。
+
+        ★ **返回不变量（`V-423`）**：只要这里回 `running=False`，同一次返回里就必须
+          已经带着最终 `result`（除非真的从未开跑、`idle=True`）。不要为了"让顶栏
+          早点停"而提前把 running 落成 false —— 页面会停止轮询。
 
         ★ `V-307`/`V-308`：多回几样 —— **活的 token 账**（不用等跑完才看得到数字）、
           **现在挂着的问题**（它问你话的那张卡）、权限模式、临时目录、杀掉过哪些进程。
@@ -5447,19 +5467,43 @@ class Api:
         return s or fallback
 
     def _pkg_ids_taken(self):
-        """已经占着的包 id（包表 + 磁盘上真有的目录）—— id 撞了就加后缀。"""
+        """已经占着的包“名字”（id / 别名 / 目录名）—— 两层都查，避免新建时撞名。
+
+        ★ `V-424`：不能只看 `user_data/pkgs`。system 层有同 id / 同别名的包时，
+          新建一个空白用户包会把它**静默遮蔽**；AI 看到退出码 0，还以为成功了。
+        ★ 显示名（pkg.json 的 `name`）**不要求唯一**；id / 别名才是解析身份。
+        """
         taken = set()
         for p in (DATA.get("packages") or []):
             try:
-                taken.add(str(p.get("id") or ""))
+                taken.add(str(p.get("id") or "").strip().lower())
+                _als = p.get("aliases") or []
+                if isinstance(_als, str):
+                    _als = [_als]
+                for a in _als:
+                    taken.add(str(a or "").strip().lower())
             except Exception:                                            # noqa: BLE001
                 pass
-        try:
-            for p in (USER_DATA / "pkgs").iterdir():
-                if p.is_dir():
-                    taken.add(p.name)
-        except OSError:
-            pass
+        # 包表可能是旧的 / 还没加载：直接扫两层的目录与清单兜底。
+        for base in (USER_DATA / "pkgs", HOME / "system" / "pkgs"):
+            try:
+                for p in base.iterdir():
+                    if p.is_dir():
+                        taken.add(p.name.strip().lower())
+                        try:
+                            _man = json.loads((p / "pkg.json").read_text(encoding="utf-8"))
+                            if isinstance(_man, dict):
+                                taken.add(str(_man.get("id") or "").strip().lower())
+                                _als = _man.get("aliases") or []
+                                if isinstance(_als, str):
+                                    _als = [_als]
+                                for a in _als:
+                                    taken.add(str(a or "").strip().lower())
+                        except Exception:                                # noqa: BLE001
+                            pass
+            except OSError:
+                pass
+        taken.discard("")
         return taken
 
     def ai_suggest_pkg(self, idea=""):
@@ -5471,7 +5515,7 @@ class Api:
         ★ 只发**一次**最小请求（不带工具、不建 loop）—— 这是"起名"，不是"干活"；
           真正的活由建完包之后那一次 `ai_start` 干。
         ★ 返回的都只是**建议**：界面上那四个框照样能改，这里不替用户拍板。
-        ★ id 当场按 `core/paths.py` 的规矩掰正，并避开已有 id（`-2`、`-3`…）。
+        ★ id 当场按 `core/paths.py` 的规矩掰正，并避开两层的 id / 别名（`-2`、`-3`…）。
         """
         idea = str(idea or "").strip()
         if not idea:
@@ -5522,10 +5566,17 @@ class Api:
         tk = str(data.get("task") or "").strip()
         pid = self._pkg_id(data.get("id") or nm, fallback="new-pkg")
         taken = self._pkg_ids_taken()
-        base, n = pid, 2
-        while pid in taken and n < 50:
-            pid = ("%s-%d" % (base, n))[:24].strip("-_")
-            n += 1
+        base = pid
+        # ★ `V-424`：旧代码写成 `("%s-%d" % (base, n))[:24]`；base 刚好 24 字符时
+        #   后缀被整段截掉，循环到 50 次仍返回原 id ⇒ 用户点创建收到“已存在”。
+        #   现在按 32 字符硬上限给后缀留位。
+        for n in range(2, 1000):
+            if pid not in taken:
+                break
+            suffix = "-%d" % n
+            pid = (base[:32 - len(suffix)].rstrip("-_") + suffix).strip("-_")
+        if pid in taken:                 # 极端兜底：别把冲突的 id 交出去
+            pid = (base[:25].rstrip("-_") + "-" + uuid.uuid4().hex[:6]).strip("-_")
         if not nm:
             nm = pid
         if not ds:

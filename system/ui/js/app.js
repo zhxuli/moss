@@ -301,6 +301,10 @@ async function npCreate(){
   npBusy(false);
   if (!r2 || !r2.ok){
     npSetStatus((r2 && r2.msg) || "新建失败（没说明）", true);
+    // ★ V-424：建包失败（最常见的就是 id 在这几秒里被占了）⇒ 丢掉这份建议缓存。
+    //   下次点「创建」会重新问 AI 起名，新的建议会避开刚出现的冲突。
+    //   以前这里不清缓存：用户再点几次都是同一个已存在的 id，看起来像“AI 不会检查”。
+    if (aiMode){ NP.sug = null; NP.sugFor = ""; }
     return;
   }
   closeModal();

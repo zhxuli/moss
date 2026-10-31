@@ -247,6 +247,33 @@ def main():
     sug2 = api.ai_suggest_pkg("再来一个一样的")
     chk("A2 id 撞了自动加后缀", sug2.get("id") == "shot-archive-2", sug2.get("id"))
     api._pkg_ids_taken = _real_taken
+    # V-424: 24-char base must still get a real suffix.
+    _long_id = "a" * 24
+    SCRIPT[:] = [{"text": '{"id":"%s","name":"long","desc":"test","task":"do it"}' % _long_id,
+                  "tool_calls": [], "usage": {}, "native": True,
+                  "message": {"role": "assistant", "content": None}}]
+    api._pkg_ids_taken = lambda: {_long_id}
+    _sug_long = api.ai_suggest_pkg("long id collision")
+    api._pkg_ids_taken = _real_taken
+    # V-424: factory package ids must count as taken even if the payload table is stale.
+    _sys_ids = set()
+    _sys_root = ROOT / "system" / "pkgs"
+    if _sys_root.is_dir():
+        for _d in _sys_root.iterdir():
+            try:
+                _man = json.loads((_d / "pkg.json").read_text(encoding="utf-8"))
+                if isinstance(_man, dict) and _man.get("id"):
+                    _sys_ids.add(str(_man["id"]).lower())
+            except Exception:
+                pass
+    _taken_now = set(api._pkg_ids_taken())
+    chk("A2 ★★ 已有 system 包 id 也算被占用（新建不能静默遮蔽出厂包）",
+        bool(_sys_ids) and _sys_ids.issubset(_taken_now),
+        "system=%d missing=%s" % (len(_sys_ids), sorted(_sys_ids - _taken_now)[:5]))
+    chk("A2 ★★ 24 字符 id 撞了也必须真的加后缀（不能截掉后返回原 id）",
+        _sug_long.get("ok") and _sug_long.get("id") != _long_id
+        and _sug_long.get("id") not in {_long_id},
+        "%r -> %r" % (_long_id, _sug_long.get("id")))
     # 模型给的是中文 / 大写 / 带空格 —— 必须掰成合法 id（不能直接信它）
     SCRIPT[:] = [{"text": '```json\n{"id":"我的 截图工具","name":"截图工具","desc":"存图","task":"做它"}\n```',
                   "tool_calls": [], "usage": {}, "native": True,
@@ -366,7 +393,7 @@ def main():
     # 上一轮（C）跑完已经落了一条记录；现在按"重启 moss 之后接着聊"这条路走一遍：
     # 界面把**那条记录的 id** 交回来，宿主自己去读对话、喂给 loop。
     import ai_runs as _runs                                                # noqa: E402
-    _rows = _runs.list_runs(5)
+    _rows = _runs.list_runs(5, everywhere=True)
     _rid = (_rows[0] or {}).get("id") if _rows else ""
     chk("C2 上一轮的任务记录落盘了（重启 moss 看得见）", bool(_rid), "%r" % (_rid,))
     chk("C2 ★ 列表里标了「这条能接着聊」+ 对话条数（页面据此画那颗按钮）",
@@ -387,7 +414,7 @@ def main():
                         "reason": "问答收工（没动文件，不用跑命令）",
                         "summary": "我是 moss 的写插件助手", "usage": {}, "files": [],
                         "snapshot": None, "steps": [], "messages": []}) or {}).get("id")
-    _crow = [r for r in _runs.list_runs(5) if r.get("id") == _cid]
+    _crow = [r for r in _runs.list_runs(5, everywhere=True) if r.get("id") == _cid]
     chk("C2 ★★ 纯问答那次列表里 `kind=chat`（界面据此画「💬 你是哪个大模型?」）",
         bool(_crow) and _crow[0].get("kind") == "chat",
         json.dumps(_crow[0] if _crow else {}, ensure_ascii=False)[:130])
@@ -1329,6 +1356,57 @@ def main():
         os.environ.pop("MOSS_HOST_CMD", None)
     else:
         os.environ["MOSS_HOST_CMD"] = _oldh
+
+    print()
+    print("=" * 72)
+    print("K：`V-423` 收尾竞态 —— `running=false` 必须和最终 `result` 同一拍")
+    print("=" * 72)
+    # ★ 这条不能只靠"正常跑一遍"：正常写盘太快，空窗可能只有几十毫秒，探针会假绿。
+    #   这里把最终记录写盘**强制拖慢 1.5 秒**，专门让轮询撞进老代码那段空窗。
+    #   不变量：`ai_poll()` 只要回 `running=false`，同一份 payload 里就必须已经有
+    #   最终 `result`；否则页面会停轮询，结论卡永远不出现（用户报过多次）。
+    _script_before = list(SCRIPT)
+    _client_before = ai_client.Client
+    _save_orig = _runs.save
+
+    def _slow_save(rec, scope=None):
+        time.sleep(1.5)
+        return _save_orig(rec, scope)
+
+    _runs.save = _slow_save
+    try:
+        SCRIPT[:] = [call("answer", {"text": "收尾结果在这里"})]
+        ai_client.Client = FakeClient
+        _k_started = api.ai_start("收尾竞态探针", str(pkgs), 100000000)
+        chk("K 探针任务起来了", bool(_k_started.get("ok")), str(_k_started)[:100])
+        _empty_finish, _k_done, _k_polls = [], None, 0
+        _k_deadline = time.time() + 20
+        while time.time() < _k_deadline:
+            _kp = api.ai_poll()
+            _k_polls += 1
+            if not _kp.get("running") and not _kp.get("result"):
+                _empty_finish.append({
+                    "poll": _k_polls,
+                    "steps": len(_kp.get("steps") or []),
+                    "idle": bool(_kp.get("idle")),
+                })
+            if not _kp.get("running") and _kp.get("result"):
+                _k_done = _kp
+                break
+            time.sleep(0.1)
+        chk("K ★★ 收尾期间绝不出现 `running=false` 但 `result=null`（出现 ⇒ 页面会停轮询）",
+            not _empty_finish,
+            "空窗命中=%s，共轮询 %d 次" % (json.dumps(_empty_finish, ensure_ascii=False), _k_polls))
+        chk("K ★★ 慢写盘结束后最终结果仍然回到页面（不靠点历史）",
+            bool(_k_done) and
+            str(((_k_done or {}).get("result") or {}).get("summary") or "") == "收尾结果在这里",
+            "轮询=%d，结果=%s" % (_k_polls,
+                                 json.dumps((_k_done or {}).get("result") or {},
+                                            ensure_ascii=False)[:120]))
+    finally:
+        _runs.save = _save_orig
+        ai_client.Client = _client_before
+        SCRIPT[:] = _script_before
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()

@@ -710,6 +710,26 @@ def cmd_new(pid, kind="task", name="", desc=""):
         out.print_cyan("[错误] id 不合法：'%s'（只允许 %s）" % (pid, paths.ID_RE.pattern))
         out.print_cyan("       规则：小写字母开头，只含小写字母/数字/-/_，不超过 32 字符。")
         return 1
+    # ★ `V-424`：**id 是全局身份，不能只看 user_data/pkgs 那个目录**。
+    #   以前这里只查 `user_data/pkgs/<id>`：如果 system 层已经有一个同 id / 同别名的包，
+    #   `moss --new` 会“成功”建出一个空白用户包，把出厂包**静默遮蔽**掉；
+    #   AI 在命令行里看到的是退出码 0，会以为新建成功，根本不知道撞了。
+    #   现在 id / 别名先按两层的包表统一查一遍，撞了就明确报出来（给 AI 看的就是这句）。
+    try:
+        clash = registry.find_alias(pid)
+    except Exception:                                                  # noqa: BLE001
+        clash = None
+    if clash:
+        clash_id = str(clash.get("id") or "")
+        layer_cn = "系统" if clash.get("layer") == "system" else "用户"
+        if clash_id == pid:
+            out.print_cyan("[错误] id '%s' 已经被%s层的包占用了：%s"
+                           % (pid, layer_cn, clash.get("dir")))
+        else:
+            out.print_cyan("[错误] id '%s' 和%s层包 '%s' 的别名冲突：%s"
+                           % (pid, layer_cn, clash_id, clash.get("dir")))
+        out.print_cyan("       换一个 id 再试（不能和已有包的 id / 别名重名）。")
+        return 1
     target = paths.USER_PKGS / pid
     if target.exists():
         out.print_cyan("[错误] 已经存在：%s" % target)

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PATH 管理</title>
+<title>PATH</title>
 <link rel="stylesheet" href="style.css">
 <script src="vendor/vue.global.prod.js"></script>
 <script src="icons.js"></script>
@@ -11,212 +11,268 @@
 </head>
 <body>
 <div id="app" :class="{dragging: dragOn}">
-<div class="wrap">
 
-  <!-- ============================ 左：PATH ============================ -->
-  <main class="card main">
+  <!-- ── 顶栏：产品名 + 两级条数 + 两个动作。只有一条线，不叠卡片 ─────────── -->
+  <header class="bar">
+    <h1>PATH</h1>
+    <p class="sub">
+      <span>用户级 <b>{{ pathCount }}</b></span>
+      <span class="dot"></span>
+      <span>系统级 <b>{{ sysCount }}</b></span>
+      <template v-if="missingN"><span class="dot"></span>
+        <span class="bad">{{ missingN }} 条目录不存在</span></template>
+    </p>
+    <div class="baracts">
+      <button class="tbtn" id="btn-backup" @click="openDrawer"
+              :title="'备份 / 恢复：' + backups.length + ' 份备份'">
+        <i v-html="ic('history')"></i>备份
+        <b class="tcount">{{ backups.length }}</b></button>
+      <button class="icobtn" id="btn-refresh" @click="load" :disabled="busy"
+              title="重新读一遍注册表（有没保存的改动会先问一声）"
+              v-html="ic('refresh-cw')"></button>
+    </div>
+  </header>
 
-    <!-- 顶栏：标题 + （有事才出现的）操作组；下面一条"输入 + 添加"的复合组 -->
-    <div class="hd">
-      <header class="hdrow">
-        <div class="title">
-          <h1><i v-html="ic('layers')"></i>PATH 管理</h1>
-          <p>当前用户的环境变量管理 · <span class="mono">{{ pathCount }}</span> 条<template
-            v-if="missingN"> · <span class="warn">{{ missingN }} 条目录不存在</span></template></p>
-        </div>
-        <div class="hdact">
-          <!-- 刷新是我们真有的功能（设计稿里没有），做成一颗不起眼的图标按钮 -->
-          <button id="btn-refresh" class="iconbtn" @click="load" :disabled="busy"
-                  title="重新读一遍注册表（有没保存的改动会先问一声）" v-html="ic('refresh-cw')"></button>
+  <!-- ── 输入行：一个输入框 + 一颗主按钮；只在有用的时候才出现的两个动作 ───── -->
+  <div class="cmd">
+    <div class="field" :class="{bad: !!inputWarn}">
+      <i class="lead" v-html="ic('folder-input')"></i>
+      <input id="path-input" v-model="input" spellcheck="false" autocomplete="off"
+             placeholder="粘贴一个目录；留空点「添加」= 选文件夹"
+             @keyup.enter="add">
+      <!-- id 给探针用：它按 id 找"这颗警告三角在不在、title 说了什么" -->
+      <span class="fieldwarn" id="input-warning" v-if="inputWarn" :title="inputWarn"
+            v-html="ic('alert-triangle')"></span>
+      <button class="fieldx" id="btn-clear" v-if="input" @click="clearInput" title="清空"
+              v-html="ic('x')"></button>
+    </div>
+    <button id="btn-add" class="btn primary" @click="add" :disabled="busy">
+      <i v-html="ic('plus')"></i>添加</button>
+    <div class="cmdgap"></div>
+    <button id="btn-dedup" class="btn quiet" v-if="hasDup" @click="dedup" :disabled="busy"
+            title="去掉重复项（大小写不敏感）">
+      <i v-html="ic('wand-2')"></i>去重</button>
+    <button id="btn-clean" class="btn quiet danger" v-if="hasMissing" @click="dropMissing" :disabled="busy"
+            title="把目录已经不存在的那些摘掉（带 %VAR% 的不动）">
+      <i v-html="ic('eraser')"></i>清理失效</button>
+  </div>
 
-          <!-- 这一组**有事才出现**：有重复才给「去重」、有失效才给「清理失效」、改了才给「保存修改」 -->
-          <div id="action-buttons-group" class="actgroup" :class="{on: anyAction}">
-            <button id="btn-dedup" class="actbtn" v-if="hasDup" @click="dedup" :disabled="busy"
-                    title="去掉重复项（大小写不敏感）">
-              <i v-html="ic('wand-2')"></i>去重</button>
-            <button id="btn-clean" class="actbtn danger" v-if="hasMissing" @click="dropMissing" :disabled="busy"
-                    title="把目录已经不存在的那些摘掉（带 %VAR% 的不动）">
-              <i v-html="ic('trash-2')"></i>清理失效</button>
-            <div id="action-divider" class="actdiv" v-if="(hasDup || hasMissing) && dirty"></div>
-            <button id="btn-undo" class="actbtn" v-if="dirty" @click="revert" :disabled="busy"
-                    title="放弃没保存的改动，回到注册表里现在的样子">
-              <i v-html="ic('undo-2')"></i>撤销</button>
-            <button id="btn-save" class="actsave" v-if="dirty" @click="save" :disabled="busy"
-                    :title="'把改动写回当前用户的 PATH（' + pendingN + ' 处，要广播一次）'">
-              <i v-html="ic('save')"></i>保存修改</button>
-          </div>
-        </div>
-      </header>
-
-      <!-- 「添加」：输入框留空 = 选文件夹；填了路径 = 先看它是不是真目录（`V-211`） -->
-      <div class="compound">
-        <div class="inputwrap">
-          <span class="lead" v-html="ic('folder-input')"></span>
-          <input id="path-input" v-model="input" spellcheck="false" :class="{bad: !!inputWarn}"
-                 placeholder="粘贴一个目录；留空点「添加」= 选文件夹"
-                 @keyup.enter="add" @blur="inputWarn = ''">
-          <span id="input-warning" class="warnicon" v-if="inputWarn" :title="inputWarn"
-                v-html="ic('alert-triangle')"></span>
-          <button id="btn-clear" class="clearbtn" v-if="input" @click="clearInput" title="清空"
-                  v-html="ic('x')"></button>
-        </div>
-        <div class="vline"></div>
-        <button id="btn-add" class="addbtn" @click="add" :disabled="busy">
-          <i v-html="ic('plus')"></i>添加</button>
-      </div>
+  <!-- ── 清单：两级在一张表里，各自一个分组头（各自保存） ────────────────── -->
+  <div class="table">
+    <div class="thead">
+      <span></span>
+      <span class="th-idx">#</span>
+      <span class="th-path">路径</span>
+      <span class="th-state">状态</span>
+      <span class="th-act"></span>
     </div>
 
-    <!-- 列表：拖手柄调优先级（顺序就是 PATH 的优先级）、失效的标红带斜纹、悬停出操作 -->
-    <div class="listwrap">
-      <ul id="path-list" class="plist">
-        <li class="row" v-for="(p, i) in paths" :key="p"
-            :class="{invalid: isMissing(p), fresh: isFresh(p), removing: leaving === p,
-                     dragging: dragFrom === p, over: dragOver === i}"
-            :draggable="dragArmed === p"
-            @dragstart="dragStart(p, $event)" @dragover="dragOverRow(i, $event)"
-            @drop="dropAt(i, $event)" @dragend="dragEnd()">
-          <span class="grip" title="按住我拖 = 调整优先级（顺序就是 PATH 的顺序）"
-                @mousedown="dragArmed = p" @mouseup="dragArmed = null" v-html="ic('grip-vertical')"></span>
-          <div class="pcell">
-            <i class="pico" v-if="isMissing(p)" title="磁盘上没有这个目录" v-html="ic('alert-triangle')"></i>
-            <span class="ptext" :title="p">{{ p }}</span>
-          </div>
-          <span class="chip" v-if="same(p, selfDir)" title="这个包自己的目录">本包</span>
-          <span class="chip new" v-if="isFresh(p)" title="还没保存 —— 点右上角「保存修改」才写进 PATH">未保存</span>
-          <div class="racts">
-            <button class="ract" @click="copyPath(p)" title="复制这条路径">
-              <i v-html="ic('copy')"></i>复制</button>
-            <button class="ract" @click="editPath(p)" title="拿出来改：填回上面的输入框（改完点「添加」放回去）">
-              <i v-html="ic('edit-3')"></i>拿出来改</button>
-            <button class="ract del" @click="remove(p)" title="从列表里去掉（要保存才生效）">
-              <i v-html="ic('trash')"></i>删除</button>
-          </div>
-        </li>
+    <div class="tbody">
+      <!-- ============ 用户级 ============ -->
+      <section class="grp">
+        <header class="grphd">
+          <span class="gname">用户级</span>
+          <code class="greg">HKCU\Environment</code>
+          <span class="gcount">{{ pathCount }}</span>
+          <span class="gdirty" v-if="dirty">
+            <i v-html="ic('circle-alert')"></i>{{ pendingN }} 处未保存</span>
+          <span class="gfill"></span>
+          <span id="action-buttons-group" class="gacts" v-if="dirty">
+            <button id="btn-undo" class="btn quiet sm" @click="revert" :disabled="busy">撤销</button>
+            <button id="btn-save" class="btn primary sm" @click="save" :disabled="busy">
+              保存修改</button>
+          </span>
+        </header>
 
-        <!-- 拖到这里 = 放到最后一条 -->
-        <li class="dropend" v-if="dragFrom" :class="{on: true, over: dragOver === paths.length}"
-            @dragover="dragOverRow(paths.length, $event)" @drop="dropAt(paths.length, $event)"></li>
+        <ul id="path-list" class="rows">
+          <li class="row" v-for="(p, i) in paths" :key="p"
+              :class="{invalid: isMissing(p), fresh: isFresh(p), removing: leaving === p,
+                       dragging: dragFrom === p, over: dragOver === i}"
+              :draggable="dragArmed === p"
+              @dragstart="dragStart(p, $event)" @dragover="dragOverRow(i, $event)"
+              @drop="dropAt(i, $event)" @dragend="dragEnd()">
+            <span class="grip" title="按住拖 = 调整优先级（顺序就是系统搜命令的顺序）"
+                  @mousedown="dragArmed = p" @mouseup="dragArmed = null"
+                  v-html="ic('grip-vertical')"></span>
+            <span class="idx">{{ i + 1 }}</span>
+            <span class="path" :title="p">{{ p }}</span>
+            <span class="state">
+              <span class="flag bad" v-if="isMissing(p)">不存在</span>
+              <span class="flag new" v-else-if="isFresh(p)">未保存</span>
+              <span class="flag self" v-else-if="same(p, selfDir)" title="这个包自己的目录">本包</span>
+            </span>
+            <span class="racts">
+              <button class="iabtn" @click="copyPath(p)" title="复制这条路径" v-html="ic('copy')"></button>
+              <button class="iabtn" @click="editPath(p)"
+                      title="拿出来改：填回上面的输入框，改完点「添加」放回去"
+                      v-html="ic('edit-3')"></button>
+              <button class="iabtn danger" @click="remove(p)" title="从列表里去掉（要保存才生效）"
+                      v-html="ic('x')"></button>
+            </span>
+          </li>
 
-        <li class="empty" v-if="!paths.length">
-          <i v-html="ic('folder-open')"></i>
-          <b>PATH 还是空的</b>
-          <span>上面填一个目录，或者把文件夹直接拖进来</span>
-        </li>
-      </ul>
+          <li class="dropend" v-if="dragFrom" :class="{over: dragOver === paths.length}"
+              @dragover="dragOverRow(paths.length, $event)" @drop="dropAt(paths.length, $event)"></li>
 
-      <!-- 从系统拖文件夹进来时铺一层提示（只在拖动中出现） -->
-      <div class="dropmask" v-if="dragOn">
-        <i v-html="ic('folder-plus')"></i>
-        <b>松手 = 把这个目录加进列表</b>
-        <span>拖文件夹（或文件，会取它所在的目录）· 记得点「保存修改」</span>
-      </div>
+          <li class="empty" v-if="!paths.length">
+            <b>这一级是空的</b>
+            <span>上面填一个目录，或者把文件夹直接拖进来</span>
+          </li>
+        </ul>
+      </section>
+
+      <!-- ============ 系统级 ============ -->
+      <section class="grp sys" v-if="sysSaved.length || sysDraft.length">
+        <header class="grphd">
+          <span class="gname">系统级</span>
+          <code class="greg">HKLM\…\Environment</code>
+          <span class="gcount">{{ sysCount }}</span>
+          <span class="gtag"><i v-html="ic('lock')"></i>需管理员</span>
+          <span class="gdirty" v-if="sysDirty">
+            <i v-html="ic('circle-alert')"></i>{{ sysPendingN }} 处未保存</span>
+          <span class="gfill"></span>
+          <span class="gacts" v-if="sysDirty">
+            <button class="btn quiet sm" @click="sysRevert" :disabled="busy">撤销</button>
+            <button class="btn primary sm" @click="sysSave" :disabled="busy"
+                    title="会弹一次 UAC；改动前后各存一份备份">
+              保存到系统</button>
+          </span>
+        </header>
+
+        <ul class="rows">
+          <li class="row srow" v-for="(p, k) in sysDraft" :key="'sys' + keyOf(p)"
+              :class="{invalid: isSysMissing(p), over: sysDragOver === k, dragging: sysDragFrom === p}"
+              draggable="true"
+              @dragstart="sysDragStart(p, $event)" @dragover="sysDragOverAt(k, $event)"
+              @drop="sysDropAt(k, $event)" @dragend="sysDragEnd">
+            <span class="grip" v-html="ic('grip-vertical')"></span>
+            <span class="idx">{{ k + 1 }}</span>
+            <input class="sin" v-if="sysEditing === k" v-model="sysEditVal" spellcheck="false"
+                   @keyup.enter="sysCommitEdit(k)" @keyup.esc="sysEditing = -1" @blur="sysCommitEdit(k)">
+            <span class="path" v-else :title="p + '（双击改）'" @dblclick="sysBeginEdit(k)">{{ p }}</span>
+            <span class="state">
+              <span class="flag bad" v-if="isSysMissing(p)">不存在</span>
+              <span class="flag edit" v-else-if="sysEditing === k">改着呢</span>
+            </span>
+            <span class="racts">
+              <button class="iabtn" @click="copyPath(p)" title="复制这条路径" v-html="ic('copy')"></button>
+              <button class="iabtn" @click="sysBeginEdit(k)" title="就地改（双击路径也行）"
+                      v-html="ic('edit-3')"></button>
+              <button class="iabtn danger" @click="sysRemove(k)" title="从系统 PATH 里去掉（点保存才真改）"
+                      v-html="ic('x')"></button>
+            </span>
+          </li>
+        </ul>
+
+        <div class="addline">
+          <i v-html="ic('plus')"></i>
+          <input class="sin add" v-model="sysInput" spellcheck="false" autocomplete="off"
+                 @keyup.enter="sysAdd" placeholder="加一条到系统级，回车">
+          <button class="btn quiet sm" @click="sysAdd">加一条</button>
+          <span class="addnote">改动前后各存一份：<span class="mono">{{ shortSysBak }}</span></span>
+        </div>
+      </section>
     </div>
 
-    <!-- 底栏：左边一句状态、右边一句提示 + 后端自证 -->
-    <div class="statusbar">
-      <span id="status-text">总计 {{ pathCount }} 条路径</span>
-      <span class="r">
-        <span>支持拖拽调整优先级<span v-if="pendingN">（有 {{ pendingN }} 处没保存）</span></span>
-        <span class="proof" :title="'备份目录：' + backupDir">{{ info.python ? 'Python ' + info.python + ' · ' : '' }}{{ shortData }}</span>
-      </span>
+    <div class="dropmask" v-if="dragOn">
+      <i v-html="ic('folder-plus')"></i>
+      <b>松手 = 把这个目录加进用户级</b>
+      <span>拖文件夹（或文件，会取它所在的目录）· 加完记得保存</span>
     </div>
-  </main>
+  </div>
 
-  <!-- ============================ 右：备份 / 恢复 ============================ -->
-  <aside class="card aside">
-    <div class="rhd">
-      <h2><i v-html="ic('history')"></i>历史备份</h2>
-      <button class="ghostbtn" @click="startBackup" :disabled="busy"
-              title="把当前注册表里的 PATH 存成一份文本（名字可以改）">
+  <!-- ── 底栏：一句话状态 + 一条提示 ─────────────────────────────────────── -->
+  <footer class="status">
+    <span class="st-dot" :class="{on: dirty || sysDirty}"></span>
+    <span id="status-text">{{ dirty || sysDirty ? '有没保存的改动' : '和注册表一致' }}</span>
+    <span class="st-sep"></span>
+    <span class="st-hint">拖动行首的把手调整优先级</span>
+    <span class="sp"></span>
+    <span class="st-meta" :title="'备份目录：' + backupDir">{{ info.python ? 'Python ' + info.python : '' }}</span>
+    <span class="st-meta mono" :title="dataDir">{{ shortData }}</span>
+  </footer>
+
+  <!-- ── 备份：抽屉（原来那栏一直空着占宽度，现在按需拉出来） ─────────────── -->
+  <div class="scrim" v-if="drawer" @click="closeDrawer"></div>
+  <aside class="drawer" :class="{open: drawer}">
+    <header class="drhd">
+      <h2>历史备份</h2>
+      <b class="tcount">{{ backups.length }}</b>
+      <span class="gfill"></span>
+      <button class="btn quiet sm" @click="startBackup" :disabled="busy">
         <i v-html="ic('file-plus-2')"></i>备份当前</button>
-    </div>
+      <button class="icobtn" @click="closeDrawer" title="关掉（Esc）" v-html="ic('x')"></button>
+    </header>
 
-    <!-- 起名（`V-209`）：默认还是时间戳，想改就改 —— 回车 = 存，Esc = 算了 -->
-    <div class="nameRow" v-if="naming">
-      <span class="fi2"><i v-html="ic('pencil')"></i>
+    <div class="drname" v-if="naming">
+      <span class="field sm">
+        <i class="lead" v-html="ic('pencil')"></i>
         <input id="bk-name-input" v-model="bkName" spellcheck="false" placeholder="给这份备份起个名字"
-               @keyup.enter="doBackup" @keyup.esc="naming = false"></span>
-      <button class="minibtn solid" @click="doBackup" :disabled="busy" title="存这一份">
-        <i v-html="ic('check')"></i>存</button>
-      <button class="minibtn" @click="naming = false" title="算了"><i v-html="ic('x')"></i></button>
-      <div class="hintline">留空 = 用时间戳（和以前一样）；名字里的 <span class="mono">\/:*?&quot;&lt;&gt;|</span> 会被去掉</div>
+               @keyup.enter="doBackup" @keyup.esc="naming = false">
+      </span>
+      <button class="btn primary sm" @click="doBackup" :disabled="busy">存</button>
+      <button class="btn quiet sm" @click="naming = false">算了</button>
     </div>
+    <p class="drhint" v-if="naming">留空 = 用时间戳。名字里的 <span class="mono">\/:*?&quot;&lt;&gt;|</span> 会被去掉</p>
 
-    <div class="blistwrap">
-      <div class="axis"></div>
-      <div id="backup-list" class="blist">
-        <div class="bentry" v-for="(b, i) in backups" :key="b.file" :class="{open: isOpen(b)}"
-             @mouseenter="hoverOn(b)" @mouseleave="hoverOff(b)">
-          <span class="dot" :class="{latest: i === 0}"></span>
-          <div class="bcard">
-            <div class="bbody">
-              <div class="brow1">
-                <span class="btime">{{ b.time }}</span>
-                <span class="chip">{{ b.total }} 条</span>
-              </div>
-              <!-- 名字：平时一行字，**双击**变输入框（`V-211`） -->
-              <div class="bname">
-                <input v-if="renaming === b.file" id="bk-rename-input" class="nameinput"
-                       v-model="renameVal" spellcheck="false"
-                       @keyup.enter="doRename(b)" @keyup.esc="renaming = null">
-                <span v-else class="namelabel" :class="{custom: !!b.name}" title="双击改名"
-                      @dblclick="startRename(b)">{{ b.name || '默认名（时间戳）' }}</span>
-              </div>
-              <div class="bmeta">
-                <span class="chip" v-if="b.legacy" title="老位置 .path_editor/path_bak 里的备份，只能读">老位置</span>
-                <span v-if="b.add" class="plus">+{{ b.add }}</span>
-                <span v-if="b.remove" class="minus">-{{ b.remove }}</span>
-                <span v-if="!b.add && !b.remove" class="dim">和现在一样</span>
-              </div>
-              <div class="bacts">
-                <button class="bact" :class="{on: pinned === b.file}" @click="togglePin(b)"
-                        :title="pinned === b.file ? '取消固定（点一下就不钉着它了）'
-                                                  : '固定住：鼠标移开也不收（不点的话，移开就自动收起）'">
-                  <i v-html="ic('folder-search')"></i>{{ pinned === b.file ? '已固定' : '对比' }}</button>
-                <button class="bact" @click="restore(b)" :disabled="busy" title="整串写回注册表（会覆盖现在的）">
-                  <i v-html="ic('rotate-ccw')"></i>恢复</button>
-                <button class="bact danger" @click="delBackup(b)" :disabled="busy" title="删掉这份备份">
-                  <i v-html="ic('trash-2')"></i>删除</button>
-              </div>
-            </div>
-
-            <!-- 恢复差异预览：**拿它和你现在界面上的清单比**（不管存没存），鼠标一上来就自动展开 -->
-            <div class="bdiff" :class="{open: isOpen(b)}">
-              <div class="bdiffin">
-                <div class="bdiffhd">
-                  <span>跟当前清单的差异</span>
-                  <button class="difftoggle" @click="toggleAll(b)">{{ showAllOf(b) ? '仅看差异' : '显示全部' }}</button>
-                </div>
-                <ul class="difflist">
-                  <li class="ditem" v-for="(d, k) in diffsOf(b)" :key="k" :class="d.type">
-                    <span class="tag">{{ d.type === 'add' ? '+ 增加' : (d.type === 'del' ? '- 减少' : '= 相同') }}</span>
-                    <span class="dp" :title="d.path">{{ d.path }}</span>
-                  </li>
-                  <li class="bnote" v-if="!diffsOf(b).length">当前清单与此备份完全相同，没有增减</li>
-                </ul>
-              </div>
-            </div>
+    <div id="backup-list" class="blist">
+      <div class="bentry" v-for="(b, i) in backups" :key="b.file" :class="{open: isOpen(b)}"
+           @mouseenter="hoverOn(b)" @mouseleave="hoverOff(b)">
+        <div class="bline">
+          <span class="bwhen mono">{{ b.time }}</span>
+          <span class="bcount">{{ b.total }} 条</span>
+          <span class="bdelta">
+            <span v-if="b.add" class="plus">+{{ b.add }}</span>
+            <span v-if="b.remove" class="minus">−{{ b.remove }}</span>
+            <span v-if="!b.add && !b.remove" class="dim">无变化</span>
+          </span>
+        </div>
+        <div class="bname">
+          <input v-if="renaming === b.file" id="bk-rename-input" class="sin"
+                 v-model="renameVal" spellcheck="false"
+                 @keyup.enter="doRename(b)" @keyup.esc="renaming = null">
+          <span v-else class="namelabel" :class="{custom: !!b.name}" title="双击改名"
+                @dblclick="startRename(b)">{{ b.name || '默认名（时间戳）' }}</span>
+          <span class="flag old" v-if="b.legacy" title="老位置 .path_editor/path_bak 里的备份，只能读">老位置</span>
+        </div>
+        <div class="bacts">
+          <button class="btn quiet sm" :class="{on: pinned === b.file}" @click="togglePin(b)"
+                  :title="pinned === b.file ? '取消固定' : '固定住对比结果（不点就随鼠标收起）'">
+            <i v-html="ic('folder-search')"></i>{{ pinned === b.file ? '已固定' : '对比' }}</button>
+          <button class="btn quiet sm" @click="restore(b)" :disabled="busy"
+                  title="整串写回注册表（会覆盖现在的）">
+            <i v-html="ic('rotate-ccw')"></i>恢复</button>
+          <button class="btn quiet sm danger" @click="delBackup(b)" :disabled="busy">
+            <i v-html="ic('trash-2')"></i>删除</button>
+        </div>
+        <div class="bdiff" v-show="isOpen(b)">
+          <div class="bdiffhd">
+            <span>跟当前清单的差异</span>
+            <button class="linkbtn" @click="toggleAll(b)">{{ showAllOf(b) ? '仅看差异' : '显示全部' }}</button>
           </div>
+          <ul class="difflist">
+            <li class="ditem" v-for="(d, k) in diffsOf(b)" :key="k" :class="d.type">
+              <span class="dtag">{{ d.type === 'add' ? '+' : (d.type === 'del' ? '−' : '=') }}</span>
+              <span class="dpath" :title="d.path">{{ d.path }}</span>
+            </li>
+            <li class="dnote" v-if="!diffsOf(b).length">这份备份和当前清单完全相同</li>
+          </ul>
         </div>
+      </div>
 
-        <div class="empty" v-if="!backups.length">
-          <i v-html="ic('save')"></i>
-          <b>还没有备份</b>
-          <span>点上面「备份当前」<br>把注册表里的 PATH 存成一行一个路径的文本</span>
-        </div>
+      <div class="drempty" v-if="!backups.length">
+        <b>还没有备份</b>
+        <span>点「备份当前」把注册表里的 PATH 存成一行一个路径的文本</span>
       </div>
     </div>
   </aside>
-</div>
 
-<!-- Toast：最后一句人话（成功 / 失败 / 提醒都在这儿） -->
-<transition-group name="toast" tag="div" id="toast-container" class="toasts">
-  <div class="toast" v-for="t in toasts" :key="t.id" :class="{error: t.type === 'error'}">
-    <i :class="t.type === 'error' ? '' : 'ok'"
-       v-html="ic(t.type === 'error' ? 'x-circle' : (t.type === 'success' ? 'check-circle-2' : 'info'))"></i>
-    <span>{{ t.text }}</span>
-  </div>
-</transition-group>
+  <transition-group name="toast" tag="div" id="toast-container" class="toasts">
+    <div class="toast" v-for="t in toasts" :key="t.id" :class="t.type">
+      <i v-html="ic(t.type === 'error' ? 'x-circle' : (t.type === 'success' ? 'check-circle-2' : 'info'))"></i>
+      <span>{{ t.text }}</span>
+    </div>
+  </transition-group>
 </div>
 <script src="app.js"></script>
 </body>

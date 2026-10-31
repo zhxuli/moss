@@ -31,8 +31,8 @@ M = 1000000
 MAX_TOKENS_DEFAULT = 100 * M
 #: 到上限的百分之多少就劝它收尾
 WARN_PCT = 0.8
-#: 兜底的步数上限（不给界面调）
-STEPS_BACKSTOP = 200
+#: ★ `V-425`：**没有步数上限了**（你定的：有 token 上限就该只剩这一道闸）。
+#:   原来这里有个 `STEPS_BACKSTOP = 200`，真机就是它把一次只用了一成七预算的活掐死的。
 #: 允许的范围（token）：0.5 百万 ~ 200 亿
 MIN_TOKENS = int(0.5 * M)
 MAX_TOKENS = 20000 * M
