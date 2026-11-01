@@ -13,6 +13,7 @@
 所以这里**绝不**用白名单重建字典 —— 只在原始字典上补默认值。
 """
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -72,6 +73,69 @@ def _fix_shape(pkg):
             pkg[key] = fixed
 
 
+def _example_value(v):
+    """示例里 `k=v` 的 v 怎么写回一行命令（空格要引号，布尔用小写 —— 参数解析认这个）。"""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    s = str(v)
+    return '"%s"' % s if (" " in s or s == "") else s
+
+
+def _one_example(it):
+    """一条 `ai.examples` → `{"args": …}`；认不出来返回 None（并说一句）。"""
+    if isinstance(it, str):
+        return {"args": it.strip()}                 # 空串 = "不带参数地调一次"，也留着
+    if not isinstance(it, dict):
+        print("[警告] pkg.json 的 ai.examples 里有一项既不是字符串也不是对象，已丢掉：%r"
+              % (it,), file=sys.stderr)
+        return None
+    args = it.get("args")
+    if isinstance(args, str):
+        return it
+    if args is not None:                            # "args": 123 这种
+        print("[警告] pkg.json 的 ai.examples 里的 args 应该是字符串，已按 %r 处理"
+              % str(args), file=sys.stderr)
+        return dict(it, args=str(args))
+    # 没有 args → 其余键当 `k=v` 参数拼一行（第 3 代写法，见 _fix_ai 的注释）
+    pairs = ["%s=%s" % (k, _example_value(v)) for k, v in it.items()
+             if k not in ("note", "why", "desc") and not isinstance(v, (dict, list))]
+    if not pairs:
+        return {"args": ""}                         # `{}` / 只有 note = 不带参数的调用
+    return dict(it, args=" ".join(pairs))
+
+
+def _fix_ai(pkg):
+    """`ai.examples` 的每一条**归一化成 `{"args": "…"}`**。
+
+    ★ 手写清单长出了四代写法，都真实存在于本机：
+        1. `{"args": "webp 60% 1200 *.png", "note": "…"}`   ← 契约里写的（`img`）
+        2. `"--list"` / `":proxycheck undo"`                ← 直接写参数串（`higgs` / `cli-proxy-check`）
+        3. `{"target": "8.8.8.8"}`                          ← 按参数名写 key=value（`ip` / `md5`）
+        4. `{}`                                             ← "不带参数地调一次"（`ip`）
+      下游（界面、`moss --info`）只认一种形状，而以前只认 1：于是 2 / 3 / 4 全被
+      `e.get("args")` **静默吞掉** —— `higgs` 的 8 条示例在详情页和 `--ui-payload`
+      里一条都不剩，**谁也没报错**。静默丢数据比报错坏得多，所以统一在这一层。
+    ★ 字符串 → 对象**不打提示**（和 `params: ["text"]` 一样，是写法差异不是写错）；
+      真的认不出来的形状才说一句。
+    """
+    raw = pkg.get("ai")
+    if not isinstance(raw, dict):
+        return
+    items = raw.get("examples")
+    if items is None or items == "":
+        return
+    ai = dict(raw)                                  # 别就地改调用方那份
+    if not isinstance(items, list):
+        items = [items]
+    fixed = []
+    for it in items:
+        ex = _one_example(it)
+        if ex is not None:
+            fixed.append(ex)
+    ai["examples"] = fixed
+    pkg["ai"] = ai
+
+
 def normalize(raw, pid=None):
     """补默认值。**入参的每一个字段都保留**，包括将来才认识的那些。"""
     pkg = dict(raw) if isinstance(raw, dict) else {}
@@ -81,6 +145,7 @@ def normalize(raw, pid=None):
     pkg["kind"] = str(pkg.get("kind") or "task")
     pkg["version"] = str(pkg.get("version") or "0.0.0")
     _fix_shape(pkg)
+    _fix_ai(pkg)
     pkg.setdefault("name", pkg["id"])
     pkg.setdefault("desc", "")
     pkg.setdefault("tags", [])
@@ -224,6 +289,47 @@ def save(pkg_dir, pkg):
     pkg_dir.mkdir(parents=True, exist_ok=True)
     with open(pkg_dir / "pkg.json", "w", encoding="utf-8") as f:
         json.dump(pkg, f, ensure_ascii=False, indent=2)
+
+
+#: `docs` 认哪几个键（`V-388`）。**白名单**：别的键原样留在清单里，只是不往界面/命令里带。
+DOCS_KEYS = ("readme", "usage", "agent")
+
+
+def docs_of(pkg, pkg_dir, limit=None):
+    """包里声明的「说明」文件：`"docs": {"readme": "README.md"}` → 读成文本。
+
+    ★ 只认 `DOCS_KEYS` 那几个键；声明的是**相对包目录**的路径（绝对路径也认）。
+      这里**不做越界拦截** —— 说明文件是给人和 AI 读的文字，不是能跑的东西，
+      跟 `entry` / `icon` 的威胁模型不一样（那两个会把路径交给 shell / 当图放进页面）。
+    ★ `limit` 是**给载荷用的**上限（界面每次整份拿 payload，见 `core/ui.py:DOCS_MAX`）；
+      `None` = 全文 —— `moss --info --docs` 要的是原文，截一半反而更坏。
+    ★ 声明了但文件还没写 → **跳过**（不报错、不留空块）：那是正常的中间状态。
+    ★ 唯一的一份实现：界面（`payload.docs`）和 `moss --info` 都走这里，
+      免得"界面上看得到、命令行读不到"。
+    """
+    raw = pkg.get("docs")
+    if not isinstance(raw, dict):
+        return {}
+    got = {}
+    for key in DOCS_KEYS:
+        rel = str(raw.get(key) or "").strip()
+        if not rel:
+            continue
+        full = Path(rel) if os.path.isabs(rel) else (Path(pkg_dir) / rel)
+        try:
+            if not full.is_file():
+                continue
+            text = full.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        got[key] = {
+            "file": rel,
+            # ★ 规范成 `/`：payload 会被界面拿去显示，也可能被别的系统读走
+            "text": text if limit is None else text[:limit],
+            "truncated": bool(limit is not None and len(text) > limit),
+            "size": len(text),
+        }
+    return got
 
 
 def entry_path(pkg, pkg_dir):

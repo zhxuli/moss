@@ -194,27 +194,11 @@ def _docs_of(pkg, pkg_dir):
       这种"一句话 desc + 没有参数"的包，详情页**一个字的使用方法都没有** ——
       用户的原话："详情里面 并没有它的使用方法的介绍呀"。
 
-    ★ 只认这几个键（白名单），别的原样不动；文件不存在就跳过（不报错、不留空块）；
-      单个文件截到 `DOCS_MAX` 字符，免得 payload 被一份大 README 撑爆。
+    ★ 读法只有一份：`pkg.docs_of()`（`moss --info --docs` 走的是同一个函数）。
+      这里只负责把它**截到 `DOCS_MAX`** —— 界面每次都整份拿 payload，
+      一份大 README 就能把它撑爆。
     """
-    raw = pkg.get("docs")
-    if not isinstance(raw, dict):
-        return {}
-    out = {}
-    for key in ("readme", "usage", "agent"):
-        rel = str(raw.get(key) or "").strip()
-        if not rel:
-            continue
-        full = (Path(pkg_dir) / rel).resolve() if not os.path.isabs(rel) else Path(rel)
-        try:
-            if not full.is_file():
-                continue
-            text = full.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        out[key] = {"file": rel, "text": text[:DOCS_MAX],
-                    "truncated": len(text) > DOCS_MAX}
-    return out
+    return pkg_mod.docs_of(pkg, pkg_dir, limit=DOCS_MAX)
 
 
 def _ui_of(pkg, pkg_dir):

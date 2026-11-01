@@ -71,6 +71,10 @@ USAGE = """moss —— 多语言启动器
   moss --alias [sync|status]   短命令：把 `moss :包名` 缩成 `mo<包名>`（`moimg` = `moss :img`）。
                                总开关在界面「设置 → 短命令」；sync = 手动对账，status = 看现状
   moss --resolve <名字>        只看解析结果，不执行（排障用：为什么选中它 / 为什么没找到）
+  moss --info <包> [--json]    看**这一个包**：清单 / 参数表 / AI 示例 / 文档在哪
+                               （AI、脚本要照着敲命令行，先读这个）
+                               `--docs [readme|agent|all]` 打文档原文（不截断）
+                               `--examples` 只列能直接粘的那几行；`--json` 只吐这一个包
   moss --selfcheck             自检：安装根 / runner 表 / 包 / 自带运行时 / cd 注入
 
 说明:
@@ -1555,6 +1559,206 @@ def cmd_resolve(name, table):
     return 0
 
 
+def cmd_info(args):
+    """`moss --info <包> [--json] [--docs [readme|agent|all]] [--examples]` —— 看**一个包**。
+
+    ★ 为什么要有这条（`CL-14` ✅）：查"这个包怎么调"此前只有三条路，都不合适 ——
+      · 裸敲 `moss`：只列名字 / 版本 / 一行说明，**没有参数表**；
+      · `moss --ui-payload`：界面用的**全量**通道（30 个包 ≈ 90 KB，还带图标 SVG），
+        而你要的只是其中一个；
+      · `pkg.json` / `README.md`：得先知道它在哪一层、目录名是不是不等于 id。
+      AI 或脚本要"照着敲命令行"时，缺的正是一个**按名字取一个包**的稳定入口：
+      清单 + 参数表 + AI 示例 + 文档原文，一条命令全拿到。
+
+    ★ 三种输出各管一头：默认**给人看**（扫一眼就知道怎么敲）；`--json` 只吐这一个
+      包（给程序和 AI 吃，字段稳定）；`--docs` 吐文档**原文**（不截断 ——
+      截一半的说明书比没有更坑）。
+    """
+    want_json = False
+    want_examples = False
+    docs_key = None                 # None = 不打文档；否则 readme / usage / agent / all
+    name = ""
+    rest = list(args)
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if a in ("--json", "-j"):
+            want_json = True
+        elif a in ("--examples", "-e"):
+            want_examples = True
+        elif a == "--docs" or a.startswith("--docs="):
+            keys = ("readme", "usage", "agent", "all")
+            if a.startswith("--docs="):
+                v = a.split("=", 1)[1]
+            elif (i + 1 < len(rest) and not rest[i + 1].startswith("-")
+                  # ★ 只有"包名已经拿到了"才敢吃掉下一个词：`moss --info --docs higgs`
+                  #   这么写时，`higgs` 是包名不是文档名。写错文档名要给错，别去当包名。
+                  and (name or rest[i + 1].lower() in keys)):
+                v = rest[i + 1]
+                i += 1
+            else:
+                v = "all"                       # 不带值 = 它声明了的文档全给
+            docs_key = (v or "all").strip().lower()
+            if docs_key not in keys:
+                out.print_cyan("[错误] --docs 只认 readme / usage / agent / all，收到 %r" % (v,))
+                return 1
+        elif a.startswith("-"):
+            out.print_cyan("[错误] --info 不认识的选项：%s" % a)
+            out.print_cyan("       用法：moss --info <包名> [--json] [--docs readme|agent|all]")
+            return 1
+        elif not name:
+            name = a
+        else:
+            out.print_cyan("[错误] --info 一次只看一个包：多余的 %r" % (a,))
+            return 1
+        i += 1
+
+    if not name:
+        out.print_cyan("[错误] --info 需要一个包名。例：moss --info higgs")
+        out.print_cyan("       看有哪些包：直接敲 moss。")
+        return 1
+    rec = registry.find_alias(name)
+    if rec is None:
+        out.print_cyan("[错误] 没有这个包：'%s'。看有哪些包：直接敲 moss。" % name)
+        return 1
+
+    p = dict(rec["pkg"])                                    # 别就地改 registry 手里那份
+    pkg_mod.display_name(p)                                 # 多语言 name/desc 摊平（和界面一致）
+    pid = str(p.get("id") or rec["id"])
+    psym = config.plugin_symbol()
+    invoke = ("moss %s%s" % (psym, pid)).strip()            # 符号被清空时就是 "moss higgs"
+    ai = p.get("ai") if isinstance(p.get("ai"), dict) else {}
+    examples = []                                           # [(args, note)]
+    for e in (ai.get("examples") or []):                    # 归一化之后一定是 {"args": …}
+        if isinstance(e, dict):
+            a = str(e.get("args") or "").strip()
+            note = str(e.get("note") or "").strip()
+        else:
+            a, note = str(e).strip(), ""
+        if not any(a == x[0] for x in examples):
+            examples.append((a, note))
+
+    def _cmd_of(a):
+        """把一条示例补成**能直接粘**的一行。
+
+        三种开头都出现过，都认：写全了的 `moss :ip …`、只写了包前缀的
+        `:proxycheck undo`、纯参数串（`webp 60% 1200 *.png` → 补上 `moss :<包> `）。
+        """
+        a = str(a or "").strip()
+        low = a.lower()
+        if low == "moss" or low.startswith("moss "):
+            return a
+        if psym and a.startswith(psym):
+            return "moss " + a
+        return ("%s %s" % (invoke, a)).strip() if a else invoke
+
+    # ---- 只列示例（脚本 / AI 取"照着敲"的那几行）----
+    if want_examples:
+        if not examples:
+            out.print_cyan("[提示] 这个包的 pkg.json 里没写 ai.examples。")
+            return 1
+        for a, _note in examples:
+            print(_cmd_of(a))
+        return 0
+
+    # ---- 只吐文档原文（不截断；多条时带小标题分隔）----
+    if docs_key:
+        wants = pkg_mod.DOCS_KEYS if docs_key == "all" else (docs_key,)
+        got = pkg_mod.docs_of(p, rec["dir"], limit=None)
+        picked = [(k, got[k]) for k in wants if k in got]
+        if not picked:
+            out.print_cyan("[提示] 这个包没声明 %s。在 pkg.json 里加一行就有："
+                           % " / ".join(wants))
+            out.print_cyan('       "docs": {"readme": "README.md", "agent": "AGENT.md"}')
+            return 1
+        for k, d in picked:
+            if len(picked) > 1:
+                print("=== %s（%s，%d 字符）===" % (k, d["file"], d["size"]))
+            sys.stdout.write(d["text"])
+            if not d["text"].endswith("\n"):
+                print()
+        sys.stdout.flush()
+        return 0
+
+    docs = pkg_mod.docs_of(p, rec["dir"], limit=ui.DOCS_MAX)
+
+    # ---- 机器用：**只有这一个包**的 JSON（没有横幅，stdout 是纯 JSON）----
+    if want_json:
+        payload = {
+            "ok": True,
+            "id": pid,
+            "layer": rec["layer"],
+            "dir": str(rec["dir"]),
+            "invoke": invoke,                       # 前缀符号按当前设置，别在调用方硬编码 ":"
+            "examples": [{"cmd": _cmd_of(a), "args": a, "note": n} for (a, n) in examples],
+            "docs": docs,                           # 只含包**声明了**的那几个（截到 DOCS_MAX）
+            "pkg": p,                               # 完整清单：未知字段一个不少（F-21）
+        }
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False))
+        sys.stdout.flush()
+        return 0
+
+    # ---- 人看 ----
+    layer_name = "用户插件" if rec["layer"] == "user" else "系统插件"
+    head = "%s —— %s" % (pid, p.get("name") or pid) if (p.get("name") or "") not in ("", pid) else pid
+    print("%s  v%s · %s · %s" % (head, p.get("version") or "?", p.get("kind") or "?", layer_name))
+
+    def row(label, value):
+        print("  %s%s" % (_pad(label, 8), value))
+
+    row("目录", rec["dir"])
+    if p.get("aliases"):
+        row("别名", ", ".join(str(a) for a in p["aliases"]))
+    if p.get("tags"):
+        row("标签", ", ".join(str(t) for t in p["tags"]))
+    row("调用", invoke + " <参数…>" + ("   （不填参数 = 看它自己的用法）" if not examples else ""))
+    if p.get("desc"):
+        row("说明", p["desc"])
+
+    params = [x for x in (p.get("params") or []) if isinstance(x, dict) and x.get("name")]
+    if params:
+        print("\n  参数（%d）" % len(params))
+        for x in params:
+            bits = [str(x.get("type") or "string")]
+            if x.get("rest"):
+                bits.append("rest")
+            if x.get("required"):
+                bits.append("必填")
+            if x.get("default") not in (None, ""):
+                bits.append("默认 %r" % (x.get("default"),))
+            print("    %s%s  [%s]" % (_pad(x["name"], 12), str(x.get("desc") or "").strip(),
+                                     " · ".join(bits)))
+    else:
+        print("\n  参数：没有（这个包不看命令行参数）")
+
+    if ai.get("expose") or ai.get("why"):
+        bits = ["expose=%s" % str(bool(ai.get("expose"))).lower()]
+        if ai.get("risk"):
+            bits.append("risk=%s" % ai["risk"])
+        if ai.get("timeout"):
+            bits.append("timeout=%ss" % ai["timeout"])
+        print("\n  AI（%s）" % ", ".join(bits))
+        if ai.get("why"):
+            print("    %s%s" % (_pad("为什么", 8), ai["why"]))
+        if examples:
+            for n, (a, note) in enumerate(examples):
+                line = _cmd_of(a) + (("      # " + note) if note else "")
+                print("    %s%s" % (_pad("示例", 8) if n == 0 else " " * 8, line))
+        else:
+            print("    %s（没写 ai.examples）" % _pad("示例", 8))
+
+    if docs:
+        print("\n  文档")
+        for k in pkg_mod.DOCS_KEYS:
+            if k in docs:
+                print("    %s %6d 字符   → moss --info %s --docs %s"
+                      % (_pad(docs[k]["file"], 14), docs[k]["size"], pid, k))
+    else:
+        print("\n  文档：没声明（pkg.json 的 docs 里加 readme / agent 就有）")
+    print("\n  JSON：moss --info %s --json      示例：moss --info %s --examples" % (pid, pid))
+    return 0
+
+
 def cmd_selfcheck(table):
     """打包后烟测用（S-05）：把关键路径全部读一遍。"""
     ok = True
@@ -2025,6 +2229,11 @@ def main(argv):
             except ValueError:
                 n = None
         return cmd_history(n, table)
+    if first == "--info":
+        # 看**一个包**（`CL-14`）：清单 / 参数 / AI 示例 / 文档原文。
+        # 和 `--resolve`（路径命名空间）对称 —— 那是"为什么选中它"，
+        # 这是"包里写了什么、该怎么调"。
+        return cmd_info(rest)
     if first == "--resolve":
         if not rest:
             out.print_cyan("[错误] --resolve 需要一个名字。")
