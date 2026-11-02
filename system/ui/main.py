@@ -3142,8 +3142,14 @@ class Api:
             started = time.time()
             base = {
                 "id": run_id, "task": task, "workdir": wd,
+                # ★ `V-389`：**文本附件的原文也存进记录**（20 万字封顶）——
+                #   不然翻历史时那颗胶囊点开是空的：你说的是"粘贴的文本被收成 .txt 之后
+                #   再也看不了原文"，只在内存里留一份等于没留。
                 "attachments": [{"name": a.get("name"), "kind": a.get("kind"),
-                                 "size": a.get("size") or 0} for a in atts],
+                                 "size": a.get("size") or 0,
+                                 "text": (str(a.get("text") or "")[:200000]
+                                          if a.get("kind") == "text" else "")}
+                                for a in atts],
                 "model": str(getattr(client, "model", "") or ""),
                 "max_tokens": cap, "started": started,
                 "started_text": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)),
@@ -3161,7 +3167,9 @@ class Api:
                        "asker": None, "loop": None,
                        "state": {"running": True, "steps": [], "result": None, "say": [],
                                  "phase": "", "snapshot": None, "ask": None,
-                                 "usage": {}, "killed": [], "stopping": False}})
+                                 "usage": {}, "killed": [], "stopping": False,
+                                 # ★ `V-389`：模型正在吐的字（界面"边收边画"用它）
+                                 "partial": None}})
 
             def on_step(row):
                 with AI_LOCK:
@@ -3252,11 +3260,31 @@ class Api:
             def mode_now():
                 return "free" if M.wildcard_write() else "limited"
 
+            def on_stream(n, text, think, chars=0, tchars=0):
+                """★ `V-389`：模型正在吐的字，**一收到就交给界面**（不再等整段收完）。
+
+                界面每 0.2~0.3 秒问一次 `ai_poll`，这里只更新一份"最新尾巴"就够 ——
+                别在锁里做 join（loop 那边已经节流并只保留尾巴）。
+                `text` / `think` 都是空串 = 这一轮收完了，把那颗"正在生成"收掉。
+                `chars` / `tchars` 是**总共**写了多少字（尾巴会被截，总数不截）。
+                """
+                with AI_LOCK:
+                    st = AI.get("state")
+                    if not st:
+                        return
+                    if not text and not think:
+                        st["partial"] = None
+                    else:
+                        st["partial"] = {"n": int(n or 0), "text": text, "think": think,
+                                         "chars": int(chars or 0),
+                                         "tchars": int(tchars or 0),
+                                         "t": time.time()}
+
             def work():
                 loop = l.Loop(client, workdir=wd, max_tokens=cap,
                               compact_at=_at, retain_tokens=_retain,
                               on_step=on_step, say=say, on_phase=phase,
-                              on_snapshot=on_snapshot,
+                              on_snapshot=on_snapshot, on_stream=on_stream,
                               stop_check=lambda: bool(AI.get("stop")),
                               asker=asker, mode_fn=mode_now, on_journal=on_journal,
                               run_id=run_id, tmp_dir=str(tmp_dir or ""),
@@ -3406,11 +3434,27 @@ class Api:
                     "tmp": str(AI.get("tmp") or ""),
                     "killed": list(st.get("killed") or []),
                     "stopping": bool(st.get("stopping")),
+                    # ★ `V-389`：模型**正在吐的字**（界面边收边画）。没有就是 None。
+                    "partial": st.get("partial") or None,
                     # `V-316`：现在是不是放手（界面不再有"模式"这一格，但轮询里带着它，
                     # 让页面能显示"它现在能不能放手写"）
                     "wildcard": self._ai_wildcard(),
                     "skills_rev": self._skills_rev(),
                     "seconds": round(time.time() - float(AI.get("t0") or time.time()), 1)}
+
+    def ai_poll_light(self):
+        """★ `V-389`：**只取"正在吐的字"** —— 流式快通道（250ms 一次）用这一条。
+
+        为什么不复用 `ai_poll`：那一份要把 steps / usage / ask / perm… 整个序列化给页面，
+        长任务跑起来 steps 能有几百 KB —— 4 次/秒就是白搬 1MB+ 的 JSON。
+        这一路只回两样：还在跑没有 + 正在写的尾巴。
+        """
+        with AI_LOCK:
+            st = AI.get("state")
+            if not st:
+                return {"ok": True, "running": False, "partial": None}
+            return {"ok": True, "running": bool(st.get("running")),
+                    "partial": st.get("partial") or None}
 
     def ai_runs(self, limit=30, workdir=""):
         """跑过的那些任务（`V-243`：重启 moss 还在）。列表**不带步骤流**，那个用 `ai_run(id)`。
@@ -3775,6 +3819,9 @@ class Api:
                                "continue_note": r.get("continue_note") or "",
                                "asked_continue": r.get("asked_continue") or ""},
                     "steps": r.get("steps") or [],
+                    # ★ `V-389`：附件也带回来（翻历史时那颗胶囊还能点开看原文 / 复制）。
+                    #   老记录里没有 `text`（那时候没存），界面会显示"没留原文"。
+                    "attachments": r.get("attachments") or [],
                 })
             return {"ok": True, "turns": turns,
                     "tail": (turns[-1]["id"] if turns else ""),
@@ -5649,6 +5696,48 @@ class Api:
             return {"ok": False, "msg": ("查余额失败：退出码 %s%s"
                                          % (r.get("code"), (" —— " + tail) if tail else ""))}
         return data
+
+    def ai_save_text(self, name="", text=""):
+        """把一段文本**另存为**到用户挑的地方（`V-389`：粘贴成附件的那段原文）。
+
+        为什么让宿主来做：这是 WebView2，页面里 `a[download]` 不可靠（没有下载目录、
+        失败还静默），而 pywebview 本来就有 `SAVE_DIALOG`。写文件用 UTF-8 + LF，
+        和仓库其它文本一致（别存成 CRLF，也别加 BOM）。
+        """
+        try:
+            import webview as _wv
+            wins = list(getattr(_wv, "windows", None) or [])
+            if not wins:
+                return {"ok": False, "msg": "窗口还没准备好，稍一下再试"}
+            win = wins[0]
+            if not hasattr(win, "create_file_dialog"):
+                return {"ok": False, "msg": "这个环境没有另存为对话框"}
+            fd = getattr(_wv, "FileDialog", None)
+            kind = getattr(fd, "SAVE", None) if fd is not None else None
+            if kind is None:
+                kind = getattr(_wv, "SAVE_DIALOG", None)
+                if callable(kind):
+                    kind = kind()
+            if not kind:
+                return {"ok": False, "msg": "这个 pywebview 版本不支持另存为"}
+            fn = str(name or "").strip() or "粘贴文本.txt"
+            types = ("文本文件 (*.txt)", "所有文件 (*.*)")
+            try:
+                res = win.create_file_dialog(kind, save_filename=fn, file_types=types)
+            except TypeError:                       # 老版本 pywebview 的签名不一样
+                res = win.create_file_dialog(kind, directory=str(HOME),
+                                             save_filename=fn, file_types=types)
+            if not res:
+                return {"ok": False, "cancelled": True, "msg": "没有选（取消）"}
+            p = res if isinstance(res, str) else (res[0] if isinstance(res, (list, tuple)) else "")
+            p = str(p or "").strip()
+            if not p:
+                return {"ok": False, "msg": "没拿到保存路径"}
+            body = str(text or "")
+            Path(p).write_text(body, encoding="utf-8", newline="\n")
+            return {"ok": True, "path": p, "bytes": len(body.encode("utf-8"))}
+        except Exception as e:                                      # noqa: BLE001
+            return {"ok": False, "msg": "另存为失败：%s" % e}
 
     def ai_pick_attachments(self, images=False):
         """给 AI 输入框挑本地附件 / 图片（系统文件对话框，**可多选**）。

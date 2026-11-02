@@ -313,8 +313,29 @@ class Loop:
                  compact_at=102400, retain_tokens=20480, stop_check=None,
                  soft_steps=0, max_tokens=100000000, on_phase=None, on_snapshot=None,
                  asker=None, mode_fn=None, on_journal=None, run_id="", tmp_dir=None,
-                 perm_gate=None):
+                 perm_gate=None, on_stream=None):
         self.client = client
+        #: ★ `V-389`：**边收边推**（你原话："既然已经做了流式了，那流式的数据拿到就开始渲染呀"）。
+        #:   `on_stream(第几步, 正文尾巴, 思考尾巴)` —— 宿主把它放进 `ai_poll` 的 `partial`，
+        #:   界面就一边收一边画。空串 = "这一轮收完了，把那颗气泡收掉"。
+        #:   为什么要分两路：带思考的模型前几十秒**正文一个字都没有**（实测那次 60.2 秒），
+        #:   只报正文的话界面还是干等 —— 思考尾巴也得能看见。
+        self.on_stream = on_stream
+        self._st_c, self._st_r = [], []          # 正文 / 思考的增量片段
+        self._st_cn, self._st_rn = 0, 0          # 各自累计了多少字（截尾用）
+        self._st_at = 0.0                        # 上次推送的时刻（节流）
+        self._st_n = 1                           # 这是第几步在收字
+        #: ★ `V-389`：**客户端认不认流式回调**（`on_delta` / `on_reasoning`）。
+        #:   `Loop` 的契约一直是"client 只要有 `.chat(messages, tools)` 就行"（探针塞假模型），
+        #:   所以不能硬塞新参数 —— 开工前看一眼签名：认就带上，不认就照老样子调（少个"边写边看"，
+        #:   但跑得通）。`**kwargs` 的客户端一律当真（多给参数它自己会吞掉）。
+        try:
+            import inspect as _inspect
+            _params = _inspect.signature(client.chat).parameters
+            self.stream_kw = ("on_delta" in _params) or any(
+                p.kind == p.VAR_KEYWORD for p in _params.values())
+        except (TypeError, ValueError):                                  # 内建函数之类
+            self.stream_kw = False
         # ★ `V-384`：快照**开工就存**（改一个已经存在的包的时候）；新建包那种还是
         #   等"第一次真要写之前"。`V-269` 想省的"问一句也留一条"由收工时那条
         #   `drop_untouched`（一个字都没改就收掉）兜住。
@@ -524,20 +545,85 @@ class Loop:
         if self.on_phase:
             self.on_phase("waiting")
 
+    # ---- ★ `V-389`：流式增量 → 界面（节流推送，别把轮询压垮） ----------------------
+    #: 只推"尾巴"这么多字：界面是跟着读的，全文最后由那一步的步骤卡给全。
+    STREAM_TAIL = 6000
+    #: 最快每多少秒推一次（0.2 秒 ≈ 5 帧/秒，看着就是"在打字"）
+    STREAM_EVERY = 0.2
+
+    def _stream_reset(self, n):
+        self._st_c, self._st_r = [], []
+        self._st_cn, self._st_rn = 0, 0
+        self._st_at = 0.0
+        self._st_n = int(n or 1)
+
+    def _stream_trim(self):
+        """只留尾巴 —— 长回答别在内存里攒两份全文（一份给界面、一份给收尾的步骤卡）。"""
+        if self._st_cn > 6 * self.STREAM_TAIL:
+            _t = "".join(self._st_c)[-self.STREAM_TAIL:]
+            self._st_c, self._st_cn = [_t], len(_t)
+        if self._st_rn > 6 * self.STREAM_TAIL:
+            _t = "".join(self._st_r)[-self.STREAM_TAIL:]
+            self._st_r, self._st_rn = [_t], len(_t)
+
+    def _stream_feed(self, kind, seg):
+        if not self.on_stream or not seg:
+            return
+        if kind == "c":
+            self._st_c.append(seg)
+            self._st_cn += len(seg)
+        else:
+            self._st_r.append(seg)
+            self._st_rn += len(seg)
+        now = time.time()
+        if now - self._st_at < self.STREAM_EVERY:
+            return                      # 节流：一秒钟最多推 5 次，别把 700ms 的轮询压死
+        self._st_at = now
+        self._stream_trim()
+        self._stream_push()
+
+    def _stream_push(self, clear=False):
+        if not self.on_stream:
+            return
+        try:
+            self.on_stream(self._st_n,
+                           "" if clear else "".join(self._st_c)[-self.STREAM_TAIL:],
+                           "" if clear else "".join(self._st_r)[-self.STREAM_TAIL:],
+                           self._st_cn, self._st_rn)
+        except Exception:                                              # noqa: BLE001
+            pass                        # 推送失败绝不能把这一跑弄死
+
+    def _stream_content(self, seg):
+        self._stream_feed("c", seg)
+
+    def _stream_think(self, seg):
+        self._stream_feed("r", seg)
+
+    def _stream_clear(self):
+        """这一轮收完了（成功 / 出错 / 被停）—— 把界面那颗"正在生成"收掉。"""
+        self._st_c, self._st_r = [], []
+        self._st_cn, self._st_rn = 0, 0
+        self._stream_push(clear=True)
+
     def _on_retry(self, attempt, times, err):
-        """`V-270`：网络抖了一下、这条请求**根本没发出去**，正在重发 —— 说出来。
+        """`V-270`：这条请求要重发一次 —— 说出来，并且**说清是哪一种**。
 
         ★ 为什么要占一行步骤：真机那次 DNS 抖了 4 分钟，连着 4 条任务全报
           `[Errno 11001] getaddrinfo failed`，界面上只有一句"模型那边出错"，看不出是网络
-          还是我们坏了。现在它会自己重试两回，重试这件事也让你看得见。
+          还是我们坏了。现在它会自己重试，重试这件事也让你看得见。
+        ★ `V-388`：现在有两种重发 —— ① **根本没连上**（DNS/重置，一个字都没发出去）；
+          ② **一个字节都没收到**（请求发出去了，对面一直没声音；11-02 那两次"假超时"就是这种）。
+          两者都得说清楚，否则永远分不清"网络断了"还是"模型被掐了"。
         """
+        wait = C.retry_wait(attempt)
+        is_timeout = bool(getattr(err, "timeout", False))
         self._step(self.cur_n or 1, "(重试)",
-                   "没连上：%s" % str(err)[:70],
-                   "%s后重发（第 %d 次，共 %d 次）"
-                   % (("%.1f 秒" % C.RETRY_WAITS[min(attempt - 1, len(C.RETRY_WAITS) - 1)]),
-                      attempt, times),
+                   ("没收到数据：" if is_timeout else "没连上：") + str(err)[:70],
+                   "%.1f 秒后重发（第 %d 次，共 %d 次）" % (wait, attempt, times),
                    out=str(err))
-        self.say("  网络抖了一下（%s）—— 正在重发（第 %d/%d 次）" % (err, attempt, times))
+        self.say("  %s —— 正在重发（第 %d/%d 次）"
+                 % (("等了半天一个字节都没来（%s）" % err) if is_timeout
+                    else ("网络抖了一下（%s）" % err), attempt, times))
 
     def _journal(self, force=False, **extra):
         """**每一步都落盘**（`V-307`）。用户那次强制重启丢的正是这条记录。
@@ -806,13 +892,22 @@ class Loop:
                 if self.on_phase:
                     self.on_phase("thinking")
                 self.cur_n = n
-                resp = self.client.chat(messages, self.tool_table, stop_check=self.stop_check,
-                                        on_wait=self._on_wait, on_retry=self._on_retry)
+                self._stream_reset(n)          # ★ `V-389`：这一轮的增量从头攒
+                _chat_kw = dict(stop_check=self.stop_check, on_wait=self._on_wait,
+                                on_retry=self._on_retry)
+                if self.stream_kw:             # 客户端认流式回调才带（老客户端/假模型照旧）
+                    _chat_kw["on_delta"] = self._stream_content
+                    _chat_kw["on_reasoning"] = self._stream_think
+                resp = self.client.chat(messages, self.tool_table, **_chat_kw)
             except C.Stopped:
                 # ★ `V-242`：请求**发到一半**按的停止 —— 立刻收工，不再等它把话说完。
                 return self._finish(False, "用户按了停止", used, missing)
             except C.AiError as e:
                 return self._finish(False, "模型那边出错：%s" % e, used, missing)
+            finally:
+                # ★ `V-389`：不管怎么收场（成功 / 出错 / 被停），界面上那颗
+                #   "正在生成"都要收掉，否则它会一直挂在那儿假装还在打字。
+                self._stream_clear()
             self._add_usage(resp.get("usage"), messages, resp)
             # ★ 思考过程：有就原样记一条**可折叠**的步骤卡（只给人看，不回灌给模型）。
             #   默认卡片只显示第一行，点开「眼睛」才摊开全文 —— 思考完自动保持折叠。

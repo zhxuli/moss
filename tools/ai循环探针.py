@@ -1162,7 +1162,7 @@ def main():
                                "usage": {"total_tokens": 3}}, ensure_ascii=False)
 
         _cli = C.Client("https://api.example.invalid/v1", "k", "m")
-        _cli._post_watched = lambda data, stop_check=None, on_wait=None: _flaky(data)
+        _cli._post_watched = lambda data, stop_check=None, on_wait=None, **kw: _flaky(data)
         _seen = []
         _got = _cli.chat([{"role": "user", "content": "hi"}],
                          on_retry=lambda a, t, e: _seen.append((a, t, str(e)[:24])))
@@ -1179,7 +1179,7 @@ def main():
             raise C.AiError("没连上 / 断了：[Errno 11001] getaddrinfo failed", retryable=True)
 
         _cli2 = C.Client("https://api.example.invalid/v1", "k", "m")
-        _cli2._post_watched = lambda data, stop_check=None, on_wait=None: _dead(data)
+        _cli2._post_watched = lambda data, stop_check=None, on_wait=None, **kw: _dead(data)
         _msg = ""
         try:
             _cli2.chat([{"role": "user", "content": "hi"}])
@@ -1197,7 +1197,7 @@ def main():
             raise C.AiError("400：insufficient tool messages following tool_calls message")
 
         _cli3 = C.Client("https://api.example.invalid/v1", "k", "m")
-        _cli3._post_watched = lambda data, stop_check=None, on_wait=None: _bad(data)
+        _cli3._post_watched = lambda data, stop_check=None, on_wait=None, **kw: _bad(data)
         try:
             _cli3.chat([{"role": "user", "content": "hi"}])
         except C.AiError:
@@ -1220,7 +1220,7 @@ def main():
                 "usage": {"total_tokens": 3}}, ensure_ascii=False)
 
         _cli4 = C.Client("https://api.example.invalid/v1", "k", "m")
-        _cli4._post_watched = lambda data, stop_check=None, on_wait=None: _flaky2(data)
+        _cli4._post_watched = lambda data, stop_check=None, on_wait=None, **kw: _flaky2(data)
         _r4 = L.Loop(_cli4, workdir=fake_pkg, max_steps=3, say=lambda s: None).run("你是谁")
         chk("R ★ loop 里重试会在步骤流里留一行 `(重试)`（界面上看得见「网络抖了一下」）",
             any(s.get("tool") == "(重试)" for s in _r4["steps"])

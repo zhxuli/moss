@@ -162,6 +162,13 @@ const AIR = Vue.reactive({
      服务商不支持时 text 显示 "?"，完整原因放 title。 */
   balance: null, balanceLoading: false,
   pageVisible: false,
+  /* ★ `V-389`：**模型正在吐的字**（宿主 `ai_poll` 的 `partial`）。
+     为什么另开一条快通道：主轮询 700ms 一跳，拿它画"打字"太卡；这一条 250ms 只拉 `partial`。
+     `text` / `think` 都是**尾巴**（服务端只留最后 6000 字），`chars` / `tchars` 才是总字数。 */
+  partial: null, ptBusy: false,
+  /* ★ `V-389`：**粘贴成附件的那段原文**（点附件胶囊打开：复制全文 / 另存为）。
+     以前这条只有 name/kind/size，原文一发出就没了 ⇒ "点不开、拷不出、存不下"。 */
+  att: null,
 });
 
 /* 大段文本到多少字就转附件；图片/文件多大就别贴（避免把请求撑爆）。 */
@@ -769,6 +776,8 @@ async function aiOpenThread(id, quiet){
       //   要拿它去问宿主"删这一轮会删掉什么、回退到哪条镜像"。
       id: t.id || "",
       task: t.task || "", at: (t.at || "").slice(5, 16),
+      // ★ `V-389`：翻历史时附件胶囊也要在（新记录带原文，老记录只有名字 ⇒ 胶囊显示"没留原文"）
+      attachments: t.attachments || [],
       steps: t.steps || [], result: t.result || null,
       folded: !!t.result, autoFolded: !!t.result,
       note: (t.result && t.result.continue_note) || "",
@@ -1159,6 +1168,9 @@ async function aiPollOnce(){
       aiLoadSkills();
     }
     AIR.steps = got.steps || [];
+    /* ★ `V-389`：这一段是"模型正在吐的字"。主轮询顺手也更新一次（收尾那一下靠它清干净）；
+       流畅的"边写边看"由下面那条 250ms 的快通道刷。 */
+    AIR.partial = got.partial || null;
     // Poll payload is authoritative for the live turn: refresh the matching turn snapshot
     // so answered ask cards stop showing controls and remain readable in history.
     // ★ `V-383`：**认 key，不认下标** —— 下标会被"翻历史 / 清空"改掉（`aiOpenThread`
@@ -1263,6 +1275,37 @@ async function aiPollOnce(){
   } catch (e) { /* 轮询失败不吵人：下一轮再说 */ }
 }
 
+/* ★ `V-389`：**流式快通道**。主轮询 700ms 一跳，拿来画"它正在打字"太卡；
+   这一条 250ms，只拉 `ai_poll` 里的 `partial`，并且**只动 `AIR.partial`** ——
+   不去碰 steps / running / result（那两个还是主轮询说了算，避免两边打架）。
+   为什么不用 websocket / 事件推送：宿主那边是 pywebview 的同步桥，多开一条通道
+   就得改协议；而本地调一次 `ai_poll` 只是读个字典，250ms 一次毫无压力。 */
+async function aiPollPartial(){
+  if (!AIR.running || AIR.ptBusy) return;
+  const api = window.pywebview && window.pywebview.api;
+  if (!api) return;
+  /* 优先用轻接口（只回 partial）—— 完整 `ai_poll` 每 250ms 搬一次 steps 太重。
+     预览 / 老宿主没有这个接口就退回 `ai_poll`。 */
+  const call = api.ai_poll_light ? api.ai_poll_light.bind(api)
+             : (api.ai_poll ? api.ai_poll.bind(api) : null);
+  if (!call) return;
+  AIR.ptBusy = true;
+  try{
+    const got = await call();
+    const p = (got && got.partial) ? got.partial : null;
+    /* 判"变了没有"不能只看长度：尾部被截到 6000 字之后长度就不动了，画面会僵住。
+       所以把**总字数 + 尾部最后 60 字**一起当指纹。 */
+    const key = (q) => q ? (String(q.chars || 0) + "/" + String(q.tchars || 0) + "/"
+                            + String(q.text || "").slice(-60)
+                            + String(q.think || "").slice(-60)) : "";
+    if (key(p) !== key(AIR.partial)){
+      AIR.partial = p;
+      AIR.rev++;                     // 触发重画（`A.partial` 的 watch 会顺手跟滚）
+    }
+  }catch(e){ /* 快通道失败就等主轮询那一跳，别吵人 */ }
+  finally { AIR.ptBusy = false; }
+}
+
 async function aiStart(opt){
   if (AIR.busy) return;
   const atts = (AIR.attachments || []).slice();
@@ -1280,6 +1323,7 @@ async function aiStart(opt){
   if (!dir) { toast("先在左边选一个包（或者选「新建包」）。", true); return; }
   AIR.busy = true;
   AIR.result = null; AIR.steps = []; AIR.say = []; AIR.answeredQid = "";
+  AIR.partial = null;                  // ★ `V-389`：新任务，上一跑残留的"正在写"要清掉
   AIR.pendingDone = null;              // 新任务：上一次的兜底结果不再回放
   AIR.doneWait = 0;                    // `V-423`：新任务清掉上一跑的收尾宽限
   AIR.killed = []; AIR.liveUsage = null; AIR.ask = null; AIR.askText = "";   // `V-307`/`V-308`
@@ -1306,7 +1350,15 @@ async function aiStart(opt){
   //   （翻历史 / 清空 / 换会话），轮询都靠它把"活的那一轮"找回来。
   const liveKey = "t" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1);
   AIR.turns.push({key: liveKey, task: task,
-                  attachments: atts.map(a => ({name: a.name, kind: a.kind, size: a.size})),
+                  /* ★ `V-389`：**原文跟着这一轮存住**。以前只存 name/kind/size ⇒
+                     日志里那颗"📎 xx.txt"点了没反应、也拷不出来（你报的就是这个）。
+                     上限 20 万字：再长就只留前 20 万（`truncated` 会照实标出来）。 */
+                  attachments: atts.map(a => ({
+                    name: a.name, kind: a.kind, size: a.size,
+                    source: a.source || "",
+                    text: a.kind === "text" ? String(a.text || "").slice(0, 200000) : "",
+                    truncated: a.kind === "text" && String(a.text || "").length > 200000,
+                  })),
                   at: (cont ? "接着聊" : "新会话") + " · " +
                       new Date().toTimeString().slice(0, 8),
                   steps: [], result: null, folded: false, autoFolded: false, note: ""});
@@ -1700,6 +1752,15 @@ const MossAi = {
        卡片只认"鼠标放上来 / 你点过钉住"（用户要的就是这个：请求别再把这张卡顶开）。 */
     permOpen(){ this.A.rev; return !!this.A.permPinned || !!this.A.permHover; },
     permFolded(){ this.A.rev; return !this.permOpen; },
+    /* ★ `V-389`：附件原文弹窗的副标题（多少个字 / 有没有截断） */
+    attMeta(){
+      this.A.rev;
+      const a = this.A.att;
+      if (!a) return "";
+      const n = String(a.text || "").length || Number(a.size || 0);
+      return "粘贴的文本 · " + String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",") + " 字"
+             + (a.truncated ? " · 只留了前 20 万字" : "");
+    },
   },
   watch: {
     /* ★ `V-252`：步骤/结论来了就**跟着往下滚**（agent 控制台该有的样子）。
@@ -1709,6 +1770,8 @@ const MossAi = {
     "A.result"(){ this.followLog(); },
     /* ★ `V-258`：新起一轮、翻历史、清空 —— 日志内容变了就跟着滚到底 */
     "A.turns"(){ this.followLog(); },
+    /* ★ `V-389`：模型正在吐的字一变就跟着滚（"边生成边看"必须跟手，不然它写一屏你只看到头） */
+    "A.partial"(){ this.followLog(); },
     /* ★ `V-321`：**它一要权限就自动展开**（你原话：折叠以后显示一行最重要的信息，
        要跟我们要权限就自动展开提示）。
        ★ `V-331`：现在"展开"不是靠改一个开关，而是 `permOpen` 把"有请求"算进去 ——
@@ -1870,7 +1933,11 @@ const MossAi = {
       const key = vw + "|" + Math.round(bounds.left) + "|" + Math.round(bounds.right) +
                   "|" + Math.round(hr0.left) + "|" + Math.round(hr0.right);
       if (!this._fitKeys) this._fitKeys = {};
-      if (this._fitKeys[which] === key) return;
+      /* ★ `V-388`：**新挂上去的那一块一定要量一次**。浮层是 `v-if`，关一下就整块销毁，
+         重开是一颗**没有行内样式**的新节点；而这里的缓存还记着上一回的位置 ⇒ 直接 return ⇒
+         面板退回 CSS 那条锚点（旧实现是 `right:0`，整块往左跑出 AI 区，被左侧栏盖住）。
+         用户报的"有时候会被左边的列表盖住"就是这个：**第一次开没事，关掉再开就错位**。 */
+      if (this._fitKeys[which] === key && panel.style.left) return;
       this._fitKeys[which] = key;
       const pad = 10;
       panel.style.left = "";
@@ -1928,7 +1995,10 @@ const MossAi = {
       },
     chainTitle(c){
       const t = (c && c.head && c.head.task) || "（没写任务）";
-      return t.length > 34 ? (t.slice(0, 34) + "…") : t;
+      /* ★ `V-389`：这里原来砍到 **34 字** —— 面板只有 440 宽、标题限一行，砍多了正好；
+         现在面板 640 宽、标题最多两行（见 `ai.css` 的 `.history-item-title`），
+         34 字又把"看不全"的老毛病带回来了。放宽到 96，**真正折几行交给 CSS 的 line-clamp**。 */
+      return t.length > 96 ? (t.slice(0, 96) + "…") : t;
     },
     chainMeta(c){
       const bits = [];
@@ -2688,6 +2758,12 @@ const MossAi = {
       if (n >= 1024) return (n / 1024).toFixed(1) + " KB";
       return n + " B";
     },
+    /* ★ `V-389`：字数按**精确数字 + 千分位**显示（"1,600 字"），比 "1.6k 字" 好读 ——
+       字数不是字节，别拿 humanTokens 那套万/亿去折算。 */
+    fmtChars(n){
+      const v = Math.max(0, Number(n || 0));
+      return String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    },
     removeAttachment(i){
       if (i < 0 || i >= AIR.attachments.length) return;
       AIR.attachments.splice(i, 1);
@@ -2706,6 +2782,61 @@ const MossAi = {
       AIR.pasteAsFile = !AIR.pasteAsFile;
       AIR.rev++;
       toast(AIR.pasteAsFile ? "大段文本会收成附件" : "大段文本会直接粘进输入框");
+    },
+    /* ---- ★ `V-389`：粘贴附件的"看原文 / 复制 / 另存为" ----
+       你报的原话："我粘贴了一段文本 它被压缩成了一个.txt的形式 但是我无法点击这个打开查看原文"。
+       三件事都在同一个弹窗里：正文、复制全文、另存为（宿主弹系统保存框）。 */
+    openAtt(a){
+      if (!a) return;
+      AIR.att = {name: String(a.name || "粘贴文本.txt"),
+                 text: String(a.text || ""),
+                 size: Number(a.size || 0),
+                 truncated: !!a.truncated};
+      if (!AIR.att.text) toast("这条老记录里没留原文（那时候只存了文件名）", true);
+      AIR.rev++;
+    },
+    closeAtt(){ AIR.att = null; AIR.rev++; },
+    async copyAtt(){
+      const t = (AIR.att && AIR.att.text) || "";
+      if (!t) return;
+      let ok = false;
+      try{ await navigator.clipboard.writeText(t); ok = true; }catch(e){ ok = false; }
+      if (!ok){
+        // 老 WebView / 没给剪贴板权限：退回 execCommand（这条在本机实测能用）
+        try{
+          const ta = document.createElement("textarea");
+          ta.value = t;
+          ta.style.position = "fixed"; ta.style.left = "-9999px"; ta.style.top = "0";
+          document.body.appendChild(ta); ta.select(); document.execCommand("copy");
+          document.body.removeChild(ta); ok = true;
+        }catch(e2){ ok = false; }
+      }
+      toast(ok ? ("原文已复制（" + t.length + " 字）")
+               : "复制失败 —— 在正文里全选再按 Ctrl+C", !ok);
+    },
+    async saveAtt(){
+      const a = AIR.att;
+      if (!a || !a.text) return;
+      const api = window.pywebview && window.pywebview.api;
+      if (api && api.ai_save_text){
+        try{
+          const r = await api.ai_save_text(a.name, a.text);
+          if (r && r.ok) toast("已另存为：" + r.path);
+          else if (r && r.cancelled) toast("没选位置，没存");
+          else toast("另存为失败：" + ((r && r.msg) || "宿主没回话"), true);
+        }catch(e){ toast("另存为失败：" + (e && e.message ? e.message : e), true); }
+        return;
+      }
+      // 浏览器预览（没有宿主）：退回浏览器下载
+      try{
+        const blob = new Blob([a.text], {type: "text/plain;charset=utf-8"});
+        const url = URL.createObjectURL(blob);
+        const el = document.createElement("a");
+        el.href = url; el.download = a.name || "粘贴文本.txt";
+        document.body.appendChild(el); el.click(); document.body.removeChild(el);
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+        toast("已交给浏览器下载");
+      }catch(e){ toast("另存为失败：" + (e && e.message ? e.message : e), true); }
     },
     onPaste(e){
       if (AIR.running) return;
@@ -2775,6 +2906,9 @@ const MossAi = {
     aiRefreshInfo();
     aiStartPage();
     aiLoadUiState();
+    /* ★ `V-389`：**流式快通道**（250ms）—— 只刷"它正在吐的字"。
+       为什么单开一条：主轮询 700ms 是给"步骤 / 结果"用的，拿它画打字会一顿一顿。 */
+    AIR.ptick = setInterval(() => { aiPollPartial(); }, 250);
     /* 700ms 一跳：① 选中的包换了就重读信息；② 正在跑就拉步骤流。
        要不要改成事件驱动？不用 —— 命令行那一页也是轮询（run_poll 200ms），
        而且 loop 一步可能几秒，这个频率足够"看着它在动"。 */
@@ -2925,6 +3059,7 @@ const MossAi = {
     }catch(e){}
     if (window.__mossAiDrop) window.__mossAiDrop = null;
     if (AIR.tick){ clearInterval(AIR.tick); AIR.tick = null; }
+    if (AIR.ptick){ clearInterval(AIR.ptick); AIR.ptick = null; }      // `V-389` 流式快通道
   },
   template: `
   <div class="aiwrap" @dragover.prevent="dropEnter()" @dragleave="dropLeave($event)">
@@ -3100,8 +3235,18 @@ const MossAi = {
               </div>
               <div class="ai-bub-t" @click="toggleTurn(ti)"
                    :title="t.folded ? '点一下展开中间过程' : '点一下折叠中间过程'">{{ t.task }}</div>
+              <!-- ★ V-389：附件胶囊**能点**了 —— 点开看原文，可一键复制 / 另存为。
+                   以前这里只是一行灰字，在蓝气泡上还看不清（你报的那两条）。 -->
               <div class="ai-bub-atts" v-if="(t.attachments || []).length">
-                <span v-for="a in t.attachments" :key="a.name">📎 {{ a.name }}</span>
+                <button type="button" v-for="a in t.attachments" :key="a.name + ':' + a.size"
+                        class="ai-att-chip" :class="{viewable: !!a.text, muted: !a.text}"
+                        :title="a.text ? '点开看原文（可复制全文 / 另存为）' : '这条老记录里没留原文'"
+                        @click.stop="openAtt(a)">
+                  <span v-html='ico(a.kind === "text" ? "file-text" : "file", "i")'></span>
+                  <span class="ai-att-chip-n">{{ a.name }}</span>
+                  <span class="ai-att-chip-s" v-if="a.size">{{ a.kind === "text"
+                      ? (fmtChars(a.size) + " 字") : attachmentSize(a) }}</span>
+                </button>
               </div>
             </div>
           </div>
@@ -3185,6 +3330,24 @@ const MossAi = {
                       :title="c.tool === '(思考)' ? '展开思考过程' : '点一下看这一步的原始参数与输出'"></span>
               </div>
             </template>
+
+            <!-- ★ V-389：**它正在写**（流式）。字是一批一批到的，这里就跟着一段一段长。
+                 A.partial 清掉（这一轮收完）就整块消失，随后那一步的正式卡片会接上。 -->
+            <div class="ai-bub ai streaming" v-if="t.key === A.liveKey && A.partial &&
+                 (A.partial.text || A.partial.think)">
+              <span class="ai-bub-ic" v-html='ico("sparkles", "i")'></span>
+              <div class="ai-bub-b">
+                <div class="ai-bub-h">
+                  <b>{{ A.partial.text ? "它正在写" : "它在想" }}</b>
+                  <span class="dim ai-stream-n">{{ A.partial.text
+                      ? (fmtChars(A.partial.chars) + " 字")
+                      : (fmtChars(A.partial.tchars) + " 字思考") }}</span>
+                  <span class="ai-stream-dot"></span>
+                </div>
+                <div class="ai-stream-think" v-if="!A.partial.text && A.partial.think">{{ A.partial.think }}</div>
+                <div class="ai-stream-t" v-if="A.partial.text">{{ A.partial.text }}<span class="ai-caret"></span></div>
+              </div>
+            </div>
 
           </template>
 
@@ -3364,6 +3527,8 @@ const MossAi = {
               <span class="ai-at-ic" v-html='ico(attachmentIcon(a), "i")'></span>
               <span class="ai-at-n" :title="a.path || a.name">{{ a.name }}</span>
               <span class="ai-at-s" v-if="a.size">{{ attachmentSize(a) }}</span>
+              <button class="ai-at-act" type="button" v-if="a.kind === 'text'"
+                      @click="openAtt(a)" title="看这段原文（可复制全文 / 另存为）">查看</button>
               <button class="ai-at-act" type="button" v-if="a.kind === 'text' && a.source === 'paste'"
                       @click="pasteAsText(a)" title="把这段原文放回输入框，按普通粘贴发出去">粘贴原文至输入框</button>
               <button class="ai-at-x" type="button" @click="removeAttachment(i)" title="移除附件"
@@ -3669,6 +3834,36 @@ const MossAi = {
           <div class="ai-modal-footer">
             <button class="ai-modal-btn" type="button" @click="copyMessages()">复制</button>
             <button class="ai-modal-btn primary" type="button" @click="closeMessages()">关闭</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ★ V-389：**粘贴成附件的那段原文**（点日志里 / 输入框上那颗胶囊打开）。
+           三个动作：看全文 / 一键复制 / 一键另存为。 -->
+      <div class="ai-modal-overlay" v-if="A.att" @click.self="closeAtt()">
+        <div class="ai-modal-box ai-attbox">
+          <div class="ai-modal-header">
+            <div class="ai-modal-title-group">
+              <h3 class="ai-modal-title">{{ A.att.name }}</h3>
+              <span class="ai-modal-meta">{{ attMeta }}</span>
+            </div>
+            <button class="ai-modal-close" type="button" title="关闭"
+                    @click="closeAtt()">&times;</button>
+          </div>
+          <div class="ai-modal-body">
+            <p class="ai-msgs-note" v-if="!A.att.text">
+              这条记录里没留原文（老记录只存了文件名）。原文在发出去的那次对话里 ——
+              点「看提示词」能看到它当时被拼进提示词的样子。
+            </p>
+            <pre class="ai-att-pre" v-else>{{ A.att.text }}</pre>
+            <p class="ai-att-note" v-if="A.att.truncated">这条太长，只存了前 20 万字。</p>
+          </div>
+          <div class="ai-modal-footer">
+            <button class="ai-modal-btn" type="button" :disabled="!A.att.text"
+                    @click="copyAtt()" title="把原文整段复制到剪贴板">复制全文</button>
+            <button class="ai-modal-btn primary" type="button" :disabled="!A.att.text"
+                    @click="saveAtt()" title="挑一个位置存成 .txt">另存为…</button>
+            <button class="ai-modal-btn" type="button" @click="closeAtt()">关闭</button>
           </div>
         </div>
       </div>

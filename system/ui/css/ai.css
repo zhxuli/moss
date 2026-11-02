@@ -726,7 +726,7 @@
 .aiwrap .ai-hist-x:hover{color:var(--aib-danger);background:#FEF2F2}
 .aiwrap .ai-hist-x svg.i{width:14px;height:14px}
 .aiwrap .ai-hist-i.on .ai-hist-t{color:var(--aib-primary);font-weight:600}
-.aiwrap .ai-hist-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aiwrap .ai-hist-t{flex:1;min-width:0;overflow:hidden}
 .aiwrap .ai-hist-m{flex:none;font-size:12px;color:var(--aib-text-light)}
 .aiwrap .ai-hist-i.new{color:var(--aib-primary);font-weight:500}
 
@@ -1120,8 +1120,8 @@
 .aiwrap .popover-hint{font-weight:400;font-size:12px;color:var(--aib-text-light)}
 
 /* ---- 历史浮层 ---- */
-.aiwrap .ai-hist-wrap .ai-hist-list{width:440px;max-height:none;overflow:visible;background:var(--aib-bg-panel)}
-.aiwrap .history-list{display:flex;flex-direction:column;gap:2px;max-height:min(260px,38vh);overflow-y:auto}
+.aiwrap .ai-hist-wrap .ai-hist-list{width:640px;max-height:none;overflow:visible;background:var(--aib-bg-panel)}
+.aiwrap .history-list{display:flex;flex-direction:column;gap:2px;max-height:min(340px,44vh);overflow-y:auto}
 .aiwrap .history-item{
   display:flex; align-items:center; justify-content:space-between; gap:10px;
   padding:9px 10px; border-radius:8px; cursor:pointer; background:transparent; transition:background .2s;
@@ -1133,7 +1133,11 @@
 .aiwrap .history-item.active .status-dot{background:#10b981}
 .aiwrap .history-item-title{
   font-size:13px;color:var(--aib-text-main);font-weight:500;min-width:0;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  /* ★ `V-389`：标题**最多两行**（你原话"最多显示 2 行标题，否则显示的对话字数太少，实在看不全"）。
+     原来 `white-space:nowrap` 一行就砍，任务名稍长只剩前半截。改成 `line-clamp:2` ——
+     第 2 行末尾浏览器自己补省略号；`overflow-wrap:anywhere` 让路径 / 英文标识符也能折行。 */
+  display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
+  overflow:hidden; white-space:normal; overflow-wrap:anywhere;
 }
 .aiwrap .history-item.active .history-item-title{color:var(--aib-primary);font-weight:600}
 .aiwrap .history-item-right{display:flex;align-items:center;gap:10px;flex:none;color:var(--aib-text-light);font-size:12px}
@@ -1465,12 +1469,33 @@
 .aiwrap .ai-at-x:hover{background:#E2E8F0;color:var(--aib-text-main)}
 .aiwrap .ai-at-x svg.i{width:12px;height:12px}
 .aiwrap .ai-paste-file.active{color:var(--aib-primary);background:color-mix(in srgb, var(--aib-primary) 10%, transparent)}
-.aiwrap .ai-bub-atts{display:flex;flex-wrap:wrap;gap:6px;margin-top:5px}
-.aiwrap .ai-bub-atts span{
-  display:inline-flex;align-items:center;max-width:100%;padding:2px 7px;border-radius:6px;
-  background:rgba(37,99,235,.08);color:var(--aib-text-muted);font-size:11.5px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+.aiwrap .ai-bub-atts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+/* ★ `V-388`/`V-389`：附件胶囊。以前这里是 `color:var(--aib-text-muted)`（#64748B 灰字）
+   + 淡蓝底，而它长在**蓝底白字**的用户气泡里 ⇒ 灰字压在蓝底上根本看不清（你报的那条）。
+   现在：能点的做成"白描边 + 半透明白底 + 白字"，**像按钮**（有 hover / cursor），
+   没原文的老记录才退回灰（`--muted`），一眼能分出"点了有反应"和"点了也没东西"。 */
+.aiwrap .ai-att-chip{
+  display:inline-flex;align-items:center;gap:5px;max-width:100%;
+  padding:3px 9px;border-radius:999px;font:inherit;font-size:12px;line-height:1.4;
+  cursor:pointer;transition:background .15s,border-color .15s,color .15s;
+  border:1px solid rgba(255,255,255,.45);
+  background:rgba(255,255,255,.16);color:#fff;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
+.aiwrap .ai-att-chip svg.i{width:13px;height:13px;flex:none;opacity:.95}
+.aiwrap .ai-att-chip .ai-att-chip-n{
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.aiwrap .ai-att-chip .ai-att-chip-s{flex:none;opacity:.75;font-size:11px}
+.aiwrap .ai-att-chip:hover{background:rgba(255,255,255,.3);border-color:rgba(255,255,255,.8)}
+.aiwrap .ai-att-chip:active{background:rgba(255,255,255,.42)}
+.aiwrap .ai-att-chip.muted{
+  color:rgba(255,255,255,.72);border-color:rgba(255,255,255,.3);
+  background:rgba(255,255,255,.08);cursor:default;
+}
+.aiwrap .ai-att-chip.muted:hover{background:rgba(255,255,255,.12)}
+/* 输入框那一排（白底）：同一个胶囊，换个配色 */
+.aiwrap .ai-at .ai-at-act{cursor:pointer}
 
 /* ============================================================================
    技能管理重设计（AI 工作台内嵌）
@@ -1681,7 +1706,14 @@
 .aiwrap .ai-perm-wrap .ai-perm-body{
   width:min(680px,92vw); min-width:0; max-width:calc(100vw - 24px);
 }
-.aiwrap .ai-hist-wrap .ai-hist-list{width:min(440px,92vw)}
+.aiwrap .ai-hist-wrap .ai-hist-list{width:min(640px,92vw)}
+/* ★ `V-388`（你报的"点历史会话，出来的浮层会被左边插件列表盖住、位置也不对"）：
+   上面那条 `left:auto;right:0` 是**旧工具栏**（按钮在右侧）留下的；2026-10-29 换成控制台之后，
+   「历史会话」挪到了输入框上方这条的**最左边**，还贴右展开就整块往左跑 ——
+   440px 的面板贴着按钮右沿往左铺 325px，越过 `#pane-ai` 的左边界就看不见了
+   （`#pane-ai{overflow:hidden}` 把它切掉，左边那列插件列表再压在上面）。
+   它得**贴左**展开：左沿跟着按钮走，剩下的交给 `fitPop` 往右夹。 */
+.aiwrap .ai-console-hist-wrap .ai-hist-list{left:0; right:auto; transform-origin:bottom left}
 
 /* ---- 权限清单里的「完全权限」开关 ---- */
 .aiwrap .ai-perm-full{
@@ -1981,7 +2013,7 @@
 .aiwrap .ai-console-divider{width:1px;height:16px;background:#E2E8F0;margin:0 2px;flex:none}
 
 /* 控制台现在紧贴输入框上方，浮层按通用规则向上弹（不会被窗口底边裁掉） */
-.aiwrap .ai-console-top .ai-hist-list{width:min(440px,calc(100vw - 40px))}
+.aiwrap .ai-console-top .ai-hist-list{width:min(640px,calc(100vw - 40px))}
 .aiwrap .ai-console-top .ai-console-palette .ai-palette-pop{left:auto;right:0;transform-origin:bottom right}
 .aiwrap .ai-console-top .ai-palette-btn{width:30px;height:30px;padding:0;justify-content:center}
 
@@ -2064,3 +2096,42 @@
   .aiwrap .ai-console-right .token-pill{min-width:128px}
   .aiwrap .ai-input-toolbar{padding-left:8px;padding-right:8px}
 }
+
+/* ============================================================================
+   ★ `V-389`：流式"边收边写" + 粘贴附件的原文弹窗
+   ========================================================================== */
+
+/* ---- 它正在写：字一段一段长出来，末尾一根闪的竖线 ---- */
+.aiwrap .ai-bub.streaming .ai-bub-b{background:#fff;border-color:var(--aib-border-color)}
+.aiwrap .ai-bub.streaming .ai-bub-ic{background:var(--aib-primary-light);color:var(--aib-primary)}
+.aiwrap .ai-stream-n{font-variant-numeric:tabular-nums}
+.aiwrap .ai-stream-dot{
+  width:6px;height:6px;border-radius:50%;background:var(--aib-success);
+  display:inline-block;flex:none;animation:ai-live-pulse 1.6s infinite;
+}
+.aiwrap .ai-stream-t{white-space:pre-wrap;word-break:break-word;color:var(--aib-text-main)}
+/* 思考阶段：一屏放不下就淡出收尾（别把整屏顶满 —— 正文还没开始呢） */
+.aiwrap .ai-stream-think{
+  position:relative;white-space:pre-wrap;word-break:break-word;
+  color:var(--aib-text-light);font-size:12.5px;line-height:1.6;
+  max-height:126px;overflow:hidden;
+}
+.aiwrap .ai-stream-think::after{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:24px;
+  background:linear-gradient(to bottom,rgba(255,255,255,0),#fff);
+}
+.aiwrap .ai-caret{
+  display:inline-block;width:2px;height:1em;margin-left:2px;vertical-align:-2px;
+  background:var(--aib-primary);animation:ai-caret-blink .9s steps(2,start) infinite;
+}
+@keyframes ai-caret-blink{0%,50%{opacity:1}51%,100%{opacity:0}}
+
+/* ---- 粘贴附件的原文弹窗 ---- */
+.aiwrap .ai-attbox{max-width:860px}
+.aiwrap .ai-att-pre{
+  margin:0;padding:14px 16px;border-radius:8px;max-height:54vh;overflow:auto;
+  background:#F8FAFC;border:1px solid var(--aib-border-color);color:#303133;
+  font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12.5px;
+  line-height:1.6;white-space:pre-wrap;word-break:break-word;
+}
+.aiwrap .ai-att-note{margin:8px 0 0;font-size:12px;color:var(--aib-warning)}
