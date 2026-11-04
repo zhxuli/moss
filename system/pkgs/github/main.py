@@ -1042,14 +1042,34 @@ def repo_info_raw(path):
             r2 = git(root, 'remote', 'get-url', names[0])
             rurl = r2['out'].strip() if r2['ok'] else ''
 
-    # 第二批：只有 ahead/behind 必须等 upstream 才知道，单独一条
+    # 第二批：ahead/behind 得先知道"和哪条远端分支比"。
+    # ★ 没设跟踪分支（`git push` 不带 -u 就会这样）时，退一步拿 `<远端>/<当前分支>` 来比。
+    #   以前这种仓库的 ahead 永远是 **0** ⇒ 界面上本地列表里明明有一条「待上传」，
+    #   大按钮却灰成「云端已最新」、点下去还说"云端已经是最新的了" ——
+    #   用户报的就是这个："本地列表有一个待上传的版本，但是却没有上传按钮"。
+    track = upstream
+    if not upstream and branch and branch != 'HEAD':
+        nm = gits_parallel(root, [('names', ['remote'])])['names']
+        names = [n.strip() for n in (nm['out'].splitlines() if nm['ok'] else []) if n.strip()]
+        order = (['origin'] if 'origin' in names else []) + [n for n in names if n != 'origin']
+        for n in order:
+            cand = '%s/%s' % (n, branch)
+            if git(root, 'rev-parse', '--verify', '--quiet', cand + '^{commit}')['ok']:
+                track = cand
+                break
     ahead = behind = 0
-    if upstream:
-        ab = git(root, 'rev-list', '--left-right', '--count', 'HEAD...@{u}')
+    if track:
+        ab = git(root, 'rev-list', '--left-right', '--count', 'HEAD...' + track)
         if ab['ok']:
             parts = re.findall(r'\d+', ab['out'])
             if len(parts) >= 2:
                 ahead, behind = int(parts[0]), int(parts[1])
+    elif rurl and branch and branch != 'HEAD':
+        # 远端连上了，但云端**根本没有这条分支**（还没上传过一次）⇒ 本地所有提交都待上传。
+        # 不然这里 ahead 会是 0，界面上又变成"云端已最新"、没有上传按钮。
+        cnt = git(root, 'rev-list', '--count', 'HEAD')
+        got = re.findall(r'\d+', cnt['out']) if cnt['ok'] else []
+        ahead = int(got[0]) if got else 0
 
     st = first['status']
     changes, counts = parse_status(st['out'] if st['ok'] else '')
@@ -1066,7 +1086,10 @@ def repo_info_raw(path):
     return {
         'root': root, 'name': os.path.basename(root.rstrip('\\/')) or root,
         'branch': branch or '(空仓库)', 'detached': branch == 'HEAD',
-        'upstream': upstream, 'remote': rurl, 'host': host_of(rurl),
+        # track = 实际拿来比较的那条远端分支：有跟踪分支就是它，没有就是
+        # `<远端>/<当前分支>`（可能为空）。ahead/behind 就是跟它比出来的。
+        'upstream': upstream, 'track': track,
+        'remote': rurl, 'host': host_of(rurl),
         'ahead': ahead, 'behind': behind,
         'dirty': bool(changes), 'counts': counts, 'changes': changes[:200],
         'changeCount': len(changes),
@@ -1130,11 +1153,15 @@ def net_info(path, info, probe=None):
         state = '本地落后 %d 个提交（该 pull）' % info['behind']
     elif info['upstream']:
         state = '和远端一致'
+    elif info.get('track'):
+        # 没设跟踪分支，但能对上 `<远端>/<当前分支>`（ahead/behind 就是跟它比的）
+        state = '和 %s 一致（这条分支还没和云端建立跟踪关系，下次上传会自动设上）' % info['track']
     else:
         state = '没有设置跟踪的远端分支（push -u origin %s 可以设上）' % (info['branch'] or 'main')
     return {
         'ok': True, 'remote': info['remote'], 'host': info['host'],
-        'upstream': info['upstream'], 'ahead': info['ahead'], 'behind': info['behind'],
+        'upstream': info['upstream'], 'track': info.get('track') or '',
+        'ahead': info['ahead'], 'behind': info['behind'],
         'state': state, 'dirty': info['dirty'],
         'lastFetchTs': ts, 'lastFetch': (rel_time(ts) if ts else '没记录（还没 fetch 过）'),
         'probe': probe,
@@ -2964,18 +2991,21 @@ class Core:
             limit = 40
         limit = max(5, min(300, limit))
         rev = str(p.get('rev') or '').strip() or 'HEAD'
+        # ★ 以哪条远端分支为准：有跟踪分支就是它，没有就是 `origin/<当前分支>`
+        #   （repo_info 里算好的）。这里和 ahead/behind 必须用**同一条**，
+        #   否则会出现"某条已上传的提交被标成待上传、待上传数却是 0"这种自相矛盾的界面。
+        track = info.get('track') or info['upstream']
         # ★ 下面这 6 件事**互不依赖，一起发**（真机上量出来的：这台机器每条 git 光是
         #   启进程就要 0.26 秒，原来一条接一条跑 = 1.4 秒；这是"打开页面特别慢"的一半）。
         #   串行时：log → rev-list 上游 → for-each-ref → rev-parse → rev-list×2 → tag
         with ThreadPoolExecutor(max_workers=6) as pool:
             f_rows = pool.submit(git_log_rows, root, limit + 1, rev)
-            f_pushed = pool.submit(_upstream_hashes, root, info['upstream'])
+            f_pushed = pool.submit(_upstream_hashes, root, track)
             f_branch = pool.submit(branch_rows, root)
             # ★ 「V-384」这种版本号：界面上要一个"每保存一次就 +1"的整数，用真实提交数来当。
             #   本地总共多少个提交 / 云端追得上多少个 —— 两个数一减就是"待备份几个版本"。
             f_total = pool.submit(_rev_count, root, 'HEAD')
-            f_uptotal = (pool.submit(_rev_count, root, info['upstream'])
-                         if info['upstream'] else None)
+            f_uptotal = (pool.submit(_rev_count, root, track) if track else None)
             f_tags = pool.submit(tag_rows, root)
             rows, _ = f_rows.result()
             pushed, capped = f_pushed.result()
@@ -2991,6 +3021,7 @@ class Core:
             r['ver'] = ('V-%d' % (total - i)) if total else ''
         return {'ok': True, 'path': path, 'root': root, 'head': info['branch'],
                 'detached': info['detached'], 'upstream': info['upstream'],
+                'track': track,
                 'ahead': info['ahead'], 'behind': info['behind'],
                 'commits': rows, 'more': more, 'branches': local, 'remoteBranches': remote,
                 'tags': tags, 'pushedKnown': bool(pushed), 'capped': capped,
@@ -3016,8 +3047,8 @@ class Core:
         if not names:
             return {'ok': False, 'why': '这个仓库还没连任何远端（先去「备到 GitHub」）',
                     'commits': [], 'path': path}
-        # 目标：跟踪分支；没有就猜 remote/当前分支
-        target = info['upstream']
+        # 目标：跟踪分支；没有就用 repo_info 算好的 `<远端>/<当前分支>`
+        target = info.get('track') or info['upstream']
         if not target:
             target = '%s/%s' % (names[0], info['branch'])
         if not git(root, 'rev-parse', '--verify', '--quiet', target + '^{commit}')['ok']:
@@ -3602,6 +3633,21 @@ class Core:
                                     '把全部分支推过去', 300))
             steps.append(self._step(root, ['git', 'push', remote, '--tags'],
                                     '把标签也推过去', 120))
+            # ★ `git push <remote> --all` **不会**建立跟踪关系（它没有 -u），
+            #   而"待上传几个"正是拿跟踪分支比的。真机日志 2026-11-04 00:44:15
+            #   `git push --progress origin --all` 就是这么把这个仓库推上去的 ——
+            #   之后再存新版，界面就说不清"传没传"。
+            #   这里把关系补上（只补 origin：镜像远端不该抢上游），一次弄干净。
+            repo_cache_clear(root)
+            after = repo_info(path, ttl=0) or {}
+            br = after.get('branch') or ''
+            if (remote == 'origin' and not after.get('upstream') and br
+                    and not after.get('detached')
+                    and git(root, 'rev-parse', '--verify', '--quiet',
+                            'origin/%s^{commit}' % br)['ok']):
+                steps.append(self._step(
+                    root, ['git', 'branch', '--set-upstream-to=origin/' + br, br],
+                    '把 %s 和 origin/%s 关联起来（以后"待上传"才数得准）' % (br, br), 30))
         else:
             return {'ok': False, 'steps': [],
                     'why': '没给镜像方式（gh_create / local_clone / add_remote）'}

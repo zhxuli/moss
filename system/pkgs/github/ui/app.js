@@ -1307,6 +1307,15 @@ function renderHistory(v) {
     return;
   }
   var h = '';
+  /* ★ 待上传的那一条自己带一个「上传」按钮。
+     用户报的 bug：本地列表里明明写着「待上传云端」，界面上却找不到任何上传按钮
+     （下面那个大按钮还是灰的「云端已最新」）。根因在后端 ahead 算成 0，已修；
+     这里再补一个就近的入口：git push 一次会把所有未上传的版本一起推上去，
+     所以只在**最上面那条**待上传的记录上标出来，不重复刷屏。 */
+  var firstUnsent = -1;
+  for (var ui = 0; ui < list.length; ui++) {
+    if (!list[ui].pushed) { firstUnsent = ui; break; }
+  }
   list.forEach(function (c, i) {
     var unsent = !c.pushed;
     var dim = (!unsent && i > 0) ? ' dim' + Math.min(3, i) : '';
@@ -1316,6 +1325,12 @@ function renderHistory(v) {
       '<span class="hmsg" title="' + esc(c.subject || '') + '">' +
       esc(c.subject || '（没有说明）') + '</span></div>' +
       '<div class="hacts">' +
+      (i === firstUnsent
+        ? '<button class="mini-btn up" data-act="backup" title="' +
+          esc(v.hasRemote ? '把还没上传的版本一起传到 GitHub'
+                          : '先连一个 GitHub 仓库，再上传') + '">' +
+          svg('arrowUp') + '上传</button>'
+        : '') +
       '<button class="mini-btn" data-act="detail" data-hash="' + esc(c.hash) + '">' +
       svg('eye') + '看</button>' +
       '<button class="mini-btn" data-act="restore" data-hash="' + esc(c.hash) + '">' +

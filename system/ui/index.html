@@ -248,6 +248,7 @@
    moss 界面（宿主界面）—— `V-67` 起拆成了模块，顺序就是下面这些 <script src>：
 
      js/core.js      状态与工具（$ / ico / 数据类型 / 全局状态）
+     js/sound.js     音效提醒（`sndNotify`：AI 跑完 / 要你确认时响一下，真播放在界面进程里）
      js/panels.js    状态栏 + 选项卡切换
      js/console.js   命令行 + 运行 + 包状态
      js/drop.js      拖文件进来
@@ -269,6 +270,9 @@
 </script>
 <script src="vendor/difflib.js"></script>
 <script src="js/core.js"></script>
+<!-- ★ 音效提醒：只提供 `sndNotify(kind, force)` 这一个入口，被 `js/ai.js`（跑完 /
+     要你确认）和 `js/settings.js`（试听 / 换完文件）调用。排在它俩前面就行。 -->
+<script src="js/sound.js"></script>
 <!-- ★ `V-358`：自动启动（详情页那一块 + 开机跑一次）—— 排在 `list.js` 前面：
      详情页重画时会调它的 `autoSectionHTML`，虽然那时只是"函数声明"，但早加载少一类意外。 -->
 <script src="js/autostart.js"></script>

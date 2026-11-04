@@ -1423,19 +1423,24 @@ def main():
     _ = _out
     M.clear_temp()
     chk("S 这一次跑结束 ⇒ 临时放行自动作废", "拒绝" in _try_write(), "")
-    # ③ 硬锁：勾了「任意路径」也进不去
+    # ③ 硬锁：连完全权限也进不去
     _lock = str(T.Tools(workdir=fake_pkg).call(
         "write_file", {"path": str(E.HOME / "core" / "别碰.py"), "content": "x"}))
-    chk("S ★★ 连 `*`（任意路径）都没勾的时候，`core/` 当然写不了", "受保护" in _lock, _lock[:70])
+    chk("S ★★ 没开完全权限的时候，`core/` 当然写不了", "受保护" in _lock, _lock[:70])
     chk("S ★★ 清单里也**加不进**硬的受保护路径（不是「加进去就能写」）",
         M.allow_add(str(E.HOME / "core")).get("ok") is False, "")
-    # ④ 「任意路径」那一行的写 = 放手：哪儿都能写，而且**危险操作不再问**
-    chk("S ★ 默认**不是**放手（`*` 那一行的读/写都是关的）", M.wildcard_write() is False, "")
+    # ④ 放手 = **完全权限**（2026-10-31：「任意路径」那一档撤了，完全权限取代它）
+    chk("S ★ 默认**不是**放手（没开完全权限）",
+        M.wildcard_write() is False and M.full_access() is False, "")
     _r = _try_write()
     chk("S ★ 没放手时，包外目录写不了（清单里没有它）", "拒绝" in _r, _r[:60])
+    # ★ 单独把 `*` 那一行的写打开**已经不算数了**：下一次 `load()` 会把它收回去
     M.allow_set("*", write=True)
-    chk("S ★★ 把「任意路径」的**写**打开 = 放手（`wildcard_write` 为真）",
-        M.wildcard_write() is True, "")
+    chk("S ★★ 只把 `*` 那行的写打开**不再等于放手**（那个开关撤了）",
+        M.wildcard_write() is False, "")
+    M.set_full_access(True)
+    chk("S ★★ 打开**完全权限** = 放手（`wildcard_write` 为真）",
+        M.wildcard_write() is True and M.full_access() is True, "")
     _r = _try_write()
     chk("S ★★ 放手之后：包外普通目录**能写**了（这才是「放手」）",
         "[失败]" not in _r and "拒绝" not in _r, _r[:60])
@@ -1444,8 +1449,8 @@ def main():
     chk("S ★★ 但放手**也写不了 `core/`**（硬锁，不是劝）", "受保护" in _lock2, _lock2[:70])
     chk("S ★★ 放手 = 危险操作**不再问**（`needs_confirm` 变假 —— 别再拿第二个开关控同一件事）",
         M.needs_confirm(M.danger_of("run_moss", {"args": "--remove x"})) is False, "")
-    M.allow_set("*", write=False)
-    chk("S ★ 把「任意路径」的写关掉 ⇒ 危险操作又要问了（现读，不用重启）",
+    M.set_full_access(False)
+    chk("S ★ 关掉完全权限 ⇒ 危险操作又要问了（现读，不用重启）",
         M.needs_confirm(M.danger_of("run_moss", {"args": "--remove x"})) is True, "")
     # ⑤ 权限那一段要**写进提示词**（它自己看不见界面，得知道能写哪儿）
     _note = M.perm_note(str(fake_pkg))
@@ -1633,7 +1638,7 @@ def main():
     print("-" * 72)
     import ai_runs as R                                              # noqa: E402
 
-    _star_before = MP.wildcard_write()
+    _full_before = MP.full_access()
 
     def _gate_counted(p, why, need):
         _gate_calls.append(str(p))
@@ -1646,14 +1651,16 @@ def main():
     _v384out = tmp / "v384outside"
     _v384out.mkdir(parents=True, exist_ok=True)
 
-    MP.allow_add("*", read=False, write=True, why="探针：完全权限")
+    # ★ 2026-10-31：「任意路径」那一档撤了 —— 放手只认 `set_full_access(True)`
+    #   （只把 `*` 那行勾上写已经不算数了，见 `ai_mode.load()` 里的收口）。
+    MP.set_full_access(True)
     _r = str(T.Tools(workdir=str(_v384pkg), perm_gate=_gate_counted).call(
         "allow_path", {"path": str(_v384out), "need": "write", "why": "改它"}))
     chk("S10 ★★ 勾了「完全权限」⇒ `allow_path` 直接回「不用申请」，"
         "而且**闸一次都没被叫**（不再白弹一张卡、白等一个人）",
         "不用申请" in _r and not _gate_calls, _r[:80])
     # 同一个目录，**没**开完全权限 ⇒ 仍然要走请求（不是无条件放行）
-    MP.allow_add("*", read=False, write=False, why="探针：关掉完全权限")
+    MP.set_full_access(False)
     _r = str(T.Tools(workdir=str(_v384pkg), perm_gate=_gate_counted).call(
         "allow_path", {"path": str(_v384out), "need": "write", "why": "改它"}))
     chk("S10 ★★ 关掉「完全权限」⇒ 该问的还是要问（闸叫到了，不是无条件放行）",
@@ -1664,7 +1671,7 @@ def main():
         "allow_path", {"path": str(_v384pkg), "need": "write", "why": "改它"}))
     chk("S10 ★★ 本来就允许的地方（当前这个包）⇒ 也回「不用申请」，不打扰人",
         "不用申请" in _r and not _gate_calls, _r[:80])
-    MP.allow_add("*", read=False, write=_star_before, why="探针：还原")
+    MP.set_full_access(bool(_full_before))
     MP.allow_rm(str(_v384out))
 
     # ② 开工就存（只认"已经是个包"的目录）
@@ -1719,7 +1726,7 @@ def main():
 
     print()
     print("=" * 72)
-    print("S11：完全权限 = 任意路径 + 技能自动批准（和单独的「任意路径」分开）")
+    print("S11：完全权限 = 放手（「任意路径」那一档撤了，只剩这一个开关）")
     print("=" * 72)
     import skill_lib as SK                                                # noqa: E402
     _sp = SK.skill_dir() / "fullprobe"
@@ -1731,10 +1738,12 @@ def main():
     (_sp / "run.py").write_text("print(1)\n", encoding="utf-8")
     (_sp / "icon.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"></svg>', encoding="utf-8")
     MP.set_full_access(False)
-    MP.allow_set("*", read=True, write=True, why="只是任意路径", by="user")
+    # ★ 2026-10-31：想"只开任意路径"已经做不到 —— 那一行会被 `load()` 收回，技能也不会自动批准
+    MP.allow_set("*", read=True, write=True, why="想只开任意路径", by="user")
     _sk = SK.list_skills()["fullprobe"]
-    chk("S11 ★ 只勾「任意路径」⇒ 技能仍然待批准（两个概念不许混）",
-        (not MP.full_access()) and (not _sk["allowed"]), _sk["why_allow"])
+    chk("S11 ★ 想「只开任意路径」已经做不到（收回）⇒ 技能仍然待批准",
+        (not MP.full_access()) and (not MP.wildcard_write()) and (not _sk["allowed"]),
+        _sk["why_allow"])
     MP.set_full_access(True)
     _sk = SK.list_skills()["fullprobe"]
     chk("S11 ★★ 打开「完全权限」⇒ 已有技能自动批准，且任意路径也开着",

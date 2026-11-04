@@ -107,6 +107,16 @@ def load():
                         and "完全权限" in str(one.get("why") or "")):
                     legacy_full = True
     cur["full_access"] = bool(raw.get("full_access", legacy_full))
+    # ★ 2026-10-31（用户：「任意路径这个功能直接给他去掉 有完全权限就可以取代他了」）：
+    #   `*` 那一行从此**只是完全权限的内部表示** —— 界面上不再摆那一行、也没地方给
+    #   "只开任意路径"了。所以这里收口：**没开完全权限 ⇒ 不可能存在"任意路径"**。
+    #   老配置里那种形状（`*` 行勾了写、`full_access` 没开）在这一步被收回 —— 宁可让它
+    #   下一次来申请（弹一张卡问人），也别留下"界面上看不见、权限却全开着"的状态。
+    if not cur["full_access"]:
+        for it in cur["allow"]:
+            if it.get("path") == WILDCARD:
+                it["read"] = False
+                it["write"] = False
     # 老文件里那个 `mode`（`V-307`~`V-315` 的三档）→ **翻译成清单里的勾选**，别让它悄悄失效
     old_mode = str(raw.get("mode") or "")
     if old_mode and not raw.get("seeded"):
@@ -837,10 +847,6 @@ def perm_note(workdir=""):
                    "★ 技能**本次开工的工具表仍然是固定的**：新造/改过的技能本次不能直接变成工具，"
                    "要试就跑 `run_moss(\":skill run <名字> …\")`；不要用 `ask` 等用户批准。"
                    "越是这样越要自己兜住：改之前想清楚，改完跑一遍。")
-    elif star_w:
-        out.append("🔓 **任意路径**：除硬锁路径外**哪儿都能写**，危险操作也不再问你。"
-                   "★ 这种时候**一次 `allow_path` 都不要调** —— 你要碰的地方本来就允许。"
-                   "★ 但技能授权仍是分开的：新建/修改技能仍需用户点一次「允许」。")
     elif wr:
         out.append("清单里另外勾了「写」的：%s" % "；".join("`%s`" % p for p in wr))
     elif not cur_write:

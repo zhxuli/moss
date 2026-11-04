@@ -498,6 +498,16 @@ window.__mossDrop = function(items){
   const framePid = DRAG.framePid;
   dragEnd();
   if (!items || !items.length){ uiLog("host drop: 没有路径（WebView2 没给）"); return; }
+  // ★ 音效提醒（设置 → AI 引擎那两行）：把音频拖到那一行上 = 换铃声。
+  //   ★ 为什么放在**最前面**：它自己只认"设置面板开着、而且正拖着音效那一行"
+  //     （`snd.hot` 有值、3 秒内的那一下），所以不会抢别人的拖入；反过来，设置面板
+  //     是盖在整个界面上的浮层 —— 排在后面的话，AI 页那条钩子会先把音频当成附件收走。
+  try{
+    if (typeof window.__mossSndDrop === "function" && window.__mossSndDrop(items)){
+      uiLog("host drop: 被设置里的音效行收下了");
+      return;
+    }
+  }catch(e){ uiLog("host drop: 音效钩子抛了 " + e); }
   // ★ `V-88`：拖进来的路径**先问一下有没有"别人更想要"**（比如备份那一页的「导出到」
   //   那一行：把文件夹拖上去 = 导出目标）。钩子收下了就到此为止，别再去跑包。
   //   真路径只有宿主知道（Chromium 不给 `File.path`），所以这条"落地口"必须留个插口。

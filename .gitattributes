@@ -14,3 +14,6 @@
 *.jpg binary
 *.jpeg binary
 *.zip binary
+# 出厂音效（`system/sound/*.mp3`：AI 跑完 / 要你确认时响的那两个）
+*.mp3 binary
+*.wav binary

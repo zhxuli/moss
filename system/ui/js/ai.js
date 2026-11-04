@@ -77,6 +77,10 @@ const AIR = Vue.reactive({
   diskNoted: "",               // `V-249`：已经通知过"盘上变了"的那一次（免得每轮轮询都刷一遍）
   skillsRev: "",               // 技能状态指纹：一变就重读「技能」那一行（修 AI 改技能后界面还写已允许）
   snapNoted: "",               // `V-250`：已经通知过"快照存好了"的那一条（同上）
+  /* ★ 音效提醒（设置 → AI 引擎里那两行）：上一张"它在问你"的卡已经是哪一条了 ——
+     轮询 700ms 一跳，同一张卡会连着好几跳都是它，认个号才不会一路连响（`js/sound.js`
+     那 1.2 秒的闸是第二道）。 */
+  askNoted: "",
   /* ★ `V-251`：**会话**那三件 —— 你原话「怎么还是找不到历史会话记录，一旦重新打开 moss
      只能重新再来 …… 没法继续上一次的聊天继续沟通」。
        · `contId`   正在接着哪条记录聊（空 = 新开一条；`aiStart` 把它交给宿主）
@@ -109,10 +113,12 @@ const AIR = Vue.reactive({
   selfSkills: {skills: [], from_pkgs: [], broken: []},
   selfOpen: false, selfWho: "", selfText: "", selfTab: "pending",
   /* ★ `V-316`：**权限 = 一份清单**（每行一对「读 / 写」勾选）—— 不再有"模式"那种第二个开关。
-      · `allow`    —— 清单（后端保证含 `*` 那一行 = 任意路径）
-      · `wild`     —— `*` 那一行勾了写没有（= 放手）
-      · `tmp`      —— 它的临时空间（按插件分）+ 一键清空 */
-  allow: [], wild: false, full: false, dropHot: false, newPath: "",
+      · `allow`    —— 清单（后端保证含 `*` 那一行）
+      · `full`     —— 完全权限（无人值守）：任意路径可读写 + 技能自动批准 + 危险操作不问
+      · `tmp`      —— 它的临时空间（按插件分）+ 一键清空
+     ★ 2026-10-31（你的要求）：「任意路径」这个功能**撤掉了**，完全权限取代它 ——
+       盾牌后面那句状态按「完全权限 > N 个路径 > 仅当前包」显示（见 `permState`）。 */
+  allow: [], full: false, dropHot: false, newPath: "",
   /* ★ `V-319`：**待允许的目录**（它提出、还没被勾的那一条）—— 清单里那一行据此闪烁 */
   perm: null,
   /* ★ `V-321`：权限卡**默认折起来**（只留一行摘要，日志区更大）。
@@ -421,8 +427,9 @@ async function aiRefreshInfo(force){
       // ★ `V-316`：权限那几样（清单 / 临时空间）—— 每次问宿主都刷一遍，
       //   因为"它在跑的时候问你要不要放行"会当场改清单，界面得跟着变。
       if (AIR.info.allow) AIR.allow = AIR.info.allow;
-      if (AIR.info.wildcard !== undefined) AIR.wild = !!AIR.info.wildcard;
-      // ★ 完全权限 = 比"任意路径"更高一档：额外包含"技能自动批准"。
+      // ★ 完全权限（`V-140` 那一档）：额外包含"技能自动批准 + 危险操作不问"。
+      //   ★ 2026-10-31：宿主还会回一个 `wildcard`（`*` 那一行有没有勾写）—— **界面不再看它**：
+      //     「任意路径」这个功能撤了，它现在只是完全权限的内部表示（`ai_mode.set_full_access`）。
       if (AIR.info.full_access !== undefined) AIR.full = !!AIR.info.full_access;
       // ★ `V-252`：模型那一格的初值 —— 只在"没选过 / 选的那个这家没有了"时才跟着配置走，
       //   不然你每次刷新都被拨回第一个。
@@ -542,6 +549,14 @@ function addPathOk(p){
    又会被 `text-overflow` 从**右边**截掉 —— 最要紧的最后两级全没了。
    拆完用 flex 排：盘符和「上一级\最后一级」**钉死**，中间那段**自己缩**
    （放得下就全显示，放不下才出 …）。 */
+/* ★ 2026-10-31：盾牌后面那句「N 个路径」里的数字 —— 用汉字（一个路径 / 两个路径 /
+   三个路径 …），超过十就老实用阿拉伯数字。`两` 不是 `二`：你写的就是「两个路径」。 */
+const AI_CN_NUM = ["零", "一", "两", "三", "四", "五", "六", "七", "八", "九", "十"];
+function aiCnNum(n){
+  const v = Math.max(0, Math.floor(Number(n) || 0));
+  return v <= 10 ? AI_CN_NUM[v] : String(v);
+}
+
 function permParts(p){
   const s = String(p || "").trim();
   if (!s || s === "*") return null;
@@ -1146,6 +1161,10 @@ async function aiPollOnce(){
       AIR.pickId = AIR.liveRunId;
     }
     if (_wasRunning && !AIR.running){
+      // ★ 音效：这一跑**刚结束**（running 从 true 变 false）⇒ 响"任务结束"那一声。
+      //   放这里而不是"结果到了才响"：宿主把 running=false 和 result 分两拍给，
+      //   等结果可能再等一两秒；你要的是"它跑完了"这一刻的提示。
+      sndNotify("finish");
       AIR.livePkg = "";          // ★ 2026-10-22：跑完了，这个"是哪个包的"标记也就没意义了
       aiLoadSkills();
       aiRefreshInfo(true);      // `V-319`：这一跑里它可能问过权限，跑完把清单重读一次
@@ -1198,6 +1217,9 @@ async function aiPollOnce(){
     const permKeyOld = AIR.perm ? String(AIR.perm.path || "") : "";
     AIR.perm = permNow;
     if (permKey !== permKeyOld) aiRefreshInfo(true);
+    // ★ 音效：它要你**放行一个目录** ⇒ 这也是"等你动手"，响"需要你确认"那一声
+    //   （同一个目录只响一次：变了才响，轮询同一跳重复给不算）。
+    if (permKey && permKey !== permKeyOld) sndNotify("warn");
     if ((got.killed || []).length) AIR.killed = got.killed;
     if (got.mode && got.mode !== AIR.mode) AIR.mode = got.mode;
     // ★ `V-308`：它问你的话（那张卡片）。★ 你正在那张卡上打字时**别把你的字冲掉**。
@@ -1206,6 +1228,12 @@ async function aiPollOnce(){
     AIR.ask = (ask && AIR.answeredQids.includes(ask.qid)) ? null : ask;
     if (!sameAsk) AIR.askText = "";
     if (!ask && !got.running) AIR.askText = "";
+    // ★ 音效：**新冒出来**一张"它在问你 / 危险操作要你点头"的卡 ⇒ 响"需要你确认"那一声。
+    //   认 qid：同一张卡会连着好几跳都还在，不认号就会一路连响。
+    if (AIR.ask && AIR.ask.qid && AIR.ask.qid !== AIR.askNoted){
+      AIR.askNoted = AIR.ask.qid;
+      sndNotify("warn");
+    }
     // 只在**正在跑**的时候才用「这次任务的」上限覆盖那一格 —— 否则你刚改完预算，
     // 下一次轮询就把它改回旧值了（预览里我先踩到）。
     if (got.running && got.max_tokens) AIR.maxTokens = got.max_tokens;
@@ -1678,20 +1706,20 @@ const MossAi = {
       return tail + (p.need === "read" ? "（读）" : "");
     },
     /* ★ `V-316`/`V-320`：权限那一块的显示（照稿子）。
-       · `permBadge` = 标题旁边那颗小胶囊（「可写 N 处」；放手时写「已放手」）
-       · `wild`      = 「任意路径」那一行勾了写（放手：危险操作也不再问）
-       · `confirmAsk`= `kind=confirm` 的那张卡 —— 它渲染在**权限卡上半段**（不另弹卡片） */
+       ★ 2026-10-31（你的要求）：盾牌**后面跟一句文字状态**，优先级
+         「完全权限 > N 个路径 > 仅当前包」——「任意路径」那一档撤掉了（完全权限取代它）。
+         数的是**明面上那几条**（`allowSplit.mine`）：`*` 那行不显示了、别的包的收在下面，
+         都不算；只读的算（它毕竟能用那个路径），读写都关掉的那种不算。 */
     allowOn(){ this.A.rev; return (this.A.allow || []).filter(x => x.write).length; },
-    permBadge(){
+    minePaths(){
       this.A.rev;
-      const bits = [];
-      if (this.A.full) bits.push("完全权限");
-      if (this.A.wild) bits.push("任意路径");
-      if (bits.length) return bits.join(" + ");
-      // ★ 2026-10-22：数的是**这一页摆出来的**那些（别的包的行收在下面，不算进来 ——
-      //   不然"可写 5 处"跟眼睛看到的 2 条对不上）
-      const n = this.allowSplit.mine.filter(x => x.write && x.path !== "*").length;
-      return n ? ("可写 " + n + " 处") : "只读";
+      return this.allowSplit.mine.filter(x => x.path !== "*" && !x.current && (x.read || x.write));
+    },
+    permState(){
+      this.A.rev;
+      if (this.A.full) return "完全权限";
+      const n = this.minePaths.length;
+      return n ? (aiCnNum(n) + "个路径") : "仅当前包";
     },
     confirmAsk(){
       this.A.rev;
@@ -1708,7 +1736,9 @@ const MossAi = {
       this.A.rev;
       const me = (aiPackage() || {}).id || "";
       const mine = [], other = [];
-      (this.A.allow || []).filter(x => !x.pending).forEach(x => {
+      // ★ 2026-10-31：`*` 那一行（老的「任意路径」）**不再摆到界面上** —— 它现在只是
+      //   完全权限的内部表示（见 `ai_mode.set_full_access` / `load` 里的收口）。
+      (this.A.allow || []).filter(x => !x.pending && x.path !== "*").forEach(x => {
         // ★ V-344：每行预先把路径拆成三段（盘符 / 中间 / 尾巴），模板直接用
         const it = Object.assign({}, x, {_p: permParts(x.path)});
         const own = permOwnerOf(it.path);
@@ -1877,10 +1907,10 @@ const MossAi = {
       toast("清掉 " + ok + " 条别的包的权限" + (bad ? ("，" + bad + " 条没清掉") : ""), !!bad);
       AIR.rev++;
     },
-    /* 清单里那一行怎么显示：当前那个包 → `:包名 当前这个包`；`*` → 任意路径；别的按路径尾巴 */
+    /* 清单里那一行怎么显示：当前那个包 → `:包名 当前这个包`；别的按路径尾巴
+       ★ 2026-10-31：`*`（老的「任意路径」）那一行不再摆到界面上，这个分支也就不需要了 */
     permLabel(it){
       if (!it) return "";
-      if (it.path === "*") return "任意路径";
       const t = this.target;
       const norm = s => String(s || "").replace(/[\\/]+$/, "").toLowerCase();
       // ★ 符号走 `this.pSym()`（`mountVue` 的 globalProperties）—— 方法体里**读不到**
@@ -1895,7 +1925,6 @@ const MossAi = {
     permDesc(it){
       if (!it) return "";
       if (it.pending) return "它想用这里" + (it.why ? ("：" + it.why) : "");
-      if (it.path === "*") return "默认安全策略";
       const t = this.target;
       const norm = s => String(s || "").replace(/[\\/]+$/, "").toLowerCase();
       /* ★ `V-347`：出厂包多说四个字（宿主升级时 `system/` 会被整体替换）—— 只提示、不拦 */
@@ -3584,17 +3613,15 @@ const MossAi = {
                   </div>
                 </div>
               </div>
-              <!-- 目录权限（点开才出） -->
+              <!-- 目录权限（点开才出）—— 盾牌后面那句文字状态：
+                   完全权限 > 两个路径 > 仅当前包（见 permState） -->
               <div class="popover-wrapper ai-perm-wrap ai-perm" :class="{folded: !A.permPop}">
                 <button ref="permBtn" class="trigger-btn ai-perm-fold"
-                        :class="{active: A.permPop, full: A.full, wild: A.wild}"
+                        :class="{active: A.permPop, full: A.full}"
                         @click.stop="togglePermPop()"
-                        :title="'权限控制 · ' + permBadge + '（点开看清单）'">
+                        :title="'权限控制 · ' + permState + '（点开看清单）'">
                   <span class="ai-perm-shield" v-html='ico(A.full ? "shield-check" : "shield", "i")'></span>
-                  <span class="ai-perm-flags" v-if="A.full || A.wild">
-                    <span class="ai-perm-flag full" v-if="A.full" title="完全权限"></span>
-                    <span class="ai-perm-flag wild" v-if="A.wild" title="任意路径"></span>
-                  </span>
+                  <span class="ai-perm-state">{{ permState }}</span>
                   <span class="dim ai-perm-foldw" v-if="A.perm">· 它想用「{{ permPendingLabel }}」</span>
                 </button>
                 <div ref="permPanel" class="popover-panel ai-perm-body" :class="{show: A.permPop}" v-if="A.permPop" @click.stop>
@@ -3624,8 +3651,7 @@ const MossAi = {
                     {{ addPathBad ? addPathHint : A.newPathErr }}
                   </p>
                   <div class="path-list">
-                    <div class="path-item ai-perm-i" v-for="it in allowRows" :key="it.path"
-                         :class="{star: it.path === '*'}">
+                    <div class="path-item ai-perm-i" v-for="it in allowRows" :key="it.path">
                       <div class="path-info ai-perm-info" :title="it.path">
                         <!-- ★ V-344：盘符 + 上一级\最后一级钉死，中间那段自己缩（够就不省） -->
                         <div class="path-title ai-perm-p">
@@ -3648,14 +3674,14 @@ const MossAi = {
                             @change="allowSet(it, 'write', $event.target.checked)"><span class="slider"></span></span>
                         </label>
                         <!-- ★ V-344：hover 才出的两颗：复制路径 / 打开文件夹 -->
-                        <button class="btn-delete ai-perm-act" v-if="it.path !== '*'" @click="copyPath(it)"
+                        <button class="btn-delete ai-perm-act" @click="copyPath(it)"
                                 title="复制这个路径" v-html='ico("copy", "i")'></button>
-                        <button class="btn-delete ai-perm-act" v-if="it.path !== '*'" @click="openDir(it.path)"
+                        <button class="btn-delete ai-perm-act" @click="openDir(it.path)"
                                 title="在资源管理器里打开" v-html='ico("folder-open", "i")'></button>
-                        <button class="btn-delete ai-perm-x" v-if="it.path !== '*' && !it.current" @click="allowRm(it)"
+                        <button class="btn-delete ai-perm-x" v-if="!it.current" @click="allowRm(it)"
                                 title="从清单里删掉（它就读不了也写不了这里）" v-html='ico("trash-2", "i")'></button>
                         <span class="ai-perm-lock" v-else v-html='ico("file-lock", "i")'
-                              title="系统默认那一行 / 当前这个包，删不掉（把开关关掉就行）"></span>
+                              title="当前这个包，删不掉（把写关掉就行）"></span>
                       </div>
                     </div>
                   </div>
@@ -3699,21 +3725,27 @@ const MossAi = {
                 </div>
               </div>
               <!-- 提示词历史 -->
-              <button class="trigger-btn ai-mini ai-messages-icon" @click="openMessages()"
-                      title="查看这条会话的完整提示词历史"
-                      v-html='ico("book-open", "i")'></button>
+              <button class="trigger-btn ai-mini ai-messages-icon ai-txtbtn" @click="openMessages()"
+                      title="查看这条会话的完整提示词历史">
+                <span v-html='ico("book-open", "i")'></span>
+                <span class="ai-btn-txt">提示词</span>
+              </button>
 
               <span class="ai-toolbar-divider" aria-hidden="true"></span>
 
               <!-- 上传附件 / 图片 / 大段文本附件 -->
-              <button type="button" class="trigger-btn ai-mini ai-upload-btn"
+              <button type="button" class="trigger-btn ai-mini ai-upload-btn ai-txtbtn"
                       :disabled="A.running" @click.stop="pickAttachment(false)"
-                      title="上传附件（可多选；代码 / 文本 / 图片都行）"
-                      v-html='ico("folder-plus", "i")'></button>
-              <button type="button" class="trigger-btn ai-mini ai-upload-btn"
+                      title="上传附件（可多选；代码 / 文本 / 图片都行）">
+                <span v-html='ico("folder-plus", "i")'></span>
+                <span class="ai-btn-txt">附件</span>
+              </button>
+              <button type="button" class="trigger-btn ai-mini ai-upload-btn ai-txtbtn"
                       :disabled="A.running" @click.stop="pickAttachment(true)"
-                      title="上传图片（可多选，交给模型直接看）"
-                      v-html='ico("file-image", "i")'></button>
+                      title="上传图片（可多选，交给模型直接看）">
+                <span v-html='ico("file-image", "i")'></span>
+                <span class="ai-btn-txt">图片</span>
+              </button>
             </div>
 
             <!-- 圆形发送按钮 -->

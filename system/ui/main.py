@@ -1950,6 +1950,192 @@ def _cfg(section, key, default=None):
     return default if val is None else val
 
 
+# ================================================================ 音效提醒（AI 跑完 / 要你确认）
+#   「设置 → AI 引擎」那两行：AI 跑完一轮响一下、有事要问你 / 要你放行目录的时候响一下。
+#
+#   ★ 文件放两处，**出厂件和用户件分开**：
+#     · 出厂件：`system/sound/<种类>.mp3` —— 跟着发行版走，升级时整体替换；
+#     · 你换的：`user_data/sound/` —— 面板上点「换一个」/ 把音频拖进来时**复制**过去，
+#       配置里只记"相对 user_data 的路径"（`sound/finish.mp3`）。记绝对路径的话，
+#       整个 moss 目录一搬就走了样；记相对路径则连 `MOSS_USER_DATA_DIR` 换到别处都不怕。
+#
+#   ★ 为什么在**界面进程**里放（`winmm` 的 MCI），而不是页面里 `<audio>`：WebView2 是
+#     Chromium，**自动播放策略**会挡掉"用户还没跟这一页交互过"的音频（刷新之后就不响，
+#     而且不报错）。MCI 是进程里直接放，不受那条策略管；mp3 / m4a / wma 走 `mpegvideo`，
+#     wav 走 `winsound`，都是系统自带的能力，不用额外装库。
+SOUND_KINDS = ("finish", "warn")
+#: 只认这几种音频（都是系统放得动的；列表外的宁可拒绝，也别"存进去了放不响"）。
+SOUND_EXTS = (".mp3", ".wav", ".m4a", ".aac", ".wma", ".ogg", ".flac")
+#: `sound.<种类>_on` 的出厂默认 —— 必须和 `core/config.py` 那个键的默认值一致。
+SOUND_DEFAULT_ON = True
+
+
+def _snd_kind(kind):
+    """把外面传进来的种类名收窄成 `finish` / `warn`（别的都当 `finish`）。"""
+    k = str(kind or "").strip().lower()
+    return k if k in SOUND_KINDS else SOUND_KINDS[0]
+
+
+def _snd_builtin(kind):
+    """出厂自带的那个音频（`system/sound/finish.mp3` / `warn.mp3`）。"""
+    return HOME / "system" / "sound" / (_snd_kind(kind) + ".mp3")
+
+
+def _snd_custom(kind):
+    """配置里指定的、**存在**的那个音频；没配 / 配的那个没了 → 返回 None。"""
+    rel = str(_cfg("sound", _snd_kind(kind) + "_file", "") or "").strip()
+    if not rel:
+        return None
+    p = Path(rel)
+    if not p.is_absolute():
+        p = USER_DATA / p
+    return p if p.is_file() else None
+
+
+def _snd_path(kind):
+    """现在到底该放哪个文件：配置里那个（存在才算）→ 出厂那个。都没有回 None。"""
+    p = _snd_custom(kind)
+    if p is not None:
+        return p
+    b = _snd_builtin(kind)
+    return b if b.is_file() else None
+
+
+def _snd_on(kind):
+    """这一种音效开着没有（读 config.toml 的 `[sound]`）。"""
+    return bool(_cfg("sound", _snd_kind(kind) + "_on", SOUND_DEFAULT_ON))
+
+
+def _snd_info(kind):
+    """给面板那一行用的现状：开没开 / 文件名 / 是出厂还是自己换的 / 文件在不在。"""
+    k = _snd_kind(kind)
+    rel = str(_cfg("sound", k + "_file", "") or "").strip()
+    p = _snd_path(k)
+    custom = _snd_custom(k)
+    return {"key": k, "on": _snd_on(k), "file": rel,
+            "name": p.name if p else "",
+            "path": str(p) if p else "",
+            "builtin": custom is None,
+            "exists": bool(p)}
+
+
+#: Windows 上不能当文件名的老古董（`CON` / `NUL` / `COM1` …）—— 真撞上了就加个前缀。
+_SND_BAD_NAMES = {"CON", "PRN", "AUX", "NUL"} | {"COM%d" % i for i in range(1, 10)} \
+    | {"LPT%d" % i for i in range(1, 10)}
+
+
+def _snd_safe_name(name, kind, ext):
+    """把你选的那个文件名留下来（面板上显示的就是它），只洗掉 Windows 不收的字符。
+
+    ★ 为什么不改叫 `finish.mp3`：面板上那一行只显示文件名 —— 换了铃声还叫 `finish.mp3`
+      的话，你根本看不出换没换成功。
+    """
+    stem = Path(str(name or "")).stem or _snd_kind(kind)
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", stem).strip(" .-") or _snd_kind(kind)
+    if stem.upper() in _SND_BAD_NAMES:
+        stem = "snd_" + stem
+    return stem[:48] + ext
+
+
+def _snd_drop_old(kind, old, keep=None):
+    """换完 / 恢复默认之后，把**上一份自己换的**那个音频删掉。
+
+    ★ 三条底线：① 只删 `user_data/sound/` **里面**的（出厂那个在 `system/sound/`，
+      永远碰不到）；② 另一类还在用它（你把同一个文件给了两种音效）就不删；
+      ③ `keep` = 刚换上的那个，不删。
+    """
+    if old is None:
+        return
+    try:
+        root = (USER_DATA / "sound").resolve()
+        p = Path(old).resolve()
+    except OSError:
+        return
+    if p == root or root not in p.parents:
+        return
+    if keep is not None:
+        try:
+            if p == Path(keep).resolve():
+                return
+        except OSError:
+            pass
+    other = "warn" if _snd_kind(kind) == "finish" else "finish"
+    o = _snd_custom(other)
+    if o is not None:
+        try:
+            if Path(o).resolve() == p:
+                return
+        except OSError:
+            pass
+    try:
+        p.unlink()
+    except OSError:
+        pass
+
+
+_SND_LOCK = threading.Lock()
+_SND_SEQ = [0]
+
+
+def _mci(cmd, want_out=False):
+    """`mciSendStringW` 的一次调用，返回 (返回码, 输出串)。出任何岔子都回 (-1, "")。"""
+    try:
+        buf = ctypes.create_unicode_buffer(256) if want_out else None
+        rc = ctypes.windll.winmm.mciSendStringW(
+            cmd, buf if buf is not None else None, 256 if buf is not None else 0, None)
+        return int(rc), (buf.value if buf is not None else "")
+    except Exception:                                                  # noqa: BLE001
+        return -1, ""
+
+
+def _snd_play_file(path):
+    """在**后台线程**里放一个音频，播完再 close。
+
+    ★ 为什么非要线程：MCI 的 `play … wait` 会**一直阻塞到播完**（2 秒的提示音就阻塞 2 秒），
+      而这是从页面的 js_api 调用里起来的 —— 直接在调用线程里等就等于把界面卡住。
+    ★ 别名带序号：连响两声时两段音频互不打断（`close` 也各关各的）。
+    ★ 放不动就退到系统提示音（`MessageBeep`）：宁可能听见，也别"什么都没发生"。
+    """
+    if os.name != "nt":
+        return "非 Windows，跳过"
+    ext = path.suffix.lower()
+    if ext == ".wav":
+        try:
+            import winsound                                            # noqa: PLC0415
+            winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC)
+            return "wav"
+        except Exception:                                              # noqa: BLE001
+            pass                        # 放不动就继续走 MCI 那条
+    with _SND_LOCK:
+        _SND_SEQ[0] += 1
+        alias = "moss_snd_%d" % _SND_SEQ[0]
+    src = str(path).replace('"', "")     # 路径里的引号会把 MCI 的命令串拆坏（不认就丢掉）
+    rc, _ = _mci('open "%s" type mpegvideo alias %s' % (src, alias))
+    if rc != 0:
+        rc, _ = _mci('open "%s" type waveaudio alias %s' % (src, alias))
+    if rc != 0:
+        try:
+            import winsound                                            # noqa: PLC0415
+            winsound.MessageBeep(0x40)                                 # MB_ICONASTERISK
+        except Exception:                                              # noqa: BLE001
+            pass
+        return "beep"
+    try:
+        _mci("play %s wait" % alias)
+    finally:
+        _mci("close " + alias)
+    return "mci"
+
+
+def _snd_start(path):
+    """起一个守护线程去放（立刻返回，别让调用方等那几秒）。"""
+    try:
+        threading.Thread(target=_snd_play_file, args=(path,), daemon=True).start()
+        return True
+    except Exception:                                                  # noqa: BLE001
+        return False
+
+
 def _pkg_ids_on_disk():
     """磁盘上现在有哪些包（返回**目录名**集合）。
 
@@ -5696,6 +5882,138 @@ class Api:
             return {"ok": False, "msg": ("查余额失败：退出码 %s%s"
                                          % (r.get("code"), (" —— " + tail) if tail else ""))}
         return data
+
+    # ---------------------------------------------------------- 音效提醒（「设置 → AI 引擎」那两行）
+    #   ★ 这几条**不走**「设置面板那条流水线」（那条要用户再点一次保存）：一个开关、一次换文件
+    #     本来就该**点一下立刻生效**。所以每条都是"改 → 写 config.toml → 把新的现状带回去"
+    #     一趟做完；写盘仍然交给宿主（`--settings-set`），规则和别的设置项是同一份。
+    def sound_state(self):
+        """两种音效现在的状态（开没开 / 用的哪个文件 / 出厂自带还是自己换的）。"""
+        return {"ok": True, "dir": str(USER_DATA / "sound"),
+                "exts": [x.lstrip(".") for x in SOUND_EXTS],
+                "items": {k: _snd_info(k) for k in SOUND_KINDS}}
+
+    def sound_set(self, kind="finish", on=True):
+        """开 / 关一种音效（写回 `config.toml` 的 `[sound]`，**立刻生效**）。"""
+        k = _snd_kind(kind)
+        r = self._settings_call("--settings-set", {"sound.%s_on" % k: bool(on)},
+                                with_notes=False)
+        return self._sound_done(r, "没改成")
+
+    def sound_play(self, kind="finish", preview=False):
+        """响一下。`preview=True` = 试听（**不看开关**，关着也放，好让你确认选对了）。"""
+        k = _snd_kind(kind)
+        if not preview and not _snd_on(k):
+            return {"ok": True, "played": False, "why": "关着"}
+        p = _snd_path(k)
+        if p is None:
+            return {"ok": False, "played": False, "msg": "还没有可用的音频文件"}
+        ok = _snd_start(p)
+        return {"ok": ok, "played": ok, "name": p.name}
+
+    def sound_pick(self, kind="finish"):
+        """弹系统文件框选一个音频；选完**复制进 `user_data/sound/`**（原文件可以删）。"""
+        k = _snd_kind(kind)
+        try:
+            import webview as _wv                                     # noqa: PLC0415
+            wins = list(getattr(_wv, "windows", None) or [])
+            if not wins:
+                return {"ok": False, "msg": "窗口还没准备好，稍一下再试"}
+            win = wins[0]
+            if not hasattr(win, "create_file_dialog"):
+                return {"ok": False, "msg": "这个环境没有文件选择框"}
+            fd = getattr(_wv, "FileDialog", None)
+            dlg = getattr(fd, "OPEN", None) if fd is not None else None
+            if callable(dlg):
+                dlg = dlg()
+            if dlg is None:
+                dlg = getattr(_wv, "OPEN_DIALOG", None)
+                if callable(dlg):
+                    dlg = dlg()
+            if not dlg:
+                return {"ok": False, "msg": "这个 pywebview 版本不支持挑文件"}
+            types = ("音频 (*.mp3;*.wav;*.m4a;*.aac;*.wma;*.ogg;*.flac)",
+                     "所有文件 (*.*)")
+            try:
+                res = win.create_file_dialog(dlg, allow_multiple=False, file_types=types)
+            except TypeError:
+                res = win.create_file_dialog(dlg)
+            if not res:
+                return {"ok": False, "cancelled": True, "msg": "没选（取消了）"}
+            p = res if isinstance(res, str) else (res[0] if isinstance(res, (list, tuple)) else "")
+            p = str(p or "").strip()
+            if not p:
+                return {"ok": False, "msg": "没拿到路径"}
+            return self.sound_use(k, p)
+        except Exception as e:                                         # noqa: BLE001
+            return {"ok": False, "msg": "挑文件失败：%s" % e}
+
+    def sound_use(self, kind="finish", path=""):
+        """把一个音频用在某种音效上（**拖进来的那条路**也走这里）：复制进 user_data/sound/ 再记配置。"""
+        k = _snd_kind(kind)
+        src = Path(str(path or "").strip())
+        if not src.is_file():
+            return {"ok": False, "msg": "找不到这个文件：%s" % src}
+        ext = src.suffix.lower()
+        if ext not in SOUND_EXTS:
+            return {"ok": False,
+                    "msg": "只认 %s 这几种音频（这个是 %s）"
+                           % (" / ".join(x.lstrip(".") for x in SOUND_EXTS),
+                              ext or "没有扩展名")}
+        d = USER_DATA / "sound"
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            return {"ok": False, "msg": "建不了 user_data/sound：%s" % e}
+        # ★ 文件名照你选的留（面板上那一行显示的就是它）；重名的（同一个文件换两次）就地覆盖。
+        dst = d / _snd_safe_name(src.name, k, ext)
+        prev = _snd_custom(k)              # 换之前那一份（只有"自己换的"才有值）
+        try:
+            if src.resolve() != dst.resolve():
+                # ★ 目标**可能正被 MCI 播着**（刚点过「试听」）—— 那时 Windows 不给覆写，
+                #   所以小等一下再试；等不到才认输（最坏就是提示"复制失败"）。
+                for _try in range(6):
+                    try:
+                        shutil.copyfile(str(src), str(dst))
+                        break
+                    except OSError:
+                        if _try == 5:
+                            raise
+                        time.sleep(0.15)
+        except OSError as e:
+            return {"ok": False, "msg": "复制失败：%s" % e}
+        rel = dst.relative_to(USER_DATA).as_posix()
+        got = self._sound_done(
+            self._settings_call("--settings-set", {"sound.%s_file" % k: rel},
+                                with_notes=False), "写不进配置")
+        if got.get("ok"):
+            # ★ 配置写成功之后才清旧的那一份 —— 反过来先删的话，复制/写盘一旦失败，
+            #   配置里指着的那个文件已经没了。
+            _snd_drop_old(k, prev, keep=dst)
+            got["msg"] = "换好了：%s" % dst.name
+        return got
+
+    def sound_reset(self, kind="finish"):
+        """回到出厂自带的那一个（把配置里的文件键清空，你换的那份顺手删掉）。"""
+        k = _snd_kind(kind)
+        prev = _snd_custom(k)
+        got = self._sound_done(
+            self._settings_call("--settings-set", {"sound.%s_file" % k: ""},
+                                with_notes=False), "没恢复成")
+        if not got.get("ok"):
+            return got
+        _snd_drop_old(k, prev)
+        got["msg"] = "已回到出厂自带的那个"
+        return got
+
+    def _sound_done(self, r, fail_msg):
+        """把 `--settings-set` 的回执变成面板要的形状（顺手让配置缓存立刻失效）。"""
+        _CFG_CACHE["data"] = None          # 别让那 2 秒缓存把刚改的开关又读回旧值
+        if not (isinstance(r, dict) and r.get("ok")):
+            probs = (r or {}).get("problems") or []
+            why = str((probs[0] or {}).get("why") or "") if probs else ""
+            return {"ok": False, "msg": (r or {}).get("msg") or why or fail_msg}
+        return {"ok": True, "items": {k: _snd_info(k) for k in SOUND_KINDS}}
 
     def ai_save_text(self, name="", text=""):
         """把一段文本**另存为**到用户挑的地方（`V-389`：粘贴成附件的那段原文）。

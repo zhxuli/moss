@@ -880,6 +880,14 @@ pre.out .hunk { color: var(--blue-d); }
 .envrow .row-btns { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
 
 /* 删除类按钮：平时不张扬，鼠标上去才红起来（别让人误点） */
+/* ★ 「上传」按钮：待上传的那一条一直露出来，不靠 hover 才看得见 —— 用户就是
+   在找它。蓝色 = 有东西等着往云端走。 */
+.mini-btn.up {
+  color: var(--blue-d); border-color: var(--blue-line); background: var(--blue-bg);
+  font-weight: 600;
+}
+.mini-btn.up:hover { color: #fff; background: var(--blue); border-color: var(--blue); }
+.hrow.unsent .hacts { opacity: 1; }
 .mini-btn.del { color: var(--mut); }
 .mini-btn.del:hover { color: var(--red); border-color: rgba(239, 68, 68, .35); background: var(--red-bg); }
 .act .ai.danger { background: var(--red-bg); color: var(--red); }

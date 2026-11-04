@@ -99,12 +99,13 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-file-preview",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
           "settings-ai", "settings-ai-tpl", "settings-ai-new", "settings-ai-empty",
+          "settings-ai-snd",
           "hist", "hist-console", "hist-file", "sync-run", "sym-list", "bars-dd", "mini-rail",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "fanyi-ui", "detail-fill", "ai-pane", "snap-by",
           "ai-disk-refresh", "ai-snap-refresh", "ai-continue", "ai-alt-jump", "ai-chat", "icons",
           "ai-hist-live", "ai-switch-live", "ai-finish-away", "list-autoscroll", "pkg-icon-fallback",
-          "perm-scope", "ai-follow",
+          "perm-scope", "perm-full", "ai-follow",
           "ai-turn-edit", "ai-self-tools", "ai-ask",
           "pkg-docs", "embed-tab", "newpkg-form", "newpkg-manual", "newpkg-manual-go", "newpkg-ai",
           "hl-window", "set-debounce", "parasite"]
@@ -267,6 +268,14 @@ def mock_data():
 
     return {"payload": payload, "hist": hist, "fs": fs, "settings": settings, "ai": ai,
             "aiPresets": ai_presets, "bigJs": _big,
+            # ★ 音效提醒那两行的假现状（真后端读 `config.toml` 的 `[sound]` + 复制文件过来）。
+            #   预览里只改这份假状态 —— 够验"开关 / 文件名 / 出厂还是自己的"这三件事。
+            "snd": {"finish": {"key": "finish", "on": True, "file": "",
+                               "name": "finish.mp3", "builtin": True, "exists": True,
+                               "path": "(预览) system/sound/finish.mp3"},
+                    "warn": {"key": "warn", "on": True, "file": "",
+                             "name": "warn.mp3", "builtin": True, "exists": True,
+                             "path": "(预览) system/sound/warn.mp3"}},
             # `V-300`：插件列表拖动排序场景 —— 种一个"倒过来的自定义顺序"，看界面认不认
             "listOrder": [str(p.get("id")) for p in (payload.get("packages") or [])][::-1],
             # 工具自己的场景清单：页面拿它对一下"这个场景名到底有没有实现"。
@@ -509,7 +518,7 @@ MOCK_JS = r"""
       allow: [{path: (state.packages.filter(x => x.id === "md5")[0] || {}).dir ||
                      (state.home + "\\system\\pkgs\\md5"),
                read: true, write: true, why: "当前这个包", by: "current", factory: true,
-               at: "2026-10-07 12:00:00"},
+               current: true, at: "2026-10-07 12:00:00"},
               {path: "D:\\proj\\外面", read: true, write: false, why: "试一下", by: "user",
                at: "2026-10-07 12:01:00"},
               // ★ 2026-10-22：`perm-scope` 场景要**别的包**的行（真机上清单是全局一份，
@@ -517,7 +526,9 @@ MOCK_JS = r"""
               ...(M.allowOther || []),
               {path: "*", read: false, write: false, why: "任意路径（硬锁除外）", by: "system",
                at: ""}],
-      wildcard: false,
+      wildcard: !!M.fullAccess,
+      // ★ 2026-10-31：「任意路径」撤了 —— 界面上只看 `full_access` 这一个（见 `setFull`）
+      full_access: !!M.fullAccess,
       // ★ `V-314`：临时空间**跟着插件走**（`state/<包id>/ai/tmp`），不是全局一个桶
       tmp: {path: state.home + "\\user_data\\state\\md5\\ai\\tmp", bytes: 2048, files: 3},
       scope: {kind: "pkg", id: "md5", dir: state.home + "\\user_data\\state\\md5\\ai\\runs",
@@ -528,7 +539,7 @@ MOCK_JS = r"""
       const rows = [{path: (state.packages.filter(x => x.id === "md5")[0] || {}).dir ||
                             (state.home + "\\system\\pkgs\\md5"),
                      read: true, write: true, why: "当前这个包", by: "current",
-                     factory: true, at: ""},
+                     factory: true, current: true, at: ""},
                     {path: "*", read: false, write: false, why: "任意路径（硬锁除外）",
                      by: "system", at: ""}];
       if (action !== "rm" && String(path || "") && String(path) !== "*"){
@@ -538,6 +549,13 @@ MOCK_JS = r"""
       return {ok: true, msg: "（预览）" + (action || "add"), summary: {allow: rows}};
     },
     ai_allow_pick: async () => ({ok: false, msg: "（预览）这里没有目录选择框", cancel: true}),
+    // ★ 2026-10-31：放手只剩**完全权限**这一个开关（「任意路径」那一档撤了）
+    ai_full_access: async (on) => {
+      M.fullAccess = !!on;
+      return {ok: true, full_access: !!on,
+              msg: (on ? "完全权限已开启：任意路径可读写；新建 / 修改技能自动批准；危险操作不再确认"
+                       : "完全权限已关闭：恢复按权限清单；技能重新按指纹授权")};
+    },
     ai_tmp: async (action, runId, workdir) => {
       M.tmpCall = String(action || "info");
       return {ok: true, msg: "（预览）清掉了 0 项",
@@ -1221,6 +1239,43 @@ MOCK_JS = r"""
               profiles: A.profiles.map(x => x.name).sort(), summary: summary};
     },
     ai_presets: async () => ({ok: true, presets: M.aiPresets}),
+    // ---- 音效提醒（「设置 → AI 引擎」页底部那两行）-------------------------------
+    //   真后端（`system/ui/main.py::sound_*`）会**复制文件进 user_data/sound/ +
+    //   写 config.toml 的 [sound] 段**；预览里只改这份假状态：够验界面上的
+    //   「开关 / 文件名 / 这是出厂还是自己换的」三件事，以及点下去有没有反应。
+    sound_state: async () => ({
+      ok: true, dir: "(预览) user_data/sound",
+      exts: ["mp3", "wav", "m4a", "aac", "wma", "ogg", "flac"],
+      items: JSON.parse(JSON.stringify(M.snd))}),
+    sound_set: async (kind, on) => {
+      if (M.snd[kind]) M.snd[kind].on = !!on;
+      return {ok: true, items: JSON.parse(JSON.stringify(M.snd))};
+    },
+    //   ★ 每次调用都记进 `M.sndPlays`（"试听"带 `试听:` 前缀）—— 想验"哪一下该响"的场景
+    //     可以读它。现在还没有这样的场景：那要真跑一轮 AI，而 AI 那几个场景本来就漂了。
+    sound_play: async (kind, preview) => {
+      (M.sndPlays = M.sndPlays || []).push((preview ? "试听:" : "") + String(kind || ""));
+      return {ok: true, played: true, name: "（预览）"};
+    },
+    sound_pick: async (kind) => window.pywebview.api.sound_use(kind, "C:\\预览\\自己的铃声.wav"),
+    sound_use: async (kind) => {
+      if (M.snd[kind]){
+        M.snd[kind].file = "sound/" + kind + ".wav";
+        M.snd[kind].name = "自己的铃声.wav";
+        M.snd[kind].builtin = false;
+        M.snd[kind].exists = true;
+      }
+      return {ok: true, msg: "换好了", items: JSON.parse(JSON.stringify(M.snd))};
+    },
+    sound_reset: async (kind) => {
+      if (M.snd[kind]){
+        M.snd[kind].file = "";
+        M.snd[kind].name = kind + ".mp3";
+        M.snd[kind].builtin = true;
+      }
+      return {ok: true, msg: "已回到出厂自带的那个",
+              items: JSON.parse(JSON.stringify(M.snd))};
+    },
     ai_save: async (name, fields) => {
       const A = M.ai;
       let hit = A.profiles.filter(x => x.name === name)[0];
@@ -3399,15 +3454,86 @@ MOCK_JS = r"""
         const addBtn = document.querySelector("#ai-new");
         const addTxt = addBtn ? addBtn.textContent.trim() : "";
         const formOn = !!document.querySelector("#ai-view-form.active");
+        // ★ 音效提醒那两行（同一页底部，照极简稿子：名字 + 文件名 / ▶ + 小开关）。
+        const sndRows = document.querySelectorAll(scope + ".ai-snd-item").length;
+        const sndNames = Array.prototype.map.call(
+          document.querySelectorAll(scope + ".ai-snd-name"), x => x.textContent.trim());
+        const sndAllOn = Array.prototype.every.call(
+          document.querySelectorAll(scope + ".ai-snd-switch input"),
+          b => b.checked === true);
+        const sndText = Array.prototype.map.call(
+          document.querySelectorAll(scope + ".ai-snd-file"), x => x.textContent.trim());
+        // 出厂状态：名字对、开关都开、显示的是出厂那个文件名（不带"自己换的"那类尾巴）
+        const sndOk = sndRows === 2 && sndNames.join("/") === "任务结束/需要你确认" &&
+                      sndAllOn && sndText[0] === "finish.mp3" && sndText[1] === "warn.mp3";
         const ok = before === 3 && cards === 0 && M.ai.profiles.length === 0 && !listBox &&
                    !!empty && /暂无 AI 配置/.test(emptyTxt) && eico &&
-                   addTxt === "添加新的 AI 配置" && !formOn;
+                   addTxt === "添加新的 AI 配置" && !formOn && sndOk;
         document.querySelector("#meta").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") + " 删前=" + before + " 删后=" + cards +
           " 假库=" + M.ai.profiles.length + " 列表块=" + (listBox ? 1 : 0) +
           " 空框=" + (empty ? 1 : 0) + "[" + emptyTxt + "] 图标=" + (eico ? 1 : 0) +
-          " 添加=[" + addTxt + "] 编辑视图=" + formOn;
+          " 添加=[" + addTxt + "] 编辑视图=" + formOn +
+          " 音效行=" + sndRows + "[" + sndNames.join("/") + "] 都开=" + sndAllOn +
+          " 音效文件=[" + (sndText[0] || "") + "/" + (sndText[1] || "") + "]";
         document.title = ok ? "READY" : ("SETTINGS-AI-EMPTY-FAIL " +
+          document.querySelector("#meta").textContent);
+      }
+      // 音效提醒（「AI 引擎」页底部，极简那一版）：开关 / 点文件名换 / 恢复 / 拖进来四条路都走一遍。
+      if (h === "settings-ai-snd"){
+        await openSettings();
+        await sleep(500);
+        const aiNav = Array.prototype.filter.call(
+          document.querySelectorAll("#set-nav .set-navitem"),
+          b => (b.dataset.group || "") === "A I 引擎")[0];
+        if (aiNav) aiNav.click();
+        await sleep(800);
+        const scope = "#set-body .set-pane.on .set-ai ";
+        const rowOf = k => document.querySelector(scope + '.ai-snd-item[data-snd="' + k + '"]');
+        const boxOf = k => {
+          const sw = document.querySelector(scope + '[data-snd-sw="' + k + '"]');
+          return sw ? sw.querySelector("input") : null;
+        };
+        const txtOf = k => {
+          const el = rowOf(k) ? rowOf(k).querySelector(".ai-snd-file") : null;
+          return el ? el.textContent.trim() : "";
+        };
+        const on0 = boxOf("warn") ? boxOf("warn").checked : null;
+        const txt0 = txtOf("finish");
+        // ① 开关：点一下 ⇒ 关（假库里跟着变）
+        boxOf("warn").click();
+        await sleep(500);
+        const on1 = boxOf("warn").checked;
+        const mock1 = !!(((M.snd || {}).warn || {}).on);
+        // ② **点文件名** ⇒ 换成自己的（文件名跟着变 + 隐身那颗「恢复」进 DOM）
+        rowOf("finish").querySelector(".ai-snd-text").click();
+        await sleep(600);
+        const txt1 = txtOf("finish");
+        const hasReset = !!rowOf("finish").querySelector("[data-snd-reset]");
+        // ③ 拖一个音频到那一行上 ⇒ 走同一个落地口（真路径只有宿主知道，这里直接调钩子）
+        rowOf("warn").dispatchEvent(new DragEvent("dragover", {bubbles: true, cancelable: true}));
+        await sleep(150);
+        const hooked = (typeof window.__mossSndDrop === "function")
+          ? window.__mossSndDrop([{path: "C:\\铃声\\拖进来的.wav", isDir: false,
+                                   name: "拖进来的.wav"}])
+          : "没有钩子";
+        await sleep(500);
+        const txt2 = txtOf("warn");
+        // ④ 「恢复」⇒ 回到出厂那个（文件名回来、那颗又缩回去）
+        const rs = rowOf("finish").querySelector("[data-snd-reset]");
+        if (rs) rs.click();
+        await sleep(600);
+        const txt3 = txtOf("finish");
+        const resetGone = !rowOf("finish").querySelector("[data-snd-reset]");
+        const ok = on0 === true && on1 === false && mock1 === false &&
+                   txt0 === "finish.mp3" && /自己的铃声/.test(txt1) && hasReset &&
+                   hooked === true && /自己的铃声/.test(txt2) &&
+                   txt3 === "finish.mp3" && resetGone;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 开=" + on0 + "→" + on1 + " 假库开关=" + mock1 +
+          " 原来=[" + txt0 + "] 换后=[" + txt1 + "] 恢复='恢复'" + hasReset +
+          " 拖入钩子=" + hooked + " 拖后=[" + txt2 + "] 恢复后=[" + txt3 + "] 恢复已收=" + resetGone;
+        document.title = ok ? "READY" : ("SETTINGS-AI-SND-FAIL " +
           document.querySelector("#meta").textContent);
       }
       // 选服务商那张脸（网格）：留一张图 + 断言"每家一格、地址小字、自定义那格也在"。
@@ -5271,7 +5397,9 @@ MOCK_JS = r"""
         const foldTxt = (foldBar ? foldBar.textContent : "").replace(/\s+/g, " ").trim();
         const folded0 = !!permPanel0 && permPanel0.classList.contains("folded") &&
                         !document.querySelector("#pane-ai .ai-perm-i") &&
-                        /(权限控制|目录权限控制)/.test(foldTxt) && /可写 1 处/.test(foldTxt);
+                        // ★ 2026-10-31：盾牌后面那句状态从「可写 N 处」改成
+                        //   「完全权限 / 一个路径 / 仅当前包」（「任意路径」撤了）
+                        /一个路径/.test(foldTxt);
         // 上下结构：权限卡在输入区**上面**（同一列）
         const footEl = document.querySelector("#pane-ai .ai-foot");
         const permTop = document.querySelector("#pane-ai .ai-foot .ai-perm");
@@ -5312,16 +5440,15 @@ MOCK_JS = r"""
         const chkBoxes = [].slice.call(document.querySelectorAll("#pane-ai .ai-perm-i .ai-sw input"));
         const descs = [].slice.call(document.querySelectorAll("#pane-ai .ai-perm-i .ai-perm-d"))
                              .map(x => x.textContent.trim());
-        const badge = ((document.querySelector("#pane-ai .ai-perm .ai-perm-badge") || {}).textContent || "").trim();
+        const badge = ((document.querySelector("#pane-ai .ai-perm .ai-perm-state") || {}).textContent || "").trim();
         const permOk = folded0 && stacked && expandedOk && footInView &&
-                       !!permPanel && permRows.length === 3 && chkBoxes.length === 6 &&
+                       !!permPanel && permRows.length === 2 && chkBoxes.length === 4 &&
                        /当前工作包/.test(descs[0] || "") &&
-                       /默认安全策略/.test(descs[2] || "") &&
+                       /试一下/.test(descs[1] || "") &&
                        /md5/.test(permRowTxt[0] || "") &&
-                       /可写 1 处/.test(badge) &&
-                       // 「任意路径」那条给锁不给删；其它两条有删除
-                       !document.querySelector("#pane-ai .ai-perm-i.star .ai-perm-x") &&
-                       document.querySelectorAll("#pane-ai .ai-perm-i .ai-perm-x").length === 2;
+                       // ★ 2026-10-31：`*`（任意路径）那一行不再摆出来，所以只剩外面那一条能删
+                       badge === "一个路径" &&
+                       document.querySelectorAll("#pane-ai .ai-perm-i .ai-perm-x").length === 1;
         // 拨一下某一行（第 2 行 = "D:\proj\外面"）的「写」⇒ 宿主收到 set / write=true
         M.allowCall = null;
         const wChk = [].slice.call(document.querySelectorAll("#pane-ai .ai-perm-i"))
@@ -5481,10 +5608,9 @@ MOCK_JS = r"""
       //   是我们没有设计这个功能吗? 按说 如果有什么它拿不准的 那应该先咨询我"）。
       //   交个任务之后宿主把"挂着的问题"放进取回包 ⇒ 页面当场弹出卡片，
       //   点选项 / 打字回车都要**真的把答案交给宿主**（`ai_answer`）。
-      if (h === "ai-ask"){
+if (h === "ai-ask"){
         // ★ `V-333`：问答/请求现在**都是聊天记录里的一条气泡**（`.ai-bub.talk`）——
-        //   没有浮层卡片了。假宿主把 `M.aiAsk` 当成一条步骤行吐出来（见它的 `ai_poll`）。
-        M.skillEmpty = true;
+        //   没有浮层卡片了。假宿主把 `M.aiAsk` 当成一条步骤行吐出来（见它的 `ai_poll`）。        M.skillEmpty = true;
         if (window.__AIR) window.__AIR.selfOpen = false;
         const p0 = state.packages.find(x => x.id === "md5") || state.packages[0];
         select(p0.id);
@@ -5980,7 +6106,7 @@ MOCK_JS = r"""
         const paths = rows.map(e => String((e.querySelector(".ai-perm-info") || {}).title || ""));
         const leaked = paths.filter(p => String(otherPkg && otherPkg.dir || "").split("\\").pop() &&
                                          p.indexOf(String(otherPkg.dir || "")) === 0);
-        const badge = String((document.querySelector("#pane-ai .ai-perm-badge") || {}).textContent || "").trim();
+        const badge = String((document.querySelector("#pane-ai .ai-perm-state") || {}).textContent || "").trim();
         const fold = document.querySelector("#pane-ai .ai-perm-other");
         const foldTxt = fold ? String(fold.textContent || "").replace(/\s+/g, " ").trim() : "";
         const otherRow0 = document.querySelectorAll("#pane-ai .ai-perm-i.other").length;
@@ -5992,14 +6118,31 @@ MOCK_JS = r"""
         (document.querySelector("#pane-ai .ai-perm-other-x") || {click(){}}).click();
         await sleep(400);
         const rmOk = !!(M.allowCall && M.allowCall.action === "rm");
-        const ok = paths.length === 3 && !leaked.length && badge === "可写 1 处" &&
+        // ★ 2026-10-31（你的要求）：盾牌后面**跟一句文字状态**，优先级
+        //   「完全权限 > N 个路径 > 仅当前包」——「任意路径」那一档撤了。
+        //   这里把「完全权限」打开一次，那行字必须变成「完全权限」（紫），关掉再回到「一个路径」。
+        const stateOf = () => String((document.querySelector("#pane-ai .ai-perm-state") || {}).textContent || "").trim();
+        const foldCls = () => (document.querySelector("#pane-ai .ai-perm-fold") || {classList: {contains: () => false}}).classList;
+        const fullBox = document.querySelector("#pane-ai .ai-perm-full input");
+        const stateBefore = stateOf();
+        if (fullBox) fullBox.click();
+        await sleep(600);
+        const stateFull = stateOf();
+        const fullCls = foldCls().contains("full");
+        if (fullBox) fullBox.click();
+        await sleep(600);
+        const stateBack = stateOf();
+        const fullOk = !!stateBefore && stateBefore === "一个路径" && stateFull === "完全权限" &&
+                       fullCls && stateBack === "一个路径";
+        const ok = paths.length === 2 && !leaked.length && badge === "一个路径" &&
                    !!fold && /别的包/.test(foldTxt) && otherRow0 === 0 && otherRow1 === 1 &&
                    new RegExp(String((otherPkg || {}).id || "@@")).test(otherTxt) && rmOk &&
-                   !(window.__errors || []).length;
+                   fullOk && !(window.__errors || []).length;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
           "\n明面上的行 = " + paths.length + "：" + JSON.stringify(paths.map(p => p.split("\\").pop())) +
           "\n漏进来的别的包的行 = " + JSON.stringify(leaked) +
-          "\n可写徽章 = " + JSON.stringify(badge) + "（应为「可写 1 处」）" +
+          "\n权限状态字 = " + JSON.stringify(badge) + "（应为「一个路径」）" +
+          "\n完全权限那一档 = " + JSON.stringify([stateBefore, stateFull, stateBack]) +
           "\n折叠那一行 = " + JSON.stringify(foldTxt.slice(0, 40)) +
           "\n收起时露出的别的包行 = " + otherRow0 + " · 点开后 = " + otherRow1 +
           "\n「全清掉」把 rm 发给宿主了吗 = " + (rmOk ? 1 : 0) +
@@ -6020,6 +6163,43 @@ MOCK_JS = r"""
       //     ③ 离底 60px（旧阈值 48 算"翻了"、新阈值 80 算"贴着底"）⇒ stick 仍是 true
       //     ④ 滚轮往上一格 ⇒ 立刻按住（旧代码没这个监听）
       //     ⑤ 贴着底时来新内容 ⇒ 真滚到底（gap≈0）
+      // ★ 2026-10-31：「任意路径」撤了之后，**放手只有「完全权限」这一档** —— 打开它，
+        //   盾牌后面那句必须是「完全权限」、按钮转紫、开关是勾上的，而且清单里**没有**第二行
+      //   「任意路径」（那一行已经不摆出来了）。
+      if (h === "perm-full"){
+        const me = state.packages.find(x => x.id === "md5") || state.packages[0];
+        M.fullAccess = false;
+        M.allowOther = [];
+        select(me.id);
+        await sleep(350);
+        (document.querySelector('.tab[data-tab="ai"]') || {click(){}}).click();
+        await sleep(500);
+        await aiRefreshInfo(true);
+        await sleep(300);
+        (document.querySelector("#pane-ai .ai-perm-fold") || {click(){}}).click();
+        await sleep(350);
+        const before = String((document.querySelector("#pane-ai .ai-perm-state") || {}).textContent || "").trim();
+        (document.querySelector("#pane-ai .ai-perm-full input") || {click(){}}).click();
+        await sleep(700);
+        const after = String((document.querySelector("#pane-ai .ai-perm-state") || {}).textContent || "").trim();
+        const fold = document.querySelector("#pane-ai .ai-perm-fold");
+        const purple = !!fold && fold.classList.contains("full");
+        const box = document.querySelector("#pane-ai .ai-perm-full input");
+        const on = !!box && box.checked === true;
+        const rowTxt = [].slice.call(document.querySelectorAll("#pane-ai .ai-perm-i"))
+                            .map(e => String((e.querySelector(".ai-perm-info") || {}).title || ""));
+        const noStar = rowTxt.indexOf("*") < 0 &&
+                       rowTxt.every(p => p.indexOf("任意路径") < 0);
+        const ok = before === "一个路径" && after === "完全权限" && purple && on && noStar &&
+                   !(window.__errors || []).length;
+        document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+          "\n状态字 = " + JSON.stringify([before, after]) + "（要「一个路径」→「完全权限」）" +
+          "\n按钮转紫 = " + purple + " · 开关勾上 = " + on +
+          "\n清单里没有「任意路径」那一行 = " + noStar +
+          "\n页内错误 = " + (window.__errors || []).length;
+        document.title = ok ? "READY" : ("PERMFULL-FAIL " +
+          document.querySelector("#meta").textContent);
+      }
       if (h === "ai-follow"){
         const p0 = state.packages.find(x => x.id === "first") || state.packages[0];
         select(p0.id);

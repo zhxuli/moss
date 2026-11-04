@@ -1143,7 +1143,7 @@ def main():
     chk("J ★★ 当前这个包**自动进清单**，读 + 写都默认开着（打开插件点 AI = 我就是要改它）",
         any(x["path"] == str(_pkgB) and x["read"] and x["write"]
             for x in (_s0.get("allow") or [])), str(_s0.get("allow"))[:120])
-    chk("J ★ 清单里**永远有一行「任意路径」**（勾上写 = 放手；删不掉）",
+    chk("J ★ 清单里那行 `*` 还在，但它**只是完全权限的内部表示**（默认不勾、界面不摆）",
         any(x["path"] == "*" for x in (_s0.get("allow") or [])), "")
     chk("J ★ 默认**不是**放手（`wildcard` 为假）", _s0.get("wildcard") is False, "")
     _out = tmp / "allowed_dir"
@@ -1162,16 +1162,22 @@ def main():
     chk("J ★ 删掉那条 ⇒ 读写都不通了",
         not any(x["path"] == str(_out) for x in _a3["summary"]["allow"])
         and MO.can_read(_out / "a.txt") is not None, "")
-    # 「任意路径」勾上写 = 放手：哪儿都能写，而且危险操作不再问
+    # ★ 2026-10-31（用户：「任意路径这个功能直接给他去掉 有完全权限就可以取代他了」）：
+    #   "放手"只剩**完全权限**这一条路 —— 单独把 `*` 那行的写打开已经不算数了。
+    _out.mkdir(parents=True, exist_ok=True)
     _a4 = api.ai_allow("*", False, True, "", "set")
-    chk("J ★★ 把「任意路径」的写打开 = 放手（`ai_info` 里 wildcard 变真）",
-        _a4.get("ok") and api.ai_info(str(_pkgB)).get("wildcard") is True, "")
+    chk("J ★★ 只把 `*` 的写打开**不再等于放手**（那个开关撤了，下一次读就收回）",
+        _a4.get("ok") and api.ai_info(str(_pkgB)).get("wildcard") is False, "")
+    _f1 = api.ai_full_access(True)
+    chk("J ★★ 打开**完全权限** = 放手（`wildcard` 和 `full_access` 都变真）",
+        _f1.get("ok") and api.ai_info(str(_pkgB)).get("wildcard") is True
+        and api.ai_info(str(_pkgB)).get("full_access") is True, str(_f1.get("msg"))[:80])
     chk("J ★★ 放手之后：包外目录能写，而且**危险操作不再问**（`needs_confirm` 为假）",
         MO.can_write(_out / "b.txt") is None
         and MO.needs_confirm(MO.danger_of("run_moss", {"args": "--remove x"})) is False, "")
-    _a5 = api.ai_allow("*", False, False, "", "set")
-    chk("J ★ 关掉「任意路径」⇒ 又变回「要问」（现读，不用重启）",
-        _a5.get("ok") and api.ai_info(str(_pkgB)).get("wildcard") is False
+    _f0 = api.ai_full_access(False)
+    chk("J ★ 关掉完全权限 ⇒ 又变回「要问」（现读，不用重启）",
+        _f0.get("ok") and api.ai_info(str(_pkgB)).get("wildcard") is False
         and MO.needs_confirm(MO.danger_of("run_moss", {"args": "--remove x"})) is True, "")
     chk("J ★ 硬锁路径**加不进**清单（`core/` 永远是拒绝）",
         api.ai_allow(str(ROOT / "core"), True, True, "", "add").get("ok") is False, "")

@@ -380,3 +380,54 @@ input[type="password"]::-ms-clear{display:none}
 /* 卡片右边那两颗小按钮（照稿子的 .btn-icon：6×12、圆角 6、13px） */
 .ai-cacts .ai-btn{padding:6px 12px;border-radius:6px;font-size:13px}
 
+/* ---------------------------------------------------------------- 音效提醒（「AI 引擎」页底部）
+   照你给的那份极简稿子：一张浅色卡片 + 两列，一种音效一行
+     [名字 · 文件名（可点）]                     [恢复] [▶] (小开关)
+   ★ 点文件名 = 换音效；把音频拖到这一行上也行（行变蓝虚线 = 收得下）。
+   ★ 「恢复」只在**自己换过**的时候才有，而且平时是**隐身**的（鼠标放到这一行上才显）——
+     静止状态就是稿子那一版，一个字都不多。
+   ★ 开关是稿子那个 32×18 的小号（不是别处那个 38×22 的 .sw）—— 刻意不共用，
+     免得以后有人动 .sw 把这一块带歪。 */
+.ai-snd{margin-top:22px;padding:16px 18px 8px;border-radius:12px;background:#f7f8fa}
+.ai-snd-title{font-size:14px;font-weight:600;color:#1f2937;letter-spacing:.5px;
+  margin-bottom:14px}
+.ai-snd-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+.ai-snd-item{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  height:40px;padding:0 8px;border:1px solid transparent;border-radius:8px;
+  transition:background-color .2s, border-color .2s}
+.ai-snd-item:hover{background:#eef1f5;border-color:#e5e7eb}
+.ai-snd-item.over{background:#eff6ff;border-color:#2563eb;border-style:dashed}
+.ai-snd-item.off .ai-snd-name,
+.ai-snd-item.off .ai-snd-file{opacity:.5}
+.ai-snd-text{display:flex;align-items:center;gap:8px;min-width:0;flex:1;cursor:pointer}
+.ai-snd-name{font-size:13px;font-weight:500;color:#374151;white-space:nowrap;flex:none}
+.ai-snd-file{font-size:12px;color:#9ca3af;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;transition:color .2s}
+.ai-snd-text:hover .ai-snd-file{color:#3b82f6;text-decoration:underline dashed;
+  text-underline-offset:3px}
+.ai-snd-right{display:flex;align-items:center;gap:10px;flex:none}
+.ai-snd-reset{border:0;background:none;padding:0;font:inherit;font-size:12px;color:#9ca3af;
+  cursor:pointer;opacity:0;pointer-events:none;transition:opacity .15s, color .15s}
+.ai-snd-item:hover .ai-snd-reset{opacity:1;pointer-events:auto}
+.ai-snd-reset:hover{color:#3b82f6;text-decoration:underline}
+/* ▶ 试听：无边框的小符号（稿子里就是一颗 ▶） */
+.ai-snd-play{display:inline-flex;align-items:center;justify-content:center;border:0;
+  background:none;padding:4px;color:#6b7280;cursor:pointer;
+  transition:color .2s, transform .1s}
+.ai-snd-play:hover{color:#1f2937}
+.ai-snd-play:active{transform:scale(.94)}
+.ai-snd-play svg{width:13px;height:13px}
+/* 极简开关（稿子的 .switch / .slider，换个前缀免得和别处撞名） */
+.ai-snd-switch{position:relative;display:inline-block;width:32px;height:18px;flex:none;
+  cursor:pointer}
+.ai-snd-switch input{position:absolute;opacity:0;width:0;height:0}
+.ai-snd-slider{position:absolute;left:0;right:0;top:0;bottom:0;border-radius:18px;
+  background:#e5e7eb;transition:background-color .3s}
+.ai-snd-slider::before{content:"";position:absolute;left:2px;bottom:2px;width:14px;height:14px;
+  border-radius:50%;background:#fff;transition:transform .3s}
+.ai-snd-switch input:checked + .ai-snd-slider{background:#3b82f6}
+.ai-snd-switch input:checked + .ai-snd-slider::before{transform:translateX(14px)}
+.ai-snd-switch input:focus-visible + .ai-snd-slider{box-shadow:0 0 0 3px rgba(59,130,246,.25)}
+/* 面板太窄就一行一种（两列挤在一起的话，文件名会被截得看不出是什么） */
+@media (max-width:640px){ .ai-snd-grid{grid-template-columns:1fr} }
+

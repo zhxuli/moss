@@ -240,6 +240,38 @@
      "hint": "每组：接口地址 / 密钥 / 模型；在面板上点「新建」或某行的「编辑」改。",
      "placeholder": "",
      "default": {}
+    },
+    {
+     "key": "sound.finish_on",
+     "label": "任务结束音效",
+     "type": "bool",
+     "hint": "AI 跑完一轮、把结论摆出来的时候响一下。关掉就不响（也可以换成自己的音频）。",
+     "placeholder": "",
+     "default": true
+    },
+    {
+     "key": "sound.finish_file",
+     "label": "任务结束音效文件",
+     "type": "text",
+     "hint": "留空 = 用出厂自带的那一个（system/sound/finish.mp3）；换法：面板上点「换一个」选文件，或把音频直接拖到那一行上 —— 选好的会被复制到 user_data/sound/，原文件删了也不影响。",
+     "placeholder": "",
+     "default": ""
+    },
+    {
+     "key": "sound.warn_on",
+     "label": "需要你确认时的提示音",
+     "type": "bool",
+     "hint": "AI 有话要问你、或者要你放行一个目录的时候响一下 —— 就是它在等你动手的那些时候。",
+     "placeholder": "",
+     "default": true
+    },
+    {
+     "key": "sound.warn_file",
+     "label": "提示音文件",
+     "type": "text",
+     "hint": "留空 = 用出厂自带的那一个（system/sound/warn.mp3）；换法同上。",
+     "placeholder": "",
+     "default": ""
     }
    ]
   }

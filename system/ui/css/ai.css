@@ -851,13 +851,11 @@
   padding:12px;background:var(--aib-row-bg);border:1px solid var(--aib-border-color);
   border-radius:var(--aib-radius);
 }
-.aiwrap .ai-perm-i.star{background:#FFFDF5;border-color:#FDE68A}
 .aiwrap .ai-perm-info{display:flex;flex-direction:column;min-width:0}
 .aiwrap .ai-perm-p{
   font-size:14px;font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-weight:500;
   color:var(--aib-text-main);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
-.aiwrap .ai-perm-i.star .ai-perm-p{color:var(--aib-warning)}
 .aiwrap .ai-perm-d{
   margin-top:2px;font-size:12px;color:var(--aib-text-muted);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
@@ -1922,7 +1920,7 @@
 }
 
 
-/* ---- 权限盾牌状态：完全权限（紫）/ 任意路径（琥珀）可同时显示 ---- */
+/* ---- 权限盾牌状态：完全权限（紫）——「任意路径」那一档撤了（完全权限取代它，2026-10-31） ---- */
 .aiwrap .ai-perm-fold{position:relative}
 .aiwrap .ai-perm-shield{display:flex;align-items:center;justify-content:center;position:relative;z-index:1}
 .aiwrap .ai-perm-fold.full{
@@ -1933,27 +1931,13 @@
   color:#7C3AED;
   filter:drop-shadow(0 0 3px rgba(124,58,237,.42));
 }
-.aiwrap .ai-perm-fold.wild{
-  background:#FFFBEB;border-color:#FDE68A;
+/* 盾牌后面那句文字状态：完全权限 / 两个路径 / 仅当前包 */
+.aiwrap .ai-perm-state{
+  font-size:12px;font-weight:500;color:var(--aib-text-muted);
+  white-space:nowrap;flex:none;
 }
-.aiwrap .ai-perm-fold.wild:hover{background:#FEF3C7;border-color:#FCD34D}
-.aiwrap .ai-perm-fold.wild .ai-perm-shield svg.i{color:#B45309}
-/* 两个状态同时开：紫 + 琥珀各留一半，图标仍用完全权限的紫色。 */
-.aiwrap .ai-perm-fold.full.wild{
-  background:linear-gradient(135deg,#F5F3FF 0%,#FFFBEB 100%);
-  border-color:#E9D5FF;
-}
-.aiwrap .ai-perm-fold.full.wild:hover{background:linear-gradient(135deg,#EDE9FE 0%,#FEF3C7 100%)}
-.aiwrap .ai-perm-fold.full.wild .ai-perm-shield svg.i{color:#7C3AED}
-.aiwrap .ai-perm-flags{
-  position:absolute;right:4px;bottom:4px;z-index:2;display:flex;align-items:center;gap:2px;
-}
-.aiwrap .ai-perm-flag{
-  width:6px;height:6px;border-radius:50%;border:1px solid #fff;
-  box-shadow:0 0 0 1px rgba(15,23,42,.14);
-}
-.aiwrap .ai-perm-flag.full{background:#7C3AED}
-.aiwrap .ai-perm-flag.wild{background:#F59E0B}
+.aiwrap .ai-perm-fold:hover .ai-perm-state{color:var(--aib-text-main)}
+.aiwrap .ai-perm-fold.full .ai-perm-state{color:#7C3AED;font-weight:600}
 
 
 /* 图标按钮统一无边框：形状只靠圆角、hover 底色和状态底色表达。 */
@@ -2078,6 +2062,20 @@
 .aiwrap .ai-input-toolbar .ai-model-btn.active{border:0;box-shadow:0 0 0 2px rgba(59,130,246,.14)}
 .aiwrap .ai-input-toolbar .ai-model-btn svg.i{color:#71717A}
 .aiwrap .ai-toolbar-divider{width:1px;height:20px;background:#E4E4E7;margin:0 6px;flex:none}
+
+/* ★ 2026-10-31（你的要求）：工具栏那三颗（提示词 / 附件 / 图片）**带上文字**。
+   有字了宽度就不能再钉死 30px（上面那几条是给纯图标写的），这里把宽度放回 auto。 */
+.aiwrap .ai-input-toolbar .ai-txtbtn{width:auto;padding:0 9px;gap:6px}
+.aiwrap .ai-input-toolbar .ai-txtbtn .ai-btn-txt{
+  font-size:12px;line-height:1;color:var(--aib-text-muted);white-space:nowrap;
+}
+.aiwrap .ai-input-toolbar .ai-txtbtn:hover .ai-btn-txt{color:var(--aib-text-main)}
+.aiwrap .ai-input-toolbar .ai-txtbtn:disabled{opacity:.45;cursor:default}
+/* 窗口窄了就把字收起来（只剩图标，不至于把工具栏挤成两三行） */
+@media (max-width:980px){
+  .aiwrap .ai-input-toolbar .ai-txtbtn{width:30px;padding:0}
+  .aiwrap .ai-input-toolbar .ai-txtbtn .ai-btn-txt{display:none}
+}
 
 .aiwrap .ai-send-circle{
   flex:none;display:inline-flex;align-items:center;justify-content:center;

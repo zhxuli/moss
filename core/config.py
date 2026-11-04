@@ -124,6 +124,17 @@ DEFAULT_CONFIG = {
     "ui": {
         "kill_pkgs_on_exit": False,   # true = 关界面时把还在跑的插件进程一并收掉（连子孙）
     },
+    # ★ 音效提醒（设置 → AI 引擎里那两行）：AI 跑完 / 有事要你确认时响一下。
+    #   `*_file` 留空 = 用**出厂自带**的那一个（`system/sound/<种类>.mp3`）；
+    #   换成自己的 = 文件被复制到 `user_data/sound/`，这里记**相对 user_data 的路径**
+    #   （`sound/finish.mp3`）—— 整个 moss 目录搬走也不失效。
+    #   ★ 读这两个开关的也是**界面进程**（`system/ui/main.py`，它不 import core）。
+    "sound": {
+        "finish_on": True,             # AI 跑完一轮时响
+        "finish_file": "",             # 空 = 出厂自带 finish.mp3
+        "warn_on": True,               # 有事要你确认（问话 / 要放行目录）时响
+        "warn_file": "",               # 空 = 出厂自带 warn.mp3
+    },
 }
 
 #: 当前生效的配置（`load()` 会用用户文件覆盖它）。
@@ -183,6 +194,19 @@ force_kill = true
 #   true         = 关界面顺手收干净，不留后台孤儿（服务型的包会被一起收掉，所以默认没开）。
 # ★ 界面进程直接读这个文件，改完**下一次关界面**就生效（不用重启 moss、也不用重打包）。
 kill_pkgs_on_exit = false
+
+[sound]
+# 音效提醒（「设置 → AI 引擎」那两行）：AI 跑完一轮 / 有事要你确认的时候响一下。
+#   *_on   = 开不开（两种各自独立，关掉就不响）
+#   *_file = 用哪个音频。留空 = 用**出厂自带**的（system/sound/finish.mp3 / warn.mp3）；
+#            换成自己的：界面上点「换一个」选文件，或者直接把音频拖到那一行上 ——
+#            选好的会被**复制到 user_data/sound/**，这里只记它在那儿的相对路径，
+#            所以你原来那个文件删掉、挪走都不影响。
+# 只认 mp3 / wav / m4a / aac / wma / ogg / flac（用系统自带的能力放，不用装播放器）。
+finish_on = true
+finish_file = ""
+warn_on = true
+warn_file = ""
 
 [path]
 # 命令接入（`V-299`）：把 moss 自己所在的目录加进 PATH，让 `moss` 命令在任何终端都能直接敲。
@@ -336,6 +360,21 @@ SETTINGS_GROUPS = [
          #   给它一个 `raw` 类型：通用校验直接跳过它（它由 AI 那块界面自己管）。
          {"key": "ai.profiles", "label": "各组", "type": "raw",
           "hint": "每组：接口地址 / 密钥 / 模型；在面板上点「新建」或某行的「编辑」改。"},
+         # ★ 音效提醒：也长在「AI 引擎」这一页上（用户要的「在设置 AI引擎这里设置音效」），
+         #   由 `js/settings.js` 那块 `.set-ai` 自己画两行（开关 + 试听 + 换文件 + 拖入）。
+         #   声明在这儿有两个用处：① 面板清单和 `DEFAULT_CONFIG` 对得上（`--selfcheck` 查这个）；
+         #   ② `set_values` 按这里的 `type` 决定写进 TOML 的样子（bool 就得写成 true / false，
+         #   写成字符串 "true" 读回来永远是"开"）。
+         {"key": "sound.finish_on", "label": "任务结束音效", "type": "bool",
+          "hint": "AI 跑完一轮、把结论摆出来的时候响一下。关掉就不响（也可以换成自己的音频）。"},
+         {"key": "sound.finish_file", "label": "任务结束音效文件", "type": "text",
+          "hint": "留空 = 用出厂自带的那一个（system/sound/finish.mp3）；"
+                  "换法：面板上点「换一个」选文件，或把音频直接拖到那一行上 —— "
+                  "选好的会被复制到 user_data/sound/，原文件删了也不影响。"},
+         {"key": "sound.warn_on", "label": "需要你确认时的提示音", "type": "bool",
+          "hint": "AI 有话要问你、或者要你放行一个目录的时候响一下 —— 就是它在等你动手的那些时候。"},
+         {"key": "sound.warn_file", "label": "提示音文件", "type": "text",
+          "hint": "留空 = 用出厂自带的那一个（system/sound/warn.mp3）；换法同上。"},
      ]},
 ]
 

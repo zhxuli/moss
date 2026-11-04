@@ -101,6 +101,39 @@ const MossSettings = {
                 <span v-html="aiSvg('plus')"></span>
                 <span>添加新的 AI 配置</span>
               </div>
+
+              <!-- ★ 音效提醒（照你给的极简稿子）：一种音效一行，左边「名字 + 文件名」，
+                   右边「▶ 试听 + 小开关」。**点文件名 = 换音效**（也可以把音频拖到这一行上），
+                   开关和换文件都**当场生效** —— 不跟底下那颗「保存」走。
+                   ★ 换进来的文件会被复制到 user_data/sound/，原文件删掉也不影响；
+                     文件名照你选的那个留着，所以那一行显示的就是你自己的文件。 -->
+              <div class="ai-snd" id="ai-snd">
+                <div class="ai-snd-title">音效提醒</div>
+                <div class="ai-snd-grid">
+                  <div v-for="k in sndKinds" :key="k.key" class="ai-snd-item"
+                       :class="{over: snd.hot === k.key, off: !sndOn(k.key)}" :data-snd="k.key"
+                       @dragover.prevent="sndHot(k.key)" @drop.prevent>
+                    <div class="ai-snd-text" :title="sndPickTip(k.key)" @click="sndPick(k.key)">
+                      <span class="ai-snd-name">{{ k.title }}</span>
+                      <span class="ai-snd-file">{{ sndFile(k.key) }}</span>
+                    </div>
+                    <div class="ai-snd-right">
+                      <button v-if="!sndBuiltin(k.key)" class="ai-snd-reset" type="button"
+                              :data-snd-reset="k.key" title="回到出厂自带的那一个"
+                              @click.stop="sndReset(k.key)">恢复</button>
+                      <button class="ai-snd-play" type="button" :data-snd-try="k.key"
+                              title="试听（不看开关，关着也放）"
+                              @click.stop="sndTry(k.key)" v-html="icon('play')"></button>
+                      <label class="ai-snd-switch" :data-snd-sw="k.key"
+                             :title="sndOn(k.key) ? '开 —— 点一下关掉' : '关 —— 点一下打开'">
+                        <input type="checkbox" :checked="sndOn(k.key)"
+                               @change="sndToggle(k.key, $event)">
+                        <span class="ai-snd-slider"></span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
               </div>
             </div>
 
@@ -430,8 +463,12 @@ const MossSettings = {
            creating: false},
       // ★ `V-299`：「命令接入」页里的 cd 增强状态（走宿主 `--cd-status` / `cd --install`）
       cd: {loaded: false, busy: false, any: false, profiles: []},
+      // ★ 音效提醒（「AI 引擎」那两行）：`items` 是宿主给的现状（开着没有 / 哪个文件 /
+      //   出厂自带还是自己换的）；`hot` = 此刻正被拖着的那一行（拖动时高亮，落地口也认它）。
+      snd: {loaded: false, busy: false, hot: "", at: 0, items: {}},
       _timer: null,
       _seq: 0,
+      _sndT: null,          // 音效那一行的"拖动到点自己收"定时器（见 sndHot）
     };
   },
   computed: {
@@ -518,7 +555,39 @@ const MossSettings = {
       if (m === 2) return hl(p) + "img\n" + hl(p) + "img webp 60% *.png";
       return hl("moss") + " " + esc(this.scSym) + "img\n" + hl("moss") + " " + esc(this.scSym) + "img webp 60% *.png";
     },
+    // ★ 音效那两行的名字（模板里 `v-for` 用）。**必须写在 computed**：模板里是
+    //   不带括号用的，写在 methods 里取到的会是函数本体（`tools/界面检查.py` 第 1c 条）。
+    sndKinds(){
+      return [
+        {key: "finish", title: "任务结束"},
+        {key: "warn", title: "需要你确认"},
+      ];
+    },
 
+  },
+  /* ★ 音效那两行的**拖放落地口**：真实路径只有宿主知道（Chromium 不给页面 `File.path`），
+     `js/drop.js` 拿到路径后交到这里。规矩和 `__mossAiDrop` 一样 —— 自己另起一个名字，
+     不去抢 `__mossDropHook` 那个全局唯一的槽。
+     ★ 只在"设置面板开着 + 音效某一行正被拖着"（`snd.hot`）时才收：不然在设置面板上
+       拖任何东西都会被当成"换铃声"。 */
+  mounted(){
+    window.__mossSndDrop = (items) => {
+      if (!this.show || !this.snd.hot) return false;
+      if (Date.now() - Number(this.snd.at || 0) > 3000) return false;
+      const kind = this.snd.hot;
+      const one = (items || []).filter(x => x && x.path && x.isDir !== true)[0] || null;
+      this.snd.hot = ""; this.snd.at = 0;
+      if (!one){
+        toast("要拖一个音频文件进来（mp3 / wav / m4a …）", true);
+        return true;
+      }
+      this.sndUsePath(kind, one.path);
+      return true;
+    };
+  },
+  beforeUnmount(){
+    if (window.__mossSndDrop) window.__mossSndDrop = null;
+    if (this._sndT) clearTimeout(this._sndT);
   },
   methods: {
     icon(name){ return ico(name, "i"); },
@@ -556,6 +625,112 @@ const MossSettings = {
       this.cd.busy = false;
       await this.cdLoad();
       toast(r && r.ok ? "已卸掉 cd 增强" : "没卸掉", !(r && r.ok));
+    },
+
+    /* ---- 音效提醒（「AI 引擎」那两行）----
+       ★ 全部**当场生效**：开关 / 换文件都是一点就写 `config.toml` 的 `[sound]` 段，
+         不跟底下那颗「保存」走（那是 AI 那几组的）。所以这里没有 draft，也没有"未保存"那种状态。 */
+    sndOn(kind){ return !!((this.snd.items || {})[kind] || {}).on; },
+    sndBuiltin(kind){ return ((this.snd.items || {})[kind] || {}).builtin !== false; },
+    // 那一行显示的文件名 —— 就是你选的那个；没换过 = 出厂那个（finish.mp3 / warn.mp3）
+    sndFile(kind){
+      const it = (this.snd.items || {})[kind] || {};
+      return it.name || "还没有音频";
+    },
+    sndPickTip(kind){
+      const it = (this.snd.items || {})[kind] || {};
+      return (it.path ? (it.path + " · ") : "")
+        + "点一下换一个音频，也可以把音频文件拖到这一行上";
+    },
+    async sndLoad(){
+      try{
+        const r = await pywebview.api.sound_state();
+        if (r && r.ok){ this.snd.items = r.items || {}; this.snd.loaded = true; }
+      }catch(e){ /* 读不到就当它没设 —— 那一行会显示"还没有音频" */ }
+    },
+    // 宿主每次回的都是"两种音效的新现状"（`items`），照抄过来就行，不用自己推
+    sndApply(r){
+      this.snd.busy = false;
+      if (r && r.items) this.snd.items = r.items;
+      this.$forceUpdate();
+    },
+    // ★ 这一颗是**复选框**（照稿子的 .switch 那个样子）：浏览器的点击已经把它拨过去了，
+    //   存失败时得手动拨回来，不然"看着开了、其实没开"。
+    async sndToggle(kind, ev){
+      if (this.snd.busy) return;
+      const box = (ev && ev.target && ev.target.type === "checkbox") ? ev.target : null;
+      const want = box ? !!box.checked : !this.sndOn(kind);
+      this.snd.busy = true;
+      let r = null;
+      try{ r = await pywebview.api.sound_set(kind, want); }
+      catch(e){ r = {ok: false, msg: String(e && e.message ? e.message : e)}; }
+      if (!r || !r.ok){
+        this.snd.busy = false;
+        if (box) box.checked = !want;
+        toast("✗ " + ((r && r.msg) || "没改成"), true);
+        return;
+      }
+      this.sndApply(r);
+      toast(want ? "音效已打开" : "音效已关闭（这一类以后不再响）");
+    },
+    async sndPick(kind){
+      if (this.snd.busy) return;
+      this.snd.busy = true;
+      let r = null;
+      try{ r = await pywebview.api.sound_pick(kind); }
+      catch(e){ r = {ok: false, msg: String(e && e.message ? e.message : e)}; }
+      if (r && r.cancelled){ this.snd.busy = false; return; }
+      if (!r || !r.ok){
+        this.snd.busy = false;
+        toast("✗ " + ((r && r.msg) || "没换成"), true);
+        return;
+      }
+      this.sndApply(r);
+      toast(r.msg || "换好了");
+      sndNotify(kind, true);        // 换完直接响一下：好让你确认就是这个
+    },
+    async sndReset(kind){
+      if (this.snd.busy) return;
+      this.snd.busy = true;
+      let r = null;
+      try{ r = await pywebview.api.sound_reset(kind); }
+      catch(e){ r = {ok: false, msg: String(e && e.message ? e.message : e)}; }
+      if (!r || !r.ok){
+        this.snd.busy = false;
+        toast("✗ " + ((r && r.msg) || "没恢复成"), true);
+        return;
+      }
+      this.sndApply(r);
+      toast(r.msg || "已回到出厂自带的那个");
+      sndNotify(kind, true);
+    },
+    // 拖进来的音频（真路径由宿主从 `__mossSndDrop` 那条路交过来）
+    async sndUsePath(kind, path){
+      if (this.snd.busy) return;
+      this.snd.busy = true;
+      let r = null;
+      try{ r = await pywebview.api.sound_use(kind, String(path || "")); }
+      catch(e){ r = {ok: false, msg: String(e && e.message ? e.message : e)}; }
+      if (!r || !r.ok){
+        this.snd.busy = false;
+        toast("✗ " + ((r && r.msg) || "换不成"), true);
+        return;
+      }
+      this.sndApply(r);
+      toast(r.msg || "换好了");
+      sndNotify(kind, true);
+    },
+    sndTry(kind){ sndNotify(kind, true); },
+    // 拖动经过某一行 ⇒ 记下"这一行是落点"（高亮 + 落地口认它）。
+    // ★ 不用 dragleave 清：拖过一个子元素就会来一次 dragleave（高亮会闪），
+    //   所以改成"记时间戳 + 到点自己收"。
+    sndHot(kind){
+      this.snd.hot = kind;
+      this.snd.at = Date.now();
+      if (this._sndT) clearTimeout(this._sndT);
+      this._sndT = setTimeout(() => {
+        if (Date.now() - Number(this.snd.at || 0) > 900){ this.snd.hot = ""; this.snd.at = 0; }
+      }, 1000);
     },
     setScMode(m){
       // 三种程度互斥：1 = 仅前缀（生成 `<前缀>`，= moss）；2 = 前缀+包名（生成 `<前缀><包名>`）；0 = 都关
@@ -951,7 +1126,7 @@ const MossSettings = {
       this.active = gid;
       this.hideTip();
       // 切到 AI 那一页时才去问宿主（省得每次开设置都多跑两条命令）
-      if (this.isAiName(gid)){ this.aiLoadPresets(); if (!this.ai.loaded) this.aiLoad(""); }
+      if (this.isAiName(gid)){ this.aiLoadPresets(); if (!this.ai.loaded) this.aiLoad(""); this.sndLoad(); }
       // 切到「命令接入」时才问一次 cd 增强的状态
       if (this.isAccessName(gid)) this.cdLoad();
     },
