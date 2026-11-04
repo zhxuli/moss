@@ -285,14 +285,63 @@ def build_payload():
 
 
 def _alert(text):
-    """GUI 模式下没有控制台，`print` 等于丢进 NUL —— 那种情况要弹窗。"""
-    if shell_mod.has_console():
+    """GUI 模式下没有控制台，`print` 等于丢进 NUL —— 那种情况要弹窗。
+
+    ★ 2026-10-31：判据从 `has_console()` 改成 `gui_mode()` **或者** `_own_console_launch()`。
+      `hide` 档下双击启动**是有控制台的**（只是窗口在 Windows Terminal 那边），以前这里
+      会认为"有控制台"就往那个看不见的地方 print —— 双击启动时报的错用户一个字都看不到。
+    """
+    if not (shell_mod.gui_mode() or _own_console_launch()):
         out.print_cyan(text)
         return
     try:
         ctypes.windll.user32.MessageBoxW(None, text, "moss", 0x40)
     except Exception:
         pass
+
+
+#: 「我这一份已经**没有控制台**了」—— 旧方案留下的记号，现在不用了（留着防老环境串味）
+NO_CONSOLE_ENV = "MOSS_NO_CONSOLE"
+
+
+def _launch_note(text):
+    """把"这次是怎么启动的 / 判成了什么 / 走哪条路"记一行到 `user_data/state/_ui_launch.log`。
+
+    ★ 为什么留这份日志：双击那条路上出问题（多一个命令行窗口、界面起不来）时**屏幕上
+      什么都看不到** —— 这份日志能说清"当时判成了什么、有没有走'拉起就走'那条路"。
+      和 `_ui_drop.log` / `_ui_http.log` 一个路子：只记事，坏了也不影响启动。
+      只留最近一截，别长成山。
+    """
+    try:
+        p = paths.STATE_DIR / "_ui_launch.log"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if p.is_file() and p.stat().st_size > 32 * 1024:
+            keep = p.read_text(encoding="utf-8", errors="replace")[-16 * 1024:]
+            p.write_text(keep, encoding="utf-8")
+        with open(p, "a", encoding="utf-8") as f:
+            f.write("%s pid=%s %s\n" % (time.strftime("%H:%M:%S"), os.getpid(), text))
+    except Exception:                                                  # noqa: BLE001
+        pass
+
+
+def _own_console_launch():
+    """这次启动，那个控制台是不是**为我们新建的**（双击 / 快捷方式 / 快速启动栏 /
+    `build.py` 的 DETACHED 重启都算）。
+
+    ★ 判据在 `shell_mod.console_is_only_ours()`：**这个控制台上一个 shell 都没有**。
+    ★ 为什么不看 `gui_mode()` 里"控制台藏没藏"：这台机器把默认终端设成了 Windows
+      Terminal —— 双击时 WT 用**自己的窗口**显示那个新控制台，nuitka 的 `SW_HIDE` 藏的
+      只是 conhost 的伪窗口，所以"藏没藏"反映不出来（`gui_mode()` 也可能判成 False）。
+    ★ 为什么不用"父链上有没有 shell"：`build.py` 是从终端跑的，它 DETACHED 拉起的那一份
+      仍然是**自己新造的控制台**（同样会留一扇窗），可父链里有 pwsh。
+    ★ 这为什么要紧：那个控制台窗口**只有等占着它的进程退出才会关**（实测：`FreeConsole()`
+      之后它还在，前 8.9 秒一直在；进程一退，0.3 秒内就消失）。所以走这条路时，宿主把
+      界面拉起来就**立刻退出**，窗口跟着关掉（见 `launch()`）。
+    """
+    try:
+        return bool(shell_mod.console_is_only_ours())
+    except Exception:                                                  # noqa: BLE001
+        return False
 
 
 def launch(args=None):
@@ -307,6 +356,14 @@ def launch(args=None):
     fd, tmp = tempfile.mkstemp(prefix="moss-ui-", suffix=".json")
     os.close(fd)
     tmp_path = Path(tmp)
+    # ★ 2026-10-31：双击 / 快捷方式那条路**拉起界面就走**（不等）。
+    #   为什么：那个控制台窗口是 Windows 单独给我们建的（这台机器上是 Windows Terminal
+    #   开的窗口），它**只有占着它的进程退出才会关**。宿主本来就是"等界面退出才返回"，
+    #   于是那扇窗会整场挂着 —— 用户报的就是这个。
+    #   所以这条路：把界面（`CREATE_NO_WINDOW`，它自己不会有窗口）拉起来，宿主**立刻退出**
+    #   ⇒ 控制台没人占了 ⇒ 窗口关掉；界面在后台照常跑（它是独立进程，不靠宿主活着）。
+    leave_now = _own_console_launch()
+    keeps_payload = False
     try:
         tmp_path.write_text(json.dumps(build_payload(), ensure_ascii=False),
                             encoding="utf-8")
@@ -318,7 +375,8 @@ def launch(args=None):
         env["PYTHONIOENCODING"] = "utf-8"
 
         argv = [exe, str(UI_MAIN)] + list(args or [])
-        flags = _NO_WINDOW if shell_mod.gui_mode() else 0
+        gui = shell_mod.gui_mode()
+        flags = _NO_WINDOW if (gui or leave_now) else 0
         try:
             proc = subprocess.Popen(argv, cwd=str(paths.HOME), env=env,
                                     creationflags=flags)
@@ -326,7 +384,15 @@ def launch(args=None):
             _alert("界面启动失败：%s" % e)
             return 1
 
-        # 等界面退出：关掉窗口 = 这次调用结束（Ctrl+C 连带把界面收掉）。
+        _launch_note("launch args=%r gui_mode=%s own_console=%s flags=0x%X pid=%s"
+                     % (list(args or []), gui, leave_now, flags, proc.pid))
+        if leave_now:
+            # ★ 这个临时文件**不能**在这儿删：界面可能还没读到它。交给界面读完自己删
+            #   （`system/ui/main.py::_load_data`）。
+            keeps_payload = True
+            return 0
+
+        # 终端里敲的那条路：等界面退出（关掉窗口 = 这次调用结束；Ctrl+C 连带把界面收掉）。
         try:
             while proc.poll() is None:
                 time.sleep(0.1)
@@ -335,7 +401,8 @@ def launch(args=None):
             return 130
         return proc.returncode or 0
     finally:
-        try:
-            tmp_path.unlink()
-        except OSError:
-            pass
+        if not keeps_payload:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass

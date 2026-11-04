@@ -474,7 +474,17 @@ def _load_data():
     p = os.environ.get("MOSS_UI_DATA")
     if not p:
         raise SystemExit("缺少 MOSS_UI_DATA —— 这个界面只能由宿主拉起（moss ui / 双击 moss.exe）")
-    return json.loads(Path(p).read_text(encoding="utf-8"))
+    path = Path(p)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    # ★ 2026-10-31：**读完就删**（这一次启动才用得上它）。
+    #   为什么改由界面来删：双击 / 快捷方式那条路上，宿主是"把界面拉起来就退出"的
+    #   （它得赶紧退出，控制台那扇窗才会关 —— 见 `core/ui.py::launch`），
+    #   来不及收拾这个临时文件。删不掉也没关系（%TEMP% 里的东西，系统会清）。
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    return data
 
 
 DATA = _load_data()

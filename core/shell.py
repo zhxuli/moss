@@ -243,6 +243,50 @@ def gui_mode():
     return (not has_console()) or console_is_hidden()
 
 
+def console_clients():
+    """这个控制台上现在挂着哪些进程（pid 列表）。没有控制台 ⇒ 空列表。"""
+    if os.name != "nt":
+        return []
+    try:
+        _k32.GetConsoleProcessList.argtypes = [ctypes.POINTER(wt.DWORD), wt.DWORD]
+        _k32.GetConsoleProcessList.restype = wt.DWORD
+        buf = (wt.DWORD * 64)()
+        n = int(_k32.GetConsoleProcessList(buf, 64))
+        if n <= 0 or n > 64:
+            return []
+        return [int(buf[i]) for i in range(n)]
+    except Exception:                                                # noqa: BLE001
+        return []
+
+
+def console_is_only_ours():
+    """这个控制台是不是**为我们新建的** —— 判据：上面挂着的进程里**一个 shell 都没有**。
+
+    ★ 为什么需要它（2026-10-31，用户报的"双击 moss 会先起一个命令行窗口，gui 起来了
+      它也不消失"）：这台机器把**默认终端**设成了 Windows Terminal。双击时 Windows 给
+      进程新建一个控制台，WT 拿一扇**自己的窗口**去显示它；nuitka 的 `SW_HIDE` 只在
+      bootstrap 那会儿藏 conhost 的伪窗口，WT 那扇窗照旧亮着。而那个窗口**只有等占着
+      这个控制台的进程全部退出才会关**（实测：`FreeConsole()` 之后它还在，前 8.9 秒一直
+      在；进程一退，0.3 秒内消失）。
+      ⇒ 知道"这个控制台是我自己的"之后，`core/ui.py::launch` 就能"把界面拉起来就退出"，
+        窗口随之关掉。
+
+    ★ 为什么**不**用"父链上有没有 shell"判：`tools/build.py` 是从终端跑的，它 DETACHED
+      拉起的那一份仍然是**自己新造的控制台**（也会留一扇窗），可父链上照样有 pwsh ——
+      只看父链会把它当终端。**"这个控制台上还有没有别的 shell"才是那个问题本身。**
+    ★ 终端里敲 moss 时：那个 shell 就挂在同一个控制台上 ⇒ 这里返回 False ⇒ 照旧等界面、
+      照旧 Ctrl+C，什么都不变。
+    """
+    if not has_console():
+        return False
+    procs = _proc_map()
+    for pid in console_clients():
+        name = str((procs.get(pid) or (0, ""))[1] or "").lower()
+        if name in SHELLS:
+            return False
+    return True
+
+
 def launcher_name(max_depth=12):
     """父进程链上**第一个不是本程序**的进程名（小写）。找不到返回 ''。
 

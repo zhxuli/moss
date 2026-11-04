@@ -309,6 +309,10 @@ def restart_ui():
         shell），于是去打用法 + 包列表，界面根本不会起来。
     ★ `DETACHED_PROCESS`：不挂到打包这个控制台上 —— 否则打包窗口一关（或 Ctrl-C），
       刚拉起来的界面会被一起带走。
+    ★ 2026-10-31：这一份**可能"拉起界面就退出"**。新版 `core/ui.py::launch` 在
+      "这个控制台是我自己新造的"（`shell.console_is_only_ours()`）时会立刻返回 ——
+      它得赶紧退出，飘在屏幕上的那扇控制台窗口才会关（用户报的那个 bug）。
+      所以"3 秒后进程不在了"**不再等于失败**：退出码 0 就当成功。
     """
     exe = HOME / "moss.exe"
     try:
@@ -321,9 +325,11 @@ def restart_ui():
         return None, "重新启动失败：%s" % exc
     time.sleep(3.0)                     # onefile 首次解包 + 起窗口，等够了再判
     code = proc.poll()
-    if code is not None:
-        return proc.pid, ("进程立刻退出了（退出码 %s）—— 手动双击 moss.exe 看看" % code)
-    return proc.pid, ""
+    if code is None:
+        return proc.pid, ""
+    if code == 0:
+        return proc.pid, ""             # 拉起就走那条路（见上面的 ★）
+    return proc.pid, ("进程立刻退出了（退出码 %s）—— 手动双击 moss.exe 看看" % code)
 
 
 def install_exe(staged, allow_kill=True):
