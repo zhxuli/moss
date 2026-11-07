@@ -339,6 +339,36 @@
 .ai-query-btn:active:not(:disabled){transform:scale(.98)}
 .ai-query-btn:disabled{opacity:.5;cursor:default}
 .ai-query-btn svg.i{width:15px;height:15px;flex:none}
+/* ★ 2026-11-02：测试可用性 —— 一次问一个模型，结果一行一个列在按钮下面。
+   绿的能通（后面跟耗时 + 它回了什么），红的不能通（跟原因），黄的还在排队 / 正在测。
+   ★ 表头那颗「清掉不通的」只在真有红行时才出现（平时一个字都不多）。 */
+.ai-ping{margin-top:10px;border:1px solid #e4e4e7;border-radius:8px;background:#fff;
+  overflow:hidden}
+.ai-ping-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:8px 12px;background:#fafafa;border-bottom:1px solid #f0f0f2;font-size:12.5px;
+  color:#52525b}
+.ai-ping-head b.ok-n{color:#15803d}
+.ai-ping-head b.bad-n{color:#b91c1c}
+.ai-ping-clear{border:0;background:#fef2f2;color:#b91c1c;border-radius:6px;padding:4px 10px;
+  font:inherit;font-size:12px;font-weight:500;cursor:pointer;
+  transition:background .13s,color .13s,transform .1s}
+.ai-ping-clear:hover{background:#fee2e2;color:#991b1b}
+.ai-ping-clear:active{transform:scale(.97)}
+.ai-ping-row{display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:12.5px;
+  border-top:1px solid #f6f6f8}
+.ai-ping-row:first-of-type{border-top:0}
+.ai-ping-dot{width:7px;height:7px;border-radius:50%;flex:none;background:#d4d4d8}
+.ai-ping-row.ok .ai-ping-dot{background:#22c55e}
+.ai-ping-row.bad .ai-ping-dot{background:#ef4444}
+.ai-ping-row.wait .ai-ping-dot{background:#f59e0b;animation:aiPingPulse 1.1s ease-in-out infinite}
+@keyframes aiPingPulse{0%,100%{opacity:1}50%{opacity:.35}}
+.ai-ping-name{font-family:var(--mono);color:#18181b;white-space:nowrap;max-width:46%;
+  overflow:hidden;text-overflow:ellipsis;flex:none}
+.ai-ping-ms{color:#6b7280;flex:none;font-variant-numeric:tabular-nums}
+.ai-ping-msg{color:#6b7280;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.ai-ping-row.bad .ai-ping-msg{color:#b91c1c}
+.ai-ping-row.wait .ai-ping-msg{color:#a16207}
 input[type="password"]::-ms-reveal,
 input[type="password"]::-ms-clear{display:none}
 
@@ -391,6 +421,11 @@ input[type="password"]::-ms-clear{display:none}
 .ai-snd{margin-top:22px;padding:16px 18px 8px;border-radius:12px;background:#f7f8fa}
 .ai-snd-title{font-size:14px;font-weight:600;color:#1f2937;letter-spacing:.5px;
   margin-bottom:14px}
+/* ★ 2026-11-02：「音效提醒」那几个字现在是**链接**（点了去 sounddino 挑音效素材），
+   但外观**一点都不变** —— 同色、同字重、没有下划线。只有鼠标停上去变小手。
+   ★ `a` 自带的蓝字 + 下划线必须显式压掉，不然这一行会突然变样（那就不是"外观不变"了）。 */
+.ai-snd-title a{color:inherit;font:inherit;letter-spacing:inherit;text-decoration:none;
+  cursor:pointer}
 .ai-snd-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
 .ai-snd-item{display:flex;align-items:center;justify-content:space-between;gap:8px;
   height:40px;padding:0 8px;border:1px solid transparent;border-radius:8px;

@@ -99,7 +99,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-file-preview",
           "statusbar", "settings", "settings-exec", "settings-format", "settings-adv",
           "settings-bad", "settings-warn", "settings-tip",
           "settings-ai", "settings-ai-tpl", "settings-ai-new", "settings-ai-empty",
-          "settings-ai-snd",
+          "settings-ai-snd", "settings-ai-ping",
           "hist", "hist-console", "hist-file", "sync-run", "sym-list", "bars-dd", "mini-rail",
           "edit-manifest", "edit-manifest-detail", "float-window", "side-counts", "path-ui",
           "path-run-stop", "exec-ui", "img-ui", "dazi-ui", "fanyi-ui", "detail-fill", "ai-pane", "snap-by",
@@ -1319,6 +1319,26 @@ MOCK_JS = r"""
               msg: '连上了：HTTP 200（模型 ' + models[0] +
                    '）· 流式第一个增量 = data: {"id":"chatcmpl-1",' +
                    '"choices":[{"delta":{"content":"收到"}}]}'};
+    },
+    // ★ 2026-11-02：「测试可用性」—— 一次问一个模型。假后端照真宿主那套回
+    //   {ok, model, ms, code, sample, msg}：本机那组假装连不上、名字里带 legacy 的假装
+    //   "没这个模型"、其余的都通（推理模型那类回"（思考）…"）。
+    ai_ping: async (name, model, fields) => {
+      const m = String(model || "");
+      const f = fields || {};
+      (M.pings = M.pings || []).push(m);
+      if (!String(f.base_url || "").trim())
+        return {ok: false, model: m, ms: 0, msg: "这一组还没填接口地址"};
+      if (/127\.0\.0\.1|localhost/i.test(String(f.base_url)))
+        return {ok: false, model: m, ms: 35,
+                msg: "<urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>"};
+      if (/legacy|no-such|expired/i.test(m))
+        return {ok: false, model: m, ms: 610,
+                msg: "The supported API model names are deepseek-chat, deepseek-reasoner, " +
+                     "but you passed " + m + "."};
+      const ms = 320 + ((m.length * 37) % 700);
+      return {ok: true, model: m, ms: ms, code: 200,
+              sample: /reason/i.test(m) ? "（思考）我们需要" : "收到", msg: "能通"};
     },
     open_ui: async () => ({ok: true, msg: "(预览) 已打开"}),
     // 浮动窗口（`V-192`）：预览里开不出第二个窗口，只把三个接口垫出来，
@@ -3536,6 +3556,109 @@ MOCK_JS = r"""
         document.title = ok ? "READY" : ("SETTINGS-AI-SND-FAIL " +
           document.querySelector("#meta").textContent);
       }
+      // ★ 2026-11-02：测试可用性 —— 点一下挨个问列表里的模型：绿的能通（带耗时 + 它回了
+      //   什么），红的不通（带原因）；点「清掉不通的」把红的那几行从**内存里的列表**里删掉
+      //   （配置一个字都没动，要保存才落盘）。
+      if (h === "settings-ai-ping"){
+        await openSettings();
+        await sleep(500);
+        const aiNav = Array.prototype.filter.call(
+          document.querySelectorAll("#set-nav .set-navitem"),
+          b => (b.dataset.group || "") === "A I 引擎")[0];
+        if (aiNav) aiNav.click();
+        await sleep(700);
+        const scope = "#set-body .set-pane.on .set-ai ";
+        // ① 进「深度求索」那组的编辑视图（有地址 + 密钥 ⇒ 快捷操作那一排才出现）
+        document.querySelector(scope + '.ai-card[data-group="深度求索"] [data-edit]').click();
+        await sleep(600);
+        const modelBox = document.querySelector(scope + '.ai-fgroup[data-ai="model"] textarea');
+        const pingBtn = document.querySelector("#ai-ping");
+        const hadBtn = !!pingBtn;
+        const apiHas = typeof ((window.pywebview || {}).api || {}).ai_ping;
+        const dis0 = pingBtn ? pingBtn.disabled : "无";
+        // ② 列表里多塞一个"早就下线"的模型（现实里就是从别处抄来的那一行）
+        modelBox.value = modelBox.value + "\nlegacy-gpt-3";
+        modelBox.dispatchEvent(new Event("input", {bubbles: true}));
+        await sleep(200);
+        // ③ 点「测试可用性」：一个接一个问，直到每一行都有结论
+        if (pingBtn) pingBtn.click();
+        for (let i = 0; i < 40; i++){
+          await sleep(150);
+          const rows = document.querySelectorAll(scope + ".ai-ping-row");
+          const waits = document.querySelectorAll(scope + ".ai-ping-row.wait");
+          if (rows.length >= 3 && waits.length === 0) break;
+        }
+        const rows1 = document.querySelectorAll(scope + ".ai-ping-row");
+        const ok1 = document.querySelectorAll(scope + ".ai-ping-row.ok").length;
+        const bad1 = document.querySelectorAll(scope + ".ai-ping-row.bad").length;
+        const clearBtn = document.querySelector("#ai-ping-clear");
+        const badText = (document.querySelector(scope + ".ai-ping-row.bad .ai-ping-msg") || {})
+          .textContent || "";
+        const msText = (document.querySelector(scope + ".ai-ping-row.ok .ai-ping-ms") || {})
+          .textContent || "";
+        const asked = (M.pings || []).slice();
+        // ④ 「清掉不通的」⇒ 内存里的列表少了那一行、结果表只剩绿的
+        if (clearBtn) clearBtn.click();
+        await sleep(300);
+        const listAfter = modelBox.value;
+        const rows2 = document.querySelectorAll(scope + ".ai-ping-row").length;
+        const stillBad = document.querySelectorAll(scope + ".ai-ping-row.bad").length;
+        const saved = JSON.stringify(((M.ai.profiles.filter(x => x.name === "深度求索")[0]
+          || {}).params || {}).model || "");
+        // ⑤ ★ 用户报的那个 bug：A 组测完 → 去编辑 B 组，B 的编辑页上**不许再挂着 A 的模型**
+        //    （也不许还在背后替 A 接着问）。
+        document.querySelector("#ai-back2").click();
+        await sleep(500);
+        document.querySelector(scope + '.ai-card[data-group="备用中转"] [data-edit]').click();
+        await sleep(700);
+        const rowsB = document.querySelectorAll(scope + ".ai-ping-row").length;
+        const queryB = (document.querySelector(scope + ".ai-query") || {}).textContent || "";
+        const crossed = /deepseek|legacy/.test(queryB);
+        const modelB = (document.querySelector(scope + '.ai-fgroup[data-ai="model"] textarea')
+          || {}).value || "";
+        // ⑥ 回到深度求索再跑一遍 ⇒ 截图要能看见"红的那一行 + 清掉按钮"
+        //    （也顺带证明第二次跑是干净的：不残留上一轮的行）。
+        document.querySelector("#ai-back2").click();
+        await sleep(500);
+        document.querySelector(scope + '.ai-card[data-group="深度求索"] [data-edit]').click();
+        await sleep(700);
+        const modelBox2 = document.querySelector(scope + '.ai-fgroup[data-ai="model"] textarea');
+        modelBox2.value = modelBox2.value + "\nlegacy-gpt-3";
+        modelBox2.dispatchEvent(new Event("input", {bubbles: true}));
+        await sleep(200);
+        const pingBtn2 = document.querySelector("#ai-ping");
+        if (pingBtn2) pingBtn2.click();
+        for (let i = 0; i < 40; i++){
+          await sleep(150);
+          const rows = document.querySelectorAll(scope + ".ai-ping-row");
+          const waits = document.querySelectorAll(scope + ".ai-ping-row.wait");
+          if (rows.length >= 3 && waits.length === 0) break;
+        }
+        const rows3 = document.querySelectorAll(scope + ".ai-ping-row").length;
+        const bad3 = document.querySelectorAll(scope + ".ai-ping-row.bad").length;
+        const ok = hadBtn && asked.length === 3 &&
+                   asked[0] === "deepseek-chat" && asked[2] === "legacy-gpt-3" &&
+                   rows1.length === 3 && ok1 === 2 && bad1 === 1 &&
+                   !!clearBtn && /supported API model names/.test(badText) &&
+                   /ms$/.test(msText) &&
+                   !/legacy-gpt-3/.test(listAfter) && /deepseek-chat/.test(listAfter) &&
+                   rows2 === 2 && stillBad === 0 &&
+                   !/legacy-gpt-3/.test(saved) && /deepseek-reasoner/.test(saved) &&
+                   rowsB === 0 && !crossed && /gemini-2\.0-flash/.test(modelB) &&
+                   rows3 === 3 && bad3 === 1;
+        document.querySelector("#meta").textContent =
+          "DIAG " + (ok ? "OK" : "FAIL") + " 按钮=" + (hadBtn ? 1 : 0) +
+          " 接口=" + apiHas + " 一开始灰=" + dis0 +
+          " 问了=" + JSON.stringify(asked) + " 行=" + rows1.length +
+          " 绿=" + ok1 + " 红=" + bad1 + " 耗时=" + msText +
+          " 原因=[" + badText.slice(0, 70) + "] 清掉按钮=" + (clearBtn ? 1 : 0) +
+          " 清后行=" + rows2 + " 清后红=" + stillBad +
+          " 列表=[" + listAfter.replace(/\n/g, "|") + "] 配置里=" + saved +
+          " 换组后行=" + rowsB + " 换组后串了=" + crossed +
+          " 换组后列表=[" + modelB.replace(/\n/g, "|") + "]";
+        document.title = ok ? "READY" : ("SETTINGS-AI-PING-FAIL " +
+          document.querySelector("#meta").textContent);
+      }
       // 选服务商那张脸（网格）：留一张图 + 断言"每家一格、地址小字、自定义那格也在"。
       if (h === "settings-ai-tpl"){
         await openSettings();
@@ -3614,6 +3737,10 @@ MOCK_JS = r"""
       if (h === "settings-bad"){
               await openSettings();
         await sleep(700);
+        // ★ 2026-11-02：先切到「快捷命令」那一页 —— `symbols.plugin_mode` 在那儿。
+        //   以前省了这一步（那会儿它是第一页），组顺序一改这个场景就悄悄红着（红=0 存=0）。
+        setActive("快捷命令");
+        await sleep(300);
         const inp = document.querySelector(
           '#set-body .set-pane.on .set-field[data-key="symbols.plugin_mode"] .inp');
         if (inp){ inp.value = ""; inp.dispatchEvent(new Event("input", {bubbles: true})); }

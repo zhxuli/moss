@@ -108,7 +108,15 @@ const MossSettings = {
                    ★ 换进来的文件会被复制到 user_data/sound/，原文件删掉也不影响；
                      文件名照你选的那个留着，所以那一行显示的就是你自己的文件。 -->
               <div class="ai-snd" id="ai-snd">
-                <div class="ai-snd-title">音效提醒</div>
+                <!-- 标题那几个字本身是个链接：点了去 sounddino 挑音效素材。
+                     外观一点不变（同色、同字重、没有下划线），只有鼠标停上去变小手。
+                     真打开交给宿主（open_url 走 webbrowser）—— 页面里 target=_blank
+                     在 WebView2 下会被拦掉，点了没反应，见 js/compare.js 那段注释。 -->
+                <div class="ai-snd-title">
+                  <a class="ai-snd-site" href="https://sounddino.com/zh/" target="_blank"
+                     rel="noopener" title="去 sounddino 找音效"
+                     @click.prevent="sndSite()">音效提醒</a>
+                </div>
                 <div class="ai-snd-grid">
                   <div v-for="k in sndKinds" :key="k.key" class="ai-snd-item"
                        :class="{over: snd.hot === k.key, off: !sndOn(k.key)}" :data-snd="k.key"
@@ -122,7 +130,7 @@ const MossSettings = {
                               :data-snd-reset="k.key" title="回到出厂自带的那一个"
                               @click.stop="sndReset(k.key)">恢复</button>
                       <button class="ai-snd-play" type="button" :data-snd-try="k.key"
-                              title="试听（不看开关，关着也放）"
+                              title="试听"
                               @click.stop="sndTry(k.key)" v-html="icon('play')"></button>
                       <label class="ai-snd-switch" :data-snd-sw="k.key"
                              :title="sndOn(k.key) ? '开 —— 点一下关掉' : '关 —— 点一下打开'">
@@ -209,15 +217,42 @@ const MossSettings = {
                 <label class="ai-flabel">快捷操作</label>
                 <div class="ai-query-btns">
                   <button class="ai-query-btn" id="ai-fetch-models" type="button"
-                          :disabled="ai.busy" @click="aiFetchModels"
+                          :disabled="ai.busy || aiPingBusy" @click="aiFetchModels"
                           title="从接口的 /models 获取可用模型，自动填入下面的列表（不用先保存）">
                     <span v-html="icon('refresh-cw')"></span><span>获取可用模型</span>
                   </button>
                   <button class="ai-query-btn" id="ai-fetch-balance" type="button"
-                          :disabled="ai.busy" @click="aiFetchBalance"
+                          :disabled="ai.busy || aiPingBusy" @click="aiFetchBalance"
                           title="查询这个接口的账户余额（DeepSeek / Kimi / OpenRouter / 硅基流动等已知接口）">
                     <span v-html="icon('gauge')"></span><span>查询余额</span>
                   </button>
+                  <!-- 测试可用性：挨个问一遍下面列表里的每个模型，一行一个结果。
+                       花销压到最低（每次只花几个 token），所以可以放心对整张表点一遍。 -->
+                  <button class="ai-query-btn" id="ai-ping" type="button"
+                          :disabled="ai.busy || aiPingBusy" @click="aiPingAll()"
+                          :title="aiPingTip">
+                    <span v-html="icon('plug')"></span>
+                    <span>{{ aiPingBusy ? ("测试中 " + aiPingDone + "/" + aiPingTotal) : "测试可用性" }}</span>
+                  </button>
+                </div>
+                <!-- 结果：一行一个模型。绿的能通（后面跟耗时 + 它回了什么），红的不能通（跟原因）。
+                     不通的那些可以一键从下面的列表里删掉，再点保存才真正写进 config.toml。 -->
+                <div class="ai-ping" id="ai-ping-box" v-if="ai.ping.rows.length">
+                  <div class="ai-ping-head">
+                    <span>可用 <b class="ok-n">{{ aiPingOkN }}</b> 个 · 不通
+                      <b class="bad-n">{{ aiPingBad.length }}</b> 个</span>
+                    <button class="ai-ping-clear" id="ai-ping-clear" type="button"
+                            v-if="aiPingBad.length && !aiPingBusy"
+                            title="把不通的那些从「可用模型列表」里删掉（列表还没保存，点保存才写进配置）"
+                            @click="aiPingDropBad()">清掉不通的（{{ aiPingBad.length }}）</button>
+                  </div>
+                  <div v-for="r in ai.ping.rows" :key="r.model" class="ai-ping-row"
+                       :class="r.state === 'done' ? (r.ok ? 'ok' : 'bad') : 'wait'">
+                    <span class="ai-ping-dot"></span>
+                    <span class="ai-ping-name" :title="r.model">{{ r.model }}</span>
+                    <span class="ai-ping-ms" v-if="r.state === 'done' && r.ok">{{ r.ms }}ms</span>
+                    <span class="ai-ping-msg" :title="r.msg">{{ aiPingRowText(r) }}</span>
+                  </div>
                 </div>
               </div>
 
@@ -460,7 +495,12 @@ const MossSettings = {
            // ★ 正在**新建**一组（点了「常用」里某家或「自定义」）：这时候保存 = 加一组；
            //   不然「名字框和当前那组不一样」就一律当成**改名** —— 点个预制参数再保存会把
            //   原来那组改掉（第一版就这么错的，场景里"假库少了一组"才发现）。
-           creating: false},
+           creating: false,
+           // ★ 「测试可用性」：`rows` 一行一个模型（state = wait / run / done），`running` 防重复点。
+           //   结果只是显示 + 改内存里的列表，**一个字节都不落盘**（要保存才写 config.toml）。
+           //   ★ `seq` = "这一批的批次号"：换了一组 / 关了面板就 +1，正在跑的那一轮回来时
+           //     一看号不对就自己收手（不然 A 组的模型会挂在 B 组的编辑页上、还在背后接着问）。
+           ping: {running: false, rows: [], seq: 0}},
       // ★ `V-299`：「命令接入」页里的 cd 增强状态（走宿主 `--cd-status` / `cd --install`）
       cd: {loaded: false, busy: false, any: false, profiles: []},
       // ★ 音效提醒（「AI 引擎」那两行）：`items` 是宿主给的现状（开着没有 / 哪个文件 /
@@ -562,6 +602,19 @@ const MossSettings = {
         {key: "finish", title: "任务结束"},
         {key: "warn", title: "需要你确认"},
       ];
+    },
+    /* ★ 2026-11-02：「测试可用性」那几个数。**必须写在 computed**（模板里不带括号用）——
+       写进 methods 的话模板拿到的是函数本体，按钮会一直是灰的、title 变成一串函数源码。
+       `rows` 一行一个模型：state = wait（排队）/ run（正在测）/ done（有结论了）。 */
+    aiPingBusy(){ return !!this.ai.ping.running; },
+    aiPingTotal(){ return (this.ai.ping.rows || []).length; },
+    aiPingDone(){ return (this.ai.ping.rows || []).filter(r => r.state === "done").length; },
+    aiPingBad(){ return (this.ai.ping.rows || []).filter(r => r.state === "done" && !r.ok); },
+    aiPingOkN(){ return (this.ai.ping.rows || []).filter(r => r.state === "done" && r.ok).length; },
+    aiPingTip(){
+      const n = this.aiModelList().length;
+      if (!n) return "先在上面「可用模型列表」里填模型名（一行一个），再来测";
+      return "挨个问一遍列表里的 " + n + " 个模型能不能用 —— 每个只花几个 token（只让它回两个字）";
     },
 
   },
@@ -721,6 +774,16 @@ const MossSettings = {
       sndNotify(kind, true);
     },
     sndTry(kind){ sndNotify(kind, true); },
+    /* 点「音效提醒」那几个字 = 去 sounddino 找素材（用**用户的默认浏览器**打开）。
+       ★ 为什么不在页面里直接跳：`target="_blank"` 在 WebView2 里被拦（点了没反应），
+         `location.href = ...` 更糟 —— 会把界面本身导航走，等于把 app 关掉。
+         所以交给宿主：`open_url` → `webbrowser.open`（和 `open_path` 同一个路子）。 */
+    async sndSite(){
+      let r = null;
+      try{ r = await pywebview.api.open_url("https://sounddino.com/zh/"); }
+      catch(e){ r = {ok: false, msg: String(e && e.message ? e.message : e)}; }
+      if (!r || !r.ok) toast("✗ 浏览器没能打开：" + ((r && r.msg) || "未知原因"), true);
+    },
     // 拖动经过某一行 ⇒ 记下"这一行是落点"（高亮 + 落地口认它）。
     // ★ 不用 dragleave 清：拖过一个子元素就会来一次 dragleave（高亮会闪），
     //   所以改成"记时间戳 + 到点自己收"。
@@ -779,6 +842,8 @@ const MossSettings = {
     aiSet(k, v){
       this.ai.draft[k] = v;
       this.ai.status = "";            // 改了参数，上次那个测试结果就不算数了
+      // 模型列表一改，上一次「测试可用性」那张表就过期了 —— 直接清掉（免得看着像刚测的）
+      if (k === "model") this.aiPingReset();
     },
     aiDirty(){ return Object.keys(this.ai.draft).length > 0; },
     // 列表里那一行的小字：地址 · 第一个模型（+N）—— 就这些，别的交给高亮标签
@@ -806,6 +871,11 @@ const MossSettings = {
       this.ai.creating = false;      // 从库里读出来的这一组：不是"新建"
       this.ai.showKey = false;
       this.ai.keyReal = false;
+      // ★ 2026-11-02（用户报的 bug）：**换一组就把「测试可用性」那张表清掉**。
+      //   这些结果是上一组的模型的，挂在别人的编辑页上等于说谎（"我在 B 上测了 A"）。
+      //   读库这一处是所有"换组"的必经之路（编辑另一组 / 存完重读 / 改名 / 删除），
+      //   所以清在这里最省心；`seq` 一起 +1，正在跑的那一轮会自己停下。
+      this.aiPingReset();
       return true;
     },
     async aiLoadPresets(){
@@ -1054,8 +1124,72 @@ const MossSettings = {
       this.aiQueryDone(r);
       this.$forceUpdate();
     },
-    // 把宿主那一行文本变成人话：成功 = 「连接成功（HTTP 200 · 模型 xxx）」；
-    // 失败 = 「连接失败：<原因>」。原始报文另存（上面那个 detail）。
+    /* ---- 测试可用性（2026-11-02）：挨个问一遍列表里的每个模型 ----
+       ★ 为什么**一个一个来**（不并发）：宿主要真发请求；并发的话结果会串，
+         而且"卡住的那一个"会把别的挤在后面 —— 排队反而最快看清是谁坏了。
+       ★ 花销：每条只几个 token（宿主那条命令写死了"只回两个字 + max_tokens=4"）。
+       ★ 结果**只改内存**，不动配置 —— 要保存才写 config.toml。 */
+    /* 把这张结果表**作废**：清空 + 批次号 +1（正在跑的那一轮回来会自己收手）。
+       ★ 什么时候调：换了一组（`aiLoad`）/ 关了面板（`open`）/ 改了模型列表（`aiSet`）。
+         漏了任何一处，"上一组的模型"就会挂在别人的编辑页上（用户报的那个 bug）。 */
+    aiPingReset(){
+      this.ai.ping.seq = (this.ai.ping.seq || 0) + 1;
+      this.ai.ping.rows = [];
+      this.ai.ping.running = false;
+    },
+    async aiPingAll(){
+      if (this.ai.busy || this.ai.ping.running) return;
+      const list = this.aiModelList();
+      if (!list.length){ toast("先把「可用模型列表」填上（一行一个模型名）", true); return; }
+      // ★ 记下这一批的号：中途换了组 / 关了面板，号就变了 ⇒ 这一轮**立刻收手**
+      //   （既不要把 A 的结果写进 B，也别在背后接着替 A 问模型花 token）。
+      const seq = this.ai.ping.seq;
+      this.ai.ping.running = true;
+      this.ai.ping.rows = list.map(m => ({model: m, state: "wait", ok: false, ms: 0, msg: ""}));
+      const fields = this.aiQueryFields();
+      const name = this.ai.name || "";
+      for (let i = 0; i < this.ai.ping.rows.length; i++){
+        if (seq !== this.ai.ping.seq) return;          // 已经换组了：什么都不动
+        const row = this.ai.ping.rows[i];
+        if (!row) return;
+        row.state = "run";
+        this.$forceUpdate();
+        let r = null;
+        try{ r = await pywebview.api.ai_ping(name, row.model, fields); }
+        catch(e){ r = {ok: false, msg: String(e && e.message ? e.message : e)}; }
+        if (seq !== this.ai.ping.seq) return;          // 等结果这会儿换组了：丢掉
+        row.ok = !!(r && r.ok);
+        row.ms = (r && r.ms) || 0;
+        row.msg = String((r && (r.ok ? r.sample : r.msg)) || "").trim();
+        if (!row.msg) row.msg = row.ok ? "能通" : "不通";
+        row.state = "done";
+        this.$forceUpdate();
+      }
+      this.ai.ping.running = false;
+      const bad = this.aiPingBad.length;
+      toast(bad ? ("测试完：" + (this.ai.ping.rows.length - bad) + " 个可用 · " + bad + " 个不通")
+                : ("测试完：" + this.ai.ping.rows.length + " 个模型都能用"));
+    },
+    aiPingRowText(r){
+      if (r && r.state === "done") return r.msg || (r.ok ? "能通" : "不通");
+      return (r && r.state === "run") ? "正在测…" : "排队中…";
+    },
+    /* 一键把"不通的"从列表里删掉。
+       ★ 只改内存里的那个文本（`ai.draft.model`），**不落盘** —— 还得点保存。
+       ★ 直接写 draft 而不走 aiSet：aiSet 会把整张结果表清掉（列表一变就过期），
+         而这里我们只想把红的那几行摘掉、绿的留着给人看。 */
+    aiPingDropBad(){
+      const bad = this.aiPingBad.map(r => r.model);
+      if (!bad.length) return;
+      const keep = this.aiModelList().filter(m => bad.indexOf(m) < 0);
+      this.ai.draft.model = keep.join("\n");
+      this.ai.ping.rows = this.ai.ping.rows.filter(r => r.ok);
+      this.ai.status = "";
+      toast(keep.length
+        ? ("已删掉 " + bad.length + " 个不通的（点保存才写进配置）")
+        : "全都不通 —— 列表清空了，点「获取可用模型」重新拉一份，或者手动填");
+    },
+    // 把宿主那一行文本变成人话：成功 = 「连接成功（HTTP 200 · 模型 xxx）」；失败 = 「连接失败：<原因>」。原始报文另存（上面那个 detail）。
     aiShort(raw, ok){
       const s = String(raw || "").replace(/^\[错误\]\s*/, "").trim();
       if (ok){
@@ -1111,6 +1245,8 @@ const MossSettings = {
       this.msg = r.msg || "";
       this.problems = []; this.notes = {}; this.live = "";
       this.saving = false;
+      // 每次打开面板都把「测试可用性」那张表清掉：那是上一次会话的事（同 `aiLoad` 的规矩）
+      this.aiPingReset();
       this.setActive((this.groups[0] || {}).name || "");
       this.show = true;
       if (this.msg) toast(this.msg);

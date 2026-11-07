@@ -99,17 +99,36 @@ for _name, _src in js_by_file.items():
     _i_tpl = _src.find("template:")
     _i_comp = _src.find("computed: {")
     _i_meth = _src.find("methods: {")
-    _i_watch = _src.find("watch: {")
     if min(_i_tpl, _i_comp, _i_meth) < 0:
         continue
-    _tpl_src = _src[_i_tpl:]
-    _comp_src = _src[_i_comp:_i_watch if _i_watch > _i_comp else len(_src)]
-    _meth_src = _src[_i_meth:_i_tpl if _i_tpl > _i_meth else len(_src)]
+    # ★ 2026-11-02：段落**边界**以前只认 `watch:` / 文件尾 —— 而没有 watch 的组件
+    #   （设置面板就是）等于"computed 一直算到文件最后"，于是写在 methods 里的名字也被
+    #   当成 computed：这条闸形同虚设（实测 `aiPingTip` 就这么漏过去，模板里渲染成
+    #   「function () { [native code] }」，按钮还一直是灰的）。现在把 methods / mounted /
+    #   created 这些也当边界。
+    _marks = sorted({_i_tpl, _i_comp, _i_meth} |
+                    {m.start() for m in re.finditer(
+                        r"^  (?:watch|mounted|created|beforeMount|unmounted)\b", _src, re.M)})
+
+    def _slice(start, _marks=_marks, _src=_src):
+        nxt = [m for m in _marks if m > start]
+        return _src[start:(min(nxt) if nxt else len(_src))]
+
+    _tpl_src = _slice(_i_tpl)
+    _comp_src = _slice(_i_comp)
+    _meth_src = _slice(_i_meth)
     _called = set(re.findall(r"([A-Za-z_$][A-Za-z0-9_$]*)\s*\(", _tpl_src))
     _exprs = re.findall(r"\{\{([^}]*)\}\}", _tpl_src)
     _exprs += re.findall(
         r'(?:v-if|v-else-if|v-show|:class|:disabled|:title|:style)="([^"]*)"', _tpl_src)
-    _bare = {t for _e in _exprs for t in re.findall(r"[A-Za-z_$][A-Za-z0-9_$]*", _e)}
+    # ★ 2026-11-02：取"裸名字"之前先把**字符串字面量**和**点访问**去掉 ——
+    #   不然 `ai.open` / `r.state === 'done'` 里的 `open` / `done` 会被当成"模板里裸用的名字"
+    #   （以前因为 computed 那段一刀切到文件尾，这个假红一直没露出来）。
+    _bare = set()
+    for _e in _exprs:
+        _e = re.sub(r"'[^']*'|\"[^\"]*\"", " ", _e)            # 去掉字符串
+        _e = re.sub(r"\.[A-Za-z_$][A-Za-z0-9_$]*", " ", _e)    # 去掉 `.foo` 这种点访问
+        _bare |= set(re.findall(r"[A-Za-z_$][A-Za-z0-9_$]*", _e))
     for _n in sorted(_bare):
         if _n in _called:                       # 模板里是 `f(...)` ⇒ 方法调用，正常
             continue

@@ -56,6 +56,8 @@ USAGE = """moss —— 多语言启动器
   moss --ai-rename <旧> <新>    给一组改名（整块搬，key 不用再读一遍）
   moss --ai-test [组]           **测试连接**：流式发一个最小请求，报状态码和第一个增量
   moss --ai-models [组]          **获取可用模型**：GET `{base_url}/models`，回一份模型清单
+  moss --ai-ping [组] model=…    **测一个模型能不能用**：一次最小请求（几个 token），
+                               回 JSON（ok / 毫秒 / 它回了什么）—— 设置面板「测试可用性」用它
   moss --ai-balance [组]         **查询余额**：DeepSeek / Kimi / OpenRouter / 硅基流动等已知接口
   moss --ai-import-legacy       把旧的 user_data/state/ai/config.json 导成一组
   moss --snap …                版本快照（备份 / 恢复 / 导出 / 差异）—— 给人和 AI 用；
@@ -1451,6 +1453,162 @@ def cmd_ai_test(argv):
         return 4
 
 
+def _ai_err_line(raw):
+    """把报错回包的原文压成**一句人话**（面板上一行放得下那种）。
+
+    ★ 各家长得不一样：OpenAI 系是 `{"error":{"message":…}}`，有的直接把一段 HTML 糊回来。
+      所以：能解出 message 就用它，解不出就用原文，最后统一压成一行、超长截断。
+    """
+    import json as _json
+    txt = str(raw or "").strip()
+    msg = ""
+    if txt:
+        try:
+            obj = _json.loads(txt)
+        except Exception:                                                # noqa: BLE001
+            obj = None
+        if isinstance(obj, dict):
+            err = obj.get("error")
+            if isinstance(err, dict):
+                msg = str(err.get("message") or err.get("msg") or err.get("type") or "")
+            elif isinstance(err, str):
+                msg = err
+            if not msg:
+                for k in ("message", "msg", "detail", "error_description"):
+                    if obj.get(k):
+                        msg = str(obj[k])
+                        break
+    msg = " ".join((msg or txt).split())
+    # ★ 各家都爱在尾巴上挂 `(request_id: xxx)` —— 面板上那点地方不值当放它。
+    for cut in (" (request_id", "(request_id"):
+        i = msg.find(cut)
+        if i > 0:
+            msg = msg[:i].strip()
+            break
+    return msg[:120] + ("…" if len(msg) > 120 else "")
+
+
+def _ai_delta_text(chunk):
+    """从**流式的一帧**里抠出"它回了什么"；这一帧没有内容（只有 role / 空 delta）就回 ""。
+
+    ★ 为什么不能"第一帧当成它回的话"：OpenAI 兼容的流，第一帧常常只有
+      `{"delta":{"role":"assistant"}}`，内容在后面几帧 —— 拿第一帧去显示，面板上就是
+      一大串原始 JSON（实测就是这样）。
+    """
+    import json as _json
+    s = str(chunk or "").strip()
+    if not s:
+        return ""
+    try:
+        obj = _json.loads(s)
+    except Exception:                                                    # noqa: BLE001
+        return ""
+    try:
+        ch = obj["choices"][0]
+    except Exception:                                                    # noqa: BLE001
+        return ""
+    if isinstance(ch, dict):
+        for key in ("delta", "message"):
+            v = ch.get(key)
+            if isinstance(v, str) and v:
+                return v[:80]
+            if not isinstance(v, dict):
+                continue
+            if v.get("content"):
+                return str(v["content"])[:80]
+            # ★ 推理模型（R1 那类）：4 个 token 可能**全花在思考上**，`content` 一直是空，
+            #   只有 `reasoning_content`。它照样证明"这个模型能用"，所以也收 —— 前面标一句
+            #   "思考"，面板上一看就知道为什么没回正文（不是它坏了）。
+            if v.get("reasoning_content"):
+                return "（思考）" + str(v["reasoning_content"])[:70]
+        if ch.get("text"):
+            return str(ch["text"])[:80]
+    return ""
+
+
+def cmd_ai_ping(argv):
+    """`--ai-ping [组名] model=<模型> [k=v…]` —— **一次最小请求**，说这个模型能不能用。
+
+    ★ 为什么要它（2026-11-02 用户要的）：一组的「可用模型列表」里常躺着十个八个名字，
+      其中一部分早就下线 / 没被授权 / 多打了一个字母。挨个点「测试连接」太慢，所以：
+        · 一条命令**只测一个模型** —— 界面轮着调，一个接一个显示结果（某个卡住也不会
+          把后面的一起拖死，每条都是独立进程）；
+        · 花销压到最低：只要它回两个字（收到）、`max_tokens=4`、
+          **流式读到第一个增量就断开** —— 后面的 token 一个字都不拿；
+        · 回**一行 JSON**（界面要拿它画结果表），不是给人看的散文。
+    ★ 临时覆盖（`k=v`）照旧认 ⇒ 面板上还没保存也能测。
+    """
+    import json as _json
+    import time
+    import urllib.error
+    import urllib.request
+
+    name, p = _ai_profile_from_argv(argv)
+    models = config.ai_models(p)
+    model = models[0] if models else ""
+    base = str(p.get("base_url") or "").rstrip("/")
+    t0 = time.time()
+
+    def done(ok, code=0, sample="", msg=""):
+        print(_json_dumps({"ok": bool(ok), "model": model,
+                           "ms": int((time.time() - t0) * 1000),
+                           "code": int(code or 0), "sample": sample, "msg": msg}))
+        return 0
+
+    if not base:
+        return done(False, msg="这一组还没填接口地址")
+    if not model:
+        return done(False, msg="没有给模型名")
+    body = _json.dumps({"model": model, "stream": True, "max_tokens": 4, "temperature": 0,
+                        "messages": [{"role": "user", "content": "只回两个字：收到"}]},
+                       ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(base + "/chat/completions", data=body,
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + str(p.get("api_key") or "")})
+    code, sample, frames = 0, "", 0
+    try:
+        with urllib.request.urlopen(req, timeout=45) as r:
+            code = int(r.status)
+            ctype = str(r.headers.get("Content-Type") or "").lower()
+            if "event-stream" not in ctype:
+                # ★ 有的家 / 有的中转**不理 `stream=true`**，直接回一坨 JSON（实测走的就是这条）
+                #   ⇒ 那就整段读回来（本来就 4 个 token），从 choices[0].message 里抠。
+                body = r.read().decode("utf-8", "replace")
+                sample = _ai_delta_text(body)
+            else:
+                # ★ 真流式：**拿到第一段真内容就断开**（后面的 token 一个字都不读、不再花）。
+                #   有的家第一帧只给 role / 空 delta，所以往里多走几帧，但最多 40 帧。
+                for raw in r:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    if not data:
+                        continue
+                    txt = _ai_delta_text(data)
+                    if txt:
+                        sample = txt
+                        break
+                    frames += 1
+                    if frames >= 40:
+                        break
+    except urllib.error.HTTPError as e:
+        code = int(e.code)
+        raw = ""
+        try:
+            raw = e.read().decode("utf-8", "replace")
+        except Exception:                                                # noqa: BLE001
+            pass
+        return done(False, code=code, msg=_ai_err_line(raw) or ("HTTP %s" % code))
+    except Exception as e:                                               # noqa: BLE001
+        return done(False, msg=str(e)[:160])
+    if 200 <= code < 300:
+        return done(True, code=code, sample=sample or "（回了空的）", msg="能通")
+    return done(False, code=code, msg="HTTP %s" % code)
+
+
 def cmd_remove(name, table, assume_yes=False):
     """卸载一个包：**包本体 + 它产生的数据**。
 
@@ -2106,6 +2264,8 @@ def main(argv):
         return cmd_ai_rename(rest)
     if first == "--ai-test":
         return cmd_ai_test(rest)
+    if first == "--ai-ping":
+        return cmd_ai_ping(rest)
     if first == "--ai-models":
         return cmd_ai_models(rest)
     if first == "--ai-balance":

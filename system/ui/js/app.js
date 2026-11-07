@@ -140,7 +140,10 @@ function paintStaticIcons(){
   //   以前用的是 `corner-up-left`（一个"返回箭头"），跟"历史"不是一回事。
   $("#sw-hist").innerHTML = ico("history", "i") + '<span>历史</span>' +
                             '<b class="sw-n" id="sw-n-hist"></b>';
-  $("#btn-newpkg").innerHTML = ico("file-plus", "i");
+  // ★ 2026-11-02：「新建包」那颗改成**蓝色实心的主按钮**（加号 + 文字）——
+  //   原来它是 23px 的图标按钮，跟刷新、筛选长得一个样，用户说"太不显眼、找不到"。
+  //   形状/位置照旧（工具条右端、同一行高），只是让它一眼就能看见。
+  $("#btn-newpkg").innerHTML = ico("moss-plus", "i") + "<span>新建插件</span>";
   $("#btn-settings").innerHTML = ico("settings", "i");   // 状态栏那颗齿轮（`V-61`）
   // 确认框右上角那颗 ×（`V-63`）。★ 设置面板那颗 × 由**组件自己**画
   //   （`js/settings.js` 的模板里 `v-html="icon('x')"`）—— 面板已经不是这块 DOM 了。

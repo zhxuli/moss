@@ -4372,6 +4372,27 @@ class Api:
         except OSError as e:
             return {"ok": False, "msg": "打不开：%s" % e}
 
+    def open_url(self, url):
+        """用**用户自己的默认浏览器**打开一个网址（音效素材站那个链接走这里）。
+
+        ★ 为什么不让页面自己跳（2026-11-02，用户要的是"点了拿我的浏览器打开"）：
+          · `<a target="_blank">` 在 WebView2 里被拦掉 —— 点了**一点反应都没有**；
+          · `location.href = ...` 更糟：界面本身被导航走，等于把 app 关掉。
+          ⇒ 只认 http/https，交给系统（`webbrowser.open`，和 `open_path` 同一个路子），
+            界面留在原地不动。
+        """
+        import webbrowser                                              # noqa: PLC0415
+        u = str(url or "").strip()
+        if not u.lower().startswith(("http://", "https://")):
+            return {"ok": False, "msg": "只能打开 http/https 链接"}
+        try:
+            ok = bool(webbrowser.open(u))
+        except Exception as e:                                         # noqa: BLE001
+            return {"ok": False, "msg": str(e)}
+        if not ok:
+            return {"ok": False, "msg": "系统没接住这个链接"}
+        return {"ok": True, "msg": "已在浏览器里打开"}
+
     # ------------------------------------------------ 文件浏览 / 编辑（v0.5）
     def fs_roots(self):
         """账上的两个根（`user_data` / `system`）。
@@ -5851,6 +5872,35 @@ class Api:
         r = _run_capture(argv)
         return {"ok": r.get("code") == 0, "code": r.get("code"),
                 "msg": (r.get("out") or "").strip() or "（宿主没说什么）"}
+
+    def ai_ping(self, name="", model="", fields=None):
+        """**测一个模型**：宿主发一次最小请求，回「能不能用 / 多久 / 它回了什么」。
+
+        ★ 为什么一条只测一个（2026-11-02 用户要的「挨个测一遍列表里的模型」）：
+          · 面板要**一个一个地显示**结果，而不是等十分钟看一屏 —— 一条一个最直接；
+          · 某个模型卡住 / 超时**不会把后面的全拖死**（每次都是独立进程）；
+          · 花销压到最低（宿主那条命令只花几个 token，见 `core/cli.py::cmd_ai_ping`）。
+        ★ 和 `ai_test` / `ai_models` 同一条路：`fields` 是"表里现在还没保存的值"，
+          当临时覆盖送过去 —— 所以**不用先保存也能测**，明文 key 也不出宿主。
+        """
+        if not HOST:
+            return {"ok": False, "model": model, "ms": 0,
+                    "msg": "没拿到宿主命令 —— 请从 moss 主程序打开界面"}
+        argv = HOST + ["--ai-ping"] + ([str(name).strip()] if str(name or "").strip() else [])
+        argv.append("model=" + _ai_arg(model))
+        for k in sorted(fields or {}):
+            v = (fields or {})[k]
+            if v not in (None, ""):
+                argv.append("%s=%s" % (k, _ai_arg(v)))
+        r = _run_capture_split(argv)
+        data = _json_from_host(r.get("out"))
+        if not isinstance(data, dict):
+            tail = (((r.get("err") or "").strip().splitlines() or [""])[-1]
+                    or ((r.get("out") or "").strip().splitlines() or [""])[-1])
+            return {"ok": False, "model": model, "ms": 0,
+                    "msg": ("测试失败：退出码 %s%s"
+                            % (r.get("code"), (" —— " + tail) if tail else ""))}
+        return data
 
     def ai_models(self, name="", fields=None):
         """**获取可用模型**：宿主 GET `{base_url}/models`，把清单回给设置面板。
