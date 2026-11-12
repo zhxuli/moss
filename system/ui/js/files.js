@@ -64,10 +64,19 @@ function fmState(key){
                   sort:{key:"name", dir:1}, tabs:[], active:"__browse__",
                   pkg: (!isHistKey(key) && key !== "__all__") ? key : null,
                   histCtx: isHistKey(key) ? key : null,
-                  layers: {user:false, system:false}};
+                  layers: {user:false, system:false},
+                  search: fmSearchFresh()};
   }
   return FM.st[key];
 }
+/* 检索状态，按上下文各一份（`on` 条子开着、`ran` 搜过、`files` 分组结果、`seq` 第几次搜） */
+function fmSearchFresh(){
+  return {on:false, q:"", cs:false, re:false, word:false,
+          busy:false, ran:false, err:"", note:"",
+          files:[], open:{}, nFiles:0, nHits:0, scanned:0, skipped:0, ms:0,
+          truncated:false, cut:[], seq:0};
+}
+function fmSearch(){ return fmState(FM.ctx).search; }
 /* 这个包在两层里的候选目录（`user/pkgs/<目录名>` / `system/pkgs/<目录名>`）。
    ★ 切换按钮要跳的是**同一个包在另一层的目录**，不是总目录 ——
      哪一层没有这个目录，那个按钮就不显示。
@@ -321,6 +330,16 @@ async function fmOpenPage(rel){
   //   再双击一个已经开着的文件也会把光标放回去）。
   fmFocusActiveSoon();
 }
+/* 打开文件并跳到某一行（检索结果用）；行号交给该页的 `t.jump` 处理 */
+let _fmJumpSeq = 0;
+async function fmOpenPageAt(rel, line){
+  const s = fmState(FM.ctx);
+  await fmOpenPage(rel);
+  const t = s.tabs.find(x => x.rel === rel);
+  if (!t) return;
+  t.jump = {line: Math.max(1, line | 0), seq: ++_fmJumpSeq};
+  fmRender();
+}
 function fmClosePage(rel){
   const s = fmState(FM.ctx);
   const t = s.tabs.find(x => x.rel === rel);
@@ -348,6 +367,77 @@ function fmSave(t){
     else toast("已保存 " + t.rel + (r.factory ? "（出厂件）" : ""));
   });
 }
+
+/* 按内容搜当前目录（含子目录）。搜索在宿主那边跑，这里只负责状态和结果分组。 */
+function fmSearchOpen(on){
+  const st = fmSearch();
+  const to = (on === undefined) ? !st.on : !!on;
+  st.on = to;
+  if (!to) st.busy = false;
+  fmRender();
+  if (to) fmFocusSearchSoon();          // 打开就把光标放进搜索框，直接能打字
+}
+/* 界面由 Vue 画，得等这一帧 */
+function fmFocusSearchSoon(){
+  const go = () => {
+    const el = document.querySelector("#fm-body .fbsearch input");
+    if (el){ el.focus(); el.select(); }
+  };
+  const a = fmApp();
+  if (a) a.$nextTick(go); else go();
+}
+function fmSearchClose(){ fmSearchOpen(false); }
+/* 改选项后，如果已经搜过就重搜一次 */
+function fmSearchOpt(key){
+  const st = fmSearch();
+  st[key] = !st[key];
+  fmSearchMaybeRerun();
+}
+function fmSearchMaybeRerun(){
+  const st = fmSearch();
+  if (st.on && st.ran && String(st.q || "").trim()) fmSearchRun();
+}
+async function fmSearchRun(){
+  const st = fmSearch(), s = fmState(FM.ctx);
+  const q = String(st.q || "");
+  if (!q.trim()){ toast("先输入要搜的内容"); return; }
+  const seq = ++st.seq;
+  const roots = [(s.rel || "user")];       // 只搜当前路径
+  st.busy = true; st.err = ""; st.note = ""; st.ran = true;
+  st.files = []; st.open = {};
+  st.nFiles = 0; st.nHits = 0; st.scanned = 0; st.skipped = 0; st.ms = 0;
+  st.truncated = false; st.cut = [];
+  fmRender();
+  let r = null;
+  try{
+    r = await pywebview.api.fs_search(q, {roots: roots, cs: !!st.cs, re: !!st.re,
+                                          word: !!st.word});
+  }catch(e){
+    r = {ok: false, msg: "搜索失败：" + ((e && e.message) || e)};
+  }
+  if (seq !== st.seq) return;             // 又搜了一次，这份结果作废
+  st.busy = false;
+  if (!r || !r.ok){
+    st.err = (r && r.msg) || "搜索失败";
+    fmRender();
+    return;
+  }
+  st.files = r.files || [];
+  st.nFiles = r.n_files || 0;
+  st.nHits = r.n_hits || 0;
+  st.scanned = r.scanned || 0;
+  st.skipped = r.skipped || 0;
+  st.ms = r.ms || 0;
+  st.truncated = !!r.truncated;
+  st.cut = r.cut || [];
+  st.note = r.note || "";
+  // 第一个文件默认展开：词很特别的时候一眼就能看到是哪一行
+  st.open = {};
+  if (st.files.length) st.open[st.files[0].rel] = true;
+  fmRender();
+}
+/* 点一条命中 = 打开那个文件 + 跳到那一行 */
+function fmSearchJump(rel, line){ fmOpenPageAt(rel, line); }
 
 /* ---------------------------------------------------------------- 包数据刷新
    `pkg.json` 是宿主唯一的清单来源；它一变，界面手里那份（名字 / 说明 / 参数表 /
@@ -812,6 +902,8 @@ const MossFilePage = {
        scrollTop（会被夹成 0），所以"切回来"这一刻必须重新对一次。 */
     active(v){ if (v){ this.scheduleHl(); if (this.previewOn) this.ensurePreview(); } },
     "t.preview"(v){ if (v) this.ensurePreview(); },
+    /* 检索结果点进来时跳到那一行（等 textarea 有内容再跳） */
+    "t.jump"(v){ if (v) this.$nextTick(() => this.jumpTo(v.line)); },
   },
   computed: {
     // 后缀 → 图标 / 颜色 / 语言（`core.js` 的 `EXT` / `NO_EXT`，只有一份）
@@ -919,6 +1011,26 @@ const MossFilePage = {
       ta.scrollTop = 0; ta.scrollLeft = 0;
       this.syncScroll();
     },
+    /* 跳到第 line 行：选中那一行、滚到中间，然后对齐三层视图 */
+    jumpTo(line){
+      const ta = this.$refs.ta;
+      const lines = String(this.t.text || "").split("\n");
+      const n = Math.max(1, Math.min(line | 0 || 1, lines.length));
+      let off = 0;
+      for (let i = 0; i < n - 1; i++) off += lines[i].length + 1;
+      if (ta){
+        if (!ta.readOnly){
+          ta.setSelectionRange(off, off + (lines[n - 1] || "").length);
+          ta.focus();
+        }
+        const cs = getComputedStyle(this.$refs.pre || ta);
+        const lh = (cs && parseFloat(cs.lineHeight)) || 20;
+        ta.scrollTop = Math.max(0, (n - 1) * lh - (ta.clientHeight || 0) / 2 + lh / 2);
+        ta.scrollLeft = 0;
+      }
+      this.syncScroll();
+      this.scheduleHl();
+    },
     onInput(ev){
       this.t.text = ev.target.value;
       this.scheduleHl();
@@ -1003,6 +1115,10 @@ const MossFileBrowse = {
             v-html='ico("arrow-up", "i")' @click="fmUp()"></button>
     <button class="iconbtn b-reload" title="刷新（F5）" v-html='ico("refresh-cw", "i")'
             @click="fmRefresh()"></button>
+    <!-- 按内容搜当前目录（Ctrl+F） -->
+    <button class="iconbtn b-search" :class="{on: st.on}"
+            title="按内容搜当前目录（Ctrl+F）"
+            v-html='ico("search", "i")' @click="fmSearchOpen()"></button>
     <!-- 面包屑。★ abs/ 那个上下文里第一段是相对写法，**不是**能点进去的目录
          （abs 本身不是路径），所以它只当个标签："此电脑"。 -->
     <div class="crumbs"><template v-for="(c, i) in crumbs" :key="i"
@@ -1035,6 +1151,24 @@ const MossFileBrowse = {
     </div>
   </div>
 
+  <!-- 按内容搜当前目录：左边是范围，回车开始 -->
+  <div class="fbsearch" v-if="st.on">
+    <span class="fbs-scope" title="搜这个目录和它的子目录">
+      <span class="ic" v-html='ico("folder-search", "i")'></span
+      ><span class="p">{{ s.rel || "user" }}</span>
+    </span>
+    <input class="fbs-q" v-model="st.q" spellcheck="false" autocomplete="off"
+           placeholder="按内容搜…（回车开始）"
+           @keydown.enter.prevent="runSearch" @keydown.esc.prevent="fmSearchClose()">
+    <button class="fbs-t" :class="{on: st.cs}" title="区分大小写" @click="toggleOpt('cs')">Aa</button>
+    <button class="fbs-t" :class="{on: st.word}" :disabled="st.re"
+            title="全词匹配（不匹配词中间那一段）" @click="toggleOpt('word')">全词</button>
+    <button class="fbs-t" :class="{on: st.re}" title="按正则表达式搜" @click="toggleOpt('re')">.*</button>
+    <button class="fbs-go" :disabled="st.busy" @click="runSearch">{{ st.busy ? "搜索中…" : "搜索" }}</button>
+    <button class="iconbtn b-search-x" title="关掉检索（Esc）" v-html='ico("x", "i")'
+            @click="fmSearchClose()"></button>
+  </div>
+
   <div class="fbtools">
     <button class="iconbtn b-newdir" title="新建文件夹" v-html='ico("folder-plus", "i")'
             @click="fmCmd('newdir')"></button>
@@ -1059,7 +1193,7 @@ const MossFileBrowse = {
   </div>
 
   <div class="fbwrap" @contextmenu="wrapCtx">
-    <table class="fb"><thead><tr>
+    <table class="fb" v-if="!searchView"><thead><tr>
       <th data-sort="name" @click="sortBy('name')">名称<span v-if="s.sort.key === 'name'"
           class="arrow">{{ s.sort.dir === 1 ? "▲" : "▼" }}</span></th>
       <th data-sort="mtime" style="width:150px" @click="sortBy('mtime')">修改日期<span
@@ -1085,9 +1219,34 @@ const MossFileBrowse = {
             @click.stop="cmp(e)" v-html='ico("git-branch", "i")'></button></td>
       </tr>
     </tbody></table>
+
+    <!-- 检索结果：按文件分组，点一行跳过去 -->
+    <div class="fbres" v-else>
+      <div class="fbres-empty bad" v-if="st.err">{{ st.err }}</div>
+      <div class="fbres-empty" v-else-if="st.busy">搜索中…</div>
+      <div class="fbres-empty" v-else-if="!st.files.length">没有找到 “{{ st.q }}”{{ st.note ? "　（" + st.note + "）" : "" }}</div>
+      <template v-else>
+        <div class="fbres-file" v-for="f in st.files" :key="f.rel">
+          <div class="fbres-head" :title="f.rel" @click="toggleFile(f)">
+            <span class="caret">{{ st.open[f.rel] ? "▾" : "▸" }}</span>
+            <span class="fname" v-html="fileIconHTML({name: f.name, ext: f.ext}, false) + '<span>' + esc(f.name) + '</span>'"></span>
+            <span class="fdir">{{ f.dir }}</span>
+            <span class="fcount">{{ f.n }}{{ f.more ? "+" : "" }} 行</span>
+          </div>
+          <template v-if="st.open[f.rel]">
+            <div class="fbres-hit" v-for="(h, i) in f.hits" :key="i"
+                 :title="'打开并跳到第 ' + h.line + ' 行'" @click="jump(f, h)">
+              <span class="ln">{{ h.line }}</span>
+              <span class="tx" v-html="hitHTML(h)"></span>
+            </div>
+          </template>
+        </div>
+      </template>
+      <div class="fbres-more" v-if="st.truncated">结果没搜完：{{ cutText }}。换个更具体的词，或者进到更里面那层目录再搜。</div>
+    </div>
   </div>
 
-  <div class="fbstatus"><span class="info">{{ infoText }}</span
+  <div class="fbstatus"><span class="info">{{ searchView ? searchInfo : infoText }}</span
     ><span class="clipinfo">{{ clipText }}</span></div>
 </div>`,
   computed: {
@@ -1118,6 +1277,29 @@ const MossFileBrowse = {
     //   覆盖了它。后写的算数，所以这里照**结果**写。`V-69` 只搬结构，不顺手改行为。
     atTop(){ return this.segs.length <= 1; },
     selN(){ return this.s.sel.size; },
+    /* 检索相关的三个 computed（模板里裸用） */
+    st(){ return this.s.search || fmSearchFresh(); },
+    searchView(){ return !!this.st.on && !!this.st.ran; },
+    /* 哪些根被掐断了（写出来，否则"没搜到"会被当成"不存在"） */
+    cutText(){
+      const st = this.st;
+      const nm = r => (r === "user" ? "user_data" : (r === "system" ? "system" : r));
+      const one = "一次最多扫 " + (st.scanned || 0) + " 个文件、回 " + (st.nHits || 0) + " 行命中";
+      const cut = (st.cut || []).map(nm);
+      return cut.length ? (one + "；" + cut.join("、") + " 还没扫完") : one;
+    },
+    searchInfo(){
+      const st = this.st;
+      if (st.busy) return "搜索中…";
+      if (st.err) return st.err;
+      let t = st.nFiles + " 个文件里 " + st.nHits + " 行命中" +
+              " · 扫了 " + st.scanned + " 个文件";
+      if (st.skipped) t += "（跳过 " + st.skipped + " 个非文本 / 太大）";
+      t += " · " + st.ms + " ms · 范围 " + (this.s.rel || "user");
+      if (st.note) t += " · " + st.note;
+      if (st.truncated) t += " · 有地方没扫完";
+      return t;
+    },
     cand(){
       void this.pkgsRev;                    // 见 `pkgsRev` 的注释
       return this.s.pkg ? fmLayerRels(this.s.pkg) : {user: "", system: ""};
@@ -1145,6 +1327,27 @@ const MossFileBrowse = {
     bkDiffMark: rel => bkDiffMark(rel),
     bkHasSnap: rel => bkHasSnap(rel),
     cmp(e){ bkCompareOpen(e.rel); },
+    /* 按内容搜：逻辑在 `fmSearch*`，这里只是给模板用 */
+    runSearch(){ fmSearchRun(); },
+    toggleOpt(k){ fmSearchOpt(k); },
+    toggleFile(f){
+      const st = this.st;
+      st.open[f.rel] = !st.open[f.rel];
+    },
+    jump(f, h){ fmSearchJump(f.rel, h.line); },
+    /* 一行命中 → 带 <mark> 的 HTML（按宿主给的 cols 切，别自己重新匹配） */
+    hitHTML(h){
+      const text = String(h.text || "");
+      const cols = (h.cols || []).slice().sort((a, b) => a[0] - b[0]);
+      let out = "", at = 0;
+      cols.forEach(c => {
+        const s0 = Math.max(0, c[0] | 0), len = Math.max(1, c[1] | 0);
+        if (s0 < at || s0 > text.length) return;     // 压在一起的（重叠命中）跳过
+        out += esc(text.slice(at, s0)) + "<mark>" + esc(text.slice(s0, s0 + len)) + "</mark>";
+        at = s0 + len;
+      });
+      return out + esc(text.slice(at));
+    },
     /* ---- 表头排序 ---- */
     sortBy(k){
       const s = this.s;
@@ -1176,6 +1379,7 @@ const MossFileBrowse = {
     },
     /* 空白处的右键：清空选中，菜单是"新建 / 粘贴 / 刷新"那一套 */
     wrapCtx(ev){
+      if (this.searchView) return;                 // 检索结果上不给文件操作菜单（不是文件列表）
       if (ev.target.closest("tr.row")) return;
       ev.preventDefault();
       this.s.sel.clear();
@@ -1238,6 +1442,7 @@ const FM_TEMPLATE_HELPERS = {
   fileIconHTML: fileIconHTML, fmtTime: fmtTime, typeLabel: typeLabel, humanSize: humanSize,
   fmGoto: fmGoto, fmHome: fmHome, fmBack: fmBack, fmFwd: fmFwd, fmUp: fmUp,
   fmRefresh: fmRefresh, fmCmd: fmCmd, fmClosePage: fmClosePage,
+  fmSearchOpen: fmSearchOpen, fmSearchClose: fmSearchClose,
 };
 
 /* ---- 挂载 + 外面认的那两个"重画"门面 ----
@@ -1422,7 +1627,11 @@ document.addEventListener("keydown", (e) => {
     if (k === "Delete"){ e.preventDefault(); fmCmd("del"); return; }
     if (k === "Backspace"){ e.preventDefault(); fmUp(); return; }
     if (k === "F5"){ e.preventDefault(); fmRefresh(); return; }
-    if (k === "Escape"){ hideCtx(); return; }
+    // Ctrl+F：开检索条（Esc 关）
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "f"){
+      e.preventDefault(); fmSearchOpen(true); return;
+    }
+    if (k === "Escape"){ hideCtx(); if (fmSearch().on) fmSearchOpen(false); return; }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "c"){ e.preventDefault(); fmCmd("copy"); return; }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "x"){ e.preventDefault(); fmCmd("cut"); return; }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "v"){ e.preventDefault(); fmCmd("paste"); return; }

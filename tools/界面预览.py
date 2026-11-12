@@ -108,7 +108,7 @@ SCENES = ["pkg", "pkg-console", "pkg-file", "pkg-file-open", "pkg-file-preview",
           "perm-scope", "perm-full", "ai-follow",
           "ai-turn-edit", "ai-self-tools", "ai-ask",
           "pkg-docs", "embed-tab", "newpkg-form", "newpkg-manual", "newpkg-manual-go", "newpkg-ai",
-          "hl-window", "set-debounce", "parasite"]
+          "hl-window", "set-debounce", "parasite", "fm-search", "fm-search-jump"]
 
 #: **已知过期**的场景（`V-202`）：它们的期望停在"设置 / AI 面板"那次重做之前，产品是对的、
 #: 是场景（或它的假数据）跟不上 —— 待办记在账本 `V-203`。
@@ -1368,6 +1368,31 @@ MOCK_JS = r"""
       return hit ? JSON.parse(JSON.stringify(hit))
                  : {ok: true, rel: rel, entries: [], writable: true, path: rel};
     },
+    // 按内容搜的假后端：只认「预览」，别的回空（用来截"没找到"）
+    fs_search: async (q, opts) => {
+      const o = opts || {}, needle = String(q || "");
+      (M.searches = M.searches || []).push({q: needle, roots: o.roots,
+                                             cs: !!o.cs, word: !!o.word, re: !!o.re});
+      const mk = (rel, rows) => ({
+        rel: rel, name: rel.split("/").pop(), dir: rel.replace(/\/[^/]+$/, ""),
+        ext: (rel.split(".").pop() || "").toLowerCase(), n: rows.length, more: false,
+        hits: rows.map(r => {
+          const at = needle ? r.text.indexOf(needle) : -1;
+          return {line: r.line, text: r.text,
+                  cols: at >= 0 ? [[at, needle.length]] : []};
+        })});
+      const files = (needle === "预览")
+        ? [mk("user/pkgs/preview-my-first/run.py",
+              [{line: 5, text: "    print('预览')"}]),
+           mk("preview-docs/README.md",
+              [{line: 1, text: "# 预览标题"},
+               {line: 3, text: "这是 **Markdown** 预览。"}])]
+        : [];
+      return {ok: true, q: needle, files: files, n_files: files.length,
+              n_hits: files.reduce((a, f) => a + f.n, 0),
+              scanned: 37, skipped: 5, truncated: false, cut: [], ms: 14,
+              roots: o.roots || [], note: ""};
+    },
     // ★ 这里**照着真宿主的行为来**：路径不存在就是「不是文件」。
     //   以前这个假 API 对任何路径都回同一段内容，于是"改名后双击旧路径"这种毛病
     //   在预览里永远看不出来（producer 说没事、真机上说不是文件）。
@@ -1801,6 +1826,87 @@ MOCK_JS = r"""
           document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
             " md=" + mdOk + " code=" + codeOk + " html=" + htmlOk;
           document.title = ok ? "READY" : ("PREVIEW-FAIL md=" + mdOk + " code=" + codeOk + " html=" + htmlOk);
+          return;
+        }
+        // 按内容搜：fm-search 验结果/统计，fm-search-jump 验跳行
+        if (h === "fm-search" || h === "fm-search-jump"){
+          setTab("file");
+          await sleep(350);
+          const typeQ = async (q) => {
+            const el = document.querySelector(".fbsearch .fbs-q");
+            if (!el) return false;
+            el.value = q;                                   // v-model 只认事件，得派发 input
+            el.dispatchEvent(new Event("input", {bubbles: true}));
+            await sleep(80);
+            el.dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", bubbles: true}));
+            for (let i = 0; i < 40 && fmSearch().busy; i++) await sleep(50);
+            await sleep(250);
+            return true;
+          };
+          // ① 点放大镜打开检索条
+          const btn = document.querySelector(".fbnav .b-search");
+          if (!btn){ document.title = "SEARCH-NOBTN"; return; }
+          btn.click();
+          await sleep(200);
+          if (!document.querySelector(".fbsearch .fbs-q")){
+            document.title = "SEARCH-NOBAR"; return;
+          }
+          // ② 左边的范围牌子写着当前目录，且没有范围开关
+          await sleep(150);
+          const hereRoot = ((typeof fmState === "function" ? fmState(FM.ctx) : {}).rel) || "";
+          const scopeText = ((document.querySelector(".fbsearch .fbs-scope .p") || {})
+                             .textContent || "").trim();
+          const noSeg = !document.querySelector(".fb-seg");
+          const rootsOfLast = () => ((M.searches || []).slice(-1)[0] || {}).roots || [];
+          // ③ "没找到"那一路（顺便验 v-model 真的把字写进了状态）
+          const typed = await typeQ("zzz没有这个词") && fmSearch().q === "zzz没有这个词";
+          const emptyText = (document.querySelector(".fbres-empty") || {}).textContent || "";
+          const noHitOK = typed && emptyText.indexOf("没有找到") >= 0;
+          // 范围只能是当前路径一个根
+          const scopeHere = scopeText === hereRoot && noSeg
+                            && rootsOfLast().length === 1 && rootsOfLast()[0] === hereRoot;
+          // ④ 真正要截图的那一搜
+          await typeQ("预览");
+          const groups = document.querySelectorAll(".fbres-file").length;
+          const heads = document.querySelectorAll(".fbres-head");
+          const openHits = () => document.querySelectorAll(".fbres-hit").length;
+          const hitFirst = openHits();        // 默认只展开第一组 ⇒ 只看见它那 1 行
+          if (heads[1]) heads[1].click();     // 点开第二组 ⇒ 多出 2 行（顺带验折叠）
+          await sleep(200);
+          const hitOpen = openHits();
+          const marks = document.querySelectorAll(".fbres-hit mark").length;
+          const info = (document.querySelector(".fbstatus .info") || {}).textContent || "";
+          const errs = (window.__errors || []).length;
+          if (h === "fm-search"){
+            const ok = noHitOK && scopeHere && groups === 2 && hitFirst === 1
+                       && hitOpen === 3 && marks === 3 && /3 行命中/.test(info) && !errs;
+            document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+              " 空结果=" + noHitOK + " 范围牌=" + scopeText + "/" + hereRoot +
+              " roots=" + JSON.stringify(rootsOfLast()) + " 无开关=" + noSeg +
+              " 文件组=" + groups + " 折叠时=" + hitFirst + " 展开后=" + hitOpen +
+              " 高亮=" + marks + " 页内错=" + errs;
+            document.title = ok ? "READY"
+              : ("SEARCH-FAIL 范围=" + scopeText + "/" + hereRoot +
+                 " roots=" + JSON.stringify(rootsOfLast()) + " 无开关=" + noSeg +
+                 " 空=" + noHitOK + " 组=" + groups + " 折叠=" + hitFirst +
+                 " 展开=" + hitOpen + " 高亮=" + marks + " 页内错=" + errs);
+            return;
+          }
+          const hit0 = document.querySelector(".fbres-hit");
+          if (!hit0){ document.title = "SEARCH-NOHIT"; return; }
+          hit0.click();
+          await sleep(700);
+          const t = fmActiveTab();
+          const ta = document.querySelector(".fmpage.on .editor textarea");
+          const sel = ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : "";
+          const ok = !!(t && t.rel === "user/pkgs/preview-my-first/run.py"
+                        && sel.indexOf("预览") >= 0 && !errs);
+          document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
+            " 打开=" + (t ? t.rel : "无页") + " 选中=" + JSON.stringify(sel) +
+            " 页内错=" + errs;
+          document.title = ok ? "READY"
+            : ("JUMP-FAIL 打开=" + (t ? t.rel : "无页") +
+               " 选中=" + JSON.stringify(sel) + " 页内错=" + errs);
           return;
         }
         if (h === "pkg-console") setTab("console");
@@ -2582,7 +2688,9 @@ MOCK_JS = r"""
         await sleep(500);
         const hidle = document.querySelector("#hist .hitem .hstat .idle");
         const hop = hidle ? getComputedStyle(hidle).opacity : "?";
-        const ok = kids.join(",") === "btn-vis,btn-run" && !!vis && vis.hidden === true &&
+        // 右上角这一排的顺序：显示 → 界面那两颗（刷新 / 弹出为窗口）→ 运行/停止
+        const ok = kids.join(",") === "btn-vis,btn-embed-reload,btn-embed-window,btn-run"
+                   && !!vis && vis.hidden === true &&
                    !!idle && parseFloat(op) === 0 &&
                    !!hidle && parseFloat(hop) === 0;
         document.querySelector("#meta").textContent = "DIAG " + (ok ? "OK" : "FAIL") +
@@ -4742,7 +4850,6 @@ MOCK_JS = r"""
         await sleep(200);
         const hidden = {header: disp("header"), aside: disp("aside"),
                         statusbar: disp("#statusbar"), tabs: disp("#tabs"),
-                        bar: disp("#embed-bar"),          // ★ `V-195`：那条也不该显示
                         detail: disp("#pane-detail"), console: disp("#pane-console"),
                         file: disp("#pane-file")};
         const allHidden = Object.keys(hidden).every(k => hidden[k] === "none");
@@ -4784,7 +4891,7 @@ MOCK_JS = r"""
         document.querySelector("#out").textContent =
           "DIAG " + (ok ? "OK" : "FAIL") +
           "\n① body.float 藏住别的（每项都该是 none）=" + JSON.stringify(hidden) +
-          "\n   ★ 说明条也藏了 = " + (hidden.bar === "none") +
+          "\n   ★ 界面那一页顶上那条已去掉 = " + (!document.querySelector("#embed-bar")) +
           "\n   ★ 包图标光栅化（md5 的 svg → PNG）= " + iconOk +
           " 送来 " + (ic.len || 0) + " 字节 base64" +
           "\n② 正常模式有「弹出为窗口」= " + floatBtn +
@@ -5284,10 +5391,21 @@ MOCK_JS = r"""
         await sleep(250);
         const t1 = document.querySelector('.tab[data-tab="embed"]');
         const shownAfter = !!(t1 && !t1.hidden);
-        const ok = hiddenBefore && shownAfter;
+        // 选项卡上写的是包自己界面的名字；顶上那条说明行已经不在了；
+        // 刷新/弹出两颗在「运行」左边
+        const label = shownAfter ? (t1.textContent || "").trim() : "";
+        const noBar = !document.querySelector("#embed-bar");
+        const acts = ["btn-embed-reload", "btn-embed-window", "btn-run"]
+          .map(id => { const el = document.getElementById(id);
+                       return el && !el.hidden ? 1 : 0; });
+        const orderOk = acts[0] === 1 && acts[1] === 1 && acts[2] === 1;
+        const ok = hiddenBefore && shownAfter && label === "预览：第一个包的界面"
+                   && noBar && orderOk;
         document.title = ok ? "READY"
           : ("EMBEDTAB-FAIL 之前隐藏=" + (hiddenBefore ? 1 : 0) +
-             " 之后出现=" + (shownAfter ? 1 : 0));
+             " 之后出现=" + (shownAfter ? 1 : 0) +
+             " 名字=" + JSON.stringify(label) +
+             " 没那条=" + (noBar ? 1 : 0) + " 两颗按钮=" + JSON.stringify(acts));
         document.querySelector("#meta").textContent = "DIAG " + document.title;
       }
       // ★ `V-387`：新建包弹窗（照用户给的稿子：AI 创建 / 手动 二选一）。

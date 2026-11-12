@@ -608,7 +608,7 @@ async function aiAllowAdd(pth, why){
     return;
   }
   try{
-    const got = await window.pywebview.api.ai_allow(p, true, true, String(why || "你手动加的"), "add", true);
+    const got = await window.pywebview.api.ai_allow(p, true, true, String(why || "你手动加的"), "add", true, aiWhereDir());
     if (got && got.ok){
       toast(got.msg || "加好了");
       AIR.newPath = "";
@@ -628,21 +628,21 @@ async function aiAllowSet(it, field, on){
   try{
     const args = {read: null, write: null};
     args[field] = !!on;
-    const got = await window.pywebview.api.ai_allow(it.path, args.read, args.write, "", "set");
+    const got = await window.pywebview.api.ai_allow(it.path, args.read, args.write, "", "set", false, aiWhereDir());
     toast((got && got.msg) || "好了", !(got && got.ok));
     await aiRefreshInfo(true);
   }catch(e){ toast("改不了：" + (e && e.message ? e.message : e), true); }
 }
 async function aiAllowRm(it){
   try{
-    const got = await window.pywebview.api.ai_allow(it.path, null, null, "", "rm");
+    const got = await window.pywebview.api.ai_allow(it.path, null, null, "", "rm", false, aiWhereDir());
     toast((got && got.msg) || "删了", !(got && got.ok));
     await aiRefreshInfo(true);
   }catch(e){ toast("删不掉：" + (e && e.message ? e.message : e), true); }
 }
 async function aiAllowPick(){
   try{
-    const got = await window.pywebview.api.ai_allow_pick();
+    const got = await window.pywebview.api.ai_allow_pick(aiWhereDir());
     if (got && got.cancel) return;
     toast((got && got.msg) || "好了", !(got && got.ok));
     await aiRefreshInfo(true);
@@ -1734,16 +1734,13 @@ const MossAi = {
        ★ 2026-10-22：**按包分堆** —— 别的包的那些行不再跟这个包的混在一起（见 `allowOther`）。 */
     allowSplit(){
       this.A.rev;
-      const me = (aiPackage() || {}).id || "";
       const mine = [], other = [];
-      // ★ 2026-10-31：`*` 那一行（老的「任意路径」）**不再摆到界面上** —— 它现在只是
-      //   完全权限的内部表示（见 `ai_mode.set_full_access` / `load` 里的收口）。
+      // ★ 权限清单现在**按插件分文件存**（`ai_mode.path(workdir)`）：这个数组里的每一条
+      //   都是当前插件自己的授权，即使路径指向另一个包，也是你在这里明确放行的，
+      //   必须显示在当前清单里才能查看 / 关闭。不再按路径所属包分堆。
       (this.A.allow || []).filter(x => !x.pending && x.path !== "*").forEach(x => {
         // ★ V-344：每行预先把路径拆成三段（盘符 / 中间 / 尾巴），模板直接用
-        const it = Object.assign({}, x, {_p: permParts(x.path)});
-        const own = permOwnerOf(it.path);
-        if (own && me && own.id !== me) other.push(Object.assign(it, {_otherOf: own.id, _otherOld: !own.live}));
-        else mine.push(it);
+        mine.push(Object.assign({}, x, {_p: permParts(x.path)}));
       });
       return {mine: mine, other: other};
     },
@@ -1866,7 +1863,8 @@ const MossAi = {
       const p = this.A.perm;
       if (!p || !on) return;                       // 取消勾选在这条上没意义（那条还没批）
       try{
-        const got = await window.pywebview.api.ai_allow(p.path, true, field === "write", "", "add");
+        const got = await window.pywebview.api.ai_allow(p.path, true, field === "write", "", "add", false,
+                                                        String(p.workdir || aiWhereDir()));
         toast((got && got.msg) || "放行了", !(got && got.ok));
       }catch(e){ toast("没成：" + (e && e.message ? e.message : e), true); }
       await aiRefreshInfo(true);
@@ -1878,7 +1876,8 @@ const MossAi = {
       const p = this.A.perm;
       if (!p) return;
       try{
-        const got = await window.pywebview.api.ai_allow(p.path, null, null, "", "deny");
+        const got = await window.pywebview.api.ai_allow(p.path, null, null, "", "deny", false,
+                                                        String(p.workdir || aiWhereDir()));
         toast((got && got.msg) || "拒绝了", !(got && got.ok));
       }catch(e){ toast("没成：" + (e && e.message ? e.message : e), true); }
       await aiRefreshInfo(true);
@@ -1899,7 +1898,7 @@ const MossAi = {
       let ok = 0, bad = 0;
       for (const it of rows){
         try{
-          const got = await window.pywebview.api.ai_allow(it.path, null, null, "", "rm");
+          const got = await window.pywebview.api.ai_allow(it.path, null, null, "", "rm", false, aiWhereDir());
           if (got && got.ok) ok += 1; else bad += 1;
         }catch(e){ bad += 1; }
       }
@@ -2469,7 +2468,7 @@ const MossAi = {
     async toggleFullAccess(){
       const want = !this.A.full;
       try{
-        const got = await window.pywebview.api.ai_full_access(!!want);
+        const got = await window.pywebview.api.ai_full_access(!!want, aiWhereDir());
         if (!got || !got.ok){ toast((got && got.msg) || "切不了完全权限", true); return; }
         toast(want ? "完全权限已开启：任意路径 + 技能自动批准 + 不再弹确认"
                    : "完全权限已关闭：恢复按权限清单和技能指纹授权");

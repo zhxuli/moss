@@ -610,6 +610,54 @@ def _json_from_host(out):
 MAX_READ = 2 * 1024 * 1024          # 超过 2 MB 不给编辑（读出来看看就够）
 TRASH_DIRNAME = "trash"
 
+# ---- 内容检索（V-426）：扫到哪儿算哪儿，只有数量上限（撞上会标 truncated/cut）
+SEARCH_MAX_FILES = 200000
+SEARCH_MAX_HITS = 800
+SEARCH_MAX_PER_FILE = 48
+SEARCH_MAX_BYTES = MAX_READ
+SEARCH_LINE_MARKS = 8
+SEARCH_LINE_MAX = 240
+# 机器产物目录不往下走；runtimes 是自带的 Python
+SEARCH_SKIP_DIRS = {"__pycache__", "node_modules", "venv", ".venv", "site-packages",
+                    "dist", "build", ".tox", ".mypy_cache", ".pytest_cache", "runtimes"}
+# 站在 user_data 顶层时跳过这两处（进到里面再搜照样能搜）
+SEARCH_SKIP_TOP = {"trash", "backups"}
+# 按后缀先筛掉二进制；_looks_binary 仍然兜底
+SEARCH_BIN_EXT = set("""
+    png jpg jpeg gif bmp webp ico tif tiff psd raw heic avif
+    exe dll so dylib pyd pyc pyo class jar war zip 7z rar gz tgz bz2 xz zst cab iso dmg msi
+    mp3 wav flac ogg m4a aac wma mp4 mkv avi mov wmv flv webm m4v
+    pdf doc docx xls xlsx ppt pptx
+    ttf otf woff woff2 eot
+    db sqlite sqlite3 mdb npy npz pkl bin dat pak
+""".split())
+
+
+def _search_skip_dir(here, d):
+    """子目录要不要跳过。`packages` 只在 `pkgs/<包>/packages`（装的依赖）时跳。"""
+    if d in SEARCH_SKIP_DIRS or d.startswith("."):
+        return True
+    return d == "packages" and here.parent.name == "pkgs"
+
+
+def _search_hit(line_no, line, matches):
+    """一行命中压成 {line, text, cols}；太长的行截断，cols 按截断后的 text 平移。"""
+    line = str(line).rstrip("\r\n")
+    cols = [[m.start(), max(1, m.end() - m.start())] for m in matches][:SEARCH_LINE_MARKS]
+    if len(line) > SEARCH_LINE_MAX:
+        mid = cols[0][0] if cols else 0
+        start = max(0, min(mid - SEARCH_LINE_MAX // 3, len(line) - SEARCH_LINE_MAX))
+        cut = line[start:start + SEARCH_LINE_MAX]
+        head = "…" if start > 0 else ""
+        tail = "…" if start + len(cut) < len(line) else ""
+        keep = []
+        for c, n in cols:
+            if c < start or c + n > start + len(cut):
+                continue                      # 被截断的那处不算
+            keep.append([c - start + len(head), n])
+        line, cols = head + cut + tail, keep
+    return {"line": int(line_no), "text": line, "cols": cols}
+
 HOME = Path(os.environ.get("MOSS_HOME") or ".")
 USER_DATA = Path(os.environ.get("MOSS_USER_DATA_DIR") or (HOME / "user_data"))
 
@@ -3029,9 +3077,9 @@ class Api:
         return ai_ask
 
     def _ai_wildcard(self):
-        """现在是不是"放手"（清单里「任意路径」那一行勾了**写**）—— `V-316`。"""
+        """**当前这一跑所在的插件**是不是"放手"（该插件清单里的 `*` 勾了写）。"""
         try:
-            return bool(self._ai_mode().wildcard_write())
+            return bool(self._ai_mode().wildcard_write(str(AI.get("task_dir") or "")))
         except Exception:                                                # noqa: BLE001
             return False
 
@@ -3350,7 +3398,7 @@ class Api:
                 "max_tokens": cap, "started": started,
                 "started_text": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)),
                 # `V-316`：这次是不是"放手"（清单里勾了任意路径的写）—— 记一条账
-                "mode": "free" if M.wildcard_write() else "limited",
+                "mode": "free" if M.wildcard_write(wd) else "limited",
                 "tmp_dir": str(tmp_dir or ""),
                 "scope": scope.get("kind"), "scope_id": scope.get("id") or "",
                 "asked_continue": cid, "continue_note": cont_note,
@@ -3454,7 +3502,10 @@ class Api:
             #   "是不是放手"这一个问题，由清单里「任意路径」那一行回答。
 
             def mode_now():
-                return "free" if M.wildcard_write() else "limited"
+                return "free" if M.wildcard_write(wd) else "limited"
+
+            def perm_gate(path, why, need, timeout=1800):
+                return self._ai_perm_wait(path, why, need, timeout=timeout, workdir=wd)
 
             def on_stream(n, text, think, chars=0, tchars=0):
                 """★ `V-389`：模型正在吐的字，**一收到就交给界面**（不再等整段收完）。
@@ -3484,7 +3535,7 @@ class Api:
                               stop_check=lambda: bool(AI.get("stop")),
                               asker=asker, mode_fn=mode_now, on_journal=on_journal,
                               run_id=run_id, tmp_dir=str(tmp_dir or ""),
-                              perm_gate=self._ai_perm_wait)
+                              perm_gate=perm_gate)
                 AI["loop"] = loop
                 got = {}
                 try:
@@ -3698,7 +3749,8 @@ class Api:
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 
-    def ai_allow(self, path="", read=None, write=None, why="", action="add", force=False):
+    def ai_allow(self, path="", read=None, write=None, why="", action="add", force=False,
+                 workdir=""):
         """权限清单：`action` = `add` / `set`（改勾选）/ `rm`（删掉）/ `deny`（**拒绝一次请求**）。
 
         ★ `V-316`：**读 / 写各一个勾**，不再有"模式"那种第二个开关控同一件事。
@@ -3710,18 +3762,19 @@ class Api:
         """
         try:
             M = self._ai_mode()
+            wd = str(workdir or self._ai_last_workdir())
             a = str(action or "add")
             if a == "deny":
                 key = _perm_key(path)
                 with AI_LOCK:
                     _PERM_DENY[key] = time.time()
-                cur = M.find(path)
+                cur = M.find(path, wd)
                 if cur is not None and cur.get("pending"):
-                    M.allow_rm(path)                 # 这趟刚摆的"待允许"⇒ 收走（列表里本来不画它）
+                    M.allow_rm(path, wd)             # 这趟刚摆的"待允许"⇒ 收走（列表里本来不画它）
                 return {"ok": True, "msg": "已拒绝 —— 这次不放行，原来的权限不变",
-                        "summary": M.summary(self._ai_last_workdir())}
+                        "summary": M.summary(wd)}
             if a == "rm":
-                got = M.allow_rm(path)
+                got = M.allow_rm(path, wd)
             else:
                 # ★ `V-319`：他勾了读/写（或加了一条）⇒ 那一行不再是"待允许"，闪烁收掉
                 _pend = False if (read is not None or write is not None) else None
@@ -3731,12 +3784,13 @@ class Api:
                 # ★ `V-344`：`force` = "这是**用户主动加的**"（拖进来 / 手输）——
                 #   让这条记录把归属和说明都改成用户的，别继承以前那条 `by="ai"` 的 why。
                 got = M.allow_set(path, read=read, write=write, why=str(why or ""),
-                                  by="user", add=True, pending=_pend, force=bool(force))
-            return dict(got, summary=M.summary(self._ai_last_workdir()))
+                                  by="user", add=True, pending=_pend, force=bool(force),
+                                  workdir=wd)
+            return dict(got, summary=M.summary(wd))
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 
-    def ai_full_access(self, on=True):
+    def ai_full_access(self, on=True, workdir=""):
         """切「完全权限（无人值守）」：路径全开 + 危险操作不问 + 技能自动批准。
 
         ★ 和清单里单独勾「任意路径」不同：那个只给文件系统权限；这个还要让
@@ -3745,12 +3799,13 @@ class Api:
         """
         try:
             M = self._ai_mode()
-            got = M.set_full_access(bool(on))
-            return dict(got, summary=M.summary(self._ai_last_workdir()))
+            wd = str(workdir or self._ai_last_workdir())
+            got = M.set_full_access(bool(on), wd)
+            return dict(got, summary=M.summary(wd))
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 
-    def ai_allow_pick(self):
+    def ai_allow_pick(self, workdir=""):
         """**选一个文件夹**加进放行清单（点「+ 加目录」那颗按钮）。
 
         ★ 用 pywebview 的原生目录选择框（`window.create_file_dialog`）—— 用户原话
@@ -3772,11 +3827,13 @@ class Api:
                 return {"ok": False, "msg": "没选（取消了）", "cancel": True}
             p = got[0] if isinstance(got, (list, tuple)) else got
             M = self._ai_mode()
+            wd = str(workdir or self._ai_last_workdir())
             # ★ `V-328`：这里原来写的是 `allow_add(p, on=True, …)` —— `allow_add` 根本没有
             #   `on` 这个参数（`V-316` 起就是 `read` / `write` 了）⇒ 每次「选目录…」都会
             #   TypeError 被 except 兜住、报一句"选不了目录"。现在按真签名来（读+写都开）。
-            r = M.allow_add(p, read=True, write=True, why="你选目录加的", by="user", force=True)
-            return dict(r, summary=M.summary())
+            r = M.allow_add(p, read=True, write=True, why="你选目录加的", by="user",
+                            force=True, workdir=wd)
+            return dict(r, summary=M.summary(wd))
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "选不了目录：%s: %s" % (type(e).__name__, e)}
 
@@ -3801,7 +3858,7 @@ class Api:
         except Exception as e:                                          # noqa: BLE001
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 
-    def _ai_perm_wait(self, path, why="", need="write", timeout=1800):
+    def _ai_perm_wait(self, path, why="", need="write", timeout=1800, workdir=""):
         """**权限请求的闸**：请求出现在**权限卡上半段那一条**（琥珀底 + 允许 / 拒绝），等他点。
 
         ★ `V-323`/`V-325`（用户把界面设计重发并说清了流程）：点「允许」⇒ 那一条消失、目录进
@@ -3820,6 +3877,7 @@ class Api:
           · 原来就没有那一行 ⇒ 由 `allow_pending_add` 摆一条待允许的（界面不画它，闸要用）。
         """
         M = self._ai_mode()
+        wd = str(workdir or self._ai_last_workdir())
         need_w = str(need or "write") != "read"
         # ★ `V-328`：路径本身不合法（乱打的 / 不存在 / 不是目录）⇒ **别摆请求**，当场回它
         #   `bad-path`（工具那边会把这句话原样还给模型，让它先去确认路径）。
@@ -3832,13 +3890,13 @@ class Api:
             return {"granted": False, "reason": "bad-path", "msg": problem,
                     "read": False, "write": False, "seconds": 0.0}
         try:
-            base = M.find(path)
+            base = M.find(path, wd)
         except Exception:                                            # noqa: BLE001
             base = None
         base_read = bool((base or {}).get("read"))
         base_write = bool((base or {}).get("write"))
         try:
-            M.allow_pending_add(path, why=why, need=need)
+            M.allow_pending_add(path, why=why, need=need, workdir=wd)
         except Exception:                                            # noqa: BLE001
             pass
         t0 = time.time()
@@ -3860,7 +3918,7 @@ class Api:
         with AI_LOCK:
             _PERM_DENY.pop(key, None)        # 这一趟从干净开始（上一次的拒绝不算）
             AI["perm"] = {"path": str(path), "why": str(why or ""),
-                          "need": str(need or "write"), "at": t0}
+                          "need": str(need or "write"), "at": t0, "workdir": wd}
         reason, it = "timeout", None
         while True:
             if AI.get("stop"):
@@ -3873,7 +3931,7 @@ class Api:
                 reason = "denied"
                 break
             try:
-                it = M.find(path)
+                it = M.find(path, wd)
             except Exception:                                        # noqa: BLE001
                 it = None
             if it is None:
@@ -3896,7 +3954,7 @@ class Api:
             _PERM_DENY.pop(key, None)        # 这一趟用完了，别留着影响下一次
         try:
             if reason != "denied":           # 拒绝那条留着他原来批过的权限；别的把这趟登记收掉
-                M.allow_set(path, pending=False)
+                M.allow_set(path, pending=False, workdir=wd)
         except Exception:                                            # noqa: BLE001
             pass
         granted = reason == "ok" or (reason == "read-only" and not need_w)
@@ -4432,6 +4490,156 @@ class Api:
             return {"ok": False, "msg": "读目录失败：%s" % e}
         return {"ok": True, "rel": _rel_page(p), "entries": entries,
                 "writable": root["writable"], "path": str(p)}
+
+    def fs_search(self, q, opts=None):
+        """按内容搜文本文件，命中按文件分组返回。
+
+        opts：`roots`（页面 rel，默认 user+system）、`cs`、`re`、`word`、`skip`（含 trash/backups）。
+        返回 {ok, files:[{rel,name,dir,ext,n,more,hits:[{line,text,cols}]}], n_files, n_hits,
+        scanned, skipped, truncated, cut, ms, roots, note}。truncated/cut 表示有根没扫完。
+        """
+        raw_q = str(q or "")
+        if not raw_q.strip():
+            return {"ok": False, "msg": "先输入要搜的内容"}
+        # opts 正常是 dict；万一桥给的是 JSON 字符串也认
+        if isinstance(opts, str):
+            try:
+                opts = json.loads(opts)
+            except ValueError:
+                opts = {}
+        opts = opts if isinstance(opts, dict) else {}
+        cs = bool(opts.get("cs"))
+        use_re = bool(opts.get("re"))
+        word = bool(opts.get("word"))
+        deep = bool(opts.get("skip"))              # 连回收站 / 版本快照一起搜
+        if use_re:
+            try:
+                rx = re.compile(raw_q, 0 if cs else re.IGNORECASE)
+            except re.error as e:
+                return {"ok": False, "msg": "正则写得不对：%s" % e}
+        else:
+            body = re.escape(raw_q)
+            if word:                               # 全词：前后不许贴着别的"词字符"
+                body = r"(?<!\w)" + body + r"(?!\w)"
+            rx = re.compile(body, 0 if cs else re.IGNORECASE)
+
+        roots = []
+        for r in (opts.get("roots") or []):
+            r = str(r or "").replace("\\", "/").strip("/")
+            if r:
+                roots.append(r)
+        if not roots:
+            roots = ["user", "system"]
+
+        user_base = Path(USER_DATA).resolve()
+        t0 = time.perf_counter()
+        files, n_hits, scanned, skipped = [], 0, 0, 0
+        truncated, dead, cut = False, [], []
+        roots = roots[:8]
+        for i, rel in enumerate(roots):
+            try:
+                _root, base = _resolve(rel)
+            except ValueError as e:
+                dead.append("%s：%s" % (rel, e))
+                continue
+            if not base.is_dir():
+                dead.append("%s：没有这个目录" % rel)
+                continue
+            # 命中数按根平分，用不完的留给后面的根
+            left = len(roots) - i
+            root_cap = n_hits + max(40, (SEARCH_MAX_HITS - n_hits) // left)
+            stopped = False
+            # 广度优先：先把浅处的文件搜完再往下走。深度优先时一个大子目录（比如包的
+            # packages/）能把额度吃光，同一层的 ui/ 一个文件都轮不到。
+            queue = [str(base)]
+            while queue and not stopped:
+                dirpath = queue.pop(0)
+                here = Path(dirpath)
+                try:
+                    with os.scandir(dirpath) as it:
+                        entries = sorted(it, key=lambda e: e.name)
+                except OSError:
+                    continue
+                subs = []
+                for ent in entries:
+                    if stopped:
+                        break
+                    try:
+                        if ent.is_dir(follow_symlinks=False):
+                            subs.append(ent.name)
+                            continue
+                    except OSError:
+                        continue
+                    fn = ent.name
+                    if scanned >= SEARCH_MAX_FILES:
+                        stopped = True
+                        break
+                    if fn.endswith(".moss-tmp"):    # 我们自己写文件的临时壳
+                        continue
+                    fp = here / fn
+                    if fp.suffix.lower().lstrip(".") in SEARCH_BIN_EXT:
+                        skipped += 1
+                        continue
+                    try:
+                        size = fp.stat().st_size
+                    except OSError:
+                        skipped += 1
+                        continue
+                    if not size or size > SEARCH_MAX_BYTES:
+                        skipped += 1
+                        continue
+                    scanned += 1
+                    try:
+                        raw = fp.read_bytes()
+                    except OSError:
+                        skipped += 1
+                        continue
+                    text, _enc, _bom = _decode_text(raw)
+                    if text is None:                # 真二进制（`_looks_binary` 兜底）
+                        skipped += 1
+                        continue
+                    # 一个文件最多回 SEARCH_MAX_PER_FILE 行，超了标 more
+                    hits, more = [], False
+                    for no, line in enumerate(text.splitlines(), 1):
+                        ms = list(rx.finditer(line))
+                        if ms:
+                            hits.append(_search_hit(no, line, ms))
+                            if len(hits) >= SEARCH_MAX_PER_FILE:
+                                more = True
+                                break
+                    if not hits:
+                        continue
+                    # 撞总上限时把最后一笔切齐，"N 行"才对得上
+                    room = root_cap - n_hits
+                    if len(hits) > room:
+                        hits = hits[:room]
+                        more = True
+                    if not hits:
+                        continue
+                    files.append({"rel": _rel_page(fp), "name": fn, "dir": _rel_page(here),
+                                  "ext": fp.suffix.lower().lstrip("."), "n": len(hits),
+                                  "more": more, "hits": hits})
+                    n_hits += len(hits)
+                    if n_hits >= root_cap:
+                        stopped = True
+                        break
+                for d in sorted(subs):
+                    if _search_skip_dir(here, d):
+                        continue
+                    if not deep and here == user_base and d in SEARCH_SKIP_TOP:
+                        continue
+                    queue.append(str(here / d))
+            if stopped:
+                truncated = True
+                cut.append(rel)
+        ms = int((time.perf_counter() - t0) * 1000)
+        out = {"ok": True, "q": raw_q, "files": files,
+               "n_files": len(files), "n_hits": n_hits,
+               "scanned": scanned, "skipped": skipped,
+               "truncated": truncated, "cut": cut, "ms": ms, "roots": roots, "note": ""}
+        if dead:
+            out["note"] = "；".join(dead[:2])
+        return out
 
     def fs_read(self, rel):
         """读一个文件。二进制 / 超大只回报状态，不给编辑（免得把编辑器当十六进制用）。"""

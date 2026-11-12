@@ -276,15 +276,16 @@ def child_env(run_id="", workdir=""):
         return env
 
 
-def mode_now():
+def mode_now(workdir=""):
     """**现在**能不能"放手写"（现读权限清单；读不到就当不能 —— 最保守）。
 
     ★ `V-316`：以前这里是"三档模式"，现在只有一份清单：`*`（任意路径）那一行勾了**写**
       才叫放手 —— 那时**危险操作也不再问**（`ai_mode.needs_confirm`）。
+    ★ 权限清单按插件分文件存；这里必须带上 workdir，不能读别的插件那一份。
     """
     try:
         import ai_mode as M                                        # noqa: PLC0415
-        return "free" if M.wildcard_write() else "limited"
+        return "free" if M.wildcard_write(workdir) else "limited"
     except Exception:                                              # noqa: BLE001
         return "limited"
 
@@ -436,7 +437,7 @@ class Tools:
         try:
             import ai_mode as M                                    # noqa: PLC0415
             danger = M.danger_of(name, args or {})
-            _ask = M.needs_confirm(danger)
+            _ask = M.needs_confirm(danger, self.workdir)
         except Exception:                                          # noqa: BLE001
             danger, _ask = None, False
         if danger and _ask:
@@ -870,7 +871,7 @@ class Tools:
                 else M.can_read(p, scope=self.workdir))
         if _now is None:
             _why = ("现在是「完全权限」：任意路径都算允许"
-                    if M.wildcard_write()
+                    if M.wildcard_write(self.workdir)
                     else "它本来就在允许范围里（清单 / 你这次干活的包 / 你自己的地方）")
             return ("[不用申请] `%s` 你本来就能%s —— %s。直接动它，"
                     "**别再调 allow_path**（那只会白弹一张卡、白等一个人）。"

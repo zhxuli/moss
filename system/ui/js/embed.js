@@ -185,13 +185,73 @@ function paintEmbedTab(){
   const ok = embedSupported(cur);
   if (tabBtn){
     tabBtn.hidden = !ok;
-    if (!tabBtn.dataset.painted){                    // 图标只画一次
-      tabBtn.dataset.painted = "1";
-      tabBtn.innerHTML = ico("app-window", "i") + '<span>界面</span>';
+    // 名字用包自己界面的名字（`ui.title`），图标用**这个包自己的图标**；没图标退回窗口那颗
+    const label = ok ? (cur.ui.title || cur.name || "界面") : "界面";
+    const key = (ok ? cur.id : "") + "|" + label;
+    if (tabBtn.dataset.painted !== key){
+      tabBtn.dataset.painted = key;
+      const own = ok && typeof iconInner === "function" ? iconInner(cur) : "";
+      tabBtn.innerHTML = (own ? '<span class="tab-ico">' + own + "</span>"
+                              : ico("app-window", "i")) +
+                         '<span class="tab-name"></span>';
+      tabBtn.querySelector(".tab-name").textContent = label;
     }
   }
+  paintEmbedActions(ok);
   if (!ok && tab === "embed") setTab("detail");
   EMBR.rev++;
+}
+
+/* 右上角那两颗（重新加载 / 弹出为窗口，挨着「运行/停止」）。
+   只有当前包有界面时才出现；刷新要帧在跑才给点，弹出则弹过之后禁用。 */
+function paintEmbedActions(ok){
+  const rl = $("#btn-embed-reload"), fl = $("#btn-embed-window");
+  if (!rl || !fl) return;
+  const has = !!ok && !!cur;
+  const alive = has && embedRunning(cur.id);
+  const floated = has && !!EMB.floated[cur.id];
+  rl.hidden = !has;
+  fl.hidden = !has;
+  rl.disabled = !alive;
+  fl.disabled = floated;
+  if (!rl.dataset.done){                    // 图标和 click 只装一次
+    rl.dataset.done = "1";
+    rl.innerHTML = ico("refresh-cw", "i");
+    rl.onclick = () => embedReloadHere();
+    fl.innerHTML = ico("app-window", "i");
+    fl.onclick = () => embedFloatHere();
+  }
+  rl.title = alive ? "重新加载这个包的界面" : "这个包的界面还没在跑";
+  fl.title = floated ? "已经弹成独立窗口了（在那边点最小化就收回）"
+                     : "把这一页弹成独立窗口（那边点最小化＝收回，点关闭＝结束）";
+}
+
+/* 重新加载当前这个包的帧 */
+function embedReloadHere(){
+  const rec = embedSupported(cur) ? EMB.alive[cur.id] : null;
+  if (rec && rec.frame) rec.frame.src = rec.frame.src;
+}
+
+/* 弹出为窗口：先拆掉这一页的帧，再让宿主开第二个窗口 —— 后端一步不动。
+   顺序不能反：同一个后端只许有一个帧（EMB.alive[pid].frame 是单帧引用）。 */
+async function embedFloatHere(){
+  const p = embedSupported(cur) ? cur : null;
+  if (!p) return;
+  const rec = EMB.alive[p.id];
+  if (rec && rec.frame) rec.frame.remove();
+  delete EMB.alive[p.id];
+  if (!Object.keys(EMB.alive).length) embedTick(false);
+  EMB.floated[p.id] = true;
+  paintEmbedTab();
+  const r = await pywebview.api.ui_float(p.id);
+  if (!r || !r.ok){                     // 开不出来就恢复原样，别让人对着一块空的
+    EMB.floated[p.id] = false;
+    toast("✗ " + ((r && r.msg) || "弹不出来"), true);
+    await embedOpen(p, {keepTab: true});
+    return;
+  }
+  toast(r.msg);
+  paintEmbedTab();
 }
 
 /* ---------------------------------------------------------------- 「界面」那一页（Vue 组件，`V-84`）
@@ -209,55 +269,11 @@ const MossEmbed = {
   data(){ return { R: EMBR }; },
   computed: {
     p(){ this.R.rev; return embedSupported(cur) ? cur : null; },
-    title(){ this.R.rev; const p = this.p; return p ? (p.ui.title || p.name || "界面") : "界面"; },
     aliveN(){ this.R.rev; return Object.keys(EMB.alive).length; },
-    // 这一页是**浮动窗口**那一份吗（`V-192`：同一份页面，靠 `#float=<id>` 分流）
-    // ★ 读 `window.__mossFloatPid`（`core.js` 里定义），**不读** app.js 里的 `FLOAT_PID`：
-    //   这个组件是**当场挂载**的，那一刻 app.js 还没跑到 —— 直接读它就是一个
-    //   `ReferenceError: FLOAT_PID is not defined`，页面一启动就报错（`V-202` 实测）。
-    isFloat(){ return !!window.__mossFloatPid; },
     // 当前这个包的帧是不是已经被弹到窗口里去了（主窗口这一侧显示占位）
     floatedHere(){ this.R.rev; const p = this.p; return !!(p && EMB.floated[p.id]); },
-    info(){
-      this.R.rev;
-      const p = this.p;
-      if (!p) return "";
-      if (window.__mossFloatPid)          // 浮动窗口：说清那两颗按钮是什么意思
-        return embedRunning(p.id) ? "浮动窗口 · 点最小化＝收回主窗口，点关闭＝结束这个包" : "还没起";
-      if (EMB.floated[p.id]) return "已经弹到窗口里去了（那边最小化就回来）";
-      if (!embedRunning(p.id)) return "还没跑 —— 点右上角「运行」就起";
-      const n = this.aliveN;
-      return "这个包的界面正在这一页里运行 · 切走也不会停" +
-             (n > 1 ? ("（另外还有 " + (n - 1) + " 个也在跑）") : "");
-    },
   },
   methods: {
-    // 重载这一页（只重载**当前这个包**那一帧）
-    reload(){
-      const rec = cur && EMB.alive[cur.id];
-      if (rec && rec.frame) rec.frame.src = rec.frame.src;
-    },
-    /* 弹出为窗口（`V-192`）：**先拆掉这一页的帧**，再让宿主开第二个窗口 —— 后端一步不动。
-       顺序不能反：同一个后端只许有一个帧（`EMB.alive[pid].frame` 是单帧引用）。 */
-    async floatOut(){
-      const p = this.p;
-      if (!p) return;
-      const rec = EMB.alive[p.id];
-      if (rec && rec.frame) rec.frame.remove();
-      delete EMB.alive[p.id];
-      if (!Object.keys(EMB.alive).length) embedTick(false);
-      EMB.floated[p.id] = true;
-      EMBR.rev++;
-      const r = await pywebview.api.ui_float(p.id);
-      if (!r || !r.ok){                     // 开不出来就恢复原样，别让人对着一块空的
-        EMB.floated[p.id] = false;
-        toast("✗ " + ((r && r.msg) || "弹不出来"), true);
-        await embedOpen(p, {keepTab: true});
-        return;
-      }
-      toast(r.msg);
-      paintEmbedTab(); EMBR.rev++;
-    },
     /* 收回：让宿主把那扇窗关掉，然后这边把帧建回来（后端还活着 ⇒ 直接复用） */
     async floatBack(){
       const p = this.p;
@@ -277,19 +293,6 @@ const MossEmbed = {
     },
   },
   template: `
-    <div id="embed-bar">
-      <span id="embed-title">{{ title }}</span>
-      <span id="embed-info" class="dim">{{ info }}</span>
-      <span style="flex:1"></span>
-      <!-- 浮动窗口里**整条都不显示**（CSS：body.float #embed-bar{display:none}）——
-           那一页就是一扇"这个包自己的窗口"：窗口标题上已经有名字，
-           最小化＝收回主窗口、关闭＝结束这个包（V-194），不需要再摆一条。 -->
-      <button id="btn-embed-reload" class="iconbtn" title="重新加载这一页"
-              v-html='ico("refresh-cw", "i")' @click="reload()"></button>
-      <button v-if="!isFloat" id="btn-embed-window" class="iconbtn"
-              title="弹出为窗口（在那边点最小化就收回、点关闭就结束）"
-              v-html='ico("app-window", "i")' @click="floatOut()"></button>
-    </div>
     <div id="embed-wrap">
       <div id="embed-floated" v-if="floatedHere" @click="floatBack()">
         <span v-html='ico("app-window", "i")'></span>

@@ -18,13 +18,18 @@
   · 「放手」= 把 `*`（任意路径）那一行的**写**打开 —— 那时**危险操作也不再问你**
     （你都已经说"随便写"了，再拦就是多一个开关控同一件事）。
 
-状态存在 `user_data/ai/mode.json`（换了内里的形状，但**文件名保留**，老文件会自动迁移）：
+★ **权限按插件隔离**：选中某个插件时，状态存在
+  `user_data/state/<包id>/ai/mode.json`；没选插件才用全局桶 `user_data/ai/mode.json`。
+  所以 A 插件批准的目录不会出现在 B 插件，也不会对 B 的 AI 生效。
 
-    {"allow": [{"path": "...", "read": true, "write": true, "why": "当前这个包",
-                "by": "auto", "at": "..."},
+    {"allow": [{"path": "...", "read": true, "write": true, "why": "...",
+                "by": "user", "at": "..."},
                {"path": "*", "read": false, "write": false, "why": "任意路径（硬锁除外）",
                 "by": "system"}],
-     "seeded": ["github"]}       ← 已经自动加过清单的包 id（用户删了就不再自动加回来）
+     "full_access": false}
+
+  老版本只有一份全局 `user_data/ai/mode.json`；第一次读某个插件时只搬入能**明确判定**
+  属于这个插件的行（包目录 / `state/<包id>/` 底下），外部目录不复制，避免继续串权限。
 
 ★ 硬锁（**永远是拒绝**，勾了 `*` 也拦）：`core/`、`moss.exe`、`moss.py`、`venv/`、`.git/`、
   `user_data/backups/`。前四个是"编进 exe / 构建链"，改了会让人以为改了源码（`K-10`）；
@@ -52,8 +57,82 @@ WILDCARD_LABEL = "任意路径"          # `V-318`：界面上只写这四个字
 
 
 # ------------------------------------------------------------------ 存取
-def path():
+def _scope_pkg(workdir=""):
+    """这次干活的是哪个插件 —— 直接复用 ai_runs 那套 id 解析。
+
+    权限清单**按插件分文件存**：同一个路径在 A 插件里批准过，不等于 B 插件也能用。
+    没有选中插件（整个项目区 / 命令行）时才落到全局桶。
+    """
+    try:
+        import ai_runs as R                                          # noqa: PLC0415
+        return R.pkg_of(str(workdir or ""))
+    except Exception:                                                # noqa: BLE001
+        return ""
+
+
+def _legacy_path():
+    """旧版唯一的一份全局清单（只用于迁移和"没有插件"的全局作用域）。"""
     return E.user_data() / "ai" / "mode.json"
+
+
+def _path_belongs_to_pkg(pth, pid):
+    """这条旧权限能不能明确判给 pid（包目录，或 state/<pid>/ 底下）。"""
+    raw = str(pth or "").strip()
+    if not raw or raw == WILDCARD or not pid:
+        return False
+    try:
+        import ai_runs as R                                          # noqa: PLC0415
+        if R.pkg_of(raw) == pid:
+            return True
+    except Exception:                                                # noqa: BLE001
+        pass
+    try:
+        st = (E.user_data() / "state" / str(pid)).resolve()
+        pp = Path(raw).resolve()
+        return pp == st or str(pp).startswith(str(st) + os.sep)
+    except (OSError, ValueError):
+        return False
+
+
+def _legacy_seed(workdir=""):
+    """首次打开某个插件时，从旧全局清单里**只搬明确属于它**的行。
+
+    ★ 不复制外部目录（Desktop / D:\项目 / 另一个插件）的选择：旧文件里没有"是谁批的"
+      这份元数据，硬塞给每个插件就是用户报的"A 的路径跑到 B 里去了"。
+    """
+    pid = _scope_pkg(workdir)
+    if not pid:
+        return {}
+    p = _legacy_path()
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
+    except Exception:                                                # noqa: BLE001
+        raw = {}
+    if not isinstance(raw, dict):
+        return {}
+    rows = []
+    for it in (raw.get("allow") or []):
+        if isinstance(it, dict) and _path_belongs_to_pkg(it.get("path"), pid):
+            one = _norm_perm(it)
+            if one:
+                rows.append(one)
+    return {"allow": rows} if rows else {}
+
+
+def path(workdir=""):
+    """权限清单落盘位置（**按插件隔离**）。
+
+    · 选中插件 ⇒ `user_data/state/<包id>/ai/mode.json`
+      （和这个插件的会话 / tmp 住一起，`moss --rename` 会整目录带走）
+    · 没选插件 ⇒ `user_data/ai/mode.json`（全局桶）
+
+    老版本只有 `user_data/ai/mode.json`；第一次读某个插件时会调用 `_legacy_seed()`，
+    只把能明确判定属于该插件的行迁过去，别的插件的行不会跟着复制。
+    """
+    pid = _scope_pkg(workdir)
+    if pid:
+        return E.user_data() / "state" / pid / "ai" / "mode.json"
+    return _legacy_path()
 
 
 def _blank():
@@ -80,16 +159,22 @@ def _norm_perm(it):
             "at": str(it.get("at") or "")}
 
 
-def load():
-    """读清单（没有 / 读坏了 ⇒ 出厂形状；**不抛**）。老形状自动迁移（见 `_norm_perm`）。"""
+def load(workdir=""):
+    """读**这个作用域**的清单（没有 / 读坏了 ⇒ 出厂形状；**不抛**）。
+
+    旧全局文件只在两种时候参与：① 没有选中插件；② 某个插件的清单第一次出现，
+    由 `_legacy_seed()` 搬入明确属于它的行。因此 A 插件的历史放行不会出现在 B。
+    """
     cur = _blank()
     raw = {}
     try:
-        p = path()
+        p = path(workdir)
         if p.is_file():
             got = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(got, dict):
                 raw = got
+        elif _scope_pkg(workdir):
+            raw = _legacy_seed(workdir)
     except Exception:                                                    # noqa: BLE001
         raw = {}
     # ★ 老版本只有一个 `*` 行：勾上写、且 why 写着"完全权限"的，迁移成新语义。
@@ -129,20 +214,20 @@ def load():
     return cur
 
 
-def save(d):
+def save(d, workdir=""):
     """原子写（先 `.tmp` 再 `os.replace`）—— 和窗口几何 / 排序一个路子。"""
     d = d if isinstance(d, dict) else _blank()
     out = {"allow": [x for x in (d.get("allow") or []) if isinstance(x, dict) and x.get("path")],
            "full_access": bool(d.get("full_access"))}
     try:
-        p = path()
+        p = path(workdir)
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_name(p.name + ".tmp")
         tmp.write_text(json.dumps(out, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
         os.replace(tmp, p)
         return dict(out, ok=True, path=str(p))
     except OSError as e:
-        return dict(out, ok=False, msg="存不下来：%s" % e, path=str(path()))
+        return dict(out, ok=False, msg="存不下来：%s" % e, path=str(path(workdir)))
 
 
 def _wildcard_row():
@@ -150,7 +235,7 @@ def _wildcard_row():
             "by": "system", "at": "", "pending": False}
 
 
-def full_access():
+def full_access(workdir=""):
     """**完全权限（无人值守）** 开着没有。
 
     ★ 和"任意路径"不是一回事：
@@ -159,19 +244,19 @@ def full_access():
     旧版本把两者合成一个开关（靠 `*` 行的 why 区分）；这里读旧文件时已经自动迁移。
     """
     try:
-        return bool(load().get("full_access"))
+        return bool(load(workdir).get("full_access"))
     except Exception:                                                # noqa: BLE001
         return False
 
 
-def set_full_access(on=True):
+def set_full_access(on=True, workdir=""):
     """切**完全权限**：同时打开/关闭任意路径，并把技能授权交给动态规则。
 
     技能授权本身不写进 `skills_allow.json` —— `skill_lib` 会读这里的 `full_access`，
     动态判"已批准"。这样关掉完全权限之后，没有真正被人点过允许的技能会回到待批准，
     不会留下"一次全开 = 永久授权"的副作用。
     """
-    cur = load()
+    cur = load(workdir)
     on = bool(on)
     cur["full_access"] = on
     rows = cur.get("allow") or []
@@ -188,7 +273,7 @@ def set_full_access(on=True):
     star["by"] = "user"
     star["why"] = "完全权限（无人值守）" if on else WILDCARD_LABEL
     cur["allow"] = rows
-    got = save(cur)
+    got = save(cur, workdir)
     got["msg"] = ("完全权限已开启：任意路径可读写；新建 / 修改技能自动批准；危险操作不再确认"
                   if on else "完全权限已关闭：恢复按权限清单；技能重新按指纹授权")
     got["full_access"] = on
@@ -196,9 +281,9 @@ def set_full_access(on=True):
     return got
 
 
-def allow_list():
-    """清单（保证含 `*` 那一行；顺序：非通配在前、`*` 在最后）。"""
-    cur = load()
+def allow_list(workdir=""):
+    """**这个作用域**的清单（保证含 `*` 那一行；顺序：非通配在前、`*` 在最后）。"""
+    cur = load(workdir)
     rows = [it for it in cur["allow"] if it.get("path") != WILDCARD]
     star = next((it for it in cur["allow"] if it.get("path") == WILDCARD), None) or _wildcard_row()
     rows.append(star)
@@ -215,7 +300,7 @@ def _find(rows, pth):
 
 # ------------------------------------------------------------------ 改清单
 def allow_set(pth, read=None, write=None, why="", by="user", add=True, pending=None,
-              force=False):
+              force=False, workdir=""):
     """加一条 / 改一条（`read` / `write` 给 `None` 就保持原样；`pending` 给 `None` 也保持原样）。
 
     ★ `path` 是 `*` 时就是那行"任意路径"（用来表达"放手"）。
@@ -229,7 +314,7 @@ def allow_set(pth, read=None, write=None, why="", by="user", add=True, pending=N
         bad = protected(Path(raw))
         if bad:
             return {"ok": False, "msg": bad}
-    cur = load()
+    cur = load(workdir)
     rows = cur.get("allow") or []
     it = _find(rows, raw)
     if it is None:
@@ -271,7 +356,7 @@ def allow_set(pth, read=None, write=None, why="", by="user", add=True, pending=N
     if raw == WILDCARD and write is not None and not bool(write):
         cur["full_access"] = False
     cur["allow"] = rows
-    got = save(cur)
+    got = save(cur, workdir)
     # `V-367`：以前是日志式的一串「路径：读=开 写=关」—— 界面上每拨一次勾就弹一次
     got["msg"] = "权限已保存：%s（读 %s · 写 %s）" % (it["path"], "开" if it.get("read") else "关",
                                                  "开" if it.get("write") else "关")
@@ -279,9 +364,10 @@ def allow_set(pth, read=None, write=None, why="", by="user", add=True, pending=N
     return got
 
 
-def allow_add(pth, read=True, write=True, why="", by="user", pending=None, force=False):
+def allow_add(pth, read=True, write=True, why="", by="user", pending=None, force=False,
+              workdir=""):
     return allow_set(pth, read=read, write=write, why=why, by=by, add=True,
-                     pending=pending, force=force)
+                     pending=pending, force=force, workdir=workdir)
 
 
 def _is_abs_path(raw):
@@ -322,12 +408,12 @@ def path_problem(pth, must_exist=True):
     return None
 
 
-def find(pth):
-    """按路径找那一条（没有就回 `None`）—— 宿主等用户勾权限时**现读**它。"""
-    return _find(load().get("allow") or [], pth)
+def find(pth, workdir=""):
+    """按路径找**这个作用域**里的那一条（没有就回 `None`）—— 宿主等权限时现读。"""
+    return _find(load(workdir).get("allow") or [], pth)
 
 
-def allow_pending_add(pth, why="", need="write"):
+def allow_pending_add(pth, why="", need="write", workdir=""):
     """**AI 提出请求**：登记一条"待允许"（读/写都关着 + `pending=True`）给闸用（`find` 现读它）。
 
     ★ `V-323`（用户把界面设计重发了一遍）：**请求只在权限卡上半段那一条里问**（琥珀底 +
@@ -343,15 +429,15 @@ def allow_pending_add(pth, why="", need="write"):
     problem = path_problem(raw)
     if problem:
         return {"ok": False, "msg": problem, "bad_path": True}
-    it = find(raw)
+    it = find(raw, workdir)
     if it is not None:
         return {"ok": True, "msg": "清单里已经有这条了", "exists": True}
     return allow_add(raw, read=False, write=False,
-                     why=str(why or ""), by="ai", pending=True)
+                     why=str(why or ""), by="ai", pending=True, workdir=workdir)
 
 
-def allow_rm(pth):
-    cur = load()
+def allow_rm(pth, workdir=""):
+    cur = load(workdir)
     key = _norm(pth)
     rows = [it for it in (cur.get("allow") or []) if _norm(it.get("path")) != key]
     if len(rows) == len(cur.get("allow") or []):
@@ -359,7 +445,7 @@ def allow_rm(pth):
     if _norm(pth) == WILDCARD:
         cur["full_access"] = False       # 删掉任意路径那行，当然也不再是完全权限
     cur["allow"] = rows
-    got = save(cur)
+    got = save(cur, workdir)
     got["msg"] = "从清单里删掉了（它现在读不了也写不了这里）"
     return got
 
@@ -450,7 +536,7 @@ def _scope_allows(path, scope, kind, rows=None):
         return False
     if not _inside(path, scope):
         return False
-    rows = allow_list() if rows is None else rows
+    rows = allow_list(scope) if rows is None else rows
     own = _find(rows, scope)
     if own is None:
         return True                      # 没被用户覆盖过 ⇒ 默认开
@@ -467,7 +553,7 @@ def _current_row(workdir, rows=None):
     wd = str(workdir or "").strip()
     if not _is_pkg_scope(wd):
         return None
-    rows = allow_list() if rows is None else rows
+    rows = allow_list(wd) if rows is None else rows
     own = _find(rows, wd)
     if own is not None:
         row = dict(own, current=True)
@@ -581,7 +667,7 @@ def can_read(path, scope=None):
         return None
     if readable_builtin(path):
         return None
-    rows = allow_list()
+    rows = allow_list(scope)
     if _hit(rows, path, "read"):
         return None
     if _scope_allows(path, scope, "read", rows):
@@ -606,7 +692,7 @@ def can_write(path, scope=None):
         return bad
     if writable_builtin(path):
         return None
-    rows = allow_list()
+    rows = allow_list(scope)
     if _hit(rows, path, "write"):
         return None
     if _scope_allows(path, scope, "write", rows):
@@ -619,20 +705,20 @@ def can_write(path, scope=None):
             "把需要改的地方说清楚、用 `answer` 收尾。）" % path)
 
 
-def wildcard_write():
-    """`*` 那一行勾了**写**没有（= 用户说了"放手"）。"""
-    it = _find(allow_list(), WILDCARD)
+def wildcard_write(workdir=""):
+    """**这个作用域**的 `*` 那一行勾了写没有（= 用户说了"放手"）。"""
+    it = _find(allow_list(workdir), WILDCARD)
     return bool(it and it.get("write"))
 
 
-def writable_roots():
+def writable_roots(workdir=""):
     """现在**能写**的地方（给提示词 / 界面显示用）：`[路径, ...]`。"""
-    return [it["path"] for it in allow_list() if it.get("write")]
+    return [it["path"] for it in allow_list(workdir) if it.get("write")]
 
 
-def readable_extra():
-    """清单里勾了读的那些路径（`ai_edits.read_roots()` 用它）。"""
-    return [Path(it["path"]) for it in allow_list()
+def readable_extra(workdir=""):
+    """**这个作用域**清单里勾了读的那些路径（`ai_edits.read_roots()` 用它）。"""
+    return [Path(it["path"]) for it in allow_list(workdir)
             if it.get("read") and it.get("path") != WILDCARD and it.get("path")]
 
 
@@ -669,9 +755,9 @@ def danger_of(tool, args):
     return None
 
 
-def needs_confirm(danger):
+def needs_confirm(danger, workdir=""):
     """这个危险操作要不要**问用户**（`danger` 是 `danger_of()` 的理由）。"""
-    return bool(danger) and not wildcard_write()
+    return bool(danger) and not wildcard_write(workdir)
 
 
 # ------------------------------------------------------------------ 临时空间
@@ -822,7 +908,7 @@ def perm_note(workdir=""):
     ★ `V-343`：**当前这次干活的包**是"算出来的默认"（不在清单里）—— 必须单独说一句，
       不然它会以为"清单里没有 ⇒ 不能写"，白撞一轮。
     """
-    rows = allow_list()
+    rows = allow_list(workdir)
     wd = str(workdir or "").strip()
     cur = _current_row(workdir, rows)
     cur_write = bool(cur and cur.get("write"))
@@ -830,8 +916,8 @@ def perm_note(workdir=""):
           if it.get("write") and it.get("path") != WILDCARD and it.get("path") != wd]
     rd = [it["path"] for it in rows
           if it.get("read") and it.get("path") != WILDCARD and it.get("path") != wd]
-    star_w = wildcard_write()
-    full = full_access()
+    star_w = wildcard_write(workdir)
+    full = full_access(workdir)
     out = []
     if cur is not None and cur_write:
         out.append("★ **这次干活的那个包** = `%s`：**默认就能读、能写**，不用申请"
@@ -872,7 +958,7 @@ def summary(workdir=""):
     ★ `V-343`：**当前这个包**不再靠"写进清单"体现，而是**算出来的第一条**
       （`_current_row`）—— 所以它不会污染 `mode.json`，清单也不会随"点过哪些包"变长。
     """
-    rows = allow_list()
+    rows = allow_list(workdir)
     star = rows[-1] if rows and str(rows[-1].get("path")) == WILDCARD else None
     body = rows[:-1] if star else rows
     cur = _current_row(workdir, rows)
@@ -883,11 +969,13 @@ def summary(workdir=""):
         out.append(star)
     return {"ok": True,
             "allow": out,
-            "wildcard": wildcard_write(),
-            "full_access": full_access(),
+            "wildcard": wildcard_write(workdir),
+            "full_access": full_access(workdir),
             # 界面上那颗「可写 N 处」胶囊数的是**清单里的**（"任意路径"那行不算）
             "writable_n": len([1 for it in out
                                if it.get("write") and it.get("path") != WILDCARD]),
             "current": (cur or {}).get("path") or "",
+            "scope_id": _scope_pkg(workdir),
+            "store": str(path(workdir)),
             "tmp": tmp_size(workdir), "tmp_keep": TMP_KEEP,
             "protected": [{"name": n, "why": w} for n, w in PROTECTED_WHY]}

@@ -149,17 +149,49 @@ def allow_path():
     return user_data() / "ai" / "skills_allow.json"
 
 
-def full_access():
-    """读 AI 权限里的「完全权限」开关（`user_data/ai/mode.json`）。
+def _pkg_id(workdir=""):
+    """从干活目录推包 id（和 `ui/ai/ai_runs.pkg_of` 同一口径，尽量少依赖 UI）。"""
+    try:
+        p = Path(str(workdir or "")).resolve()
+    except (OSError, ValueError):
+        return ""
+    for root in (user_data() / "pkgs", HOME / "system" / "pkgs"):
+        try:
+            rel = p.relative_to(root.resolve())
+        except (OSError, ValueError):
+            continue
+        if not rel.parts:
+            continue
+        name = rel.parts[0]
+        pid = name
+        try:
+            man = root / name / "pkg.json"
+            if man.is_file():
+                got = json.loads(man.read_text(encoding="utf-8"))
+                cand = str((got or {}).get("id") or "").strip()
+                if cand:
+                    pid = cand
+        except Exception:                                            # noqa: BLE001
+            pass
+        return pid
+    return ""
 
-    ★ 为什么技能层要自己读：`system/ai/skill_lib.py` 是宿主和 `:skill` 插件共用的，
-      不能 import `system/ui/ai/ai_mode.py`；两边只共享这一份 JSON 数据。
-    ★ 完全权限 = 比"任意路径"更高一档：任意路径只开文件系统权限，完全权限还包含
-      "AI 新建 / 修改技能自动视为已批准"。旧文件没有 `full_access` 字段，回退看
-      `*` 行是否写着"完全权限"（兼容升级前那个合并开关）。
+
+def _mode_path(workdir=""):
+    pid = _pkg_id(workdir)
+    if pid:
+        return user_data() / "state" / pid / "ai" / "mode.json"
+    return user_data() / "ai" / "mode.json"
+
+
+def full_access(workdir=""):
+    """读**这个插件**的「完全权限」开关。
+
+    路径清单已改为按插件分文件（`state/<包id>/ai/mode.json`）；技能授权必须看同一份，
+    否则 A 插件开了完全权限、B 插件也会跟着自动批准技能。没给 workdir 才回全局桶。
     """
     try:
-        raw = json.loads((user_data() / "ai" / "mode.json").read_text(encoding="utf-8"))
+        raw = json.loads(_mode_path(workdir).read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             return False
         if "full_access" in raw:
@@ -514,7 +546,7 @@ def _files_of(pdir):
     return out
 
 
-def _load(d, layer, kind, stats_in=None):
+def _load(d, layer, kind, stats_in=None, workdir=""):
     """读一只技能 / 一个可调用的插件 → 那一项（文件不全就带着 problems 回来）。"""
     sid = d.name
     stats = stats_in if stats_in is not None else load_stats()
@@ -574,7 +606,7 @@ def _load(d, layer, kind, stats_in=None):
     fp = _fp(blobs, sid)
     if layer == "system":
         allowed, why_allow = True, "出厂技能（AI 写不到这个根，随版本走）"
-    elif full_access():
+    elif full_access(workdir):
         # ★ 完全权限：AI 现在有文件系统写权限，所以技能这一层也彻底放权。
         #   动态判断而不写进 skills_allow.json —— 关掉开关后，没被人真正点过允许的
         #   技能会立刻回到"待批准"，不会留下永久授权的副作用。
@@ -615,7 +647,7 @@ def _clamp_timeout(t):
     return max(5, min(TIMEOUT_MAX, t)) if t > 0 else TIMEOUT
 
 
-def list_skills(roots_in=None):
+def list_skills(roots_in=None, workdir=""):
     """`{id: 那一项}` —— **user 层同名盖 system 层**（跟包、跟技能一个规矩）。
 
     `roots_in` 只给探针用（造一组合成的根，别去动仓库里那两份出厂件）。
@@ -631,33 +663,33 @@ def list_skills(roots_in=None):
         for sub in sorted(d.iterdir()):
             if not sub.is_dir():
                 continue
-            out[sub.name] = _load(sub, layer, kind, stats)
+            out[sub.name] = _load(sub, layer, kind, stats, workdir=workdir)
     return out
 
 
-def usable(roots_in=None):
+def usable(roots_in=None, workdir=""):
     """能进工具表：没毛病 + 已授权。"""
     out = {}
-    for _sid, it in sorted(list_skills(roots_in).items()):
+    for _sid, it in sorted(list_skills(roots_in, workdir=workdir).items()):
         if it["problems"] or not it["allowed"]:
             continue
         out.setdefault(it["name"], it)
     return out
 
 
-def pending(roots_in=None):
-    return {k: v for k, v in list_skills(roots_in).items()
+def pending(roots_in=None, workdir=""):
+    return {k: v for k, v in list_skills(roots_in, workdir=workdir).items()
             if not v["problems"] and not v["allowed"]}
 
 
-def broken(roots_in=None):
-    return {k: v for k, v in list_skills(roots_in).items() if v["problems"]}
+def broken(roots_in=None, workdir=""):
+    return {k: v for k, v in list_skills(roots_in, workdir=workdir).items() if v["problems"]}
 
 
-def conflicts(roots_in=None):
+def conflicts(roots_in=None, workdir=""):
     """**重名**（`--x` 和插件 `x` 都能用）—— 只留了先到的那只，另一只要报出来，别静默。"""
     seen, dup = {}, {}
-    for sid, it in sorted(list_skills(roots_in).items()):
+    for sid, it in sorted(list_skills(roots_in, workdir=workdir).items()):
         if it["problems"] or not it["allowed"]:
             continue
         if it["name"] in seen:
@@ -695,13 +727,13 @@ def specs_from(got):
     return rows
 
 
-def specs(roots_in=None):
-    return specs_from(usable(roots_in))
+def specs(roots_in=None, workdir=""):
+    return specs_from(usable(roots_in, workdir=workdir))
 
 
-def note(got=None):
+def note(got=None, workdir=""):
     """系统提示里那段"你已经有哪些技能"（一只都没有就一个字都不加）。"""
-    got = usable() if got is None else got
+    got = usable(workdir=workdir) if got is None else got
     if not got:
         return ""
     rows = ["【我自己的技能】这些是**已经允许我用**的（工具表里就在，直接调）："]
@@ -711,7 +743,7 @@ def note(got=None):
                        if isinstance(p, dict) and p.get("name"))
         rows.append("  · %s(%s) —— %s" % (name, ps or "无参数",
                                           it.get("desc") or it.get("why") or ""))
-    if full_access():
+    if full_access(workdir):
         rows.append("  · 缺什么能力：先 `skill(\"self-tool\")` 看怎么写，然后照**插件契约**把一个包写到 "
                     "`%s/<名字>/`（id 小写字母开头、kind=task、带 icon.svg 和 `ai.why`）。"
                     "★ 当前是**完全权限**：新建 / 修改技能会自动视为已批准，**不要停下来等用户点「允许」**。"

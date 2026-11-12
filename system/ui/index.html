@@ -115,6 +115,12 @@
             （没有开着的窗口就藏起来 —— 由 `paintActions` 置 `hidden`）。 -->
       <div id="tabactions">
         <button class="iconbtn" id="btn-vis" disabled hidden></button>
+        <!-- 包自己界面的两颗（原来在「界面」那一页顶上那条里，现在挪到停止旁边：
+             这样那一页就不用再摆一条标题栏，整块地方都是界面本身）。 -->
+        <button class="iconbtn" id="btn-embed-reload" hidden
+                title="重新加载这个包的界面"></button>
+        <button class="iconbtn" id="btn-embed-window" hidden
+                title="把这一页弹成独立窗口（那边点最小化＝收回，点关闭＝结束）"></button>
         <button class="iconbtn" id="btn-run" disabled></button>
       </div>
     </div>

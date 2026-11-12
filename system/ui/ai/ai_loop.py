@@ -143,7 +143,7 @@ def _step_disp(name, args):
         return str(a)[:DISP_MAX]
 
 
-def compose_system(task, extra=(), self_tools=None):
+def compose_system(task, extra=(), self_tools=None, workdir=""):
     """拼出这次的系统提示：两份基底 + **技能清单**（正文不进！）+ 点名要装的技能正文。
 
     回 `(文本, 用了哪些, 缺了哪些)`。
@@ -177,7 +177,7 @@ def compose_system(task, extra=(), self_tools=None):
         parts.append(note)
         used.append("技能清单（%d 个：%s）" % (len(K.usable()), "、".join(K.names()) or "无"))
     # `V-280`：它自己的手（有才写）
-    mine = ST.note(self_tools)
+    mine = ST.note(self_tools, workdir=workdir)
     if mine:
         parts.append(mine)
         used.append("技能（%d 个：%s）" % (len(self_tools or {}), "、".join(sorted(self_tools or {}))))
@@ -358,7 +358,7 @@ class Loop:
         #: ★ `V-280`/`V-281`：**这一次跑**的工具表在开工这一刻定死 —— 内置那些 + 已经允许它用的技能。
         #:   它这一次新造的技能**下一次**才进表（也正好卡在"用户还没点允许"那一步）。
         try:
-            self.self_tools = ST.usable()
+            self.self_tools = ST.usable(workdir=str(workdir or ""))
         except Exception:                                              # noqa: BLE001
             self.self_tools = {}
         self.tool_table = T.tools_for(self.self_tools)
@@ -805,14 +805,15 @@ class Loop:
         ★ 空会话（`[]`）和没给一样 —— 别把"新开一条"变成"少发一条用户消息"。
         `from_id`：这条会话是从哪条记录接过来的（写进新记录，界面上能看出链条）。
         """
-        sys_text, used, missing = compose_system(task, extra_fragments, self.self_tools)
+        sys_text, used, missing = compose_system(task, extra_fragments, self.self_tools,
+                                                  workdir=str(self.tools.workdir))
         self.task = str(task or "")
         self.want_snapshot = bool(snapshot)
         old = [m for m in (history or []) if str(m.get("role")) != "system"]
         try:
             import ai_mode as M                                          # noqa: PLC0415
             _perm = M.perm_note(str(self.tools.workdir))
-            _allow = [it.get("path") for it in M.allow_list()
+            _allow = [it.get("path") for it in M.allow_list(str(self.tools.workdir))
                       if (it.get("read") or it.get("write")) and it.get("path") != "*"]
         except Exception:                                                # noqa: BLE001
             _perm, _allow = "", []

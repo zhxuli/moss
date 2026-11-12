@@ -708,10 +708,23 @@ def log_write(text):
 
 
 def _sub(argv):
-    """argv 里的子命令（`git push -u origin main` → `push`）。"""
-    for a in list(argv)[1:]:
-        if not a.startswith('-'):
-            return a
+    """argv 里的子命令（`git push -u origin main` → `push`）。
+
+    ★ 要跳过"带值的选项"：`git -c http.sslBackend=openssl fetch` 里的
+      `http.sslBackend=openssl` 不以 `-` 开头，以前会被当成子命令 ⇒
+      `fetch/push` 就认不出来（重试和进度条那道判断全失效）。`-C <目录>` 同理。
+    """
+    rest = list(argv)[1:]
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if a in ('-c', '--config', '-C', '--git-dir', '--work-tree', '--exec-path'):
+            i += 2                     # 连它的值一起跳过
+            continue
+        if a.startswith('-'):
+            i += 1
+            continue
+        return a
     return ''
 
 
@@ -853,7 +866,7 @@ def run_progress(argv, cwd=None, timeout=300, tick=5.0, label=''):
     return got
 
 
-def _exec(argv, cwd=None, timeout=60, label=''):
+def _exec_once(argv, cwd=None, timeout=60, label=''):
     """该看得见进度的走 run_progress（push / fetch / pull / clone），其余走 run。
 
     `MOSS_GIT_PROGRESS=0` 可以关掉（脚本里想只要最后那段输出时用）。
@@ -862,6 +875,272 @@ def _exec(argv, cwd=None, timeout=60, label=''):
             str(os.environ.get('MOSS_GIT_PROGRESS', '1')).strip() != '0':
         return run_progress(argv, cwd=cwd, timeout=timeout, label=label)
     return run(argv, cwd=cwd, timeout=timeout)
+
+
+# ------------------------------------------------------- 联网命令：抖一下自己扛（重试 + 换后端）
+#: 只有这几种命令会联网，也只有它们能安全地重跑（推 / 拉 / 问远端）。
+#: `add` / `commit` / `reset` 这类改状态的**绝不重试** —— 重跑一次可能把活干两遍。
+NET_SUBS = frozenset(('push', 'fetch', 'pull', 'clone', 'ls-remote'))
+
+#: 这台机器的网络脾气（2026-11-11 实测，同一个仓库连 github.com，见 sync.log）：
+#:   · 默认后端（Windows 自带 schannel）走代理时**第一次基本必挂**：
+#:     `schannel: failed to receive handshake, SSL/TLS connection failed`，643ms 就退；
+#:     紧接着重试就成（3.0 秒）。
+#:   · 换成 `-c http.sslBackend=openssl` **第一次就成**（2.8 秒）。
+#: 所以重试不是"玄学多试几次"，而是第二枪直接换成量出来更快的那套后端。
+NET_FLAKY = re.compile(
+    r'schannel|ssl/tls connection failed|unexpected eof|connection was reset'
+    r'|connection reset by peer|recv failure|gnutls_handshake|ssl_error_syscall'
+    r'|tls packet was malformed|rpc failed|remote end hung up|early eof'
+    r'|could not resolve host|failed to connect|operation timed out|timed out'
+    r'|http 50[234]|proxy', re.I)
+
+#: 这些是**硬错误**：重试纯属浪费，还会把"密码错了"糊成"网络问题"。
+NET_FINAL = re.compile(
+    r'authentication failed|permission denied|permission to .* denied'
+    r'|could not read username|repository not found|access denied|403 forbidden'
+    r'|does not exist|non-fast-forward|\[rejected\]|merge conflict'
+    r'|not a git repository|invalid username or password', re.I)
+
+#: 最多跑几次（1 次正常 + 2 次重试）。再多了就是"网络真断了"，别磨人。
+NET_ATTEMPTS = 3
+
+
+#: 上次是**哪套 TLS 后端**把 GitHub 连通的（`openssl` / 空=默认）。
+NET_PREF = os.path.join(DATA_DIR, 'net.json')
+
+
+def _net_score():
+    """两套 TLS 后端各自**首枪**挂了几次。
+
+    ★ 为什么是计分，不是"记上回谁通的"（2026-11-11 在这台机器上真跑出来的，不是猜）：
+      一开始只记"上回谁通的"，结果实测这台机器的网络**两套都会偶发失败** ——
+      13:51:55 默认后端挂、openssl 通；13:52:02 第一枪 openssl 反而挂（unexpected eof）、
+      默认后端通。偏好于是每跑一次就翻一次，"记住上次"等于没记住，
+      每次还是白陪第一枪失败一回（多花约 1 秒）。
+      改成计分：谁首枪挂得多就少用它；**首枪成功一次抵掉一次失败**，
+      所以换网络环境（不用代理了）也会自己慢慢纠回来，不会一辈子背着旧结论。
+    """
+    try:
+        with open(NET_PREF, encoding='utf-8') as f:
+            d = json.load(f) or {}
+    except Exception:                                                    # noqa: BLE001
+        d = {}
+    lose = d.get('lose') if isinstance(d.get('lose'), dict) else {}
+    return {k: max(0, int(lose.get(k) or 0)) for k in ('default', 'openssl')}
+
+
+def net_pref():
+    """第一枪该用哪套 TLS 后端：`'openssl'` 或 `''`（默认）。
+
+    只有 openssl **明显**更少挂（少 2 次以上）才改用它 —— 差一两次不算数，
+    免得两边都偶尔抖的时候第一枪来回跳。
+    ★ 它只是**单条命令的临时参数**（`git -c http.sslBackend=openssl …`），
+      绝不写进 git 配置：用户的环境不该被我们偷偷改。不合适就下一枪换回来。
+    """
+    s = _net_score()
+    return 'openssl' if s['openssl'] + 2 <= s['default'] else ''
+
+
+def net_pref_learn(backend, ok):
+    """记一笔首枪结果：挂了 +1，通了 -1（最低 0）。分数真变了才写盘。"""
+    key = 'openssl' if backend == 'openssl' else 'default'
+    s = _net_score()
+    before = dict(s)
+    s[key] = max(0, s[key] + (-1 if ok else 1))
+    if s == before:
+        return
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = NET_PREF + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump({'lose': s, 'at': now_text()}, f, ensure_ascii=False)
+        os.replace(tmp, NET_PREF)
+    except Exception:                                                    # noqa: BLE001
+        pass
+
+
+def _mask_proxy(v):
+    """代理地址里可能带账号密码，别原样打到界面上。"""
+    return re.sub(r'//[^/@]+@', '//***@', str(v or ''))
+
+
+def git_proxy(url='https://github.com'):
+    """**问 git 自己**：对 github 生效的代理是什么（只读配置，不启动任何东西）。
+
+    ★ 为什么是"问 git"而不是写死：每台机器不一样 —— 有人配在 `~/.gitconfig` 的
+      `http.proxy` / `http.<url>.proxy`，有人靠环境变量 `HTTPS_PROXY`，有人根本不用代理。
+      `git config --get-urlmatch` 正好是按 git **真正生效**的优先级去查（含 URL 专属规则），
+      所以这里读出来的就是 git 等一下要用的那个，不会读错也不会覆盖用户的选择。
+      **代码里没有任何默认地址/端口** —— 没配就是空串，一切以这台机器为准。
+    ★ 为什么值得摆到界面上（开发时在这台机器上真踩过）：代理软件的端口会变，一变所有
+      联网动作全挂，而报错只有一句 `schannel: failed to receive handshake`，
+      用户根本不知道要去看哪儿。
+    """
+    try:
+        got = run([GIT, 'config', '--get-urlmatch', 'http.proxy', url], timeout=10)
+    except Exception:                                                    # noqa: BLE001
+        return ''
+    v = (got['out'].splitlines() or [''])[0].strip() if got['ok'] else ''
+    return _mask_proxy(v)
+
+
+def system_proxy():
+    """操作系统里配的代理（仅 Windows 的 WinINET 设置 / 环境变量）。没有就回空串。
+
+    ★ 注意这一条**只是参考，git 不一定用它**：git 不读 WinINET 设置，只认自己的配置和
+      `HTTPS_PROXY` 一类环境变量。所以只有当 git 那边空着、系统这边有时，才值得提示
+      "系统有代理但 git 用不上" —— 这正是新手最容易被卡住的地方。
+    ★ 任何一台机器都可能是空的（家里直连、公司代理、手机热点…），所以这里是探测，不是默认值。
+    """
+    for k in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'):
+        v = str(os.environ.get(k) or '').strip()
+        if v:
+            return _mask_proxy(v), k
+    if os.name != 'nt':
+        return '', ''
+    try:
+        import winreg                                                 # noqa: PLC0415
+        path = r'Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+            try:
+                on, _ = winreg.QueryValueEx(key, 'ProxyEnable')
+            except OSError:
+                on = 0
+            if not on:
+                return '', ''
+            try:
+                srv, _ = winreg.QueryValueEx(key, 'ProxyServer')
+            except OSError:
+                srv = ''
+    except Exception:                                                    # noqa: BLE001
+        return '', ''
+    srv = str(srv or '').strip()
+    if not srv:
+        return '', ''
+    # 可能是 `127.0.0.1:7890`，也可能是 `http=…;https=…` 这种按协议分开的写法
+    if '=' in srv:
+        pick = ''
+        for part in srv.split(';'):
+            k, _, v = part.partition('=')
+            if k.strip().lower() in ('https', 'http'):
+                pick = v.strip()
+                if k.strip().lower() == 'https':
+                    break
+        srv = pick or ''
+    return _mask_proxy(srv), 'Windows 系统代理'
+
+
+def proxy_alive(proxy, timeout=0.6):
+    """代理端口通不通（0.6 秒就够）。回 True/False/None（认不出地址就不下结论）。"""
+    m2 = re.match(r'^(?:[a-zA-Z0-9+]+://)?(?:[^@/]*@)?([^:/]+):(\d+)', str(proxy or ''))
+    if not m2:
+        return None
+    host, port = m2.group(1), int(m2.group(2))
+    import socket                                                     # noqa: PLC0415
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _first_line(text, n=90):
+    lines = [x.strip() for x in str(text or '').splitlines() if x.strip()]
+    return lines[0][:n] if lines else ''
+
+
+def net_hint(out):
+    """网络类失败 → 一句"是什么 + 该怎么办"；认不出就回空串（不瞎解释）。"""
+    low = str(out or '').lower()
+    if not low:
+        return ''
+    if 'schannel' in low or 'ssl/tls connection failed' in low:
+        return ('Windows 自带的 TLS（schannel）和代理握手没过 —— 默认后端和 openssl 后端都试过了，'
+                '这次都不行：看一眼代理软件开着没有（git 配置里那个 proxy 端口对不对）。'
+                '凭据在 Windows 凭据管理器里，跟这个没关系，不用重新登录。')
+    if 'could not resolve host' in low or 'failed to connect' in low:
+        return '连不上 github.com：网络或代理断了（端口变了也会这样）。网络好了再点一次就行。'
+    if ('unexpected eof' in low or 'remote end hung up' in low
+            or 'connection was reset' in low or 'recv failure' in low or 'early eof' in low):
+        return ('连接被掐断（代理偶发的 EOF / reset），已经自动重试过；还不行就再点一次 —— '
+                '推成功与否以"两端是不是同一个提交"为准，不会重复上传。')
+    if ('authentication failed' in low or 'permission denied' in low
+            or 'could not read username' in low):
+        return '这是账号 / 凭据的问题，不是网络 —— 去「检查环境」看一眼 GitHub 登录。'
+    return ''
+
+
+def _exec(argv, cwd=None, timeout=60, label=''):
+    """跑一条命令。联网的那几种（NET_SUBS）抖一下自己重试，别的原样跑一次。
+
+    ★ 为什么要有（用户报的坑）：这台机器用默认 schannel 走代理连 GitHub，
+      **第一次握手几乎必失败**，得手工再点一次才行 —— 对用户就是"上传失败、
+      不知道要不要重试"。现在第一次挂了就自动再来，第二枪换 openssl 后端。
+    ★ 只对**只读/幂等**的联网命令这么干；`add`/`commit` 那种一次失败就原样回报，
+      绝不重跑（重跑可能把活干两遍）。
+    """
+    base = list(argv)
+    if _sub(base) not in NET_SUBS:
+        return _exec_once(base, cwd=cwd, timeout=timeout, label=label)
+    is_git = os.path.basename(str(base[0])).lower() in ('git', 'git.exe')
+    can_switch = is_git and os.name == 'nt'      # 只有 Windows 上有 schannel/openssl 这两种后端
+    # 打几枪、每枪用哪套后端：
+    #   正常情况下先照原样（默认后端）来一枪，抖了就换 openssl；
+    #   但这台机器上回是靠 openssl 通的话，第一枪就直接用它（少陪它失败一次）。
+    order = (['openssl', 'default', 'openssl'] if (can_switch and net_pref() == 'openssl')
+             else ['default', 'openssl', 'default'])
+    got, tries = None, 0
+    first_backend = order[0] if can_switch else 'default'
+    first_ok, first_out = None, ''
+    for i in range(NET_ATTEMPTS):
+        backend = order[i] if can_switch else 'default'
+        cur, why_try = list(base), ''
+        if backend == 'openssl':
+            # 只对**这一次进程**生效，不写任何配置（用户的环境不该被我们偷偷改）
+            cur = [cur[0], '-c', 'http.sslBackend=openssl'] + cur[1:]
+        if i:
+            why_try = '，换成 openssl 后端' if backend == 'openssl' else '，换回默认后端'
+            time.sleep(0.6 * i)
+            _live('⚠ 网络抖了一下（%s），自动重试第 %d 次%s…'
+                  % (_first_line((got or {}).get('out'), 60), i + 1, why_try))
+        got = _exec_once(cur, cwd=cwd, timeout=timeout,
+                         label=label if not i else '%s（重试 %d）' % (label, i + 1))
+        tries = i + 1
+        got['retried'] = i
+        got['cmd'] = display(cur)        # 显示**真跑的那条**（带 -c 也如实写出来）
+        got['backend'] = backend         # 这次用的是哪套 TLS 后端（环境体检看得见）
+        if i == 0:                       # 只拿**首枪**结果打分（重试通不通另外说）
+            first_ok, first_out = bool(got.get('ok')), got.get('out') or ''
+        if got.get('ok'):
+            if first_ok is not None:
+                net_pref_learn(first_backend, first_ok)
+            if i:
+                got['out'] = ((got.get('out') or '')
+                              + '\n（网络抖了一下，自动重试 %d 次，第 %d 次才通%s）'
+                              % (i, i + 1, why_try)).strip('\n')
+                log_cmd(cur, cwd, got, timeout,
+                        note='自动重试第 %d 次才成功%s' % (i + 1, why_try))
+            return got
+        if got.get('code') in (124, 130):
+            break                        # 超时 / 用户点了「停一下」：再试只是让人多等
+        blob = got.get('out') or ''
+        if not NET_FLAKY.search(blob) or NET_FINAL.search(blob):
+            break                        # 硬错误（密码错、被拒、不是仓库）：重试没意义
+    if first_ok is False and NET_FLAKY.search(first_out or '') \
+            and not NET_FINAL.search(first_out or ''):
+        net_pref_learn(first_backend, False)   # 首枪是"网络抖"挂的 —— 记一笔
+    if got is not None:
+        hint = net_hint(got.get('out') or '')
+        if hint:
+            # ★ 先给人话，再把人话后面挂上"试了几次"和**原始那行报错**。
+            #   反过来（英文打头）用户第一眼就是 `fatal: unable to access ...`，容易以为是自己弄坏了；
+            #   原始报错留着是为了能搜、能贴给别人。
+            got['why'] = '%s%s' % (hint, ('（自动试了 %d 次）' % tries) if tries > 1 else '')
+            first = _first_line(got.get('out'))
+            if first:
+                got['why'] += '　原始报错：' + first
+    return got
 
 
 def git(path, *args, **kw):
@@ -2208,12 +2487,17 @@ class Core:
         info = repo_info(path)
         if not info or not info['remote']:
             return {'ok': False, 'why': '这个目录没有可探测的远端地址', 'cmd': 'git ls-remote --heads origin'}
-        got = run([GIT, '-C', info['root'], 'ls-remote', '--heads', 'origin'], timeout=25)
+        # ★ 走 `_exec` 而不是裸 `run`：这条本身是联网命令，也要享受"抖一下自动重试 +
+        #   换 openssl 后端"（`NET_SUBS` 里有 ls-remote）。不然「检查环境」会因为同一个
+        #   schannel 握手问题报"连不上"，而真去推的时候其实能通。
+        got = _exec([GIT, '-C', info['root'], 'ls-remote', '--heads', 'origin'],
+                    timeout=25, label='问一下远端有哪些分支')
         heads = len([x for x in got['out'].splitlines() if x.strip()])
         return {'ok': got['ok'], 'ms': got['ms'], 'cmd': 'git ls-remote --heads origin',
                 'host': info['host'], 'heads': heads, 'code': got['code'],
+                'retried': got.get('retried') or 0, 'backend': got.get('backend') or '',
                 'out': '\n'.join(got['out'].splitlines()[:10]),
-                'why': '' if got['ok'] else got['out'][:300]}
+                'why': '' if got['ok'] else (got.get('why') or got['out'][:300])}
 
     def _gh(self):
         global GH
@@ -2242,7 +2526,15 @@ class Core:
             m = re.search(r'account\s+(\S+)', txt)
             res['user'] = m.group(1).strip() if m else ''
             if not res['loggedIn']:
-                res['why'] = (txt or 'gh 说没登录（gh auth login 登一下）').strip()[:300]
+                # ★ `gh auth status` 要联网（问 token 有没有过期）。网络抖的时候它会失败，
+                #   以前这里就当成"没登录"劝人重新登 —— 可其实推送走的是 git 自己的凭据
+                #   （凭据管理器里那份），跟 gh 一点关系都没有。所以网络类错误要说清是网络。
+                _why = (txt or 'gh 说没登录（gh auth login 登一下）').strip()[:300]
+                _hint = net_hint(txt)
+                if _hint:
+                    _why = '%s　→ %s（这一条拿不准，别急着重新登录 —— 推送用的是 git 自己的凭据）' \
+                           % (_why, _hint)
+                res['why'] = _why
         else:
             res['why'] = '这台机器上没有 gh（GitHub CLI）—— 有它才好管 PR / issue；装好再回来点一下'
         self._gh_cache = (time.time(), res)
@@ -2443,12 +2735,43 @@ class Core:
                           'url': URL_SIGNUP, 'fix': '', 'help': ''})
 
         online = net_touch()
+        # ★ 代理这一块必须看得见：代理软件的端口一变就全挂，而报错只会说"握手失败"，
+        #   用户猜不到是代理（开发时在这台机器上真踩过，具体地址是它自己配的）。
+        # ★ 代理一律**现场探测**，代码里没有任何默认地址/端口（每台机器都不一样：
+        #   家里直连、公司代理、Clash、v2ray… 写死一个值等于把别人的机器搞坏）。
+        #   顺序：先问 git 自己（这是它真正会用的），再看系统/环境变量，最后什么都不配。
+        _px = git_proxy()
+        _px_alive = proxy_alive(_px) if _px else None
+        _sys_alive = None
+        _px_txt = ''
+        if _px:
+            _px_txt = '｜走代理 %s（git 自己配的）' % _px
+            if _px_alive is False:
+                # 纯文本（界面是 textContent 显示，别用 Markdown 星号）
+                _px_txt += '，但这个端口连不上 —— 多半是代理软件没开（或者换了端口）'
+        else:
+            _sys_px, _sys_src = system_proxy()
+            if _sys_px:
+                # git **不读** Windows 的 Internet 选项，这是最容易卡住人的地方
+                _px_txt = ('｜%s设了 %s，但 git 不认它（git 只认自己的配置）'
+                           '—— 要让 git 走代理得执行一次 git config --global http.proxy %s'
+                           % (_sys_src, _sys_px, _sys_px))
+                _sys_alive = proxy_alive(_sys_px)
+                if _sys_alive is False:
+                    _px_txt += '；而且这个端口现在也连不上'
+        # ★ 这台机器上回是靠 openssl 后端连通的就都说出来：不是玄学，是量出来的
+        #   （Windows 自带 schannel 走代理第一枪几乎必挂）。联网命令会自动用它。
+        _pref = net_pref()
         items.append({
-            'key': 'net', 'state': 'ok' if online else 'warn', 'label': '能不能连上 GitHub',
+            'key': 'net',
+            'state': 'warn' if (not online or _px_alive is False or _sys_alive is False) else 'ok',
+            'label': '能不能连上 GitHub',
             # ★ 措辞改了（`V-422`）：这只是一次**3 秒的探测**，探不到不等于推不上去
             #   （有的网络只卡 DNS / 只卡 HTTPS 的握手，git 走代理照样通）。
-            'detail': '能连上' if online else
-                      '这次没探到 github.com（443）—— 只是 3 秒的探测，不代表推不上去',
+            'detail': ('能连上' if online else
+                       '这次没探到 github.com（443）—— 只是 3 秒的探测，不代表推不上去')
+                      + _px_txt
+                      + ('｜回回都用 openssl 后端连（自动，不用你管）' if _pref else ''),
             'fix': '', 'url': '',
             'help': '' if online else '本地存版本一点不受影响。「备份到云端」是**真去推**，'
                                       '推不推得动以那一步的核对结果为准（不是看这里的探测）；'
@@ -2883,8 +3206,15 @@ class Core:
         got.update({'action': name, 'label': spec['label'], 'path': path,
                     'danger': bool(spec.get('danger'))})
         if not got['ok']:
-            got['why'] = (got['out'] or '').strip().splitlines()[:1]
-            got['why'] = got['why'][0] if got['why'] else '退出码 %s' % got['code']
+            # ★ 别把 `_exec` 已经写好的人话冲掉（它带"试了几次 + 该怎么办"）。
+            #   以前这里无条件用原始输出的第一行，界面就只剩
+            #   `fatal: unable to access ...` —— 等于没解释。
+            if not got.get('why'):
+                got['why'] = (got['out'] or '').strip().splitlines()[:1]
+                got['why'] = got['why'][0] if got['why'] else '退出码 %s' % got['code']
+                hint = net_hint(got.get('out') or '')
+                if hint:
+                    got['why'] = '%s　原始报错：%s' % (hint, got['why'])
         print('[github] %s → %s（%d ms，退出码 %s）'
               % (spec['label'], got['cmd'], got['ms'], got['code']), flush=True)
         return got
@@ -2918,6 +3248,12 @@ class Core:
     def _step(self, cwd, argv, label, timeout=180):
         got = _exec(argv, cwd=cwd, timeout=timeout, label=label)
         got['label'] = label
+        # ★ 抖过别装作没事：界面上那一步旁边留一句"自动重试了 N 次才通"，
+        #   用户才知道刚才网络确实卡了一下（也才知道不用再点一次）。
+        if got.get('retried'):
+            got['label'] = '%s（网络抖了一下，自动重试 %d 次才通，用的是%s后端）' % (
+                label, got['retried'],
+                'openssl' if got.get('backend') == 'openssl' else '默认')
         # ★ 跑过任何一条 git 命令，仓库状态就可能变了 —— 立刻把 repo_info 的缓存清掉。
         #   不清的后果是"我明明保存了，界面还说没改动"（比慢更难受）。
         repo_cache_clear(cwd)
@@ -2960,6 +3296,16 @@ class Core:
             first = bad[0]
             lines = (first.get('out') or '').splitlines() or ['没跑成']
             why = first.get('why') or lines[0]
+            # ★ 网络类失败要翻成"人话 + 下一步"（`_exec` 已经给过的就别重复加）。
+            #   用户看到 `schannel: failed to receive handshake` 只会以为是自己错了。
+            if not first.get('why'):
+                hint = net_hint(first.get('out') or '')
+                if hint:
+                    why = '%s　→ %s' % (why, hint)
+            # 推不上去 ≠ 白干：提交已经在本地了，这话必须说出来，否则人会以为要重做一遍。
+            if 'push' in (first.get('cmd') or '') and why:
+                why = ('%s　（这次保存的版本已经在本地了，网络好了再点一次「备份到云端」就行，'
+                       '不会重复上传）' % why)
         # 整体成了、只是"问远端"那一步没问着 ⇒ 别让界面显示一个吓人的 ✗
         if not bad:
             for s in steps:

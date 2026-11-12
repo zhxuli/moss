@@ -300,6 +300,11 @@ main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;he
 .tab:hover{background:var(--fill);color:var(--fg)}
 .tab:active{transform:scale(.98)}
 .tab.active{background:var(--fill);color:var(--fg);font-weight:500}
+/* 「界面」那颗：图标是包自己的（svg 或图片），名字是包自己界面的名字（可能很长，超了省略） */
+.tab > .tab-ico{display:flex;align-items:center;justify-content:center;width:16px;height:16px;flex:none}
+.tab > .tab-ico svg{width:16px;height:16px;display:block}
+.tab > .tab-ico img{width:16px;height:16px;display:block;object-fit:contain}
+.tab > .tab-name{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #tabactions{margin-left:auto;display:flex;gap:6px;align-items:center;flex:none}
 #tabactions .iconbtn{padding:4px 11px}
 .pane{flex:1;min-height:0;display:none}
@@ -338,13 +343,9 @@ body.dragging .item{border-style:dashed}          /* 拖动时可选的那些包
 /* `V-91`：文件管理那一页现在是"**左文件 + 右版本快照**"横排（快照边栏见下） */
 #pane-file.on{display:flex;flex-direction:row}
 .fm-main{display:flex;flex-direction:column;flex:1;min-width:0}
-/* 第四个选项卡（包的界面，`V-48`）：顶上一小条工具行 + 下面整块 iframe。
-   ★ iframe **不随切换卸载** —— 切走只是这一页 `.on` 掉了，里面照旧在跑。 */
+/* 第四个选项卡（包的界面，`V-48`）：整页就是那一帧，顶上的标题栏已去掉
+   （名字和两颗按钮挪到顶栏了）。iframe **不随切换卸载** —— 切走只是藏起来。 */
 #pane-embed.on{display:flex;flex-direction:column}
-#embed-bar{display:flex;gap:8px;align-items:center;padding:6px 12px;flex:none;
-  border-bottom:1px solid var(--hair);background:var(--panel);font-size:12px;color:var(--dim)}
-#embed-bar .iconbtn{padding:4px 8px}
-#embed-info{color:var(--dim)}
 #embed-wrap{flex:1;min-height:0;background:var(--panel);position:relative}
 #embed-wrap iframe{width:100%;height:100%;border:0;display:block;background:#fff}
 /* 这一帧被弹成窗口了（`V-192`）：主窗口这边留个占位，点一下收回 */
@@ -366,14 +367,12 @@ body.float header,
 body.float aside,
 body.float #statusbar,
 body.float #tabs,
-body.float #embed-bar,          /* ★ 那一条也不显示（你说得对）：窗口标题上已经有了 */
 body.float #dropzone,
 body.float #pane-detail,
 body.float #pane-console,
 body.float #pane-file{display:none !important}
 body.float #right{margin:0 !important}
 body.float #pane-embed{padding:0}
-body.float #embed-bar{padding:7px 14px}
 .outbar{display:flex;gap:6px;align-items:center;padding:6px 12px;flex:none;
   border-bottom:1px solid var(--hair);background:var(--panel);color:var(--dim);font-size:12px}
 .outbar .iconbtn{padding:4px 6px;min-width:28px}

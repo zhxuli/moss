@@ -86,7 +86,7 @@ def check_writable(path, scope=None):
     return M.can_write(path, scope=scope)
 
 
-def read_roots():
+def read_roots(scope=None):
     """允许**读**的范围（`V-316` 起：**清单说了算**，这里只列"基础设施"那几处 + 清单里勾了读的）。
 
     ★ 为什么要管读（`V-232` 实测）：第一次真跑，模型为了搞清"包到底写到哪了"，
@@ -99,7 +99,7 @@ def read_roots():
             tool_root(),                                     # user_data/state/skill/**（它自己造的手）
             M.tmp_root(),                                    # user_data/ai/tmp/**（全局桶）
             HOME / "system" / "spec",                        # 契约（唯一真相）
-            HOME / "system" / "pkgs"] + M.readable_extra()   # 样板包（照 skill 抄）+ 清单里勾了读的
+            HOME / "system" / "pkgs"] + M.readable_extra(scope)  # 样板包 + 这个插件勾了读的
 
 
 def check_readable(path, scope=None):
