@@ -1,8 +1,3 @@
-/* PATH 管理界面的图标（lucide，ISC 许可）—— 和 moss 主界面**同一套形状**：
-   24×24 网格 / 1.5 描边 / currentColor（跟随主题色，深浅模式都不用重画）。
-   ★ 只放这个界面用得到的这几个；路径一字不改地从 lucide-static 抄来
-     （moss 主界面那份在 `system/ui/vendor/lucide.js`，同一个版本 1.48.0）。
-   ★ 为什么要自带一份：包是自包含的 —— 界面只从自己的目录取资源，不去读 moss 的内部文件。 */
 const ICONS = {
   "folder-plus": "<path d='M12 10v6' /> <path d='M9 13h6' /> <path d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z' />",
   "folder-open": "<path d='m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2' />",
@@ -38,7 +33,6 @@ const ICONS = {
   "lock": "<rect width='18' height='11' x='3' y='11' rx='2' ry='2' /> <path d='M7 11V7a5 5 0 0 1 10 0v4' />",
 };
 
-/* 用法：icon("folder-plus") → 一段 <svg> 字符串（和 moss 主界面的 `ico()` 同一个路子） */
 function icon(name, cls) {
   const path = ICONS[name] || ICONS["info"];
   return '<svg class="' + (cls || "i") + '" viewBox="0 0 24 24" fill="none" ' +

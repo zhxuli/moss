@@ -1,15 +1,3 @@
-/* moss 界面 · js/compare.js —— 文件对比窗口（`V-109`）
-   ============================================================================
-   一句话：**左边 = 现在这个文件，右边 = 它最新那份快照**，两栏对齐、按行标出来。
-   ★ 只借人家的**库**：`vendor/difflib.js`（jsdifflib 的 SequenceMatcher，BSD，离线零依赖）
-     负责算 opcodes；**界面是我们自己的** —— 不抄它那套表格，配色/字体/间距全用这套令牌：
-     新增行=绿、删掉行=红、改动行=琥珀（和文件列表里那份差异色是同一套语义）。
-   ★ 为什么不是"真开一个独立窗口"：WebView2 下 `window.open` 会被拦、pywebview 在启动后
-     再开窗口各平台行为不一；这里用一个**整屏浮层**当窗口（自己的标题栏 + 关掉按钮），
-     长得就是"弹出来一个窗口"，而且不会踩平台的坑。
-   ============================================================================ */
-
-/* 把两段文本按行比出来：返回 {html, same, add, del, chg} */
 function cmpBuild(leftText, rightText){
   const A = String(leftText == null ? "" : leftText).split(/\r?\n/);
   const B = String(rightText == null ? "" : rightText).split(/\r?\n/);
@@ -52,7 +40,6 @@ function cmpBuild(leftText, rightText){
 
 function cmpClose(){ const w = document.querySelector("#cmpwin"); if (w) w.remove(); }
 
-/* 弹出来（整屏浮层当窗口） */
 function cmpShow(left, right, hint){
   cmpClose();
   const r = cmpBuild(left.text, right.text);
@@ -86,7 +73,6 @@ function cmpShow(left, right, hint){
   return r;
 }
 
-/* 文件列表里那颗对比图标点了走这里（左边=现在，右边=快照那一份） */
 async function bkCompareOpen(rel){
   const d = (BKD.diff && BKD.diff.byRel) ? BKD.diff.byRel[rel] : null;
   if (!d || !d.snap){ toast("这个文件没有快照版本，没得比", true); return; }
@@ -104,16 +90,8 @@ async function bkCompareOpen(rel){
   }catch(e){ reportError("打开对比失败", String((e && e.message) || e)); }
 }
 
-
-/* `V-122`：创建快照那个模态框的关闭（和对比窗口一个套路：整屏浮层 + 自己的标题栏） */
 function snapClose(){ const w = document.querySelector("#snapwin"); if (w) w.remove(); }
 
-
-/* ================================================================ 预设过滤规则（`V-121`/`V-126`）
-   ★ 为什么放前端算（`V-126`）：文件管理**已经把"当前目录这一层"加载在 `FM.st[ctx].entries` 里了**，
-     预设匹配就是拿这一层的名字去比 —— 前端算即时、零往返、改起来也不用重启宿主；
-     宿主那份 `backup_presets()` 只当兜底（当前这一层还没加载时才去问它）。
-   ★ 这张表**只有一份**（前端），宿主的 `PRESET_FILTERS` 只在兜底那条路用，两边内容要一致。 */
 const SNAP_PRESETS = [
   {id: "logs",    label: "日志",           pat: ["*.log"],                                        why: "跑起来才产生的日志，通常不用留版本"},
   {id: "media",   label: "视频 / 音频",     pat: ["*.mp4", "*.mov", "*.avi", "*.mkv", "*.mp3", "*.wav"], why: "又大又不常改，快照会很占地方"},
@@ -127,7 +105,6 @@ const SNAP_PRESETS = [
   {id: "dot",     label: "点开头的隐藏项",   pat: [".*"],                                          why: "含 .git / .env / .idea —— 勾了连 .env 一起排"},
 ];
 
-/* 一个 glob（含 * ? 和末尾 / 表示只排目录）能不能命中这个名字 */
 function snapGlobRe(pat){
   return new RegExp("^" + String(pat).replace(/[.+^${}()|[\]\\]/g, "\\$&")
                                      .replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]") + "$", "i");
@@ -140,14 +117,13 @@ function snapHit(name, isDir, pats){
     try{ return snapGlobRe(q).test(name); }catch(e){ return false; }
   });
 }
-/* 拿"当前这一层"已经加载好的清单算一遍（前端算；这一层还没加载就返回 null，让调用方去问宿主） */
+
 function snapPresetLocal(){
   const es = (typeof bkNowEntries === "function") ? bkNowEntries() : [];
   if (!es || !es.length) return null;
   return SNAP_PRESETS.map(p => {
     const hit = es.filter(e => snapHit(e.name, !!e.dir, p.pat));
-    // ★ `V-128`：**每个模式各命中几次**也要带上 —— 一键填入/点选只写"命中的那些模式"，
-    //   不是把这一类的所有写法（`venv/.venv/env/site-packages`）全塞进去。
+
     const matched = (p.pat || []).filter(x => es.some(e => snapHit(e.name, !!e.dir, [x])));
     return {id: p.id, label: p.label, pat: p.pat, why: p.why, matched: matched,
             hit: hit.length, sample: hit.slice(0, 3).map(e => e.rel)};

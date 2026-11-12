@@ -1,14 +1,4 @@
-/* ============================================================================
-   AI 工作台那一页 —— **照用户给的那份 UI 稿子逐条抄的**（`V-253`）。
-   ★ 稿子里的 `:root` 变量和每一条规则都原样搬过来，只加了 `.aiwrap` 这一层前缀：
-     稿子用的是全局名（`.btn` / `.log-container` / `::-webkit-scrollbar`），
-     不圈起来会把整个界面带歪。
-   ★ 字体照稿子写（Inter / JetBrains Mono；没装就落到 system-ui 那套）。
-     **不引 Google Fonts**：这程序可能没网，而且页面里那道"资源加载失败"的闸会报红。
-   ★ 稿子没有的三块（警告条 / 结论卡 / 会话记录列表）放在最后，颜色也取自这份调色板。
-   ========================================================================== */
 .aiwrap{
-  /* 稿子里的 :root 调色板（原样） */
   --aib-bg-body:#F1F5F9;
   --aib-bg-panel:#FFFFFF;
   --aib-border-color:#E2E8F0;
@@ -21,14 +11,12 @@
   --aib-danger:#EF4444;
   --aib-success:#10B981;
   --aib-warning:#F59E0B;
-  /* ★ `V-323`：稿子里那三样（琥珀浅底 / 琥珀描边 / 规则行浅灰底）——
-     以前是散在各处的字面值，现在收进令牌，跟 `--aib-primary` 一个待遇。 */
+
   --aib-warning-light:#FFFBEB;
   --aib-warning-border:#FCD34D;
   --aib-row-bg:#F9FAFB;
   --aib-code-bg:#F8FAFC;
-  /* ★ `V-323`：`--aib-radius` 以前**压根没定义**（好几处 `var(--aib-radius)` 算不出值、
-     圆角一直是 0）—— 稿子的 `--radius-md` 是 8px，补上。 */
+
   --aib-radius:8px;
   --aib-radius-md:8px;
   --aib-radius-lg:12px;
@@ -36,20 +24,17 @@
   --aib-shadow-focus:0 0 0 3px rgba(59,130,246,.15);
   --aib-shadow-float:0 10px 30px -10px rgba(0,0,0,.1);
   --aib-transition-smooth:all .3s cubic-bezier(.4,0,.2,1);
-  /* 这一页自己的布局：稿子是"灰底上摆一张 900px 的卡片"，但**那是稿子的演示壳**
-     （`V-256` 你定的）：真界面上要**尽量把窗口用满**，别把自己卡在 900×90% 那一小块里。
-     所以：填满整个 pane，圆角/描边/投影都去掉（pane 自己就有边框），里面的三段照旧。 */
+
   flex:1;min-height:0;display:flex;background:var(--aib-bg-body);overflow:hidden;
   font-family:'Inter',system-ui,-apple-system,sans-serif;color:var(--aib-text-main);
 }
-/* 自定义滚动条（类似 macOS）—— 稿子是 `::-webkit-scrollbar`，这里圈在 .aiwrap 里 */
+
 .aiwrap ::-webkit-scrollbar{width:6px;height:6px}
 .aiwrap ::-webkit-scrollbar-track{background:transparent}
 .aiwrap ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:10px}
 .aiwrap ::-webkit-scrollbar-thumb:hover{background:#94A3B8}
 
 .aiwrap .ai-workspace{
-  /* 填满（`V-256`）：不再 max-width:900px / height:90% —— 那在真界面上纯属浪费地方 */
   width:100%;height:100%;max-width:none;
   background:var(--aib-bg-panel);
   display:flex;flex-direction:column;overflow:hidden;flex: 1; min-height: 0; min-width: 0;
@@ -57,7 +42,6 @@
   animation:workspaceEntrance .6s cubic-bezier(.16,1,.3,1) backwards;
 }
 
-/* 顶部栏：`V-263` 起只有两个下拉 —— **会话吃剩下的宽度**（`grow`），别的自适应、不换行 */
 .aiwrap .top-toolbar{
   display:flex;justify-content:space-between;align-items:center;gap:8px;
   padding:12px 16px;background:rgba(250,250,250,.8);backdrop-filter:blur(10px);
@@ -66,7 +50,6 @@
 }
 .aiwrap .toolbar-group{display:flex;align-items:center;gap:12px}
 
-/* 交互式下拉框 */
 .aiwrap .custom-select{
   display:flex;align-items:center;gap:6px;background:var(--aib-bg-panel);
   border:1px solid var(--aib-border-color);padding:6px 12px;border-radius:6px;
@@ -85,12 +68,10 @@
 .aiwrap .select-model{background:var(--aib-primary-light);border-color:#BFDBFE;color:var(--aib-primary)}
 .aiwrap .select-model:hover{background:#DBEAFE}
 .aiwrap .custom-select svg{flex:none}
-/* ★ `V-257`：**下拉列表本身**也得是这个风格 —— 原生 `<select>` 的弹出层在 Chromium 上
-   认 `option` 的底色/字色/字号，所以照 `.custom-select` 那套给一遍；再补 hover / 选中态。
-   （弹出框的外框是浏览器画的，改不了，但里面这部分能对上。） */
+
 .aiwrap .custom-select select:hover{color:var(--aib-primary)}
 .aiwrap .custom-select select:disabled{color:var(--aib-text-light);cursor:default}
-/* ★ `V-263`：会话那个下拉**吃掉剩下的宽度**（别的按内容自适应、整条不许换行） */
+
 .aiwrap .custom-select.grow{flex:1;min-width:0}
 .aiwrap .custom-select.grow select{flex:1;min-width:0;width:100%;text-overflow:ellipsis}
 .aiwrap .custom-select option{
@@ -101,9 +82,6 @@
 .aiwrap .custom-select option:hover{background:var(--aib-primary-light);color:var(--aib-primary)}
 .aiwrap .custom-select option:disabled{color:var(--aib-text-light)}
 
-/* ★ `V-386`：**模型下拉改成自己画的面板**（原生 `<select>` 的弹出层是浏览器画的 —— `optgroup`
-   连内边距都不给，hover / 勾选态也全不认，所以看着"素"）。面板复用 `.popover-panel`；
-   它在**底部工具栏**上，所以是往上弹、右对齐。 */
 .aiwrap .ai-model-pick{position:relative;flex:none}
 .aiwrap .ai-model-btn{
   display:flex;align-items:center;gap:6px;max-width:min(300px,40vw);
@@ -116,7 +94,7 @@
 .aiwrap .ai-model-btn:disabled{opacity:.55;cursor:default}
 .aiwrap .ai-model-btn svg.i{width:15px;height:15px;flex:none}
 .aiwrap .ai-model-txt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* 当前是哪一家（只配了一家时不显示，省地方） */
+
 .aiwrap .ai-model-prov{
   flex:none;max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   font-size:11px;font-weight:600;color:#1D4ED8;background:#DBEAFE;
@@ -127,7 +105,7 @@
 .aiwrap .ai-model-pop{
   width:min(430px,86vw);left:auto;right:0;padding:12px;transform-origin:bottom right;
 }
-/* 筛选框（模型多于 6 个才出现 —— 帅红那家 40 个，不筛没法找） */
+
 .aiwrap .ai-model-q{
   display:flex;align-items:center;gap:6px;padding:6px 9px;margin:0 2px 8px;
   background:var(--aib-code-bg);border:1px solid var(--aib-border-color);border-radius:8px;
@@ -143,7 +121,7 @@
 }
 .aiwrap .ai-model-list{max-height:min(330px,46vh);overflow-y:auto;padding-right:2px}
 .aiwrap .ai-model-grp + .ai-model-grp{margin-top:4px}
-/* 服务商那行：吸顶（滚 40 条的时候还知道自己在看谁家的模型） */
+
 .aiwrap .ai-model-gh{
   display:flex;align-items:center;gap:6px;padding:6px 8px 4px;position:sticky;top:0;z-index:1;
   background:var(--aib-bg-panel);font-size:11px;font-weight:600;color:var(--aib-text-muted);
@@ -169,9 +147,6 @@
 .aiwrap .ai-model-nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .aiwrap .ai-model-none{padding:12px 8px;text-align:center;font-size:12px;color:var(--aib-text-light)}
 
-/* 数字输入框交互（★ `V-263`：自带 nowrap —— 以前它自己折成两行，就是你要修的那个）
-   ★ `V-315`：**平时看着就是一段文字**（没有边框、没有底色）—— "token 上限"那几个字
-     挪进了 input 的 `title`，点进去编辑时才显出输入框的样子。界面因此干净一块。 */
 .aiwrap .token-input-group{
   display:flex;align-items:center;gap:6px;font-size:13px;color:var(--aib-text-muted);
   white-space:nowrap;flex:none;
@@ -186,10 +161,6 @@
   border-color:var(--aib-primary);background:#fff;box-shadow:var(--aib-shadow-focus);
 }
 
-/* 中间日志流
-   ★ `V-323`：`flex-basis` 从 `0%` 改成 **`auto`** —— 页脚要按内容长（权限清单不许限高），
-     内容一高就得**先让聊天区缩**。`flex:1 1 0%` 的权重是 0，缩的时候一点不担，
-     全压在页脚上 ⇒ 卡被压成一条缝（用户原话："像是门缝里看东西 看不全"）。 */
 .aiwrap .log-container{
   flex:1 1 auto;min-height:0;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px;
   scroll-behavior:smooth;
@@ -199,7 +170,6 @@
   display:flex;align-items:center;gap:8px;
 }
 
-/* 步骤卡片及动效 */
 .aiwrap .step-card{
   display:flex;gap:12px;padding:14px;border-radius:var(--aib-radius-md);
   background:var(--aib-code-bg);border:1px solid var(--aib-border-color);
@@ -217,11 +187,10 @@
   font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;
   color:var(--aib-text-muted);word-break:break-all;background:#E2E8F0;
   padding:2px 6px;border-radius:4px;display:inline-block;width:fit-content;
-  /* ★ `V-260`：回答可以是好几段（`done` 的 summary）—— 换行照原样、不截断 */
+
   white-space:pre-wrap;max-width:100%;
 }
 
-/* 思考中指示器（AI Thinking） */
 .aiwrap .thinking-indicator{
   display:none;align-items:center;gap:8px;font-size:13px;color:var(--aib-primary);
   font-weight:500;padding:10px;animation:fadeIn .3s forwards;
@@ -232,12 +201,11 @@
   animation:pulse 1.5s infinite cubic-bezier(.4,0,.6,1);
 }
 
-/* 底部输入区 */
 .aiwrap .bottom-area{
   flex-shrink:0;background:var(--aib-bg-panel);border-top:1px solid var(--aib-border-color);
   padding:16px 20px 0 20px;z-index:10;
 }
-/* 核心输入框容器 */
+
 .aiwrap .prompt-box{
   border:1px solid var(--aib-border-color);border-radius:var(--aib-radius-lg);
   background:var(--aib-bg-panel);transition:var(--aib-transition-smooth);
@@ -247,7 +215,7 @@
 .aiwrap .prompt-box.error-shake{
   animation:shake .4s cubic-bezier(.36,.07,.19,.97) both;border-color:var(--aib-danger);
 }
-/* 自适应文本域 */
+
 .aiwrap .prompt-textarea{
   width:100%;min-height:56px;height:56px;max-height:200px;
   padding:16px;border:none;resize:none;outline:none;
@@ -257,8 +225,6 @@
 }
 .aiwrap .prompt-textarea::placeholder{color:var(--aib-text-light)}
 .aiwrap .prompt-textarea:disabled{
-  /* V-334：不许改的时候是灰的，但**得看得见** —— 用户报过"找不到聊天的输入框"：
-     以前 opacity:.6 + 浅色占位符，看着就是一格空白。 */
   opacity:1;background:#F8FAFC;color:var(--aib-text-muted);
 }
 .aiwrap .prompt-textarea:disabled::placeholder{color:var(--aib-text-light)}
@@ -266,8 +232,7 @@
   display:flex;justify-content:space-between;align-items:center;padding:10px 16px;
   background:#FAFAFA;border-top:1px solid var(--aib-border-color);flex-wrap:nowrap;gap:8px;
 }
-/* ★ `V-263`：这一行是"token 上限（左）… 模型 / 清空 / 发送指令（右）"——
-   宽度不够时**不许换行**（换行了就变成两行按钮，很难看） */
+
 .aiwrap .prompt-toolbar .ai-actions{
   display:flex;align-items:center;flex-wrap:nowrap;gap:8px;flex:none;
 }
@@ -275,7 +240,6 @@
 .aiwrap .prompt-toolbar .btn{padding:6px 12px}
 .aiwrap .tips{font-size:12px;color:var(--aib-text-muted);display:flex;align-items:center;gap:6px}
 
-/* 交互按钮 */
 .aiwrap .btn{
   display:flex;align-items:center;gap:6px;padding:8px 16px;border-radius:6px;
   font-size:13px;font-weight:500;cursor:pointer;border:none;
@@ -288,19 +252,15 @@
 .aiwrap .btn-primary:hover{background:var(--aib-primary-hover);box-shadow:0 4px 8px rgba(59,130,246,.3)}
 .aiwrap .btn-primary:disabled{background:#94A3B8;cursor:not-allowed;box-shadow:none;transform:none}
 .aiwrap .spin{animation:spin 1s linear infinite}
-/* 图标尺寸照稿子那几处 width/height 定死（我们的 `ico()` 只给 class="i"，默认 16px）：
-   顶栏两个下拉 15px、会话标题 18px、步骤卡 16px、提示/按钮 14px。 */
+
 .aiwrap .custom-select svg.i{width:15px;height:15px}
 .aiwrap .token-input-group svg.i{width:15px;height:15px}
 .aiwrap .session-title svg.i{width:18px;height:18px}
 .aiwrap .step-icon svg.i{width:16px;height:16px}
 .aiwrap .tips svg.i,.aiwrap .btn svg.i{width:14px;height:14px}
-/* 步骤卡那行动作里，工具名跟前面的中文**一模一样**（稿子里就是一整串蓝字，
-   我们只是把工具名包了个 `b` 给探针用 —— 别让它变成黑体/等宽） */
+
 .aiwrap .step-action b{font-weight:inherit;color:inherit;font-family:inherit}
 
-
-/* 动画帧定义（稿子原样） */
 @keyframes workspaceEntrance{from{opacity:0;transform:translateY(20px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
 @keyframes slideUpFadeIn{from{opacity:0;transform:translateY(15px)}to{opacity:1;transform:translateY(0)}}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
@@ -313,13 +273,6 @@
   40%,60%{transform:translate3d(4px,0,0)}
 }
 
-/* ---- 稿子是**静态**的（只有一种状态），这一页是动态的，所以下面这几块必须有 ——
-   但一律**长在稿子这套 UI 里**：几何照 `.step-card`（radius 8 / padding 14 / 1px #E2E8F0 /
-   #F8FAFC），字级照稿子（13px 动作、12px meta、14px 输入），颜色只用上面那份调色板。
-   而且都是**条件渲染**（需要时才出现）：
-   ① 警告条（没配 AI / 提示词缺了 / 这个包改不了）
-   ② 结论卡（验收过没过 + 它说改了什么 + 开工前快照 + 退回按钮）
-   ③ 停止按钮（跑着才有；样式同「清空」的 btn-outline） */
 .aiwrap .ai-warn{
   margin:10px 16px 0;padding:12px 14px;border-radius:var(--aib-radius-md);
   background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;
@@ -333,7 +286,7 @@
   font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;
   background:#FEF3C7;padding:1px 5px;border-radius:4px;
 }
-/* 结论卡：和 `.step-card` 同一套几何，只在左边加一条状态色 + 标题那一行上色 */
+
 .aiwrap .ai-result{
   display:flex;flex-direction:column;gap:6px;padding:14px;
   border-radius:var(--aib-radius-md);background:var(--aib-code-bg);
@@ -358,13 +311,13 @@
   display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:2px;padding-top:8px;
   border-top:1px solid var(--aib-border-color);font-size:12px;color:var(--aib-text-muted);
 }
-/* 快照号（结论卡里那个）*/
+
 .aiwrap .ai-rsnap code{
   font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;
   background:var(--aib-bg-panel);border:1px solid var(--aib-border-color);
   padding:1px 6px;border-radius:4px;color:var(--aib-text-main);
 }
-/* `V-382`：改了文件却没快照 ⇒ 结论卡上要有一个**看得见的告警**（不是灰字） */
+
 .aiwrap .ai-rsnap.warn{color:var(--aib-warning)}
 .aiwrap .ai-rsnap.warn span{font-weight:500}
 .aiwrap .ai-old{
@@ -374,7 +327,7 @@
 .aiwrap .ai-empty{
   margin:2px;font-size:13px;line-height:1.6;color:var(--aib-text-light);
 }
-/* 下面这些是给探针/历史版本留的钩子类（当前模板已经不用了，留着不碍事） */
+
 .aiwrap .ai-runs{
   border:1px solid var(--aib-border-color);border-radius:var(--aib-radius-md);
   background:var(--aib-bg-panel);overflow:auto;max-height:26vh;flex:none;
@@ -401,14 +354,10 @@
 .aiwrap .ai-run .ai-eg.on{color:var(--aib-primary);background:var(--aib-primary-light);font-weight:500}
 .aiwrap .ai-n,.aiwrap .ai-ms{color:var(--aib-text-light);font-size:12px}
 .aiwrap .ai-log .sp{flex:1}
-/* ★ `V-258`：一轮 = 一小段（用户指令卡 + 步骤卡 + 结论卡），轮与轮之间留口气；
-   点「用户指令」那张卡就折叠这一轮（鼠标变成手型，暗示能点）。 */
+
 .aiwrap .ai-turn{display:flex;flex-direction:column;gap:16px}
 .aiwrap .ai-turn + .ai-turn{margin-top:6px}
-/* ★ `V-263`/`V-264`：这一轮的抬头**做成一条细线**（原来是一张两行的卡，白占一行）：
-   `#N  那句话……  时间/接没接上` —— 点一下折叠这一轮。
-   ★ `V-264`：**不再写「用户对话」四个字**（白占宽度），改用**底色**说明"这是用户说的"：
-     浅蓝底（和 `.select-model` 同一个 `--aib-primary-light`），hover 再深一档。 */
+
 .aiwrap .ai-th{
   display:flex;align-items:baseline;gap:8px;padding:6px 10px;cursor:pointer;
   background:var(--aib-primary-light);border-radius:6px;
@@ -426,9 +375,7 @@
 .aiwrap .ai-th-a{font-size:12px;color:var(--aib-text-light);flex:none;max-width:40%;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .aiwrap .ai-th-a.bad{color:var(--aib-warning)}
-/* ★ `V-279`：这一轮抬头右边那两颗小按钮（编辑 / 删除）—— 平时**淡着**，鼠标到这一行才亮
-   （每条记录都挂两颗亮按钮，整片日志就被搅花了）。
-   `align-self:center` 是必须的：这一行是 `align-items:baseline`，按钮不写就会"吊"在字腰上。 */
+
 .aiwrap .ai-th-x{display:flex;gap:6px;flex:none;align-self:center;opacity:.4;
   transition:var(--aib-transition-smooth)}
 .aiwrap .ai-th:hover .ai-th-x{opacity:1}
@@ -438,9 +385,7 @@
 }
 .aiwrap .ai-th-x button:hover{border-color:var(--aib-primary);color:var(--aib-primary)}
 .aiwrap .ai-th-x button.danger:hover{border-color:var(--aib-danger);color:var(--aib-danger)}
-/* ★ `V-280`：**它自己造的工具**那一块 —— 用户平时看不见（不在插件页、不是 :别名、不算包），
-   只在 AI 页折叠成**一行灰字**；有待批准的时候整行变黄（那才需要你动手）。
-   做成"一行 + 展开"而不是常驻面板：这一层是给 AI 自己用的，不该占用户的注意力。 */
+
 .aiwrap .ai-selft{margin:0 0 10px}
 .aiwrap .ai-selft-h{
   display:flex;align-items:center;gap:6px;padding:4px 8px;cursor:pointer;font-size:12px;
@@ -478,10 +423,10 @@
   font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;color:var(--aib-text-main);
 }
 .aiwrap .ai-selft-p{margin:0;font-size:12px;color:var(--aib-warning)}
-/* ★ `V-259`：这一轮"接着上次聊 / 按新会话跑"那行小字（宿主说的，照实显示） */
+
 .aiwrap .ai-turnnote{font-size:12px;color:var(--aib-success)}
 .aiwrap .ai-turnnote.bad{color:var(--aib-warning)}
-/* ★ `V-261`：按住 Alt 浮出来的"我说过的话"那张表（右上角，样式跟这套 UI 一路） */
+
 .aiwrap{position:relative}
 .aiwrap .ai-jump{
   position:absolute;right:16px;top:58px;z-index:20;width:380px;max-width:70%;
@@ -511,25 +456,17 @@
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .aiwrap .ai-jump-a{font-size:12px;color:var(--aib-text-light);flex:none}
-/* 跳过去那一下闪一下，让你知道落在哪儿了 */
+
 .aiwrap .ai-turn.ai-flash .ai-th{
   border-color:var(--aib-primary);box-shadow:0 0 0 3px var(--aib-shadow-focus);
   animation:fadeIn .2s;
 }
 
-/* ============================================================================
-   ★ V-307 / V-308：AI 工作台新增的那几块（都在 .aiwrap 前缀里，别带歪别的页）
-     · 权限档（顶栏那一格）+ 放行清单面板（带滑块开关）
-     · 它问你的那张卡（ask / 危险操作确认 / 请求放行）
-     · 「回到最新」浮标（你往上翻的时候它不抢滚动条）
-     · 「看提示词」那一层（这条会话喂给它的全部内容）
-   ========================================================================== */
 .aiwrap .custom-select.ai-mode{background:#F8FAFC;border-color:#CBD5E1}
 .aiwrap .custom-select.ai-mode select{font-weight:600}
 .aiwrap .btn.ai-mini{padding:5px 9px;font-size:12px;white-space:nowrap}
 .aiwrap .log-container{position:relative}
 
-/* ---- 放行清单面板 ---- */
 .aiwrap .ai-allow{
   margin:0 0 10px;border:1px solid var(--aib-border-color);border-radius:var(--aib-radius);
   background:#fff;padding:10px 12px;display:flex;flex-direction:column;gap:8px;
@@ -551,24 +488,7 @@
 .aiwrap .ai-allow-x{border:none;background:transparent;color:var(--aib-text-light);cursor:pointer;
   display:flex;padding:2px}
 .aiwrap .ai-allow-x:hover{color:var(--aib-danger)}
-/* ★ `V-323`：这一段老的滑块（`34×18` 那条）**整段删掉** —— 它的 `width:34px`/`height:18px`
-   还挂在 `.ai-sw` 上，而新版 `.ai-sw` 是**标签（读/写 + 轨道）**、轨道才是 36×20，
-   于是"读"字 + 36px 轨道被塞进 34px 的盒子里 ⇒ **滑块错位**（用户当场指出来：
-   "你给它设置了一个固定的宽度34px 可是这个宽度太小了"）。滑块现在只由 `V-323` 那一段定义。 */
 
-/* ============================================================================
-   ★ `V-333`：**聊天记录改成"微信气泡"那一套**（用户原话："整体改成那种微信气泡泡的风格 把我说的
-     和ai说的 以及 其他内容信息 分开 且给各自不同的图标 … 那些弹窗就没了 也没有和聊天记录的重叠
-     问题了 我选择以后 后续我翻看聊天记录 也能看我之前的选择"）。
-     三种东西、三种长相、三个图标：
-       · **我说的**（`.ai-bub.me`）= 靠右、主色蓝底白字，图标 `moss-user`；
-       · **它说的**（`.ai-bub.ai`）= 靠左、白底，图标 `sparkles`；
-         其中"要你动作"的那条（`.ai-bub.talk.waiting`）= 琥珀边 + **呼吸光环**，
-         选项 / 「就这么回」/ 允许·拒绝**直接长在气泡里**；
-       · **其他信息**（`.step-card`，工具调用）= 整宽淡底小条，图标按工具各自不同。
-     权限请求和问答是**聊天记录里的一条**（宿主把它插进步骤流、答完写回同一条）——
-     所以没有浮层、没有重叠，翻旧会话还看得见你当时选了什么。
-   ========================================================================== */
 .aiwrap .ai-turn{display:flex;flex-direction:column;gap:10px}
 .aiwrap .ai-bub{display:flex;gap:10px;align-items:flex-start;max-width:min(780px,88%)}
 .aiwrap .ai-bub-ic{
@@ -588,7 +508,7 @@
 }
 .aiwrap .ai-bub-h b{color:var(--aib-text-muted);font-weight:600}
 .aiwrap .ai-bub-t{white-space:pre-wrap;word-break:break-word;cursor:pointer}
-/* 我说的：靠右、蓝底白字 */
+
 .aiwrap .ai-bub.me{align-self:flex-end;flex-direction:row-reverse}
 .aiwrap .ai-bub.me .ai-bub-b{
   background:var(--aib-primary);border-color:var(--aib-primary);color:#fff;
@@ -600,9 +520,9 @@
 .aiwrap .ai-bub.me .ai-th-x button:hover{background:rgba(255,255,255,.16)}
 .aiwrap .ai-bub.me .ai-th-x button.danger:hover{background:rgba(255,255,255,.16);color:#fff}
 .aiwrap .ai-bub.me .ai-bub-ic{background:var(--aib-primary-light);color:var(--aib-primary)}
-/* 它说的：靠左 */
+
 .aiwrap .ai-bub.ai .ai-bub-b{border-top-left-radius:4px}
-/* 它问你的那一条（在等你动作）：琥珀 + 呼吸光环（原来的光环从浮层卡片挪到这儿） */
+
 .aiwrap .ai-bub.talk{--ai-ring:245,158,11}
 .aiwrap .ai-bub.talk.waiting .ai-bub-b{
   background:var(--aib-warning-light);border-color:var(--aib-warning-border);
@@ -626,19 +546,18 @@
 }
 .aiwrap .ai-bub-q{margin:0;font-size:14px;font-weight:500;color:#92400E;white-space:pre-wrap}
 .aiwrap .ai-bub-w{margin:4px 0 0;font-size:12px;color:#B45309;opacity:.85}
-/* 气泡里的动作区（选项 / 自己打字 / 允许·拒绝） */
+
 .aiwrap .ai-bub-a{display:flex;flex-direction:column;gap:8px;margin-top:10px}
-/* 答完那一条：**你当时选了什么**（翻旧会话照样看得见） */
+
 .aiwrap .ai-bub-ans{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
 .aiwrap .ai-bub-mine{
   background:var(--aib-primary);color:#fff;border-radius:999px;padding:2px 12px;
   font-size:13px;font-weight:600;
 }
 .aiwrap .ai-bub-note{font-size:12px;color:var(--aib-text-light)}
-/* 结论卡放进气泡里：别再套一层边框 */
+
 .aiwrap .ai-bub .ai-result{border:none;background:transparent;padding:0;margin:0}
 
-/* —— 它问你的那条气泡里，选项还是那一套（整宽一条条 + → 箭头 + 高级黑按钮） —— */
 .aiwrap .ai-msg{border:1px solid var(--aib-border-color);border-left:3px solid #CBD5E1;
   border-radius:var(--aib-radius);padding:6px 10px;background:#fff}
 .aiwrap .ai-msg.r-system{border-left-color:#64748B;background:#F8FAFC}
@@ -653,10 +572,6 @@
   color:var(--aib-text-main);
 }
 
-/* ============================================================================
-   ★ V-315：聊天框下面那一行里的权限档 + 可点开的步骤卡 + 步骤详情那一层
-   ========================================================================== */
-/* 权限档：**只显示名字**（解释在 hover 的 title 里），平时看着就是一段彩色文字 */
 .aiwrap .ai-modepick{display:inline-flex;align-items:center;flex:none}
 .aiwrap .ai-modepick select.ai-mode-sel{
   border:1px solid transparent;background:transparent;outline:none;cursor:pointer;
@@ -670,7 +585,6 @@
 .aiwrap .ai-modepick select.ai-mode-sel:hover{background-color:var(--aib-code-bg)}
 .aiwrap .ai-modepick select.ai-mode-sel:focus{box-shadow:var(--aib-shadow-focus)}
 
-/* 步骤卡右边那颗"眼睛"：平时很淡，悬停才明显（点了才开详情，不抢注意力） */
 .aiwrap .ai-step{cursor:pointer}
 .aiwrap .ai-step-x{
   flex:none;align-self:center;color:var(--aib-text-light);opacity:.25;display:flex;
@@ -679,19 +593,11 @@
 .aiwrap .ai-step:hover .ai-step-x{opacity:.9;color:var(--aib-primary)}
 .aiwrap .ai-step-x svg.i{width:15px;height:15px}
 
-/* 步骤详情：复用"看提示词"那一套壳子（`.ai-msgs`），只多一行"为什么"和两个代码块 */
 .aiwrap .ai-detail-w{
   margin:0 0 2px;font-size:13px;font-weight:600;color:var(--aib-text-main);
 }
 .aiwrap .ai-msgs > .ai-msgs-b > .ai-msg{flex:none}
 
-
-/* ============================================================================
-   ★ V-316：下面那一块改成**左右结构**（左 = 权限清单，右 = 输入 + 发送指令 + 提示词），
-            顶上那颗**历史图标**点开才是会话列表。
-            权限只有一份清单、每行一对「读 / 写」勾选 —— 不再有"模式"那种第二个开关。
-   ========================================================================== */
-/* 顶栏：只剩一颗历史图标 + 当前会话名（灰字） */
 .aiwrap .ai-bar{align-items:center}
 .aiwrap .ai-hist-wrap{position:relative;flex:none}
 .aiwrap .ai-hist{padding:5px 9px}
@@ -718,7 +624,7 @@
 .aiwrap .ai-hist-i:last-child{border-bottom:none}
 .aiwrap .ai-hist-i:hover{background:var(--aib-primary-light)}
 .aiwrap .ai-hist-i.on{background:var(--aib-primary-light)}
-/* V-334：历史会话**一条条能删**（用户："我无法删除某些聊天记录"）—— 行尾那颗叉 */
+
 .aiwrap .ai-hist-x{
   flex:none;display:flex;margin-left:4px;padding:2px;border:none;border-radius:4px;
   background:transparent;color:var(--aib-text-light);cursor:pointer;
@@ -730,30 +636,15 @@
 .aiwrap .ai-hist-m{flex:none;font-size:12px;color:var(--aib-text-light)}
 .aiwrap .ai-hist-i.new{color:var(--aib-primary);font-weight:500}
 
-/* 下面那两栏的老布局（`V-316` 的左右结构）已经由 `V-321`（上下结构）取代 ——
-   ★ `V-323` 把那两条也一起删了：留着 `max-width:42%` 会把权限卡卡在 42% 宽
-   （截图里当场看见：卡只有三百多像素宽，右边空一大片）。 */
-
-/* —— 权限清单（★ `V-323`：照你给的那份稿子**一比一复刻**）——
-   稿子的关键数（一个都不改）：卡 = 白底 / 12px 圆角 / 1px 描边 / 轻投影 / `overflow:hidden`；
-   上下两段：上段请求 = 琥珀底 `#FFFBEB` + **下边一条**琥珀描边 `#FCD34D` + **20px 通栏留白**，
-   正文 14px `#B45309`、原因 13px（`opacity:.8`）、按钮 `8px 16px` + 圆角 8 + 14px 字、
-   整排按钮 `margin-left:36px`（= 24px 图标 + 12px 间距，跟正文左对齐）；
-   下段规则 = 20px 留白、抬头 15px、胶囊 `#F3F4F6` / 圆角 12 / 12px 字、
-   输入框 `10px 12px`、规则行 `12px` 留白 + `#F9FAFB` 底 + 圆角 8、
-   路径名 14px 等宽 500、说明 12px 灰、读/写开关 **36×20**（圆点 16px，读与写之间 16px）。
-   ★ 你上一轮的原话："刚加的这个界面弄的太拥挤太紧促了 一点不够大气" —— 所以这一版**只加留白、
-   不加元件**：原来那套 7px 内边距 / 11.5px 小字 / 34×18 开关全部按稿子放大。 */
 .aiwrap .ai-perm{
   display:flex;flex-direction:column;gap:0;padding:0;
   background:var(--aib-bg-panel);border:1px solid var(--aib-border-color);
   border-radius:var(--aib-radius-lg);
-  /* ★ `V-323`：**卡自己滚**（不是裁）—— 面板矮的时候，`.ai-perm-body` 里的东西
-     得能滚到；`border-radius` 仍然会把里面的琥珀条裁成圆角。 */
+
   overflow:auto;
   box-shadow:0 4px 6px -1px rgba(0,0,0,.1),0 2px 4px -1px rgba(0,0,0,.06);
 }
-/* 上段：当前请求（稿子的 `.request-section`） */
+
 .aiwrap .ai-perm-req{
   background:var(--aib-warning-light);border-bottom:1px solid var(--aib-warning-border);
   padding:20px;display:flex;flex-direction:column;gap:16px;
@@ -775,7 +666,7 @@
 .aiwrap .ai-perm-req-w svg.i{width:13px;height:13px;flex:none;position:relative;top:2px}
 .aiwrap .ai-perm-req-a{
   display:flex;gap:12px;margin-left:36px;
-  /* ★ `V-323`：卡矮的时候，正文可以滚走，**这两颗按钮钉在卡底**（永远点得到） */
+
   position:sticky;bottom:0;z-index:2;padding-top:6px;
   background:var(--aib-warning-light);
 }
@@ -788,12 +679,12 @@
   background:#FEE2E2;color:var(--aib-danger);border:1px solid #FECACA;
 }
 .aiwrap .ai-perm-req-a .btn-danger:hover{background:#FECACA}
-/* 下段：目录权限控制（稿子的 `.rules-section`） */
+
 .aiwrap .ai-perm-body{padding:20px;display:flex;flex-direction:column;gap:16px;
-  flex:0 1 auto;min-height:0}   /* ★ `V-334`：里面还能再让一层位（给清单滚） */
-/* 抬头 —— 同时也是"折叠"那一条（稿子里没有折叠，这是我们自己加的那一下） */
+  flex:0 1 auto;min-height:0}   
+
 .aiwrap .ai-perm-fold{
-  flex:0 0 auto;                     /* ★ `V-334`：不许被压（抬头永远在） */
+  flex:0 0 auto;                     
   display:flex;align-items:center;gap:8px;cursor:pointer;padding:2px;margin:-2px;
   font-size:15px;color:var(--aib-text-main);border-radius:var(--aib-radius);
 }
@@ -805,20 +696,19 @@
   flex:none;background:#F3F4F6;color:var(--aib-text-muted);white-space:nowrap;
   border-radius:12px;padding:2px 8px;font-size:12px;
 }
-/* ★ `V-323`：这一句是**第一个让位的**（`flex:0 1 auto;min-width:0` + 省略号）——
-   上一版写死 `flex:none;max-width:44%`，窗口一窄就把标题挤成一列竖字（截图里当场看见）。 */
+
 .aiwrap .ai-perm-foldw{
   flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   font-size:12px;font-weight:600;color:var(--aib-warning);
 }
 .aiwrap .ai-perm-fold .sp{flex:1}
-/* ★ `V-331`：折着的时候提示一句"鼠标放上来展开"（不然谁知道这张卡是能 hover 出来的） */
+
 .aiwrap .ai-perm-foldhint{flex:none;font-size:11.5px;color:var(--aib-text-light)}
 .aiwrap .ai-perm-foldx{display:flex;flex:none;color:var(--aib-text-light);transition:transform .18s}
 .aiwrap .ai-perm-foldx svg.i{width:16px;height:16px}
 .aiwrap .ai-perm-foldx.on{transform:rotate(180deg)}
-/* 加目录那一行（稿子的 `.add-rule-box`） */
-.aiwrap .ai-perm-add{display:flex;gap:8px;flex:0 0 auto}   /* ★ `V-334`：也不许被压 */
+
+.aiwrap .ai-perm-add{display:flex;gap:8px;flex:0 0 auto}   
 .aiwrap .ai-perm-add input{
   flex:1;min-width:0;padding:10px 12px;font-size:14px;font-family:inherit;
   color:var(--aib-text-main);background:var(--aib-bg-panel);
@@ -828,22 +718,20 @@
 .aiwrap .ai-perm-add input::placeholder{color:var(--aib-text-light)}
 .aiwrap .ai-perm-add input:focus{border-color:var(--aib-primary)}
 .aiwrap .ai-perm-add.hot input{border-color:var(--aib-primary);background:var(--aib-primary-light)}
-/* ★ `V-328`：填的不是路径 ⇒ 框标红（按钮那边 `:disabled` 变灰，不用等点了才知道错） */
+
 .aiwrap .ai-perm-add.bad input{border-color:var(--aib-danger);background:#FEF2F2}
 .aiwrap .ai-perm-add .btn:disabled{opacity:.5;cursor:not-allowed}
-/* ★ `V-329`：这一格的报错**贴在它自己下面**（行内一句红的）—— 不再 `toast()`
-   （`toast()` 是"浮一颗深色胶囊 + 底部状态栏留一行"两处一起报，一个错看两遍，你报过）。 */
+
 .aiwrap .ai-perm-err{
   display:flex;align-items:baseline;gap:6px;margin:0;
   font-size:12px;line-height:1.5;color:var(--aib-danger);
 }
 .aiwrap .ai-perm-err svg.i{width:13px;height:13px;flex:none;position:relative;top:2px}
 .aiwrap .ai-perm-add .btn{padding:8px 14px;border-radius:var(--aib-radius);font-size:14px;gap:6px;flex:none}
-/* 规则列表（稿子的 `.rule-list` / `.rule-item`） */
+
 .aiwrap .ai-perm-list{
   display:flex;flex-direction:column;gap:8px;
-  /* ★ `V-334`：**清单是唯一让位的那一块**（抬头 / 加目录那行 `flex:0 0 auto` 钉住）——
-     面板小的时候它缩并自己滚，绝不会把输入框顶出去。 */
+
   flex:0 1 auto;min-height:0;overflow:auto;
 }
 .aiwrap .ai-perm-i{
@@ -861,14 +749,9 @@
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .aiwrap .ai-perm-i.pending .ai-perm-d{color:var(--aib-warning);font-weight:600}
-/* ★ `V-323`：`.ai-perm-i.pending` 现在只在"万一宿主还塞了一条待允许的"时兜底
-   （正常流程下 `pending` 那些不往界面上画），所以只留一条文字色，不再有闪烁。 */
+
 .aiwrap .ai-perm-togs{display:flex;align-items:center;gap:16px;flex:none}
-/* 读 / 写：稿子的 `.toggle-wrapper` + `.slider`（36×20，圆点 16px）
-   ★ 盒子宽高**由内容定**（`width:auto;height:auto`）—— 上一版这里被老规则残留的 `width:34px`
-   压住（"读"字 + 36px 轨道塞不进 34px 的盒子）⇒ **滑块错位**（用户抓到的就是这个）。
-   ★ 那条老规则（`V-315` 的 34×18 轨道）已经整段删了，这两行是**兜底**：以后无论谁再加
-   一条带固定宽高的老规则，这里都能扳回来。 */
+
 .aiwrap .ai-sw{
   position:relative;display:inline-flex;align-items:center;gap:8px;flex:none;cursor:pointer;
   width:auto;height:auto;
@@ -886,7 +769,7 @@
 .aiwrap .ai-sw input:checked + .ai-sw-t{background:var(--aib-primary)}
 .aiwrap .ai-sw input:checked + .ai-sw-t::after{transform:translateX(16px)}
 .aiwrap .ai-sw input:disabled + .ai-sw-t{opacity:.5;cursor:not-allowed}
-/* 删除 / 锁（稿子的 `.delete-btn`） */
+
 .aiwrap .ai-perm-x{
   display:flex;flex:none;margin-left:8px;padding:4px;cursor:pointer;
   border:none;background:transparent;color:var(--aib-text-muted);transition:color .2s;
@@ -897,46 +780,24 @@
 .aiwrap .ai-perm-lock svg.i{width:15px;height:15px}
 .aiwrap .ai-mini{padding:5px 10px;font-size:12px}
 
-/* ============================================================================
-   ★ `V-319` 的那套"请求就在清单里冒一行、闪啊闪"**整段删了**（`V-323`）——
-     用户把设计稿重发了一遍并说清了流程：**请求只在权限卡上半段那一条里问**
-     （琥珀底 + 允许 / 拒绝）；点允许才进下面清单，点拒绝就什么都没有。
-     所以 `pending` 那一行**不再往界面上画**（宿主那边还留着这条登记，闸要靠它判读），
-     `.ai-perm-i.pending` / `aiperm-blink` 这些规则也就没有存在意义了。
-   ========================================================================== */
-
-/* ============================================================================
-   ★ `V-321`/`V-323`：**上下结构**（权限卡在上、输入区在下）+ 权限卡**可折叠**
-     · 折起来只留 `.ai-perm-fold` 那一行（盾牌 + 目录权限控制 + 可写 N 处 + 折/展箭头）
-     · 有请求时那一行会多一句琥珀提示，并且**自动展开**（逻辑在 ai.js 的 watch 里）
-     ★ 高度：**不再用百分比硬封顶**（`V-322` 那版卡死在 44%，请求一来就把「允许/拒绝」裁掉）——
-       页脚改成"按剩下多少地方自己定"：`.ai-foot{flex:0 1 auto;min-height:0}`，
-       面板（`#pane-ai`）是定高的 flex 列，日志流先让到最小，剩下的全给页脚；
-       页脚内部：**输入区 `flex:0 0 auto`（永远不被压、永远在视野里）**，
-       权限卡 `flex:0 1 auto` 自己滚；日志流的最小高度由 `.log-container` 的 padding 决定。
-   ========================================================================== */
 .aiwrap .ai-foot.ai-split{
   display:flex;flex-direction:column;gap:8px;
-  /* ★ `V-325` 写的是"页脚不参与伸缩"；★ `V-334` 改回**可以缩**：
-     卡一展开就能占 350px+，面板小的时候**总得有人让位**，而这里的让位办法是
-     "页脚缩 → 卡缩 → **卡里的规则清单缩并自己滚**"（抬头和加目录那行钉住，输入区钉住）。 */
+
   flex:0 1 auto;min-height:0;max-height:none;
 }
-/* ★ `V-325`：权限卡不许被压成"一条线"（用户报过）。
-   ★ `V-334`：但它**可以让位**（`flex:0 1 auto`）—— 见上面那条：谁让位、谁钉住，都写在下面。 */
+
 .aiwrap .ai-foot.ai-split .ai-perm{
   width:100%;min-width:0;flex:0 1 auto;min-height:0;max-height:56vh;overflow:hidden;
 }
 .aiwrap .ai-foot.ai-split .ai-right{
   flex:0 0 auto;min-width:0;display:flex;flex-direction:column;gap:8px;
 }
-/* ★ `V-316`：右栏那排工具条允许换行 —— 窗口一窄，「发送指令」会被裁到框外（预览截图里看出来的） */
+
 .aiwrap .ai-foot.ai-split .ai-right .prompt-toolbar{flex-wrap:wrap;row-gap:6px}
 .aiwrap .ai-foot.ai-split .ai-right .ai-actions{margin-left:auto}
-/* ★ `V-323`：**技能**那一段不许把面板吃掉（它一展开能顶两百多像素，页脚就没地方了） */
+
 .aiwrap .ai-selft-b{max-height:18vh;overflow:auto}
 
-  /* ================= 补全缺失的交互选择和输入框样式（V-333 遗失）================= */
   .aiwrap .ai-ask-opt {
     display: flex; flex-direction: column; align-items: flex-start;
     width: 100%; text-align: left;
@@ -991,10 +852,6 @@
     background: var(--aib-text-light, #94a3b8); cursor: not-allowed; opacity: 0.8; box-shadow: none;
   }
 
-  
-
-/* Layout containment: the pane supplied by #right is the fixed-height flex item.
-   Workspace consumes it; only the log scrolls. Footer controls remain visible. */
 #pane-ai { min-height:0; min-width:0; overflow:hidden; }
 #pane-ai.on { display:flex; flex-direction:column; }
 #pane-ai > .aiwrap { flex:1 1 0; min-height:0; min-width:0; height:100%; overflow:hidden; }
@@ -1018,17 +875,11 @@
 .aiwrap .ai-token-limit:hover,.aiwrap .ai-token-limit:focus{border-color:var(--aib-primary);background:#fff;box-shadow:var(--aib-shadow-focus)}
 .aiwrap .ai-token-limit::-webkit-inner-spin-button,.aiwrap .ai-token-limit::-webkit-outer-spin-button{margin:0}
 
-/* Compact toolbar layout: token budget, snapshot, prompt-history icon, actions. */
 .aiwrap .prompt-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
 .aiwrap .prompt-toolbar .ai-token-meter{min-width:145px;width:155px;flex:0 0 155px;height:28px}
 .aiwrap .ai-messages-icon{width:30px;height:30px;padding:0;justify-content:center}
 .aiwrap .prompt-toolbar .ai-actions{margin-left:auto;gap:6px}
 
-/* ============================================================================
-   ★ V-340：**所有按钮/信息收进下面一条工具栏**（照新稿子重排）——
-     输入框在上、工具栏在下；历史会话 / 目录权限改成两个**点开才出的浮层**。
-     这一块写在最后：同权重时后写的赢；有几条要用和旧规则相同的选择器才压得住。
-   ========================================================================== */
 .aiwrap .ai-foot.ai-split{
   display:block; padding:10px 14px 12px; gap:0; flex:0 0 auto;
   background:transparent; border:0; overflow:visible;
@@ -1054,7 +905,6 @@
   opacity:1; background:transparent; color:var(--aib-text-muted);
 }
 
-/* ---- 工具行 ---- */
 .aiwrap .chat-input-container .toolbar{
   display:flex; align-items:center; justify-content:space-between; gap:10px;
   padding:8px 12px; border-top:1px solid var(--aib-border-color);
@@ -1063,7 +913,6 @@
 .aiwrap .toolbar-left,.aiwrap .toolbar-right{display:flex;align-items:center;gap:8px;min-width:0}
 .aiwrap .toolbar-right{margin-left:auto}
 
-/* ---- token 胶囊：进度条当背景，数字可直接改 ---- */
 .aiwrap .tool-text{
   position:relative; isolation:isolate; overflow:hidden; flex:none;
   display:inline-flex; align-items:center; gap:4px; padding:4px 10px;
@@ -1084,7 +933,6 @@
 }
 .aiwrap .ai-token-limit:hover,.aiwrap .ai-token-limit:focus{color:var(--aib-primary)}
 
-/* ---- 触发器按钮 ---- */
 .aiwrap .popover-wrapper{position:relative}
 .aiwrap .trigger-btn{
   display:inline-flex; align-items:center; gap:6px; flex:none;
@@ -1102,7 +950,6 @@
   padding:1px 6px; border-radius:4px; margin-left:2px; white-space:nowrap;
 }
 
-/* ---- 统一浮层（一律往**上**弹） ---- */
 .aiwrap .popover-panel{
   position:absolute; left:0; top:auto; bottom:calc(100% + 10px); z-index:60;
   visibility:hidden; opacity:0; transform:translateY(8px) scale(.98); transform-origin:bottom left;
@@ -1117,7 +964,6 @@
 }
 .aiwrap .popover-hint{font-weight:400;font-size:12px;color:var(--aib-text-light)}
 
-/* ---- 历史浮层 ---- */
 .aiwrap .ai-hist-wrap .ai-hist-list{width:640px;max-height:none;overflow:visible;background:var(--aib-bg-panel)}
 .aiwrap .history-list{display:flex;flex-direction:column;gap:2px;max-height:min(340px,44vh);overflow-y:auto}
 .aiwrap .history-item{
@@ -1131,9 +977,7 @@
 .aiwrap .history-item.active .status-dot{background:#10b981}
 .aiwrap .history-item-title{
   font-size:13px;color:var(--aib-text-main);font-weight:500;min-width:0;
-  /* ★ `V-389`：标题**最多两行**（你原话"最多显示 2 行标题，否则显示的对话字数太少，实在看不全"）。
-     原来 `white-space:nowrap` 一行就砍，任务名稍长只剩前半截。改成 `line-clamp:2` ——
-     第 2 行末尾浏览器自己补省略号；`overflow-wrap:anywhere` 让路径 / 英文标识符也能折行。 */
+
   display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
   overflow:hidden; white-space:normal; overflow-wrap:anywhere;
 }
@@ -1150,8 +994,7 @@
 .aiwrap .btn-delete:hover{color:var(--aib-danger);background:#FEE2E2}
 .aiwrap .btn-delete svg.i{width:15px;height:15px}
 .aiwrap .history-item.new{color:var(--aib-primary);font-weight:500;justify-content:flex-start}
-/* ★ `V-383`：**正在跑的那一条**要看得出来（用户原话："这个记录应该高亮 因为这是当前记录"）。
-   绿点在呼吸 = 活的；点它 = 切回实时（不会冻在历史快照上）。 */
+
 .aiwrap .history-item.live{background:#f0fdf4}
 .aiwrap .history-item.live .status-dot{background:#10b981;box-shadow:0 0 0 0 rgba(16,185,129,.7);animation:ai-live-pulse 1.6s infinite}
 .aiwrap .history-item.live .history-item-title{color:#047857;font-weight:600}
@@ -1162,7 +1005,6 @@
   100%{box-shadow:0 0 0 0 rgba(16,185,129,0)}
 }
 
-/* ---- 权限浮层 ---- */
 .aiwrap .ai-perm-wrap .ai-perm-body{width:500px;padding:14px;gap:0;overflow:visible;background:var(--aib-bg-panel)}
 .aiwrap .popover-header{display:flex;gap:8px;margin-bottom:12px}
 .aiwrap .popover-header input{
@@ -1182,8 +1024,7 @@
 .aiwrap .path-info{display:flex;flex-direction:column;gap:3px;min-width:0}
 .aiwrap .path-title{font-size:13px;font-weight:500;color:var(--aib-text-main)}
 .aiwrap .path-desc{font-size:12px;color:var(--aib-text-light)}
-/* ★ 2026-10-22：权限清单下面那一行"另有 N 条别的包的权限"（默认收起）。
-   为什么要它：清单是全局的一份账，别的包的行摆在明面上会让人以为"它要动那些包"。 */
+
 .aiwrap .ai-perm-other{margin-top:10px;border-top:1px dashed var(--aib-border-color);padding-top:10px}
 .aiwrap .ai-perm-other-h{display:flex;align-items:center;gap:8px}
 .aiwrap .ai-perm-other-t{
@@ -1196,7 +1037,7 @@
 .aiwrap .ai-perm-other-t b{color:var(--aib-text-main)}
 .aiwrap .ai-perm-other-t .dim{margin-left:auto;color:var(--aib-text-light);font-size:11.5px}
 .aiwrap .ai-perm-other-x{font-size:12px;padding:4px 8px;border-radius:6px;gap:4px;
-  /* `.btn-delete` 平时是透明的（hover 才露）—— 这颗要**一直看得见** */
+
   display:inline-flex;opacity:1;transform:none;border:1px solid var(--aib-border-color)}
 .aiwrap .ai-perm-other-w{
   margin:2px 0 8px;padding:0 8px;font-size:11.5px;line-height:1.6;color:var(--aib-text-light);
@@ -1215,7 +1056,6 @@
 .aiwrap .switch input:checked + .slider{background:var(--aib-primary)}
 .aiwrap .switch input:checked + .slider::before{transform:translateX(14px)}
 
-/* ---- 模型 + 连体「新建 / 发送」按钮 ---- */
 .aiwrap .btn-model{padding:5px 10px;font-size:12px}
 .aiwrap .action-group{
   display:inline-flex;align-items:stretch;overflow:hidden;flex:none;background:var(--aib-primary);
@@ -1233,8 +1073,6 @@
 .aiwrap .btn-send-main{padding:0 14px;font-size:13px;font-weight:500}
 .aiwrap .action-group-btn svg.i{width:16px;height:16px;color:#fff}
 
-/* 旧的「常驻权限卡 / 悬停展开」那一套已经不用了 —— 这里把老规则压回去，
-   免得它和新浮层打架（同权重后写的赢，所以这几条必须和上面那条用一样的全名）。 */
 .aiwrap .ai-foot.ai-split .ai-perm{
   display:block; width:auto; min-width:0; flex:none; max-height:none; overflow:visible;
   position:relative; padding:0; gap:0; background:transparent; border:0; border-radius:0; box-shadow:none;
@@ -1275,32 +1113,19 @@
   font-size:12px; color:var(--aib-danger);
 }
 
-/* V-340 收尾：把老 `.ai-perm-fold` 残留的 margin / 图标尺寸扳回来（它原来是"卡抬头"）。 */
 .aiwrap .ai-perm-fold{margin:0;font-size:12px;border:1px solid var(--aib-border-color)}
 .aiwrap .ai-perm-fold > span:first-child svg.i{width:15px;height:15px;color:var(--aib-text-muted)}
 
-/* V-340 收尾：`.ai-right` 那条老规则（V-334 的右栏）会给容器塞一个 `gap:8px`，
-   输入区和工具行之间就裂开一条缝 —— 用更高的权重把它按回去。 */
 .aiwrap .ai-foot.ai-split .ai-right.chat-input-container{
   display:flex; flex-direction:column; gap:0; flex:0 0 auto; min-width:0;
 }
 
-/* ============================================================================
-   ★ V-341：**聊天区配色 / 排版升级**（照用户给的新稿子复刻）——
-     浅灰聊天底 + 白 AI 气泡 + 蓝色用户气泡 + 圆头像 + 胶囊选项 + 右下角 token 微标。
-     ★ 只动样式，**不动 DOM**：探针挂着的那些类名（ai-bub / ai-ask-opt / ai-ask-t /
-       ai-th-a / ai-th-x / ai-bub.me .ai-bub-h / ai-bub.talk.waiting …）一个都没改。
-   ========================================================================== */
-
-/* 聊天区：极浅灰底 + 更松的留白（原来是一整片白，气泡看着"重"） */
 .aiwrap .ai-log{ background:#f8fafc; padding:24px 32px; gap:28px; }
 .aiwrap .ai-foot.ai-split{ background:#f8fafc; }
 
-/* 一轮的节奏 */
 .aiwrap .ai-turn{ gap:18px; }
 .aiwrap .ai-turn + .ai-turn{ margin-top:0; }
 
-/* 头像：36px 圆 + 细描边 + 轻投影 */
 .aiwrap .ai-bub{ gap:14px; max-width:min(820px,86%); }
 .aiwrap .ai-bub-ic{
   width:36px; height:36px; border-radius:50%; flex:none;
@@ -1309,23 +1134,21 @@
 }
 .aiwrap .ai-bub-ic svg.i{width:19px;height:19px}
 
-/* 气泡：16px 圆角 + 15px 正文 */
 .aiwrap .ai-bub-b{
   padding:14px 18px; border-radius:16px; font-size:15px; line-height:1.6;
   background:#fff; border:1px solid var(--aib-border-color); color:var(--aib-text-main);
   box-shadow:0 2px 4px -1px rgba(0,0,0,.03), 0 1px 2px -1px rgba(0,0,0,.02);
 }
-/* 我说的：蓝底白字，**右下角收角**（原来收在右上）；头像用浅蓝 */
+
 .aiwrap .ai-bub.me .ai-bub-b{
   background:#3b82f6; border-color:#3b82f6; color:#fff;
   border-top-right-radius:16px; border-bottom-right-radius:4px;
   box-shadow:0 2px 6px rgba(59,130,246,.2);
 }
 .aiwrap .ai-bub.me .ai-bub-ic{background:#e0f2fe;border-color:#bae6fd;color:#3b82f6}
-/* 它说的：白底细描边，**左下角收角** */
+
 .aiwrap .ai-bub.ai .ai-bub-b{border-top-left-radius:16px;border-bottom-left-radius:4px}
 
-/* 用户气泡里的抬头（#N / 时间 / 改·删）：降成 11px 半透明；按钮 hover 才亮 */
 .aiwrap .ai-bub.me .ai-bub-h{margin-bottom:4px;font-size:11px;color:rgba(255,255,255,.75)}
 .aiwrap .ai-bub.me .ai-bub-h b{color:rgba(255,255,255,.75);font-weight:400}
 .aiwrap .ai-bub.me .ai-th-a{color:rgba(255,255,255,.7);font-size:11px}
@@ -1338,21 +1161,19 @@
 .aiwrap .ai-bub.me .ai-th-x button:hover,
 .aiwrap .ai-bub.me .ai-th-x button.danger:hover{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.7);color:#fff}
 
-/* 它问的：**问题就是正文**（加粗、深色），不再用琥珀色 */
 .aiwrap .ai-bub-q{margin:0;font-size:15px;font-weight:600;color:var(--aib-text-main);white-space:pre-wrap}
-/* "为什么" → 灰底引用条（照稿子：降噪） */
+
 .aiwrap .ai-bub-w{
   margin:2px 0 0; padding:8px 12px; font-size:13px; color:var(--aib-text-muted);
   background:#f1f5f9; border-left:3px solid #cbd5e1; border-radius:4px 6px 6px 4px; opacity:1;
 }
-/* 等回答：白气泡 + 柔和蓝环（原来是琥珀底 + 很重的呼吸） */
+
 .aiwrap .ai-bub.talk{--ai-ring:59,130,246}
 .aiwrap .ai-bub.talk.waiting .ai-bub-b{
   background:#fff; border-color:#bfdbfe; color:var(--aib-text-main);
   animation:none; box-shadow:0 0 0 3px rgba(59,130,246,.10);
 }
 
-/* 选项 → 胶囊（整片排开，不再是一条条占满宽度） */
 .aiwrap .ai-bub-a{display:flex;flex-wrap:wrap;flex-direction:row;gap:8px;margin-top:12px}
 .aiwrap .ai-ask-opt{
   display:inline-flex; flex-direction:row; align-items:center; gap:6px; width:auto; margin:0;
@@ -1367,7 +1188,6 @@
 .aiwrap .ai-ask-opt-d{font-size:11px;color:var(--aib-text-light)}
 .aiwrap .ai-ask-t{flex-basis:100%;width:100%;margin-top:2px}
 
-/* 答完：候选项同样排成胶囊，选中的高亮（"全部候选项："那行字收起，降噪） */
 .aiwrap .ai-ask-history{display:flex;flex-wrap:wrap;gap:8px;align-items:center;width:100%;margin-top:10px}
 .aiwrap .ai-ask-history-label{display:none}
 .aiwrap .ai-ask-history-opt{
@@ -1379,7 +1199,7 @@
   background:var(--aib-primary-light); border-color:var(--aib-primary);
   color:var(--aib-primary); font-weight:500; box-shadow:0 2px 4px rgba(59,130,246,.1);
 }
-/* 你选的那句 / 它的回答 */
+
 .aiwrap .ai-bub-ans{display:block;margin-top:8px}
 .aiwrap .ai-bub-mine{
   display:inline-block; margin:0 0 4px; padding:0; border-radius:0; background:transparent;
@@ -1387,12 +1207,10 @@
 }
 .aiwrap .ai-bub-note{font-size:14px;color:var(--aib-text-main);line-height:1.6}
 
-/* 工具步（"其他信息"）：白底细描边的小条，别抢气泡的戏 */
 .aiwrap .step-card{background:#fff;border:1px solid var(--aib-border-color);border-radius:12px;padding:12px 14px}
 .aiwrap .ai-step-x{opacity:0}
 .aiwrap .ai-step:hover .ai-step-x{opacity:1}
 
-/* 结论卡：在气泡里就不再套一层边框；token 收成右下角微标 */
 .aiwrap .ai-bub .ai-result{border:none;background:transparent;padding:0;margin:0;gap:6px}
 .aiwrap .ai-rhead{font-size:13px}
 .aiwrap .ai-rsum{font-size:14px;color:var(--aib-text-main)}
@@ -1401,21 +1219,11 @@
   margin-top:8px; font-size:11px; color:var(--aib-text-light); text-align:right;
 }
 
-/* V-341 收尾：选中的候选项打勾；"你的回答：…"那条已经写清了选择，
-   所以上面那颗重复的「选择胶囊」收起来（`.ai-bub-note` 保留，里面有额外信息）。 */
 .aiwrap .ai-ask-history-opt.chosen::before{content:"✓";font-weight:700;margin-right:1px}
 .aiwrap .ai-bub-mine{display:none}
 
-/* ============================================================================
-   ★ V-344：权限清单那几行
-     · 路径改成「盘符 + 中间 + 上一级\最后一级」三段：盘符和尾巴钉死，中间自己缩
-       （放得下就不省、放不下才出 …）—— 原来只写最后一级，根本不知道它在哪
-     · hover 出两颗按钮：复制路径 / 打开文件夹（和删除那颗一个套路）
-     · 浮层加宽：500px 连 "C:\...\Pictures\闲鱼\2" 都放不下
-   ========================================================================== */
 .aiwrap .ai-perm-wrap .ai-perm-body{width:min(860px,68vw);min-width:min(520px,62vw)}
 
-/* 三段路径：head / tail 不缩，mid 自己省略 —— 正好"够就不省、不够才省" */
 .aiwrap .ai-perm-info{flex:1 1 auto;min-width:0}
 .aiwrap .ai-perm-p{
   display:flex; align-items:baseline; min-width:0; white-space:nowrap;
@@ -1425,18 +1233,12 @@
 .aiwrap .pp-mid{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--aib-text-light)}
 .aiwrap .pp-tail{flex:none;color:var(--aib-text-main);font-weight:600}
 
-/* hover 才出的两颗（复制路径 / 打开文件夹） */
 .aiwrap .ai-perm-act{padding:3px;margin-left:2px}
 .aiwrap .ai-perm-act svg.i{width:15px;height:15px}
 .aiwrap .ai-perm-act:hover{color:var(--aib-primary);background:#eff6ff}
 
-/* ★ V-345：浮层不许横着出窗（兜底）——
-   真正的位置由 `fitPop()` 算（把浮层往左挪 + 必要时缩窄），这一条只是最后一道保险。 */
 .aiwrap .popover-panel{max-width:calc(100vw - 20px)}
 
-/* ============================================================================
-   附件 / 拖入 / 大段文本粘贴（本轮新增）
-   ========================================================================== */
 .aiwrap .chat-input-container.drop-hot{
   border-color:var(--aib-primary);
   box-shadow:0 0 0 3px color-mix(in srgb, var(--aib-primary) 16%, transparent);
@@ -1468,10 +1270,7 @@
 .aiwrap .ai-at-x svg.i{width:12px;height:12px}
 .aiwrap .ai-paste-file.active{color:var(--aib-primary);background:color-mix(in srgb, var(--aib-primary) 10%, transparent)}
 .aiwrap .ai-bub-atts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-/* ★ `V-388`/`V-389`：附件胶囊。以前这里是 `color:var(--aib-text-muted)`（#64748B 灰字）
-   + 淡蓝底，而它长在**蓝底白字**的用户气泡里 ⇒ 灰字压在蓝底上根本看不清（你报的那条）。
-   现在：能点的做成"白描边 + 半透明白底 + 白字"，**像按钮**（有 hover / cursor），
-   没原文的老记录才退回灰（`--muted`），一眼能分出"点了有反应"和"点了也没东西"。 */
+
 .aiwrap .ai-att-chip{
   display:inline-flex;align-items:center;gap:5px;max-width:100%;
   padding:3px 9px;border-radius:999px;font:inherit;font-size:12px;line-height:1.4;
@@ -1492,16 +1291,9 @@
   background:rgba(255,255,255,.08);cursor:default;
 }
 .aiwrap .ai-att-chip.muted:hover{background:rgba(255,255,255,.12)}
-/* 输入框那一排（白底）：同一个胶囊，换个配色 */
+
 .aiwrap .ai-at .ai-at-act{cursor:pointer}
 
-/* ============================================================================
-   技能管理重设计（AI 工作台内嵌）
-   参考用户给的「极压空间·通透灰度版」：
-   - 顶部 tabs（待批准 / 已启用）+ 全局图标动作；
-   - 待批准页内嵌 warning banner；
-   - 行内展示 id / 说明，右侧允许 / 审查 / 删除。
-   ========================================================================== */
 .aiwrap .ai-skill-widget{
   width:100%;max-width:900px;margin:0 auto 10px;background:#fff;
   border:1px solid #e4e4e7;border-radius:10px;overflow:hidden;
@@ -1586,10 +1378,6 @@
   .aiwrap .ai-skill-alert{font-size:12px;padding:8px 10px}
 }
 
-/* ============================================================================
-   详情 / 思考过程 / 提示词历史 —— 模态框重设计
-   参考用户给的「思考过程 - 模态框设计」：遮罩 + 居中卡片 + 头/身/脚。
-   ========================================================================== */
 .aiwrap .ai-modal-overlay{
   position:fixed;inset:0;background:rgba(0,0,0,.45);backdrop-filter:blur(3px);
   display:flex;justify-content:center;align-items:center;z-index:9999;
@@ -1651,7 +1439,6 @@
   .aiwrap .ai-modal-header,.aiwrap .ai-modal-body,.aiwrap .ai-modal-footer{padding-left:16px;padding-right:16px}
 }
 
-/* ---- 模态框里的「查看详情 / 查看源码」页签 + JSON 高亮树 ---- */
 .aiwrap .ai-modal-tabs{
   display:flex;gap:2px;padding:0 24px;background:#fafafa;border-bottom:1px solid #ebeef5;
   flex:none;
@@ -1690,13 +1477,11 @@
   .aiwrap .ai-modal-tabs{padding-left:16px;padding-right:16px}
 }
 
-/* 完全权限（无人值守）开关：关=灰，开=绿 */
 .aiwrap .ai-fullperm.active{
   color:#047857;background:#ecfdf5;border-color:#a7f3d0;
 }
 .aiwrap .ai-fullperm.active:hover{background:#d1fae5;border-color:#6ee7b7;color:#065f46}
 
-/* ---- 工具栏右侧浮层：历史 / 权限都贴右展开，防止右侧出屏 ---- */
 .aiwrap .ai-hist-wrap .ai-hist-list,
 .aiwrap .ai-perm-wrap .ai-perm-body{
   left:auto; right:0; transform-origin:bottom right;
@@ -1705,15 +1490,9 @@
   width:min(680px,92vw); min-width:0; max-width:calc(100vw - 24px);
 }
 .aiwrap .ai-hist-wrap .ai-hist-list{width:min(640px,92vw)}
-/* ★ `V-388`（你报的"点历史会话，出来的浮层会被左边插件列表盖住、位置也不对"）：
-   上面那条 `left:auto;right:0` 是**旧工具栏**（按钮在右侧）留下的；2026-10-29 换成控制台之后，
-   「历史会话」挪到了输入框上方这条的**最左边**，还贴右展开就整块往左跑 ——
-   440px 的面板贴着按钮右沿往左铺 325px，越过 `#pane-ai` 的左边界就看不见了
-   （`#pane-ai{overflow:hidden}` 把它切掉，左边那列插件列表再压在上面）。
-   它得**贴左**展开：左沿跟着按钮走，剩下的交给 `fitPop` 往右夹。 */
+
 .aiwrap .ai-console-hist-wrap .ai-hist-list{left:0; right:auto; transform-origin:bottom left}
 
-/* ---- 权限清单里的「完全权限」开关 ---- */
 .aiwrap .ai-perm-full{
   display:flex; align-items:center; justify-content:space-between; gap:12px;
   padding:10px 12px; margin-bottom:12px; border:1px solid #FDE68A; background:#FFFBEB;
@@ -1729,14 +1508,6 @@
 }
 .aiwrap .ai-perm-full-info > span{font-size:12px; color:#B45309}
 
-/* ---------------------------------------------------------------- 「回到最新」那颗浮动按钮
-   ★ 它以前**一条样式都没有**（模板里写着 `<button class="ai-tobottom">`，ai.css 里搜不到
-     这个类）—— 于是浏览器按默认 button 画：通栏、白底、灰边、字号 13px 的一整块，
-     看着像界面坏了（2026-10-21 录屏时抓到的就是它）。
-   ★ 形状：贴在手记流（`.ai-log`，自己是 `overflow-y:auto`）的右下角 —— 用 `sticky`
-     而不是 `absolute`：`absolute` 得靠一个"高度已知"的定位祖先，而这里高度是弹性的；
-     `sticky` + `margin-left:auto` 跟着滚动容器走，滚到哪儿它都在右下角。 */
-/* 日志流外面那层**不滚动**的框：只为了让「回到最新」能浮在聊天区右下角 */
 #pane-ai .ai-logwrap{flex:1 1 0; min-height:0; position:relative; display:flex;
   flex-direction:column}
 #pane-ai .ai-logwrap > .ai-log{flex:1 1 0; min-height:0}
@@ -1749,20 +1520,13 @@
   line-height:1; cursor:pointer; z-index:6; box-shadow:0 6px 18px rgba(15,23,42,.14);
   transition:var(--aib-transition-smooth);
 }
-/* ★ 用 class 切显示，不用 v-if：按钮那颗一进一出会让整块日志重新 patch 一次，
-   连 <main> 的引用都可能被换掉（i-follow 场景第 ④ 步就是这么被抓出来的）。 */
+
 .aiwrap .ai-tobottom.on{display:inline-flex}
 .aiwrap .ai-tobottom:hover{background:var(--aib-primary-light);
   border-color:var(--aib-primary); color:var(--aib-primary-hover)}
 .aiwrap .ai-tobottom svg{width:14px;height:14px}
 .aiwrap .ai-tobottom:focus-visible{outline:2px solid var(--aib-primary);outline-offset:2px}
 
-
-/* ============================================================================
-   2026-10-29：工具栏收口 + 余额 + 调色盘呼吸背景 + token 进度条
-   ========================================================================== */
-
-/* ---- 余额：图标 + 短文本；不支持时就是 ?（完整原因在 title） ---- */
 .aiwrap .ai-balance-btn{
   max-width:180px;height:30px;padding:0 8px;gap:5px;
   border-color:transparent;background:transparent;box-shadow:none;
@@ -1782,14 +1546,13 @@
 .aiwrap .ai-balance-btn.ok svg.i{color:#10B981}
 .aiwrap .ai-balance-btn.bad svg.i{color:#F59E0B}
 
-/* ---- token：本次会话已用 / 总上限；文字就在进度条里面 ---- */
 .aiwrap .token-pill{
   min-width:128px;height:30px;justify-content:center;gap:0;padding:0 8px;
   border:0;border-radius:6px;background:#F1F5F9;
   overflow:hidden;scrollbar-width:none;-ms-overflow-style:none;
   color:var(--aib-text-light);
 }
-/* 进度条前后（已用 / 上限）使用**同一种低对比度灰色**，不做一深一浅。 */
+
 .aiwrap .token-pill,
 .aiwrap .token-pill .token-pill-text,
 .aiwrap .token-pill .token-pill-used,
@@ -1828,7 +1591,6 @@
 }
 .aiwrap .token-pill:hover .ai-token-limit{background:rgba(255,255,255,.55)}
 
-/* ---- 调色盘按钮 / 浮层 ---- */
 .aiwrap .ai-palette-btn{position:relative;width:30px;height:30px;padding:0;justify-content:center}
 .aiwrap .ai-palette-btn.colored{border-color:color-mix(in srgb,var(--aib-primary) 35%,var(--aib-border-color))}
 .aiwrap .ai-palette-dot{
@@ -1864,7 +1626,6 @@
   margin:10px 0 0;font-size:11.5px;line-height:1.45;color:var(--aib-text-light);
 }
 
-/* ---- 工作时的呼吸背景：圆润色块慢慢漂移，不是整屏硬涂 ---- */
 #pane-ai .ai-logwrap{isolation:isolate;overflow:hidden;border-radius:14px}
 #pane-ai .ai-logwrap > .ai-log{position:relative;z-index:2;background:transparent}
 .aiwrap .ai-breath-bg{
@@ -1919,8 +1680,6 @@
   .aiwrap .ai-palette-pop{width:244px}
 }
 
-
-/* ---- 权限盾牌状态：完全权限（紫）——「任意路径」那一档撤了（完全权限取代它，2026-10-31） ---- */
 .aiwrap .ai-perm-fold{position:relative}
 .aiwrap .ai-perm-shield{display:flex;align-items:center;justify-content:center;position:relative;z-index:1}
 .aiwrap .ai-perm-fold.full{
@@ -1931,7 +1690,7 @@
   color:#7C3AED;
   filter:drop-shadow(0 0 3px rgba(124,58,237,.42));
 }
-/* 盾牌后面那句文字状态：完全权限 / 两个路径 / 仅当前包 */
+
 .aiwrap .ai-perm-state{
   font-size:12px;font-weight:500;color:var(--aib-text-muted);
   white-space:nowrap;flex:none;
@@ -1939,8 +1698,6 @@
 .aiwrap .ai-perm-fold:hover .ai-perm-state{color:var(--aib-text-main)}
 .aiwrap .ai-perm-fold.full .ai-perm-state{color:#7C3AED;font-weight:600}
 
-
-/* 图标按钮统一无边框：形状只靠圆角、hover 底色和状态底色表达。 */
 .aiwrap .ai-messages-icon,
 .aiwrap .ai-paste-file,
 .aiwrap .ai-palette-btn,
@@ -1961,12 +1718,6 @@
   border:0 !important;
 }
 
-
-/* ============================================================================
-   2026-10-29：AI 工作台新稿 —— 顶部控制台 + 大输入区 + 底部操作条
-   ========================================================================== */
-
-/* ---- 顶部控制台 ---- */
 .aiwrap .ai-console-top{
   flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;
   padding:8px 14px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;
@@ -1996,18 +1747,15 @@
 }
 .aiwrap .ai-console-divider{width:1px;height:16px;background:#E2E8F0;margin:0 2px;flex:none}
 
-/* 控制台现在紧贴输入框上方，浮层按通用规则向上弹（不会被窗口底边裁掉） */
 .aiwrap .ai-console-top .ai-hist-list{width:min(640px,calc(100vw - 40px))}
 .aiwrap .ai-console-top .ai-console-palette .ai-palette-pop{left:auto;right:0;transform-origin:bottom right}
 .aiwrap .ai-console-top .ai-palette-btn{width:30px;height:30px;padding:0;justify-content:center}
 
-/* 控制台和输入框属于同一张卡片：顶部用同样的圆角，底边只留一条轻分隔线。 */
 .aiwrap .chat-input-container > .ai-console-top{
   border-radius:12px 12px 0 0;
   padding:8px 12px;
 }
 
-/* ---- 顶部 token 胶囊 / 余额 ---- */
 .aiwrap .ai-console-right .token-pill{
   min-width:128px;height:30px;background:#fff;border-radius:6px;
   box-shadow:0 1px 2px rgba(15,23,42,.06);
@@ -2029,14 +1777,12 @@
 .aiwrap .ai-console-balance.bad svg.i{color:#F59E0B}
 .aiwrap .ai-console-balance .ai-balance-text{font-size:11.5px;font-weight:600}
 
-/* ---- 输入区：按新稿放大正文编辑区 ---- */
 .aiwrap .chat-input-container .input-area{padding:14px 16px 8px}
 .aiwrap .chat-input-container .prompt-textarea{
   min-height:100px;max-height:220px;padding:2px 0;
   font-size:14px;line-height:1.6;
 }
 
-/* ---- 底部操作条 ---- */
 .aiwrap .ai-input-toolbar{
   display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:10px 16px 12px;border-top:0;background:#fff;
@@ -2063,15 +1809,13 @@
 .aiwrap .ai-input-toolbar .ai-model-btn svg.i{color:#71717A}
 .aiwrap .ai-toolbar-divider{width:1px;height:20px;background:#E4E4E7;margin:0 6px;flex:none}
 
-/* ★ 2026-10-31（你的要求）：工具栏那三颗（提示词 / 附件 / 图片）**带上文字**。
-   有字了宽度就不能再钉死 30px（上面那几条是给纯图标写的），这里把宽度放回 auto。 */
 .aiwrap .ai-input-toolbar .ai-txtbtn{width:auto;padding:0 9px;gap:6px}
 .aiwrap .ai-input-toolbar .ai-txtbtn .ai-btn-txt{
   font-size:12px;line-height:1;color:var(--aib-text-muted);white-space:nowrap;
 }
 .aiwrap .ai-input-toolbar .ai-txtbtn:hover .ai-btn-txt{color:var(--aib-text-main)}
 .aiwrap .ai-input-toolbar .ai-txtbtn:disabled{opacity:.45;cursor:default}
-/* 窗口窄了就把字收起来（只剩图标，不至于把工具栏挤成两三行） */
+
 @media (max-width:980px){
   .aiwrap .ai-input-toolbar .ai-txtbtn{width:30px;padding:0}
   .aiwrap .ai-input-toolbar .ai-txtbtn .ai-btn-txt{display:none}
@@ -2095,11 +1839,6 @@
   .aiwrap .ai-input-toolbar{padding-left:8px;padding-right:8px}
 }
 
-/* ============================================================================
-   ★ `V-389`：流式"边收边写" + 粘贴附件的原文弹窗
-   ========================================================================== */
-
-/* ---- 它正在写：字一段一段长出来，末尾一根闪的竖线 ---- */
 .aiwrap .ai-bub.streaming .ai-bub-b{background:#fff;border-color:var(--aib-border-color)}
 .aiwrap .ai-bub.streaming .ai-bub-ic{background:var(--aib-primary-light);color:var(--aib-primary)}
 .aiwrap .ai-stream-n{font-variant-numeric:tabular-nums}
@@ -2108,7 +1847,7 @@
   display:inline-block;flex:none;animation:ai-live-pulse 1.6s infinite;
 }
 .aiwrap .ai-stream-t{white-space:pre-wrap;word-break:break-word;color:var(--aib-text-main)}
-/* 思考阶段：一屏放不下就淡出收尾（别把整屏顶满 —— 正文还没开始呢） */
+
 .aiwrap .ai-stream-think{
   position:relative;white-space:pre-wrap;word-break:break-word;
   color:var(--aib-text-light);font-size:12.5px;line-height:1.6;
@@ -2124,7 +1863,6 @@
 }
 @keyframes ai-caret-blink{0%,50%{opacity:1}51%,100%{opacity:0}}
 
-/* ---- 粘贴附件的原文弹窗 ---- */
 .aiwrap .ai-attbox{max-width:860px}
 .aiwrap .ai-att-pre{
   margin:0;padding:14px 16px;border-radius:8px;max-height:54vh;overflow:auto;

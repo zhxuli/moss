@@ -1,11 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-兜底界面：WebView 不可用时（缺 pywebview / 缺 WebView2 运行时）用的 tkinter 版。
-
-它只覆盖最常用的字段（别名 / 执行方式 / 描述 / 内容 / 工作目录），
-其余字段（环境变量、运行后动作、提权、多步步骤）在保存时原样保留、不会被抹掉。
-完整编辑请用 WebView 界面 —— 这是 Tk 的能力上限，不是设计取舍。
-"""
 import ctypes
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -14,7 +6,6 @@ import core
 
 FONT = ('Microsoft YaHei UI', 10)
 
-# 必须在创建 Tk 根窗口之前声明 DPI 感知，否则缩放显示器上整个界面会被系统拉伸变糊
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
 except Exception:
@@ -25,7 +16,6 @@ except Exception:
 
 LABEL_BY_TYPE = {k: v['label'] for k, v in core.TYPES.items()}
 TYPE_BY_LABEL = {v: k for k, v in LABEL_BY_TYPE.items()}
-
 
 def run_gui():
     root = tk.Tk()
@@ -86,7 +76,6 @@ def run_gui():
              'raw': None, 'codes': {}, 'shown_type': 'python'}
 
     def stash_code():
-        """把当前文本框里的内容收进它所属执行方式的格子。"""
         state['codes'][state['shown_type']] = text_code.get('1.0', tk.END).rstrip('\n')
 
     def refresh_list(keep=None):
@@ -106,7 +95,6 @@ def run_gui():
         hint.config(text=spec['hint'])
 
     def on_type_change(_event=None):
-        """切换执行方式：把当前内容存档，再换成新类型自己的内容（没填过就是空的）。"""
         if state['raw'] is None:
             set_hint()
             return
@@ -156,7 +144,7 @@ def run_gui():
 
     def save_item():
         payload = dict(state['raw'] or {})
-        payload.pop('code', None)          # 用 codes 作为唯一来源
+        payload.pop('code', None)
         stash_code()
         payload.update({
             'alias': entry_alias.get(),

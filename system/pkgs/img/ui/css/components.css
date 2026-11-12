@@ -1,20 +1,8 @@
-/* components.css
-   组件：选择器网格、字段、分段控件、日志、警告条、提示条
-   —— 取自 exec/ui/css/components.css，按 img 实际用到的部分裁剪。
-      被裁掉的都是 exec 特有的东西：命令树(.row/.grp/.dot)、代码编辑器(.editor)、
-      语法高亮(.hljs-*)、新建弹层(.sheet/.tile)、HTML 预览(.preview-frame)。
-      窗口骨架在 layout.css，这里只管零件。 */
-
-/* ============================================================================
-   选择器（缩略图网格 / 紧凑列表）
-   —— 交互跟资源管理器对齐：单击/Ctrl/Shift/框选/双击打开
-   —— 高度交给 flex：窗口多高，网格就多高（这是唯一的主动作，空间优先给它）
-   ========================================================================== */
 .picker {
   position: relative; flex: 1 1 auto; min-height: 96px;
   margin-top: 8px; overflow: auto;
   padding: 8px; border-radius: var(--r-md);
-  /* 边框去掉了（用户要求）：卡片本身就是个容器，里面再套一个带框的容器是多余的 */
+
   border: none;
   background: var(--content-bg);
   outline: none;
@@ -27,10 +15,7 @@
 }
 .picker-empty b { font-size: var(--t-head); font-weight: 590; color: var(--text-2); letter-spacing: var(--t-head-ls); }
 .picker-empty span { max-width: 420px; line-height: 1.6; }
-/* ★ 凡是自己写了 display 的元素，用 hidden 隐藏时都必须补这条 ——
-   作者样式表里的 display 会盖掉浏览器默认的 [hidden]{display:none}。
-   踩过两次：.drop-veil 和这里。这里那次很隐蔽：占位文字没消失，
-   把整个缩略图网格顶到可视区外面，看着像"点了没反应"。 */
+
 .picker-empty[hidden] { display: none; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; align-content: start; }
@@ -66,7 +51,6 @@
 .tile.gone .name { color: var(--danger); text-decoration: line-through; }
 .tile.gone .thumb { opacity: .35; }
 
-/* 选中角标：只有选中时才出现，平时不抢视线 */
 .tile .check-badge {
   position: absolute; top: 4px; right: 4px;
   width: 17px; height: 17px; border-radius: 50%;
@@ -79,7 +63,6 @@
 .tile.sel .check-badge { display: grid; }
 @keyframes pop { from { transform: scale(.5); opacity: 0 } to { transform: none; opacity: 1 } }
 
-/* 紧凑列表（文件多的时候不画缩略图） */
 .grid.rows { display: flex; flex-direction: column; gap: 1px; }
 .grid.rows .tile {
   display: grid; grid-template-columns: 42px minmax(0, 1fr) minmax(0, 1fr) auto;
@@ -101,7 +84,6 @@
 .grid.rows .tile.sel .fico { background: color-mix(in srgb, var(--accent-fg) 25%, transparent); }
 .grid.rows .tile.sel .fdir, .grid.rows .tile.sel .fsize { color: color-mix(in srgb, var(--accent-fg) 80%, transparent); }
 
-/* 框选矩形 */
 .marquee {
   position: absolute; z-index: 5; pointer-events: none;
   border: 1px solid var(--accent);
@@ -110,8 +92,6 @@
 }
 .marquee[hidden] { display: none; }
 
-/* 类型芯片：现在是**快捷选择按钮**（点一下把这类全选上），不是过滤勾选框。
-   这样"选中"只剩一套模型，不再有两级全选。 */
 .types { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; min-width: 0; }
 .types[hidden] { display: none; }
 .types .lead { font-size: var(--t-sub); color: var(--text-3); }
@@ -134,9 +114,6 @@
 .chip .n { color: var(--text-3); font-variant-numeric: tabular-nums; }
 .chip.on .n { color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
 
-/* ============================================================================
-   字段
-   ========================================================================== */
 .field { margin-top: 12px; }
 .label {
   display: flex; align-items: baseline; gap: 6px;
@@ -155,7 +132,6 @@ input[type=text]:focus { background: var(--surface); border-color: var(--ring); 
 input[type=text].invalid { border-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent); }
 input.mono { font-family: var(--font-mono); font-size: var(--t-code); }
 
-/* 分段控件：选项少才点得舒服 */
 .seg { display: flex; padding: 2px; gap: 2px; background: var(--field); border-radius: var(--r-sm); }
 .seg button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
 .seg button > svg { width: 14px; height: 14px; opacity: .85; }
@@ -176,15 +152,13 @@ input.mono { font-family: var(--font-mono); font-size: var(--t-code); }
 html[data-theme="dark"] .seg button[aria-selected="true"] { background: var(--surface-3); }
 .seg button.warn[aria-selected="true"] { color: var(--danger); }
 
-/* 分段控件按内容宽度（自己占一行的用） */
 .seg.mode-seg { flex: none; }
 .seg.mode-seg button { flex: none; padding: 5px 16px; }
-/* 格式那一段要宽一点，但别撑满整行 */
+
 .seg.fmt-seg { flex: 0 1 340px; }
-/* 保存模式：三个中文长标签，给它需要的宽度 */
+
 .seg.save-seg { flex: 0 1 470px; }
 
-/* 宽度那个小输入框 */
 .width-wrap { display: flex; align-items: center; gap: 4px; flex: none; }
 .width-wrap input[type=text] {
   width: 74px; padding: 6px 8px; text-align: right;
@@ -192,10 +166,6 @@ html[data-theme="dark"] .seg button[aria-selected="true"] { background: var(--su
 }
 .width-wrap .lead { font-size: var(--t-sub); color: var(--text-3); }
 
-/* ============================================================================
-   保存行右侧的**共用槽位**：选「新文件夹」时是输出目录，选危险模式时是警告。
-   两者互斥且高度一致 —— 切换保存模式时整块高度不跳。
-   ========================================================================== */
 .outdir {
   display: flex; align-items: center; gap: 6px;
   flex: 1 1 auto; min-width: 0; height: 100%;
@@ -204,13 +174,13 @@ html[data-theme="dark"] .seg button[aria-selected="true"] { background: var(--su
   transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
 .outdir[hidden] { display: none; }
-/* 输入框和按钮都压到 26px，整格（含虚框）正好落在保存行的 34px 里，不再把行撑高 */
+
 .outdir input[type=text] {
   flex: 1 1 auto; min-width: 0; height: 26px; padding: 0 9px;
   font-family: var(--font-mono); font-size: var(--t-code);
 }
 .outdir .btn { height: 26px; padding: 0 10px; font-size: var(--t-sub); }
-/* 拖到上面时：虚线变实线 + 高亮，并且只在这一格上亮，大遮罩同时会隐藏 */
+
 .outdir.over {
   border-color: var(--accent); border-style: solid;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -227,7 +197,7 @@ html[data-theme="dark"] .seg button[aria-selected="true"] { background: var(--su
 html[data-theme="dark"] .warn-inline.soft { color: #fbbf24; }
 .warn-inline[hidden] { display: none; }
 
-/* 下拉：最近使用过的文件夹 */select {
+select {
   background-color: var(--field); border: 1px solid transparent; border-radius: var(--r-sm);
   height: 30px; padding: 0 24px 0 9px;
   outline: none; cursor: pointer; appearance: none; -webkit-appearance: none;
@@ -238,7 +208,6 @@ html[data-theme="dark"] .warn-inline.soft { color: #fbbf24; }
 }
 select:focus { background-color: var(--surface); border-color: var(--ring); box-shadow: 0 0 0 3px var(--field-focus); }
 
-/* 拖动条：原生 range 太丑，按字段的观感重画一遍 */
 input[type=range] {
   flex: 1 1 auto; min-width: 0; height: 30px; margin: 0; padding: 0;
   background: var(--field); border-radius: var(--r-sm);
@@ -260,7 +229,6 @@ input[type=range]:active::-webkit-slider-thumb { transform: scale(1.06); }
   font-weight: 590; color: var(--text); font-size: var(--t-sub);
 }
 
-/* 勾选 */
 .check { display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-sub); color: var(--text-2); cursor: pointer; }
 .check input { accent-color: var(--accent); margin: 0; }
 .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; }
@@ -270,15 +238,8 @@ input[type=range]:active::-webkit-slider-thumb { transform: scale(1.06); }
 .alias-row .lead { color: var(--text-3); font-weight: 500; flex: none; white-space: nowrap; }
 .slot .lead { color: var(--text-3); font-weight: 500; flex: none; white-space: nowrap; font-size: var(--t-sub); }
 
-/* ============================================================================
-   图标：统一尺寸与描边，颜色跟随 currentColor
-   ========================================================================== */
 .btn.icon svg { width: 15px; height: 15px; display: block; }
-/* ★ 必须是**后代**选择器 `.btn svg`，不能是 `.btn > svg`。
-   按钮上的图标是塞在 <span data-icon="..."> 里的（脱离 DOM 就不知道它是什么图标），
-   实际结构是 `.btn > span > svg` —— 写 `>` 一个都匹配不上，
-   而没有 CSS 尺寸的 <svg viewBox> 会按浏览器默认的 300×150 渲染，界面直接炸。
-   加个兜底：所有图标容器一律 inline-flex，不让 span 自己撑出空隙。 */
+
 .btn svg, .seg button svg, .warnbar svg, .toast svg, .log-toggle svg {
   display: block; flex: none;
 }
@@ -294,16 +255,12 @@ input[type=range]:active::-webkit-slider-thumb { transform: scale(1.06); }
 .picker-empty .pe-ico svg { width: 34px; height: 34px; color: var(--text-3); opacity: .7; }
 
 .field-note { margin-top: 5px; font-size: var(--t-sub); color: var(--text-3); }
-/* 没话说的时候**不占高度** —— 「将处理 N 个」这种和右上角、按钮上的数量重复，
-   已经在代码里不写了；这里保证空的时候是 0 高度。 */
+
 .field-note:empty { display: none; }
 .field-note.err { color: var(--danger); }
 .field-note.warn { color: #d97706; }
 html[data-theme="dark"] .field-note.warn { color: #fbbf24; }
 
-/* ============================================================================
-   警告条：只有选了危险模式才出现。藏起来的是设置，不是警告。
-   ========================================================================== */
 .warnbar {
   display: flex; align-items: center; gap: 7px;
   flex: none; margin-top: 8px; padding: 6px 10px;
@@ -320,9 +277,6 @@ html[data-theme="dark"] .field-note.warn { color: #fbbf24; }
 html[data-theme="dark"] .warnbar.soft { color: #fbbf24; }
 .warnbar[hidden] { display: none; }
 
-/* ============================================================================
-   日志：折叠时**零高度**，展开才占地方
-   ========================================================================== */
 .output.boxed { flex: none; height: 210px; margin-top: 8px; }
 .output.boxed[hidden] { display: none; }
 .output pre {
@@ -366,9 +320,6 @@ html[data-theme="dark"] .warnbar.soft { color: #fbbf24; }
 }
 .pill.mute { background: var(--field); color: var(--text-3); }
 
-/* ============================================================================
-   悬停详情卡片：鼠标停在缩略图上时出现，跟着鼠标走
-   ========================================================================== */
 .hovercard {
   position: fixed; z-index: 60; pointer-events: none;
   display: flex; gap: 10px; max-width: 420px;
@@ -400,9 +351,6 @@ html[data-theme="dark"] .warnbar.soft { color: #fbbf24; }
 .hc-meta { font-size: var(--t-sub); color: var(--text-2); font-variant-numeric: tabular-nums; }
 .hc-time { font-size: var(--t-sub); color: var(--text-3); font-variant-numeric: tabular-nums; }
 
-/* ============================================================================
-   帮助面板（模态）
-   ========================================================================== */
 .sheet-wrap { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: var(--sp-4); }
 .sheet-wrap[hidden] { display: none; }
 .scrim {
@@ -440,9 +388,6 @@ html[data-theme="dark"] .warnbar.soft { color: #fbbf24; }
 }
 .sheet-foot { display: flex; justify-content: flex-end; gap: var(--sp-2); margin-top: 18px; }
 
-/* ============================================================================
-   提示条
-   ========================================================================== */
 .toast-wrap { position: fixed; top: 62px; left: 0; right: 0; display: grid; justify-items: center; pointer-events: none; z-index: 50; }
 .toast {
   display: flex; align-items: center; gap: 7px; margin-bottom: 6px;
@@ -454,18 +399,15 @@ html[data-theme="dark"] .warnbar.soft { color: #fbbf24; }
 }
 .toast.bad { color: var(--danger); }
 
-/* ============================================================================
-   拖放遮罩
-   ========================================================================== */
 .drop-veil {
   position: fixed; inset: 0; z-index: 80;
   display: grid; place-items: center;
   background: color-mix(in srgb, var(--accent) 12%, rgba(0, 0, 0, .22));
   backdrop-filter: blur(2px);
   animation: fade var(--dur-fast) var(--ease-out) both;
-  pointer-events: none;       /* 别把 drop 事件自己吃掉 */
+  pointer-events: none;       
 }
-/* ★ 必须显式写：作者样式表里的 display 会盖掉浏览器默认的 [hidden]{display:none} */
+
 .drop-veil[hidden] { display: none; }
 .drop-card {
   display: grid; gap: 6px; justify-items: center;

@@ -1,13 +1,5 @@
-/* components.css
-   组件：树、命令行、字段、编辑器、卡片、sheet、toast
-   —— 由 index.html 拆出；<link> 顺序即层叠顺序 */
-
-/* ============================================================================
-   主体
-   ========================================================================== */
 .body { display: grid; grid-template-columns: 320px minmax(0, 1fr); min-height: 0; }
 
-/* 左栏：分类+命令的一棵树（半透明材质，内容从它下面滚过） */
 .sidebar {
   display: flex; flex-direction: column; min-height: 0;
   background: var(--material);
@@ -17,7 +9,6 @@
   box-shadow: var(--edge);
 }
 
-/* 命令行：树里的一行，单行显示（别名 + 灰描述），缩进表示层级 */
 .row {
   display: grid; grid-template-columns: 8px minmax(48px, auto) minmax(0, 1fr);
   gap: 8px; align-items: center;
@@ -52,9 +43,6 @@
 }
 .side-foot button:hover { color: var(--accent); }
 
-/* ============================================================================
-   详情
-   ========================================================================== */
 .detail {
   position: relative; min-height: 0; display: flex;
   padding: var(--sp-4) var(--sp-5);
@@ -104,7 +92,6 @@ input[type=text]:focus { background: var(--surface); border-color: var(--ring); 
 input[type=text].invalid { border-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent); }
 input.mono { font-family: var(--font-mono); font-size: var(--t-code); }
 
-/* 分段控件：选项少才点得舒服 */
 .seg { display: flex; padding: 2px; gap: 2px; width: 100%; background: var(--field); border-radius: var(--r-sm); }
 .seg button {
   flex: 1; min-width: 0; border: none; background: transparent; cursor: pointer;
@@ -121,8 +108,6 @@ input.mono { font-family: var(--font-mono); font-size: var(--t-code); }
 }
 html[data-theme="dark"] .seg button[aria-selected="true"] { background: var(--surface-3); }
 
-/* 代码编辑器：高亮层在下，透明文字的 textarea 在上。
-   两层字号/行高/字距/内边距/制表位必须完全一致，否则光标会和字形错位。 */
 .editor {
   position: relative; flex: 1; min-height: 0; overflow: hidden;
   background: var(--code-bg); border: 1px solid var(--sep); border-radius: var(--r-sm);
@@ -136,16 +121,7 @@ html[data-theme="dark"] .seg button[aria-selected="true"] { background: var(--su
   overflow: auto; overflow-wrap: normal; word-break: normal;
 }
 .editor > pre { pointer-events: none; color: var(--text); background: transparent; }
-/* ★ `V-375`：高亮层里的 `<code>` 必须**跟着编辑器走**（主界面 `system/ui/css/files.css`
-   里是 `V-29` 那条修复，插件这边原来漏了，所以"光标偏移"又犯了一次）：
-   `code` 有自己的 UA 规则 `code{font-family:monospace}` —— 那是**元素自己的**声明，
-   会盖过从 `pre` 继承下来的 `--font-mono`（"SF Mono"/ui-monospace/"Cascadia Code"
-   一个都不生效，落到默认等宽字体）⇒ 两层字宽不一样，越往右越偏。
-   实测（无头 Edge，同一行 172 字）：
-     · 原样  : pre/textarea = "SF Mono",ui-monospace,"Cascadia Code"…，而 code = monospace
-                ⇒ code 量到 1228px、textarea 1280px，**行尾差 -52px**；
-     · 补这条: 三层同一串字体 ⇒ 差 +0.5px（只是 `scrollWidth` 取整的零头）。
-   `font: inherit` 一次把字号/行高/字族都拉回来；`letter-spacing` / `tab-size` 同理。 */
+
 .editor > pre code { font: inherit; letter-spacing: inherit; tab-size: inherit; }
 .editor > textarea {
   background: transparent; color: transparent; caret-color: var(--text);
@@ -154,7 +130,6 @@ html[data-theme="dark"] .seg button[aria-selected="true"] { background: var(--su
 .editor > textarea::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 .field.code { flex: 1 1 0; min-height: 88px; display: flex; flex-direction: column; }
 
-/* 语法高亮配色用应用自己的 token，不引第三方主题（第三方是写死浅色） */
 .hljs-comment, .hljs-quote { color: var(--syn-comment); font-style: italic; }
 .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-section,
 .hljs-doctag, .hljs-type, .hljs-name, .hljs-tag { color: var(--syn-keyword); }
@@ -174,7 +149,6 @@ html[data-theme="dark"] .seg button[aria-selected="true"] { background: var(--su
 .field-note { margin-top: 6px; font-size: var(--t-sub); color: var(--text-3); min-height: 15px; }
 .field-note.err { color: var(--danger); }
 
-/* 下拉：只给「运行后」这种三选一的次要字段用 */
 select {
   width: 100%; height: 30px; padding: 0 26px 0 10px;
   background-color: var(--field); border: 1px solid transparent; border-radius: var(--r-sm);
@@ -195,7 +169,6 @@ textarea.small {
 }
 textarea.small:focus { border-color: var(--ring); box-shadow: 0 0 0 3px var(--field-focus); }
 
-/* 高级选项：默认折叠 —— 常用的先露出来，冷门的往下一层 */
 .advanced { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--sep); }
 .advanced > summary {
   cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
@@ -226,9 +199,6 @@ textarea.small:focus { border-color: var(--ring); box-shadow: 0 0 0 3px var(--fi
   animation: rise var(--dur-fast) var(--ease-out) both;
 }
 
-/* 输出抽屉 */
-/* 输出抽屉。注意不能用 :empty 判断 —— Vue 的 v-if 会留一个注释节点，
-   :empty 永远不成立，于是输出区会一直占着弹性空间把代码区挤小。 */
 .run-area { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .run-area:not(.on) { flex: 0 0 auto; }
 .output {
@@ -251,7 +221,6 @@ textarea.small:focus { border-color: var(--ring); box-shadow: 0 0 0 3px var(--fi
 }
 .output pre:empty::before { content: "（暂无输出）"; color: var(--text-3); }
 
-/* 列表项悬停时显示完整描述（列表宽度不够，描述会被截断） */
 .tip {
   position: fixed; z-index: 60; max-width: 360px;
   padding: 6px 10px; border-radius: 7px;
@@ -263,7 +232,6 @@ textarea.small:focus { border-color: var(--ring); box-shadow: 0 0 0 3px var(--fi
   animation: rise var(--dur-fast) var(--ease-out) both;
 }
 
-/* 新建命令：先选类型（macOS 的 sheet / 模板选择器那种做法，不是下拉） */
 .sheet-wrap { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; }
 .scrim {
   position: absolute; inset: 0; background: rgba(0,0,0,.30);
@@ -300,7 +268,6 @@ textarea.small:focus { border-color: var(--ring); box-shadow: 0 0 0 3px var(--fi
 }
 .sheet-foot { display: flex; justify-content: flex-end; margin-top: 16px; }
 
-/* HTML 的内嵌预览：iframe 天然隔离样式，不会污染主界面 */
 .preview-frame {
   flex: 1; min-height: 0; width: 100%;
   border: 1px solid var(--sep); border-radius: var(--r-sm);
@@ -312,7 +279,6 @@ textarea.small:focus { border-color: var(--ring); box-shadow: 0 0 0 3px var(--fi
 @keyframes sheetIn { from { opacity: 0; transform: scale(.96) translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes fade { from { opacity: 0 } to { opacity: 1 } }
 
-/* 空状态 */
 .empty {
   flex: 1; display: grid; place-content: center; justify-items: center;
   gap: var(--sp-2); text-align: center; color: var(--text-2); padding: var(--sp-5);
@@ -325,7 +291,6 @@ textarea.small:focus { border-color: var(--ring); box-shadow: 0 0 0 3px var(--fi
 @keyframes materialize { from { opacity: 0; transform: scale(.985) translateY(6px); filter: blur(2px); }
                          to   { opacity: 1; transform: none; filter: none; } }
 
-/* 提示条 */
 .toast-wrap { position: fixed; top: 62px; left: 0; right: 0; display: grid; justify-items: center; pointer-events: none; z-index: 50; }
 .toast {
   display: flex; align-items: center; gap: 7px; margin-bottom: 6px;

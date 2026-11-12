@@ -1,8 +1,3 @@
-/* 快捷翻译工具 —— 界面逻辑（原生 JS）。
-   ★ 这里不做翻译/缓存/热键，那些全在 Python（main.py）。本文件只干两件事：
-     ① 把后端推来的 `hotkey` 事件翻译成微型步骤条 / 日志 / 焦点卡片 / 历史；
-     ② 顶部状态（可点击）调 `hotkey_start` / `hotkey_stop`。
-   垫片（moss-embed.js）保证内嵌和独立窗口两种环境下这段代码一模一样。 */
 (function () {
   'use strict';
 
@@ -26,7 +21,6 @@
 
   var running = false;
 
-  /* ---------------------------------------------------------------- 视图更新 */
   function setRunning(on) {
     running = !!on;
     statusDot.className = 'status-dot' + (running ? ' running' : '');
@@ -93,15 +87,13 @@
       }).catch(function () {});
     });
 
-    /* 单条删除：这条历史对应的缓存也一起删（重启不会再冒出来）。
-       ★ 按 (原文, 目标语言) 定位 —— 后端就是照这个找缓存的。 */
     var del = document.createElement('button');
     del.type = 'button';
     del.className = 'history-del';
     del.textContent = '×';
     del.title = '删除这条历史（连带它的缓存）';
     del.addEventListener('click', function (e) {
-      e.stopPropagation();                 // 别触发外层的"点击复制"
+      e.stopPropagation();                 
       del.disabled = true;
       window.moss.call('history_remove', { src: source, target: targetLang || '' })
         .then(function (r) {
@@ -128,13 +120,10 @@
       historyList.appendChild(hint);
       return;
     }
-    /* ★ 倒着插：addHistory 是往最上面插的（新发生的排最前），
-       后端给的顺序本来就是"新的在前"，照原序插会把列表整个翻过来。
-       倒序插一遍 → 页面上就是后端给的顺序（最新的在最上面）。 */
+
     items.slice().reverse().forEach(function (h) { addHistory(h.src, h.dst, h.target); });
   }
 
-  /* 后端每个"改历史"的方法都回一份现成载荷 → 这里一处收口刷新界面 */
   function refresh(r) {
     if (!r || !r.ok) return;
     renderHistory(r.history);
@@ -151,7 +140,6 @@
       : '当前：不保留历史记录（点一下 → 保留）';
   }
 
-  /* ---------------------------------------------------------------- 交互 */
   function toggle() {
     var method = running ? 'hotkey_stop' : 'hotkey_start';
     window.moss.call(method, {}).then(function (r) {
@@ -160,8 +148,6 @@
   }
   statusEl.addEventListener('click', toggle);
 
-  /* 清空全部历史：点第一次只是"上膛"，3 秒内再点一次才真删
-     （★ 不用 confirm —— 内嵌 iframe 里 confirm 可能被挡，点了没反应） */
   var armedAt = 0;
   function disarmClear() {
     armedAt = 0;
@@ -186,7 +172,6 @@
     });
   }
 
-  /* 保留历史：开 = 翻译完记历史（也能命中缓存）；关 = 新翻译不落盘、每次都联网翻 */
   if (keepSwitch) {
     keepSwitch.addEventListener('click', function () {
       var next = !keepSwitch.classList.contains('on');
@@ -202,7 +187,6 @@
     });
   }
 
-  /* 左右拖动分隔线：调整右侧面板宽度（左侧自适应） */
   (function initSplitter() {
     var main = document.querySelector('.main-content');
     var right = $('right-panel');
@@ -219,7 +203,7 @@
     window.addEventListener('mousemove', function (e) {
       if (!drag) return;
       var r = main.getBoundingClientRect();
-      var w = r.right - e.clientX;                 // 右栏 = 指针到右边缘的距离
+      var w = r.right - e.clientX;                 
       if (r.width - w < MIN_LEFT) w = r.width - MIN_LEFT;
       if (w < MIN_RIGHT) w = MIN_RIGHT;
       right.style.flexBasis = w + 'px';
@@ -233,7 +217,6 @@
     });
   })();
 
-  /* ---------------------------------------------------------------- 后端事件 */
   window.moss.on('hotkey', function (d) {
     if (!d) return;
 
@@ -290,21 +273,20 @@
     }
   });
 
-  /* ---------------------------------------------------------------- 初始化 */
   (function init() {
     resetStep();
     try {
       window.moss.call('hotkey_status', {}).then(function (h) {
         if (h) setRunning(h.running);
       }).catch(function () {});
-    } catch (e) { /* 无妨 */ }
+    } catch (e) {  }
     try {
       window.moss.call('cache_info', {}).then(function (c) {
         if (!c || !c.ok) return;
-        refresh(c);                       // 历史列表 + 条数 + 开关状态，一次画好
+        refresh(c);                       
         if (c.keep === false) log('SYS', '当前是「不保留历史」：新翻译不会记进历史');
       }).catch(function () {});
-    } catch (e) { /* 无妨 */ }
+    } catch (e) {  }
     window.moss.on('ready', function () {
       EMBEDDED = !!(window.moss && window.moss.env.embedded);
     });

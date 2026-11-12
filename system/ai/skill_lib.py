@@ -1,64 +1,3 @@
-# -*- coding: utf-8 -*-
-"""**技能**（`V-281`/`V-284`）：AI 自己造的能力 —— **就是一个包**，只是住在另一个根里。
-
-你 2026-10-05 的话
-------------------
-> 「既然我们之前的 pkgs 的插件格式 能完全和 ai 技能兼容，那我们不应该直接使用原来的格式，
->   而把参数配置和路径稍稍不一样吗？这样的话我们还可以在它的技能和我们的插件之间相互转换，
->   我们还可以使用我们已经有的工具对文件进行卸载管理」
-> 「技能里面 现在不需要再添加 `--` 了 —— 当时是为了和用户的插件隔离开，防止相互干扰，
->   但是技能无法干扰了，因为我们需要通过 `moss :skill` 参数来调用，所以干扰问题已经彻底解决了」
-
-所以这一层**不另造格式**：技能 = `pkg.json` + 入口文件（跟插件一字不差，`spec("pkg.json")`
-那份契约就是它的说明书），只是：
-
-* **id 跟插件同一规格**（`shot`，小写字母开头）：技能**根本不走包解析那条路**
-  （入口是 `moss :skill <动词> <名字>`，见 `system/pkgs/skill/`），两个命名空间碰不到一起，
-  所以不需要任何前缀。
-* **本体住在 `:skill` 插件自己的数据目录里**（跟 `:exec` 把命令放 `state/exec/cmds/` 一样）：
-
-```
-system/pkgs/skill/            管理器插件本身（跟 :exec 并排；出厂）
-system/pkgs/skill/seed/shot/  出厂样例（**只留作"照它抄"的样板**：不会再自己长进数据目录，`V-288`/`V-289`）
-system/pkgs/skill/builtin/<id>/  预制技能（随发行版打包，出厂即可用；同名 user 技能覆盖它）
-user_data/state/skill/shot/   **技能本体**：一个目录（pkg.json + 入口 + icon.svg + 任意文件）
-user_data/ai/skills_allow.json  **你的授权**（AI 写不到这儿 —— 见下面「声明 ≠ 授权」）
-user_data/pkgs/<id>/            「转为插件」搬过去之后，它就是普通插件（插件页里看得见）
-```
-* **技能和插件两个圈子不互相出现**（`V-284`）：技能这一页只列技能；插件**不再自动进**
-  AI 的工具表 —— AI 想用插件就走它一直就有的那条路 `run_moss(":包名 …")`。
-  （账本 §16.3「只有 `ai.expose: true` 的插件才进工具列表」**留到商店/权限那轮**，那轮会有
-  正经的授权界面；现在只留字段，不做工具面。）
-
-
-声明 ≠ 授权（这条是旧设计必须补的）
------------------------------------
-账本 §16.6 原话是「验证通过 → `ai.expose = true`，进入可调用池」。那在"包是人写的 / 商店来的"
-前提下是安全的；**现在 AI 自己能写文件、也就能自己写 `expose: true`** —— 它一写就给自己发了
-通行证。所以拆成两半：
-
-| | 谁写 | 作用 |
-|---|---|---|
-| `pkg.json` 的 `ai.expose` | 包自己（AI 也写得动） | **声明**"我能被 AI 调" |
-| `user_data/ai/skills_allow.json` + 指纹 | **只有界面 / 只有你**（这文件不在 AI 的可写范围里） | **你的授权** |
-
-指纹 = `pkg.json` + 入口文件 + 图标 的 sha1 ⇒ 它事后改一个字，授权自动作废、退回"待批准"。
-
-技能自己的几个字段（都在 `ai` 块里，`additionalProperties: true`，不用改 schema）
--------------------------------------------------------------------------------
-```jsonc
-"ai": {
-  "expose": true,          // 声明：我能被 AI 调（技能目录里必须 true）
-  "why": "为什么要造它 / 它解决了什么问题",   // 详情页要显示的就是这句
-  "risk": "low",           // 详情页也显示
-  "timeout": 60,           // 单次最多跑多久（默认 60，最多 300）
-  "examples": [ {"args": "…"} ]
-}
-```
-图标：技能目录里的 `icon.svg`（跟插件一个规矩：相对包目录、不许跑出去）；缺了就画一个默认的，
-并记一条**提醒**（不算写坏）。★ 图标是**它自己写的文件**，所以发给界面前要**洗一遍**
-（去掉 `<script>` / `on*=` / `javascript:` —— 界面是把它 innerHTML 进去的）。
-"""
 import hashlib
 import json
 import os
@@ -69,34 +8,23 @@ import sys
 import time
 from pathlib import Path
 
-#: 洗 SVG：只留画画要用的东西（这只够挡"图标里塞脚本"这种，不追求当完整消毒器用）
 _SVG_BAD = re.compile(r"(<\s*script|<\s*foreignObject|<\s*iframe|<\s*use\b|on[a-z]+\s*=|javascript:)",
                       re.I)
 
-HERE = Path(__file__).resolve().parent                     # system/ai
+HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-#: ★ 这个模块住在 `system/ai/`，是**技能那一层的唯一定义**：宿主界面进程（AI 工作台）
-#: 和 `:skill` 插件进程 import 的是同一份 —— 两边不会各写一套然后漂移。
-#: 所以它**只用标准库**（不 import `core`、也不 import `system/ui/**` 里的东西）：
-#: 插件跑在自带运行时里，跨包 import 越少越不容易坏。
 def _home():
     env = (os.environ.get("MOSS_HOME") or "").strip()
-    return Path(env) if env else HERE.parents[1]           # system/ai → 安装根
-
+    return Path(env) if env else HERE.parents[1]
 
 HOME = _home()
-
 
 def user_data():
     env = (os.environ.get("MOSS_USER_DATA_DIR") or "").strip()
     return Path(env) if env else (HOME / "user_data")
 
-#: 技能 id：**跟插件 id 同一规格**（小写字母开头）。`V-284`：不再要求 `--` 前缀 ——
-#: 那是早期为了"别污染用户的插件 id"加的，但现在技能**根本不走包解析那条路**
-#: （`moss :skill <动词>` 才是入口，见 `system/pkgs/skill/`），两个命名空间碰不到一起，
-#: 前缀就成了纯粹的噪音（你 2026-10-05 的原话：「干扰问题已经彻底解决了」）。
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 TIMEOUT = 60
@@ -105,52 +33,21 @@ TAIL_LINES = 60
 TAIL_CHARS = 4000
 FILE_CAP = 200
 
-
-# ------------------------------------------------------------------ 技能住哪儿
 def skill_dir():
-    """技能本体住**插件自己的数据目录**里（`user_data/state/skill/`）。
-
-    ★ 为什么是这儿（你 2026-10-05 定的）：跟 `:exec` 一个道理 —— 它管的那些命令就住在
-      `user_data/state/exec/cmds/`。`:skill` 也是个普通插件，那它的东西就住它自己的数据目录。
-      **只差一点**：exec 把代码**内联在 json 里**（`"code": "import sys…"`），技能是
-      **一个目录**（`pkg.json` + 入口 + `icon.svg` + 随便什么文件）—— 就是插件那种多文件结构，
-      所以技能和插件能互相搬。
-    """
     return user_data() / "state" / "skill"
 
-
-#: 出厂样例（"照它抄"的样板）住在 `:skill` 插件自带的 `seed/` 里：`<这里>/shot/`。
-#: ★ `V-288`（你 2026-10-05 定的）：**不再往数据目录自动播种** —— 原来有个 `ensure_seed()`
-#:   每次列技能都把缺的样例补回去（于是界面里删掉它、下次刷新又冒出来），界面上还有一颗
-#:   「补回出厂样例」按钮、命令行还有 `moss :skill seed`；**这几个都已删除**（`V-289`）。
-#:   想要样例就自己复制一份成 `user_data/state/skill/<名字>/` —— 这个常量只是告诉你样板在哪。
 SEED_DIR = HOME / "system" / "pkgs" / "skill" / "seed"
 
-#: 预制技能（随发行版一起打包、出厂即可用、无需用户允许）：`system/pkgs/skill/builtin/<id>/`。
-#: 用户 `user_data/state/skill/<id>/` 里的同名技能会覆盖它（`roots()` 先 system 后 user）。
 BUILTIN_DIR = HOME / "system" / "pkgs" / "skill" / "builtin"
 
-
 def roots():
-    """技能扫描根：system 预制技能 + user_data 用户技能（同名 user 覆盖 system）。
-
-    技能和插件仍然不混：这里没有插件根，插件走 run_moss 的包调用那条路。
-    """
     return [(BUILTIN_DIR, "system", "skill"),
             (skill_dir(), "user", "skill")]
 
-
 def allow_path():
-    """你的授权记在这儿（**不在技能目录里，也不在 state/skill 下**）。
-
-    ★ 这是那道闸的地基：AI 能写技能本体（要让它自己造），所以授权表**必须**在它的可写范围
-      之外 —— 否则它随手改一下这个文件就给自己发了通行证。
-    """
     return user_data() / "ai" / "skills_allow.json"
 
-
 def _pkg_id(workdir=""):
-    """从干活目录推包 id（和 `ui/ai/ai_runs.pkg_of` 同一口径，尽量少依赖 UI）。"""
     try:
         p = Path(str(workdir or "")).resolve()
     except (OSError, ValueError):
@@ -171,11 +68,10 @@ def _pkg_id(workdir=""):
                 cand = str((got or {}).get("id") or "").strip()
                 if cand:
                     pid = cand
-        except Exception:                                            # noqa: BLE001
+        except Exception:
             pass
         return pid
     return ""
-
 
 def _mode_path(workdir=""):
     pid = _pkg_id(workdir)
@@ -183,13 +79,7 @@ def _mode_path(workdir=""):
         return user_data() / "state" / pid / "ai" / "mode.json"
     return user_data() / "ai" / "mode.json"
 
-
 def full_access(workdir=""):
-    """读**这个插件**的「完全权限」开关。
-
-    路径清单已改为按插件分文件（`state/<包id>/ai/mode.json`）；技能授权必须看同一份，
-    否则 A 插件开了完全权限、B 插件也会跟着自动批准技能。没给 workdir 才回全局桶。
-    """
     try:
         raw = json.loads(_mode_path(workdir).read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
@@ -200,59 +90,36 @@ def full_access(workdir=""):
             if (isinstance(it, dict) and str(it.get("path") or "") == "*"
                     and it.get("write") and "完全权限" in str(it.get("why") or "")):
                 return True
-    except Exception:                                                  # noqa: BLE001
+    except Exception:
         pass
     return False
 
-
 def stats_path():
-    """**调用统计**（每只被调了几次 + 最近一次调用时间）住这儿。
-
-    ★ 为什么放在 `user_data/ai/`（跟授权表同一层）、而不是技能目录里：技能目录里的东西
-      是"这个技能有哪些文件"的证据（详情页的文件清单就列它）—— 统计文件混进去会污染它；
-      而且技能目录是 AI 写得到的地方，统计该跟授权一样待在外面。
-    """
     return user_data() / "ai" / "skill_stats.json"
 
-
-# ------------------------------------------------------------------ 运行方式（照 runners.json）
 _RUNNERS = {"t": 0.0, "got": None}
 
-
 def runners():
-    """`system/runners.json` —— **跟插件同一张表**：技能的入口怎么跑由它说了算。"""
     now = time.time()
     if _RUNNERS["got"] is not None and now - _RUNNERS["t"] < 30:
         return _RUNNERS["got"]
     try:
         got = json.loads((HOME / "system" / "runners.json").read_text(encoding="utf-8"))
         got = {k: v for k, v in got.items() if not k.startswith("_")}
-    except Exception:                                                  # noqa: BLE001
+    except Exception:
         got = {}
     _RUNNERS.update({"t": now, "got": got})
     return got
-
 
 def _resolve_interp(tpl):
     if tpl.startswith("PATH:"):
         return shutil.which(tpl[5:]) or ""
     return tpl if Path(tpl).is_file() else ""
 
-
 def _ver_key(name):
     return [int(x) for x in re.findall(r"\d+", str(name))] or [0]
 
-
 def runtime_dir(family):
-    """`{runtime}` 该指哪儿 = `<runtimes>/<家族>/<版本>/`（**用户层优先**）。
-
-    ★ 为什么不能直接拼 `<runtimes>/python`：那里没有 `python.exe` —— 真的解释器在
-      `<runtimes>/python/3.12/python.exe`。**第一版就是这么写错的**：`{runtime}\\python.exe`
-      不存在 ⇒ 顺着模板退到 `PATH:python` ⇒ 拿**系统的 Python 3.13** 去跑技能
-      （技能是给自带运行时写的：依赖都在那边、行为才一致）。
-      规矩跟 core 的 `runners.runtime_dir()` 对齐：先看 `runtimes/default.json` 钉的版本，
-      没钉就取版本号最大的那个。
-    """
     fam = str(family or "")
     if not fam:
         return ""
@@ -275,7 +142,7 @@ def runtime_dir(family):
               HOME / "system" / "runtimes" / "default.json"):
         try:
             pinned = str(json.loads(f.read_text(encoding="utf-8")).get(fam) or "")
-        except Exception:                                              # noqa: BLE001
+        except Exception:
             pinned = ""
         if pinned:
             break
@@ -285,19 +152,13 @@ def runtime_dir(family):
                 return str(p)
     return str(sorted(cands, key=lambda t: _ver_key(t[0]))[-1][1])
 
-
 def _is_bundled(p):
     try:
         return str(p).lower().startswith(str(HOME / "system" / "runtimes").lower())
-    except Exception:                                                  # noqa: BLE001
+    except Exception:
         return False
 
-
 def runner_argv(pkg, pdir):
-    """按 runner 表拼出启动命令（**跟插件走同一套规则**，含自带运行时的 bootstrap 垫片）。
-
-    回 `(argv, 原因)` —— 拼不出来时第二个是一句人话。
-    """
     rname = str((pkg or {}).get("runner") or "python")
     spec = runners().get(rname)
     if not spec:
@@ -319,7 +180,7 @@ def runner_argv(pkg, pdir):
     for tpl in (cands or []):
         try:
             interp = _resolve_interp(str(tpl).format(**ctx))
-        except Exception:                                              # noqa: BLE001
+        except Exception:
             interp = ""
         if interp:
             break
@@ -342,12 +203,10 @@ def runner_argv(pkg, pdir):
     for t in tpls:
         try:
             argv.append(str(t).format(**ctx))
-        except Exception:                                              # noqa: BLE001
+        except Exception:
             argv.append(str(t))
     return argv, ""
 
-
-# ------------------------------------------------------------------ 指纹 / 授权
 def _fp(blobs, sid):
     h = hashlib.sha1()
     h.update(str(sid).encode("utf-8"))
@@ -356,43 +215,31 @@ def _fp(blobs, sid):
         h.update(b or b"")
     return h.hexdigest()[:16]
 
-
 def allowed_map():
     try:
         got = json.loads(allow_path().read_text(encoding="utf-8"))
         return got if isinstance(got, dict) else {}
-    except Exception:                                                  # noqa: BLE001
+    except Exception:
         return {}
-
 
 def _save_allow(d):
     p = allow_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
 
-
-# ------------------------------------------------------------------ 调用统计
 def load_stats():
-    """`{id: {"n": 次数, "at": "最近一次调用时间"}}`（读不出来就当空）。"""
     try:
         got = json.loads(stats_path().read_text(encoding="utf-8"))
         return got if isinstance(got, dict) else {}
-    except Exception:                                                  # noqa: BLE001
+    except Exception:
         return {}
-
 
 def _save_stats(d):
     p = stats_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
 
-
 def bump_stat(sid):
-    """记一次调用：次数 +1、把"最近调用时间"写成现在。
-
-    ★ 在 `run()` 真跑之前调它 —— **AI 调的、命令行调的、界面「运行测试」调的，都从 `run()`
-      这一条路走**，所以一处埋点就全覆盖了（不管成没成功，只要真发起了就算一次）。
-    """
     sid = str(sid or "").strip()
     if not sid:
         return
@@ -406,25 +253,16 @@ def bump_stat(sid):
     except OSError:
         pass
 
-
-# ------------------------------------------------------------------ 运行日志（`V-301`）
 def run_log_path():
-    """技能**运行日志**：`user_data/ai/skill_runs.jsonl`（一行 = 一次运行）。
-
-    ★ 放在技能目录**外面**（跟 stats / 授权表一层）：技能目录回答的是"这只技能有哪些文件"，
-      运行日志不是它的文件。界面「运行日志面板」和"管理日志"都读这一份。
-    """
     return user_data() / "ai" / "skill_runs.jsonl"
 
-
 def _log_run(rec):
-    """记一次运行（jsonl 追加）。日志是锦上添花 —— 坏了也不能影响这次调用。"""
     try:
         p = run_log_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        try:                                        # 别越攒越大：超 2MB 就裁到最近 400 行
+        try:
             if p.stat().st_size > 2 * 1024 * 1024:
                 lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
                 p.write_text("\n".join(lines[-400:]) + "\n", encoding="utf-8")
@@ -433,9 +271,7 @@ def _log_run(rec):
     except OSError:
         pass
 
-
 def list_runs(sid=None, limit=50):
-    """最近的运行记录（**新的在前**）。`sid` 给了就只看这只技能的。"""
     try:
         lines = run_log_path().read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -459,9 +295,7 @@ def list_runs(sid=None, limit=50):
             break
     return out
 
-
 def clear_runs(sid=None):
-    """清运行日志：给了 `sid` 就只清它那几行，否则整个清空。回 `(ok, 说明)`。"""
     p = run_log_path()
     want = str(sid or "").strip()
     if not p.is_file():
@@ -489,33 +323,22 @@ def clear_runs(sid=None):
     except OSError as e:
         return False, "写不回去：%s" % e
 
-
-# ------------------------------------------------------------------ 扫描
 def _text(p):
     try:
         return p.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
 
-
 def clean_svg(svg):
-    """洗一遍图标（`<script>` / `on*=` / `javascript:` 一律不要）。
-
-    ★ 为什么必须洗：图标是**它自己写的文件**，而界面是把它 `innerHTML` 进去画的 ——
-      不洗就等于让"技能"能往主界面里塞脚本。
-    """
     s = str(svg or "")
     if _SVG_BAD.search(s):
-        return ""                                  # 有脏东西就整个不用（退回默认图标）
+        return ""
     return s
 
-
 def _i18n(v):
-    """`name` / `desc` 在契约里是多语言的（`{"zh-CN": …}`），也可能直接给字符串。"""
     if isinstance(v, dict):
         return str(v.get("zh-CN") or v.get("en") or next(iter(v.values()), "") or "")
     return str(v or "")
-
 
 def _stamp(ts):
     try:
@@ -523,9 +346,7 @@ def _stamp(ts):
     except (TypeError, ValueError, OSError):
         return ""
 
-
 def _files_of(pdir):
-    """这个技能目录里有什么（**跳过 `__pycache__` / `.pyc`** —— 那是跑出来的垃圾，不是它写的东西）。"""
     out = []
     try:
         for f in sorted(pdir.rglob("*")):
@@ -545,9 +366,7 @@ def _files_of(pdir):
         pass
     return out
 
-
 def _load(d, layer, kind, stats_in=None, workdir=""):
-    """读一只技能 / 一个可调用的插件 → 那一项（文件不全就带着 problems 回来）。"""
     sid = d.name
     stats = stats_in if stats_in is not None else load_stats()
     stat = stats.get(sid) if isinstance(stats.get(sid), dict) else {}
@@ -607,9 +426,6 @@ def _load(d, layer, kind, stats_in=None, workdir=""):
     if layer == "system":
         allowed, why_allow = True, "出厂技能（AI 写不到这个根，随版本走）"
     elif full_access(workdir):
-        # ★ 完全权限：AI 现在有文件系统写权限，所以技能这一层也彻底放权。
-        #   动态判断而不写进 skills_allow.json —— 关掉开关后，没被人真正点过允许的
-        #   技能会立刻回到"待批准"，不会留下永久授权的副作用。
         allowed, why_allow = True, "完全权限：自动批准（新建 / 修改也照此）"
     else:
         rec = allowed_map().get(sid) or {}
@@ -638,7 +454,6 @@ def _load(d, layer, kind, stats_in=None, workdir=""):
                 "problems": probs, "warns": warns})
     return out
 
-
 def _clamp_timeout(t):
     try:
         t = int(t or 0)
@@ -646,15 +461,10 @@ def _clamp_timeout(t):
         t = 0
     return max(5, min(TIMEOUT_MAX, t)) if t > 0 else TIMEOUT
 
-
 def list_skills(roots_in=None, workdir=""):
-    """`{id: 那一项}` —— **user 层同名盖 system 层**（跟包、跟技能一个规矩）。
-
-    `roots_in` 只给探针用（造一组合成的根，别去动仓库里那两份出厂件）。
-    """
     if roots_in is None:
-        migrate_dashes()                     # `V-284`：老的 `--名字` 改成不带前缀（幂等）
-    stats = load_stats()                     # 调用统计读一次，喂给每个 `_load`（别一个技能读一遍盘）
+        migrate_dashes()
+    stats = load_stats()
     out = {}
     for d, layer, kind in (roots_in if roots_in is not None else roots()):
         d = Path(d)
@@ -666,9 +476,7 @@ def list_skills(roots_in=None, workdir=""):
             out[sub.name] = _load(sub, layer, kind, stats, workdir=workdir)
     return out
 
-
 def usable(roots_in=None, workdir=""):
-    """能进工具表：没毛病 + 已授权。"""
     out = {}
     for _sid, it in sorted(list_skills(roots_in, workdir=workdir).items()):
         if it["problems"] or not it["allowed"]:
@@ -676,18 +484,14 @@ def usable(roots_in=None, workdir=""):
         out.setdefault(it["name"], it)
     return out
 
-
 def pending(roots_in=None, workdir=""):
     return {k: v for k, v in list_skills(roots_in, workdir=workdir).items()
             if not v["problems"] and not v["allowed"]}
 
-
 def broken(roots_in=None, workdir=""):
     return {k: v for k, v in list_skills(roots_in, workdir=workdir).items() if v["problems"]}
 
-
 def conflicts(roots_in=None, workdir=""):
-    """**重名**（`--x` 和插件 `x` 都能用）—— 只留了先到的那只，另一只要报出来，别静默。"""
     seen, dup = {}, {}
     for sid, it in sorted(list_skills(roots_in, workdir=workdir).items()):
         if it["problems"] or not it["allowed"]:
@@ -699,14 +503,10 @@ def conflicts(roots_in=None, workdir=""):
             seen[it["name"]] = it
     return dup
 
-
-# ------------------------------------------------------------------ 给模型的两样
 _SCHEMA_TYPE = {"int": "integer", "integer": "integer", "float": "number",
                 "number": "number", "bool": "boolean", "boolean": "boolean"}
 
-
 def specs_from(got):
-    """`{名字: 那一项}` → 工具表里那几张（参数类型照 `pkg.json` 的 `params` 来）。"""
     rows = []
     for name in sorted(got or {}):
         it = got[name]
@@ -726,13 +526,10 @@ def specs_from(got):
             "parameters": {"type": "object", "properties": props, "required": req}}})
     return rows
 
-
 def specs(roots_in=None, workdir=""):
     return specs_from(usable(roots_in, workdir=workdir))
 
-
 def note(got=None, workdir=""):
-    """系统提示里那段"你已经有哪些技能"（一只都没有就一个字都不加）。"""
     got = usable(workdir=workdir) if got is None else got
     if not got:
         return ""
@@ -755,8 +552,6 @@ def note(got=None, workdir=""):
                     "写完**要用户点一次「允许」**，下一次跑才生效。" % skill_dir())
     return "\n".join(rows)
 
-
-# ------------------------------------------------------------------ 跑一只技能
 def _env(args, sid):
     keep = {"MOSS_HOME", "MOSS_USER_DATA_DIR", "MOSS_UI_DATA"}
     env = {k: v for k, v in os.environ.items()
@@ -769,11 +564,8 @@ def _env(args, sid):
     env["MOSS_VIA"] = "ai"
     env["MOSS_ARGS"] = " ".join("%s=%s" % (k, v) for k, v in (args or {}).items())
     env.setdefault("PYTHONIOENCODING", "utf-8")
-    # ★ `V-302`：**不缓冲输出** —— 交互式运行时（界面「运行测试」）输出是**流式**读的，
-    #   子进程要是把 stdout 攒在缓冲区里，界面就一直"正在跑却什么都没有"（要等进程结束才吐）。
     env.setdefault("PYTHONUNBUFFERED", "1")
     return env
-
 
 def tail(text, lines=TAIL_LINES, chars=TAIL_CHARS):
     s = str(text or "")
@@ -787,13 +579,7 @@ def tail(text, lines=TAIL_LINES, chars=TAIL_CHARS):
         s = s[-chars:]
     return ("……（前面还有 %d 行，已省略）\n" % (len(ls) - lines) if cut else "") + s
 
-
 def run(name, args, roots_in=None, _detail=False):
-    """真跑一只技能。默认回一段**给模型看**的文本（跟 `run_moss` 一个口径）；
-    `_detail=True` 时回**结构化** dict（给界面「运行测试」用）。
-
-    ★ 不论谁调（AI / 命令行 / 界面）都从这条路过 ⇒ 都在这里**记一条运行日志**。
-    """
     want = str(name or "").strip()
 
     def _ret(text, ok=True, **kw):
@@ -824,7 +610,7 @@ def run(name, args, roots_in=None, _detail=False):
         return _ret("[跑不起来] %s" % (got.get("run_err") or "拼不出启动命令"),
                     ok=False, id=got["id"])
     cmd = argv + [str(v) for v in (args or {}).values() if isinstance(v, str) and v]
-    bump_stat(got["id"])                    # 记一次调用（次数 +1 + 最近调用时间）
+    bump_stat(got["id"])
     at = time.strftime("%Y-%m-%d %H:%M:%S")
     t0 = time.time()
     try:
@@ -864,15 +650,10 @@ def run(name, args, roots_in=None, _detail=False):
                 name=got.get("name") or "", code=p.returncode, out=out, err=err,
                 dur=dur, at=at, cmd=cmd, cwd=str(got["dir"]))
 
-
 def run_detail(name, args, roots_in=None):
-    """给界面用的**结构化**运行结果（同时记一条运行日志）。"""
     return run(name, args, roots_in, _detail=True)
 
-
-# ------------------------------------------------------------------ 设置里那几个动作
 def allow(sid, yes=True, roots_in=None):
-    """允许 / 撤销。**只对 user 层有意义**（出厂技能本来就允许）。"""
     got = list_skills(roots_in).get(str(sid or "").strip())
     if not got:
         return {"ok": False, "msg": "没有这只技能：%s" % sid}
@@ -891,14 +672,7 @@ def allow(sid, yes=True, roots_in=None):
             "msg": ("允许了：%s —— 它**下一次**跑就能用（工具表是开工那一刻定的）" % got["id"])
                    if yes else ("撤销了：%s —— 它还留在盘上，但进不了工具表" % got["id"])}
 
-
 def rm(sid, confirm=False, roots_in=None):
-    """删掉一只**它自己造的技能**。
-
-    出厂件删不得（哪怕带了 confirm）；**插件行也不许从这儿删** —— 技能这一层只管
-    `user_data/state/skill/` 里那些；一个插件的去留是 `moss --remove`（宿主那套确认流程）的事。
-    （这一条是排查"一只出厂包怎么从技能层被删掉"时顺手加的闸：不给技能层留"删到插件"的口子。）
-    """
     got = list_skills(roots_in).get(str(sid or "").strip())
     if not got:
         return {"ok": False, "msg": "没有这只技能：%s" % sid}
@@ -921,9 +695,7 @@ def rm(sid, confirm=False, roots_in=None):
     _save_allow(d)
     return {"ok": True, "id": got["id"], "msg": "删掉了：%s" % got["id"]}
 
-
 def read(sid, limit=20000, roots_in=None):
-    """看一眼它写了什么（详情页那个「文件内容」用它）。"""
     got = list_skills(roots_in).get(str(sid or "").strip())
     if not got:
         return {"ok": False, "msg": "没有这只技能：%s" % sid}
@@ -940,17 +712,8 @@ def read(sid, limit=20000, roots_in=None):
             "allowed": got["allowed"], "why_allow": got["why_allow"],
             "problems": got["problems"], "files": got.get("files") or [], "text": out}
 
-
-# ------------------------------------------------------------------ 转成插件
 def _taken_ids():
-    """两层 pkgs 里已经占掉的 id / 目录名 / 别名。
-
-    ★ 注意是 `roots()[1:]`（**两个 pkgs 根**）—— 第一版写的是 `roots()[2:]`，
-      那时候根表里有四个；根表缩成三个之后，这一刀正好把 `system/pkgs` 切掉了 ⇒
-      `--md5` 转插件时不报冲突（而 `md5` 明明已经占了）。探针当场抓住。
-    """
     out = {}
-    # ★ 根表里已经没有插件了（`V-284`）—— 转插件要查的是**两个 pkgs 根**，直接扫
     for d in (HOME / "system" / "pkgs", user_data() / "pkgs"):
         d = Path(d)
         if not d.is_dir():
@@ -961,16 +724,14 @@ def _taken_ids():
             out.setdefault(sub.name.lower(), str(sub))
             try:
                 pkg = json.loads((sub / "pkg.json").read_text(encoding="utf-8"))
-            except Exception:                                          # noqa: BLE001
+            except Exception:
                 continue
             for k in [pkg.get("id")] + list(pkg.get("aliases") or []):
                 if k:
                     out.setdefault(str(k).lower(), str(sub))
     return out
 
-
 def promote_plan(sid, new_id="", roots_in=None, builtin=()):
-    """**只算不改**：把技能转成插件要做哪些事、id 会不会撞（设置里那个按钮先弹这个）。"""
     got = list_skills(roots_in).get(str(sid or "").strip())
     if not got:
         return {"ok": False, "msg": "没有这只技能：%s" % sid}
@@ -996,13 +757,7 @@ def promote_plan(sid, new_id="", roots_in=None, builtin=()):
             "files": len(got.get("files") or []), "why": got.get("why") or "",
             "desc": got.get("desc") or ""}
 
-
 def promote(sid, confirm=False, new_id="", roots_in=None, builtin=()):
-    """真转：搬目录 + 把 `pkg.json` 的 id 改成新名字（插件那边 id 必须 = 目录名）。
-
-    ★ 转成插件之后它就是"用户的插件"了：AI 想用走 `run_moss(":新id …")`（那条路一直都在），
-      所以这边**不留**技能那套授权记录（留着反而是个说不清的影子）。
-    """
     plan = promote_plan(sid, new_id, roots_in, builtin)
     if not plan.get("ok"):
         return plan
@@ -1028,18 +783,16 @@ def promote(sid, confirm=False, new_id="", roots_in=None, builtin=()):
         ai.setdefault("why", plan.get("why") or "")
         pkg["ai"] = ai
         pj.write_text(json.dumps(pkg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    except Exception as e:                                             # noqa: BLE001
+    except Exception as e:
         return {"ok": False,
                 "msg": "包搬过去了，但 pkg.json 没改好：%s: %s" % (type(e).__name__, e)}
     d = allowed_map()
-    d.pop(plan["id"], None)                    # 它已经不是技能了，把授权记录收掉
+    d.pop(plan["id"], None)
     _save_allow(d)
     return {"ok": True, "id": plan["id"], "new_id": plan["new_id"], "dir": str(dst),
             "msg": "转成插件了：%s —— 插件列表里现在能看到它（id「%s」）"
                    % (dst.name, plan["new_id"])}
 
-
-# ------------------------------------------------------------------ `:skill` 那一页的数据
 def _row(it, with_files=False):
     row = {"id": it["id"], "name": it["name"], "layer": it["layer"], "kind": it["kind"],
            "dir": str(it["dir"]), "desc": it.get("desc") or "", "why": it.get("why") or "",
@@ -1058,15 +811,7 @@ def _row(it, with_files=False):
         row["files"] = it.get("files") or []
     return row
 
-
 def migrate_dashes():
-    """`V-284`：把早期带 `--` 前缀的技能目录**改名成不带前缀的**（只做一次，之后无操作）。
-
-    为什么还要这一步：`--` 是上一轮加的，你这次说「不需要再添加 -- 了」—— 那已经存在的
-    `--shot` 就得跟着改，不然界面上会留着一只"名字带两个短横"的怪东西。顺手把
-    `pkg.json` 里的 `id` 和授权记录里的键一起搬过来（**不重算指纹**：文件内容没变，
-    只是名字变了；指纹里含名字，所以这里按新名字重算一次）。
-    """
     moved = []
     root = skill_dir()
     if not root.is_dir():
@@ -1079,7 +824,7 @@ def migrate_dashes():
         want = sub.name.lstrip("-")
         dst = root / want
         if not NAME_RE.match(want) or dst.exists():
-            continue                       # 新名字不合法 / 已经有一个同名的：留着别动（下面会点名）
+            continue
         try:
             sub.rename(dst)
         except OSError:
@@ -1090,7 +835,7 @@ def migrate_dashes():
             pkg["id"] = want
             pkg["aliases"] = [a for a in (pkg.get("aliases") or []) if str(a) != sub.name]
             pj.write_text(json.dumps(pkg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        except Exception:                                              # noqa: BLE001
+        except Exception:
             pass
         rec = d.pop(sub.name, None)
         got = _load(dst, "user", "skill")
@@ -1103,14 +848,7 @@ def migrate_dashes():
         _save_allow(d)
     return moved
 
-
 def doc(sid, roots_in=None):
-    """这只技能**自己的说明书**（`AGENT.md`；没有就退回 `pkg.json` + 文件清单）。
-
-    ★ 为什么要有它：AI 得能"看说明"才知道这东西怎么用 —— 命令行里就是
-      `moss :skill doc <名字>`（你 2026-10-05 问的"有没有什么功能是查看某个插件的
-      `AGENT.md` 内容的"）。人这边是详情页那颗「看说明」。
-    """
     got = list_skills(roots_in).get(str(sid or "").strip())
     if not got:
         return {"ok": False, "msg": "没有这只技能：%s" % sid}
@@ -1136,14 +874,7 @@ def doc(sid, roots_in=None):
     return {"ok": True, "id": got["id"], "name": got["name"], "dir": str(d), "text": text,
             "has_agent_md": (d / "AGENT.md").is_file()}
 
-
 def rev():
-    """技能状态的小指纹（`ai_poll` 每 700ms 拿它判断要不要重读界面那一行）。
-
-    ★ 修用户报的：AI 先造技能、用户点允许，然后 AI 又改了它 —— 授权按指纹自动作废，
-      宿主盘上的状态已经是"待批准"，但 AI 页那行还写着"已允许"（界面没重读）。
-      指纹把每只技能的 `fp + allowed + why_allow` 都算进去，改一个字就变。
-    """
     h = hashlib.sha1()
     try:
         for sid, it in sorted(list_skills().items()):
@@ -1154,7 +885,7 @@ def rev():
             h.update(b"1" if it.get("allowed") else b"0")
             h.update(str(it.get("why_allow") or "").encode("utf-8", "replace"))
             h.update(b"\0")
-    except Exception:                                                    # noqa: BLE001
+    except Exception:
         pass
     try:
         ap = allow_path()
@@ -1162,17 +893,11 @@ def rev():
             st = ap.stat()
             h.update(str(st.st_mtime_ns).encode("ascii", "replace"))
             h.update(str(st.st_size).encode("ascii", "replace"))
-    except Exception:                                                    # noqa: BLE001
+    except Exception:
         pass
     return h.hexdigest()[:16]
 
-
 def summary():
-    """`:skill` 那一页要的全部数据（图标墙 + 详情都在里面；宿主 AI 页那一行也用它）。
-
-    ★ `V-284`：**只有技能**（`skills`）—— 插件不出现在这儿（你说的"插件的东西不能放在技能这里"）。
-      `broken` 还是那堆"写坏了、进不了工具表"的技能（界面上要能看见它们）。
-    """
     got = list_skills()
     dup = conflicts()
     rows = [_row(v, with_files=True) for _k, v in sorted(got.items())]

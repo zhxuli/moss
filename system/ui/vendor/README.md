@@ -38,20 +38,7 @@ https://cdnjs.cloudflare.com/ajax/libs/highlight.js/<版本>/languages/dos.min.j
 https://unpkg.com/lucide-static@<版本>/icons/<名字>.svg
 ```
 
-`system/icon/svg/*.svg` 里那些图标由 **`tools/取图标.py`** 生成（`lucide.js` 现在只是
-二十来行的 `ico()`，**别手工编辑那些 `.svg`**）：
-
-```
-venv\Scripts\python.exe tools\取图标.py                 # 只报告，不写
-venv\Scripts\python.exe tools\取图标.py history clock   # 把缺的补进去
-venv\Scripts\python.exe tools\取图标.py --verify        # 拿线上重新核对现有文件
-```
-
-它把每个线上 `<svg>` 里的内容剥出来、套上统一画笔写成一个文件。
-**只增不改** —— 已经有的文件一个字节都不动，免得整个目录产生无意义 diff。
-改版本号时把脚本里的 `VERSION` 一起改掉，再跑 `--verify` 核对。
-
-★ 2026-09-28 之前，这个脚本**不在仓库里**（只在提交记录里），README 却写着"别手工编辑" ——
-于是想补一个图标就只能手抄，等于破了自己定的规矩。现在补回来了（补 `history` 时顺手做的）。
+`system/icon/svg/*.svg` 是静态图标资产，**别手工编辑**。新增图标时从 lucide-static
+下载对应 SVG，保持现有画笔和目录格式。
 ★ 2026-10（`V-267`）：图标从 `lucide.js` 的表里搬到了 `system/icon/svg/*.svg`，
 脚本也从"往表里插一行"改成"写一个文件"。

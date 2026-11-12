@@ -1,13 +1,5 @@
-/* base.css
-   重置与基础排版
-   —— 由 index.html 拆出；<link> 顺序即层叠顺序 */
-
-/* ============================================================================
-   基础
-   ========================================================================== */
 * { box-sizing: border-box; }
-/* #app 是 Vue 的挂载点，必须显式给高度 ——
-   否则里面 .window 的 height:100% 解析不到视口，整页会被内容撑高、底部操作栏溢出屏幕 */
+
 html, body, #app { height: 100%; margin: 0; }
 [v-cloak] { display: none; }
 body {
@@ -29,8 +21,7 @@ button, input, textarea { font: inherit; letter-spacing: inherit; color: inherit
 }
 ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--text-3) 72%, transparent); background-clip: content-box; }
 ::-webkit-scrollbar-track { background: transparent; }
-/* 正文区滚动条默认隐形、悬停才浮现（macOS 默认就是"滚动时才显示"），
-   顺带盖住 flex 撑满到小数像素时那 1~2px 溢出带来的常驻滚动条 */
+
 .card-body::-webkit-scrollbar-thumb { background: transparent; }
 .card-body:hover::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--text-3) 46%, transparent); background-clip: content-box;

@@ -1,13 +1,5 @@
 @echo off
-REM ============================================================================
-REM  moss build helper  (V-380)
-REM  Shortcut for the long nuitka command that is kept in moss.py.
-REM  The real logic lives in tools\build.py -- do NOT put logic here.
-REM  Keep this file ASCII-only: cmd.exe under cp936 mangles non-ASCII bytes in
-REM  .cmd files (that is exactly why the build logic is Python, see build.py).
-REM ============================================================================
 setlocal
-REM  Resolve OUR OWN folder (not the caller's cwd), then build from the repo root.
 cd /d "%~dp0"
 
 if not exist "venv\Scripts\python.exe" (

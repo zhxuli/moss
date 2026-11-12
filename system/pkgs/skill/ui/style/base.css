@@ -1,9 +1,5 @@
-/* base.css —— 重置与基础排版
-   —— `<link>` 顺序即层叠顺序：tokens → base → layout → components */
-
 * { box-sizing: border-box; }
-/* #app 是 Vue 的挂载点，必须显式给高度：
-   否则里面 .page 的 height:100% 解析不到视口，整页被内容撑高、底栏溢出屏幕 */
+
 html, body, #app { height: 100%; margin: 0; }
 [v-cloak] { display: none !important; }
 
@@ -13,7 +9,7 @@ body {
   line-height: 1.5;
   color: var(--ink);
   background-color: var(--paper);
-  /* 环境光垫在纸底下面（两层极淡的径向辉光），让整页"有空气" */
+
   background-image: var(--ambient);
   background-attachment: fixed;
   overflow: hidden;
@@ -27,7 +23,6 @@ button { -webkit-tap-highlight-color: transparent; }
 a { color: var(--primary); }
 ::selection { background: var(--primary); color: var(--primary-ink); }
 
-/* 细一点的滚动条：默认隐形、悬停才浮现 */
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
@@ -39,16 +34,13 @@ a { color: var(--primary); }
   background: var(--ink-faint); background-clip: content-box;
 }
 
-/* 键盘走查时给一颗焦点环（鼠标点就不给，免得满屏光环） */
 :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
 code, pre, .mono { font-family: var(--font-mono); }
 
-/* 微标签：uppercase + 加宽字距 */
 .micro {
   font-size: var(--t-micro); font-weight: 600; letter-spacing: var(--t-micro-ls);
   text-transform: uppercase; color: var(--ink-faint);
 }
 
-/* 图标：统一按 em 走，尺寸跟着字号 */
 .ico { display: inline-block; vertical-align: middle; flex: none; }

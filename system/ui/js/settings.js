@@ -1,21 +1,3 @@
-/* moss 界面 · js/settings.js —— ★ 设置面板（`V-60` ✅ / `V-63` ✅ / `V-66` ✅ / `V-67` ✅）
-   ============================================================================
-   这是**第一个 Vue 3 组件**（`V-67`：原来它是一大段命令式 DOM 代码，散在 index.html 里）。
-
-   它自己带：模板（写在这个文件里）、状态、校验、保存、hover 提示 —— 外面只管两件事：
-     · `<div id="settings-host"></div>` 这么个挂载点；
-     · 齿轮点一下调 `openSettings()`。
-
-   ★ 数据全是宿主给的（`moss --settings` / `--settings-check` / `--settings-set`）：
-     分组 / 图标 / 标签 / 说明 / 控件类型 / 当前值 / 「现在这样」/ 冲突原因。
-     这个组件**不认识任何设置项，也不自己实现校验规则** —— 规则只有 `core/config.py` 那一份。
-   ★ 为什么是"经典脚本 + 全局组件"而不是 .vue 单文件：页面是 pywebview 从 `file://`
-     打开的，`file://` 下的 ES module 会被 CORS 拦掉（见 index.html 里的说明）。
-     `vue.global.prod.js` 自带模板编译器，所以 `template:` 字符串在这里能用。 */
-/* ★ `V-358`：**自动启动那一组从这里搬走了** —— 用户说「把那个自动启动放在详情里面去设置
-   而不是放到设置里面去 那样很不直观」。现在它在「详情」页（包详情 / 历史详情各一块），
-   实现在 `js/autostart.js`，设置面板里一个字都不留。 */
-
 const MossSettings = {
   name: "moss-settings",
   template: `
@@ -23,8 +5,8 @@ const MossSettings = {
   <div class="card wide">
     <div class="set-head">
       <h3>设置</h3>
-      <!-- 整条路径**每一段**都能点（V-198）：点哪一段就打开"到那一级"的路径，一直能点到根目录。
-           最后一段没有分隔符 ⇒ 那是个文件，点它就是打开文件（上一版只拆了目录 / 文件名两段，V-160）。 -->
+      
+
       <span class="set-sub" id="set-path" :title="path"><span
         v-for="(s, i) in segs" :key="i" class="set-link" :data-path="s.path"
         :id="i === segs.length - 1 ? 'set-open-file' : null"
@@ -51,19 +33,19 @@ const MossSettings = {
         <div v-for="g in groups" :key="g.name" class="set-pane"
              :class="{on: g.name === active, 'is-ai': isAi(g)}" :data-group="g.name">
 
-          <!-- 通用标题 + 说明：AI 那一页自己有稿子的 view-header，这里让开（V-146） -->
+          
           <template v-if="!isAi(g)">
             <h3 class="set-ptitle">{{ g.name }}</h3>
             <p class="set-pdesc" v-if="g.blurb">{{ g.blurb }}</p>
           </template>
 
-          <!-- ★ AI（V-143）：照那份 UI 稿子抄的 —— 三张"视图"（列表 / 选服务商 / 编辑）**常驻 DOM**，
-               靠 .active 做「淡入 + 上移 15px」的切换（稿子的 .view / .view.active 那套），
-               卡片 / 虚线空框 / 九宫格 / 结果横幅 / 底部动作条的大小间距也按稿子来。
-               ★ 唯一没照抄的：稿子里的次要按钮是 1px 描边的，咱这边有「按钮不许有描边」那条通用闸
-                 （V-92 你定的），所以换成浅底色 —— 形状、尺寸、字重照旧。 -->
+          
+
+
+
+
           <div class="set-ai" v-if="isAi(g)">
-            <!-- 视图 1：列表 -->
+            
             <div class="ai-view active" id="ai-view-list" v-if="ai.mode === 'list'">
               <div class="ai-scroll">
               <div class="ai-vhead">
@@ -102,16 +84,16 @@ const MossSettings = {
                 <span>添加新的 AI 配置</span>
               </div>
 
-              <!-- ★ 音效提醒（照你给的极简稿子）：一种音效一行，左边「名字 + 文件名」，
-                   右边「▶ 试听 + 小开关」。**点文件名 = 换音效**（也可以把音频拖到这一行上），
-                   开关和换文件都**当场生效** —— 不跟底下那颗「保存」走。
-                   ★ 换进来的文件会被复制到 user_data/sound/，原文件删掉也不影响；
-                     文件名照你选的那个留着，所以那一行显示的就是你自己的文件。 -->
+              
+
+
+
+
               <div class="ai-snd" id="ai-snd">
-                <!-- 标题那几个字本身是个链接：点了去 sounddino 挑音效素材。
-                     外观一点不变（同色、同字重、没有下划线），只有鼠标停上去变小手。
-                     真打开交给宿主（open_url 走 webbrowser）—— 页面里 target=_blank
-                     在 WebView2 下会被拦掉，点了没反应，见 js/compare.js 那段注释。 -->
+                
+
+
+
                 <div class="ai-snd-title">
                   <a class="ai-snd-site" href="https://sounddino.com/zh/" target="_blank"
                      rel="noopener" title="去 sounddino 找音效"
@@ -145,7 +127,7 @@ const MossSettings = {
               </div>
             </div>
 
-            <!-- 视图 2：选服务商 -->
+            
             <div class="ai-view active" id="ai-view-tpl" v-else-if="ai.mode === 'tpl'">
               <div class="ai-scroll">
               <button class="ai-back" id="ai-back" type="button" title="返回列表"
@@ -169,7 +151,7 @@ const MossSettings = {
               </div>
             </div>
 
-            <!-- 视图 3：编辑 -->
+            
             <div class="ai-view active" id="ai-view-form" v-else>
               <div class="ai-scroll">
               <button class="ai-back" id="ai-back2" type="button" title="放弃修改，返回列表"
@@ -205,7 +187,7 @@ const MossSettings = {
                   <input class="ai-input" id="ai-in-key" :type="ai.showKey ? 'text' : 'password'"
                          spellcheck="false" autocomplete="off" :placeholder="aiKeyPh()"
                          :value="aiVal('api_key')" @input="aiSet('api_key', $event.target.value)">
-                  <!-- 框里那只小眼睛：悬停/聚焦 + 框里有内容才出现（悬停、有字才看得见） -->
+                  
                   <button class="ai-eye" id="ai-eye" type="button"
                           :title="ai.showKey ? '藏起来' : '看明文'"
                           @click="aiToggleKey()"
@@ -226,8 +208,8 @@ const MossSettings = {
                           title="查询这个接口的账户余额（DeepSeek / Kimi / OpenRouter / 硅基流动等已知接口）">
                     <span v-html="icon('gauge')"></span><span>查询余额</span>
                   </button>
-                  <!-- 测试可用性：挨个问一遍下面列表里的每个模型，一行一个结果。
-                       花销压到最低（每次只花几个 token），所以可以放心对整张表点一遍。 -->
+                  
+
                   <button class="ai-query-btn" id="ai-ping" type="button"
                           :disabled="ai.busy || aiPingBusy" @click="aiPingAll()"
                           :title="aiPingTip">
@@ -235,8 +217,8 @@ const MossSettings = {
                     <span>{{ aiPingBusy ? ("测试中 " + aiPingDone + "/" + aiPingTotal) : "测试可用性" }}</span>
                   </button>
                 </div>
-                <!-- 结果：一行一个模型。绿的能通（后面跟耗时 + 它回了什么），红的不能通（跟原因）。
-                     不通的那些可以一键从下面的列表里删掉，再点保存才真正写进 config.toml。 -->
+                
+
                 <div class="ai-ping" id="ai-ping-box" v-if="ai.ping.rows.length">
                   <div class="ai-ping-head">
                     <span>可用 <b class="ok-n">{{ aiPingOkN }}</b> 个 · 不通
@@ -270,7 +252,7 @@ const MossSettings = {
                       v-html="icon(ai.statusOk ? 'check' : 'circle-alert')"></span>
                 <span class="ai-btxt">
                   <span id="ai-state">{{ ai.status }}</span>
-                  <!-- 原始报文（那一大串）折起来，点了才看 —— 普通用户不需要看到代码 -->
+                  
                   <button class="ai-more" id="ai-more" type="button" v-if="ai.detail"
                           @click="ai.open = !ai.open">{{ ai.open ? "收起" : "详情" }}</button>
                   <code class="ai-detail" id="ai-detail" v-if="ai.open && ai.detail">{{ ai.detail }}</code>
@@ -282,9 +264,9 @@ const MossSettings = {
             </div>
           </div>
 
-          <!-- 通用那套（一个键一行）：AI / 短名设置 / 命令接入这三组自己有界面，所以用 v-if 让开 -->
+          
           <template v-if="!isAi(g) && !isShortcut(g) && !isAccess(g)">
-          <!-- 输入类：标签在上、控件在下（两列网格） -->
+          
           <div class="set-fields" v-if="fieldsOf(g).length">
             <div v-for="it in fieldsOf(g)" :key="it.key" class="set-field" :data-key="it.key"
                  :class="rowClass(it.key)">
@@ -310,7 +292,7 @@ const MossSettings = {
             </div>
           </div>
 
-          <!-- 开关类：名字在左、开关在右 -->
+          
           <div class="set-list" v-if="rowsOf(g).length" :style="fieldsOf(g).length ? 'margin-top:16px' : ''">
             <div v-for="it in rowsOf(g)" :key="it.key" class="set-item" :data-key="it.key"
                  :class="rowClass(it.key)">
@@ -328,18 +310,18 @@ const MossSettings = {
             </div>
           </div>
 
-          <!-- 快捷命令那页：底下一条预览行（宿主算的那句话） -->
+          
           <div v-if="g.live" class="set-live" id="set-live" :class="{bad: /^⚠/.test(live || '')}">
             <b>预览：</b> {{ live }}
-            <!-- ★ V-275：改动还没保存时，这段预览是**上一次问宿主**（打开面板那次）算的 ——
-                 老实说一句，别让它看着像"实时反映你刚才的改动"。 -->
+            
+
             <span v-if="changed.length" style="opacity:.65">（改动还没保存，预览还是上一次的）</span>
           </div>
 
           </template>
 
-          <!-- ★ V-299：命令接入那一组（照你给的那份清爽稿子）—— 一张卡片两行设置（PATH / CD 增强），
-               CD 下面挂一个"受控子环境列表"的子面板；关掉 CD 时子面板整块置灰。 -->
+          
+
           <div class="acc-card" id="set-acc" v-if="isAccess(g)">
             <div class="acc-row">
               <div class="acc-info">
@@ -386,9 +368,9 @@ const MossSettings = {
             </div>
           </div>
 
-          <!-- ★ V-298：短名设置那一组（照那份稿子）—— 前缀 + 三段选择（不启用 / 仅前缀 / 前缀+包名）
-               + **一直显示**的左右对比预览（左=原来、右=现在；改前缀、切模式它立刻跟着变）。
-               ★ 为什么用三段而不是两个独立开关：这是一件事的三种程度，做成一条线才一眼看懂。 -->
+          
+
+
           <div class="set-sc" v-if="isShortcut(g)">
             <div class="set-field sc-field" :class="rowClass('shortcut.prefix')">
               <div class="set-lbl">
@@ -437,8 +419,8 @@ const MossSettings = {
       </div>
     </div>
 
-    <!-- ★ 底栏**所有页共用一条**（V-155）：AI 不做特殊化。
-         左边状态字 + 右边按钮：AI 页是「测试连接 / 保存」，别的页是「取消 / 保存」。 -->
+    
+
     <div class="set-foot">
       <span class="set-state" id="set-state" :class="footClass">{{ aiPane ? aiFootText() : footText }}</span>
       <button class="btn-quiet" id="set-ai-test" v-if="aiPane && ai.mode === 'edit'"
@@ -453,8 +435,8 @@ const MossSettings = {
     </div>
   </div>
 
-  <!-- hover 提示：挂在组件里（原来那个全局 #tip 已经不需要了）。fixed 定位 —— 
-       放进滚动层里会被裁掉。 -->
+  
+
   <div id="tip" v-if="tip.show" :style="{left: tip.x + 'px', top: tip.y + 'px'}">
     <b>{{ tip.title }}</b>
     <div v-if="tip.hint">{{ tip.hint }}</div>
@@ -470,53 +452,38 @@ const MossSettings = {
       show: false,
       path: "",
       groups: [],
-      items: {},          // key -> 定义（标签 / 类型 / 说明）
-      values: {},         // key -> 现在的值
-      orig: {},           // key -> 打开时的值（判断"改了没有"）
+      items: {},          
+      values: {},         
+      orig: {},           
       problems: [],
       notes: {},
       live: "",
       active: "",
-      msg: "",            // 宿主顺带说的话（首次运行建了配置文件之类）
+      msg: "",            
       saving: false,
       tip: {show: false, x: 0, y: 0, title: "", hint: "", now: "", problems: []},
-      // ★ AI 那一组（`V-138`）：界面**不解析 TOML**，全都问宿主（`pywebview.api.ai_*`）。
-      //   `params` = 宿主给的那一组（key **打码**）；`draft` = 用户改过、还没保存的字段
-      //   （存的时候**只送这几个**，不会把打码那串当值写回去）。
+
       ai: {loaded: false, busy: false, name: "", active: "", profiles: [], presets: [],
            summary: {},
            params: {}, draft: {}, status: "", statusOk: false, from: "", showKey: false,
            keyReal: false,
            detail: "", open: false,
-           // ★ `V-140`：两张脸 —— `list`（默认，一组一行）/ `edit`（点新建或某行编辑才进来）。
-           //   一打开就摊开四个输入框（上一版）会让人以为"已经配好了"，你的原话：
-           //   「还没有设置过的时候 它不应该是显示列表吗」。
+
            mode: "list",
-           // ★ 正在**新建**一组（点了「常用」里某家或「自定义」）：这时候保存 = 加一组；
-           //   不然「名字框和当前那组不一样」就一律当成**改名** —— 点个预制参数再保存会把
-           //   原来那组改掉（第一版就这么错的，场景里"假库少了一组"才发现）。
+
            creating: false,
-           // ★ 「测试可用性」：`rows` 一行一个模型（state = wait / run / done），`running` 防重复点。
-           //   结果只是显示 + 改内存里的列表，**一个字节都不落盘**（要保存才写 config.toml）。
-           //   ★ `seq` = "这一批的批次号"：换了一组 / 关了面板就 +1，正在跑的那一轮回来时
-           //     一看号不对就自己收手（不然 A 组的模型会挂在 B 组的编辑页上、还在背后接着问）。
+
            ping: {running: false, rows: [], seq: 0}},
-      // ★ `V-299`：「命令接入」页里的 cd 增强状态（走宿主 `--cd-status` / `cd --install`）
+
       cd: {loaded: false, busy: false, any: false, profiles: []},
-      // ★ 音效提醒（「AI 引擎」那两行）：`items` 是宿主给的现状（开着没有 / 哪个文件 /
-      //   出厂自带还是自己换的）；`hot` = 此刻正被拖着的那一行（拖动时高亮，落地口也认它）。
+
       snd: {loaded: false, busy: false, hot: "", at: 0, items: {}},
       _timer: null,
       _seq: 0,
-      _sndT: null,          // 音效那一行的"拖动到点自己收"定时器（见 sndHot）
+      _sndT: null,          
     };
   },
   computed: {
-    // ★ `V-198`：整条路径拆成**每一段**（每段自带它后面那个分隔符），每段都记着"到这一级"的完整路径。
-    //   上一版只拆两段（目录 / 文件名，`V-160`）—— 中间那几级点不动。
-    //   ★ 切法是"段 + 分隔符交替"，好处有三：① 拼回去**一字不差**（原来是 `/` 还是 `\` 都照原样）；
-    //     ② 盘符 `D:\` / UNC 头 `\\server\share\` / 根 `/` 单独当第一段；③ **最后一段没有分隔符**
-    //     正好就等于"这是个文件"（路径以分隔符结尾 ⇒ 最后那段是目录）。
     segs(){
       const raw = String(this.path || "");
       const out = [];
@@ -547,26 +514,24 @@ const MossSettings = {
       return this.problems.filter(p => p.level !== "warn").length;
     },
     canSave(){
-      // ★ `V-275`：**只看"改没改"**（纯前端），不再要求"宿主说没问题" —— 那样才能做到
-      //   "点保存才校验"。真有问题的话，保存那趟会把 problems 带回来并标红。
       return this.changed.length > 0 && !this.saving;
     },
     footText(){
       if (this.saving) return "正在保存…";
-      // 上一次保存被打回留下的那些冲突（改的时候还留着，方便照着改；存成功就清掉）
+
       if (this.errs) return "✗ " + this.errs + " 处冲突 —— 改好再点一次保存";
       if (this.changed.length){
         return "改了 " + this.changed.length + " 项 · 点保存写入 config.toml（下次启动 moss 生效）"
                + (this.msg ? "（" + this.msg + "）" : "");
       }
-      // ★ `V-164`：没改动不是状态、更不是错，什么都不显示（只留宿主顺带说的话）
+
       return this.msg ? ("（" + this.msg + "）") : "";
     },
     footClass(){
       if (this.errs) return "bad";
       return this.changed.length ? "moved" : "";
     },
-    // 哪一组里有红/黄 —— 要在左边分类上点一个小圆点（不然切走了看不见）
+
     badGroups(){
       const out = {};
       (this.problems || []).forEach(p => {
@@ -578,16 +543,15 @@ const MossSettings = {
       });
       return out;
     },
-    // 现在这一页是不是 AI 那一组（是的话底部那颗全局「保存」就不摆 —— 见模板里的注释）
+
     aiPane(){ return this.isAiName(this.active); },
-    // ★ `V-298`：短名设置那一组 —— 前缀 / 三段模式 / 对比预览（都跟着当前编辑值即时变）
+
     scPrefix(){ return (String(this.values["shortcut.prefix"] || "").replace(/[^A-Za-z0-9_-]/g, "")) || "mo"; },
     scMode(){ return this.values["shortcut.pkg"] ? 2 : (this.values["shortcut.mo"] ? 1 : 0); },
-    // ★ `V-305`：这一页"现在的写法"要用**真的跑包符号**（设置→符号 里那个），别写死 `:`
+
     scSym(){ const s = this.values["symbols.plugin_mode"]; return s === undefined ? ":" : String(s); },
     scBeforeText(){ return "moss " + this.scSym + "img\nmoss " + this.scSym + "img webp 60% *.png"; },
-    // ★ V-298：右列要**把前缀高亮**（`mo` 亮、`img` 正常）—— 照那份稿子的视觉引导。
-    //   `scPrefix` 已经洗过（只剩字母/数字/-/_），拼进 HTML 安全。
+
     scNowHtml(){
       const p = this.scPrefix, m = this.scMode;
       const hl = s => '<span class="sc-hl">' + s + '</span>';
@@ -595,17 +559,14 @@ const MossSettings = {
       if (m === 2) return hl(p) + "img\n" + hl(p) + "img webp 60% *.png";
       return hl("moss") + " " + esc(this.scSym) + "img\n" + hl("moss") + " " + esc(this.scSym) + "img webp 60% *.png";
     },
-    // ★ 音效那两行的名字（模板里 `v-for` 用）。**必须写在 computed**：模板里是
-    //   不带括号用的，写在 methods 里取到的会是函数本体（`tools/界面检查.py` 第 1c 条）。
+
     sndKinds(){
       return [
         {key: "finish", title: "任务结束"},
         {key: "warn", title: "需要你确认"},
       ];
     },
-    /* ★ 2026-11-02：「测试可用性」那几个数。**必须写在 computed**（模板里不带括号用）——
-       写进 methods 的话模板拿到的是函数本体，按钮会一直是灰的、title 变成一串函数源码。
-       `rows` 一行一个模型：state = wait（排队）/ run（正在测）/ done（有结论了）。 */
+
     aiPingBusy(){ return !!this.ai.ping.running; },
     aiPingTotal(){ return (this.ai.ping.rows || []).length; },
     aiPingDone(){ return (this.ai.ping.rows || []).filter(r => r.state === "done").length; },
@@ -618,11 +579,7 @@ const MossSettings = {
     },
 
   },
-  /* ★ 音效那两行的**拖放落地口**：真实路径只有宿主知道（Chromium 不给页面 `File.path`），
-     `js/drop.js` 拿到路径后交到这里。规矩和 `__mossAiDrop` 一样 —— 自己另起一个名字，
-     不去抢 `__mossDropHook` 那个全局唯一的槽。
-     ★ 只在"设置面板开着 + 音效某一行正被拖着"（`snd.hot`）时才收：不然在设置面板上
-       拖任何东西都会被当成"换铃声"。 */
+
   mounted(){
     window.__mossSndDrop = (items) => {
       if (!this.show || !this.snd.hot) return false;
@@ -645,9 +602,9 @@ const MossSettings = {
   methods: {
     icon(name){ return ico(name, "i"); },
     isAi(g){ return this.isAiName(g && g.name); },
-    // 短名设置那一组（`V-298`）—— 模板里要给它单画一块（前缀 + 三段模式 + 对比预览）
+
     isShortcut(g){ return !!(g && (g.items || []).some(it => it.key === "shortcut.prefix")); },
-    // 命令接入那一组（`V-299`）—— 除通用开关外，再画一块 cd 增强
+
     isAccess(g){ return this.isAccessName(g && g.name); },
     isAccessName(name){
       const g = (this.groups || []).find(x => x.name === name);
@@ -658,7 +615,7 @@ const MossSettings = {
         const r = await pywebview.api.cd_state();
         this.cd.any = !!(r && r.any);
         this.cd.profiles = (r && r.profiles) || [];
-      } catch(e){ /* 拿不到就当未装 */ }
+      } catch(e){  }
       this.cd.loaded = true;
     },
     async cdToggle(){
@@ -680,12 +637,9 @@ const MossSettings = {
       toast(r && r.ok ? "已卸掉 cd 增强" : "没卸掉", !(r && r.ok));
     },
 
-    /* ---- 音效提醒（「AI 引擎」那两行）----
-       ★ 全部**当场生效**：开关 / 换文件都是一点就写 `config.toml` 的 `[sound]` 段，
-         不跟底下那颗「保存」走（那是 AI 那几组的）。所以这里没有 draft，也没有"未保存"那种状态。 */
     sndOn(kind){ return !!((this.snd.items || {})[kind] || {}).on; },
     sndBuiltin(kind){ return ((this.snd.items || {})[kind] || {}).builtin !== false; },
-    // 那一行显示的文件名 —— 就是你选的那个；没换过 = 出厂那个（finish.mp3 / warn.mp3）
+
     sndFile(kind){
       const it = (this.snd.items || {})[kind] || {};
       return it.name || "还没有音频";
@@ -699,16 +653,15 @@ const MossSettings = {
       try{
         const r = await pywebview.api.sound_state();
         if (r && r.ok){ this.snd.items = r.items || {}; this.snd.loaded = true; }
-      }catch(e){ /* 读不到就当它没设 —— 那一行会显示"还没有音频" */ }
+      }catch(e){  }
     },
-    // 宿主每次回的都是"两种音效的新现状"（`items`），照抄过来就行，不用自己推
+
     sndApply(r){
       this.snd.busy = false;
       if (r && r.items) this.snd.items = r.items;
       this.$forceUpdate();
     },
-    // ★ 这一颗是**复选框**（照稿子的 .switch 那个样子）：浏览器的点击已经把它拨过去了，
-    //   存失败时得手动拨回来，不然"看着开了、其实没开"。
+
     async sndToggle(kind, ev){
       if (this.snd.busy) return;
       const box = (ev && ev.target && ev.target.type === "checkbox") ? ev.target : null;
@@ -740,7 +693,7 @@ const MossSettings = {
       }
       this.sndApply(r);
       toast(r.msg || "换好了");
-      sndNotify(kind, true);        // 换完直接响一下：好让你确认就是这个
+      sndNotify(kind, true);        
     },
     async sndReset(kind){
       if (this.snd.busy) return;
@@ -757,7 +710,7 @@ const MossSettings = {
       toast(r.msg || "已回到出厂自带的那个");
       sndNotify(kind, true);
     },
-    // 拖进来的音频（真路径由宿主从 `__mossSndDrop` 那条路交过来）
+
     async sndUsePath(kind, path){
       if (this.snd.busy) return;
       this.snd.busy = true;
@@ -774,19 +727,14 @@ const MossSettings = {
       sndNotify(kind, true);
     },
     sndTry(kind){ sndNotify(kind, true); },
-    /* 点「音效提醒」那几个字 = 去 sounddino 找素材（用**用户的默认浏览器**打开）。
-       ★ 为什么不在页面里直接跳：`target="_blank"` 在 WebView2 里被拦（点了没反应），
-         `location.href = ...` 更糟 —— 会把界面本身导航走，等于把 app 关掉。
-         所以交给宿主：`open_url` → `webbrowser.open`（和 `open_path` 同一个路子）。 */
+
     async sndSite(){
       let r = null;
       try{ r = await pywebview.api.open_url("https://sounddino.com/zh/"); }
       catch(e){ r = {ok: false, msg: String(e && e.message ? e.message : e)}; }
       if (!r || !r.ok) toast("✗ 浏览器没能打开：" + ((r && r.msg) || "未知原因"), true);
     },
-    // 拖动经过某一行 ⇒ 记下"这一行是落点"（高亮 + 落地口认它）。
-    // ★ 不用 dragleave 清：拖过一个子元素就会来一次 dragleave（高亮会闪），
-    //   所以改成"记时间戳 + 到点自己收"。
+
     sndHot(kind){
       this.snd.hot = kind;
       this.snd.at = Date.now();
@@ -796,7 +744,6 @@ const MossSettings = {
       }, 1000);
     },
     setScMode(m){
-      // 三种程度互斥：1 = 仅前缀（生成 `<前缀>`，= moss）；2 = 前缀+包名（生成 `<前缀><包名>`）；0 = 都关
       this.setVal("shortcut.mo", m === 1);
       this.setVal("shortcut.pkg", m === 2);
     },
@@ -804,10 +751,7 @@ const MossSettings = {
       const g = (this.groups || []).find(x => x.name === name);
       return !!(g && (g.items || []).some(it => it.key === "ai.active"));
     },
-    /* ---- AI 那一组（`V-139`：名字 / 接口地址 / 密钥 / 模型）—— 全走宿主，界面不解析 TOML ---- */
-    // 接口地址 / 密钥 / 模型 **三样都齐**才让保存和测试（V-151）。
-    // ★ 密钥：这一组已经存过一把（列表摘要里的 has_key）也算齐 —— 不然"编辑旧配置"时
-    //   输入框是空的（占位写着"已保存，留空不改"），会被判成没填、按钮永远灰着。
+
     aiFilled(){
       if (!String(this.aiVal("base_url") || "").trim()) return false;
       if (!this.aiModelList().length) return false;
@@ -818,10 +762,9 @@ const MossSettings = {
     aiVal(k){
       if (Object.prototype.hasOwnProperty.call(this.ai.draft, k)) return this.ai.draft[k];
       if (k === "name") return this.ai.name;
-      // 打码的那串**不当值填进框里** —— 不然保存时会把 "sk-a…7890" 存成真 key
-      // 打码那串永远不当值填进框；只有"进编辑时真去读过明文"（`V-159`）才显示
+
       if (k === "api_key") return this.ai.keyReal ? (this.ai.params.api_key || "") : "";
-      // 模型在库里是**列表**，在框里是「一行一个」的文本
+
       if (k === "model"){
         const m = this.ai.params.model;
         return (Array.isArray(m) ? m : (m ? [m] : [])).join("\n");
@@ -835,24 +778,23 @@ const MossSettings = {
     },
     aiKeyPh(){
       if (this.ai.keyReal) return "";
-      // 新建的时候**没有"已保存的密钥"这回事**（`ai.params` 还留着上一组读出来的东西）
+
       if (this.ai.creating) return "sk-xxxxxxxxxxxxxxxx";
       return this.ai.params.api_key ? "已保存，留空不改" : "sk-xxxxxxxxxxxxxxxx";
     },
     aiSet(k, v){
       this.ai.draft[k] = v;
-      this.ai.status = "";            // 改了参数，上次那个测试结果就不算数了
-      // 模型列表一改，上一次「测试可用性」那张表就过期了 —— 直接清掉（免得看着像刚测的）
+      this.ai.status = "";            
+
       if (k === "model") this.aiPingReset();
     },
     aiDirty(){ return Object.keys(this.ai.draft).length > 0; },
-    // 列表里那一行的小字：地址 · 第一个模型（+N）—— 就这些，别的交给高亮标签
+
     aiSummary(n){
       return String(((this.ai.summary || {})[n] || {}).base_url || "")
         .replace(/^https?:\/\//, "");
     },
     aiNewName(base){
-      // 名字撞了就在后面加 -2 / -3…（点预制参数时用）
       let n = String(base || "").trim() || "我的AI", i = 2;
       while (this.ai.profiles.indexOf(n) >= 0){ n = base + "-" + i; i++; }
       return n;
@@ -868,13 +810,10 @@ const MossSettings = {
       this.ai.params = r.params || {};
       this.ai.draft = {};
       this.ai.status = "";
-      this.ai.creating = false;      // 从库里读出来的这一组：不是"新建"
+      this.ai.creating = false;      
       this.ai.showKey = false;
       this.ai.keyReal = false;
-      // ★ 2026-11-02（用户报的 bug）：**换一组就把「测试可用性」那张表清掉**。
-      //   这些结果是上一组的模型的，挂在别人的编辑页上等于说谎（"我在 B 上测了 A"）。
-      //   读库这一处是所有"换组"的必经之路（编辑另一组 / 存完重读 / 改名 / 删除），
-      //   所以清在这里最省心；`seq` 一起 +1，正在跑的那一轮会自己停下。
+
       this.aiPingReset();
       return true;
     },
@@ -883,42 +822,33 @@ const MossSettings = {
       const r = await pywebview.api.ai_presets();
       this.ai.presets = (r && r.presets) || [];
     },
-    // 稿子里的几个内联图标（人物 / 加号 / 左箭头）—— 我们的图标库（lucide）里没有一样的，
-    // 所以照抄它的 path 存成图标文件（`system/icon/svg/moss-*.svg`）。
-    // ★ `V-257`：AI 那一组的标记**搬进 `system/icon/svg/` 了** ——
-    //   顶层「AI」选项卡也要用同一个标记，两处各抄一段 path 迟早漂移。
-    // ★ `V-386`：那枚标记从 OpenAI 换成 **DeepSeek**（`moss-deepseek.svg`，官方 mark）。
-    // ★ `V-267`：那三条 path 也搬进文件了（`moss-user` / `moss-plus` / `moss-back`）——
-    //   这一处代码从 15 行缩成 1 行，画笔（1.5 描边那套）跟别的图标一样写在文件里。
+
     aiSvg(name){
-      // ★ `V-386`：名字**先拼进变量**再传 —— 直接在调用里拼前缀会被 `tools/界面检查.py`
-      //   当成"用了一个叫 moss- 的图标"（它扫的是字面量，连注释里的也算）。
       const key = "moss-" + name;
       return ico(key, "i");
     },
-    // 点路径里的任意一段（`V-198`）：用系统默认方式打开"到这一段为止"的那个路径
+
     async openSeg(s){ if (s && s.path) await pywebview.api.open_path(s.path); },
-    // AI 页在底栏左边显示什么（V-155）—— 和别的页一个位置、一个样式
+
     aiFootText(){
       if (this.ai.mode !== "edit") return "";
       if (!this.aiFilled()) return "把接口地址 / 密钥 / 模型 填全";
-      if (!this.aiDirty()) return "";        // `V-159`：没改动不是错，别在左下角挂一句
+      if (!this.aiDirty()) return "";        
       return "改动还没保存";
     },
-    // 框里那只眼睛：只切「明文 / 圆点」，**不碰 draft / 不问宿主**（V-149）
+
     aiToggleKey(){ this.ai.showKey = !this.ai.showKey; },
-    // ---- 三张脸之间走：列表 ⇄ 选服务商 ⇄ 编辑（`V-142`，照那份 UI 稿子）----
-    // 模板格子上那行小字：把地址里的协议头去掉，只留主机名（短、认得出来就行）
+
     aiHost(url){
       return String(url || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
     },
-    // 「添加 AI 配置」：去选服务商那一步（不在列表里直接摊开表单）
+
     async aiTemplates(){
       await this.aiLoadPresets();
       this.ai.mode = "tpl";
       this.ai.status = "";
     },
-    // 选服务商那一步的「返回」
+
     aiList(){
       this.ai.mode = "list";
       this.ai.creating = false;
@@ -926,7 +856,7 @@ const MossSettings = {
       this.ai.status = "";
       this.aiLoad("");
     },
-    // 编辑那一步的「返回 / 取消」：没保存的改动先问一句
+
     aiCancel(){
       const go = () => {
         this.ai.mode = "list";
@@ -937,12 +867,10 @@ const MossSettings = {
           this.ai.status = "";
         this.aiLoad("");
       };
-      // ★ V-146：返回**不再二次确认**（你说的）—— 直接回去，改动丢掉就丢掉
+
       go();
     },
-    // 列表里某一张卡片的「编辑」：进编辑态，表单就是这一组现在的样子
-    // ★ `V-159`：顺便把**已存的密钥读成明文填进去**（你说的"编辑以后 API KEY 应该显示"）——
-    //   这是本机自己的配置、明文就存在 config.toml 里，显示出来才改得动。
+
     async aiEdit(n){
       if (this.aiDirty() && this.ai.name === n && this.ai.mode === "edit") return;
       const r = await this.aiLoad(n);
@@ -956,12 +884,12 @@ const MossSettings = {
         this.ai.keyReal = true;
       }
     },
-    // 选服务商里点某一家：把名字 / 地址 / 模型填进表单，只等你粘 key（**不写盘**）
+
     aiUsePreset(p){
       this.ai.draft = {name: this.aiNewName(p.name), base_url: p.base_url || "",
                        model: (p.model || []).join("\n"), api_key: ""};
       this.ai.creating = true;
-      this.ai.from = p.name;                       // 标题要写「配置 DeepSeek」（照稿子）
+      this.ai.from = p.name;                       
       this.ai.mode = "edit";
       this.ai.status = "";
       this.$nextTick(() => {
@@ -969,7 +897,7 @@ const MossSettings = {
         if (box) box.focus();
       });
     },
-    // 「自定义」= 名字之外都空着，自己填
+
     aiBlank(){
       this.ai.draft = {name: this.aiNewName("我的AI"), base_url: "", model: "", api_key: ""};
       this.ai.creating = true;
@@ -991,20 +919,19 @@ const MossSettings = {
       if (!name){ toast("先起个名字", true); return; }
       let old = this.ai.name;
       const d = this.ai.draft;
-      // 新建（点了预制参数 / 自定义）⇒ 全新一组；否则才可能是在给**当前这组改名**
+
       const creating = !old || this.ai.creating;
       const fields = {};
-      // 全新的一组：三个字段都给（哪怕是空的，也算"我有这一组了"）
+
       if (creating || Object.prototype.hasOwnProperty.call(d, "base_url"))
         fields.base_url = String(this.aiVal("base_url") || "").trim();
       if (creating || Object.prototype.hasOwnProperty.call(d, "model"))
         fields.model = this.aiModelList();
-      // ★ 密钥**只在你真填过的时候才送**：没填就一个字都别动（不然会把已有的 key 抹成空）
+
       if (creating || Object.prototype.hasOwnProperty.call(d, "api_key")) fields.api_key = d.api_key;
       if (!creating && !Object.keys(fields).length && name === old){ toast("没有改动"); return; }
       this.ai.busy = true;
-      // 改名 = 换一组：**让宿主整块搬**（`--ai-rename`）—— 不搬的话密钥拿不到，
-      // 面板上只有打码那串，按新名字再存一遍就等于把 key 丢了。
+
       if (!creating && name !== old){
         const rn = await pywebview.api.ai_rename(old, name);
         if (!rn || !rn.ok){
@@ -1018,10 +945,10 @@ const MossSettings = {
       this.ai.busy = false;
       if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "没存上"), true); return; }
       await this.aiLoad(name);
-      this.ai.mode = "list";          // 存完回列表（照那份 UI 稿子的手感）
+      this.ai.mode = "list";          
       toast("已保存「" + name + "」");
     },
-    // ---- 列表里那三颗（都带组名：列表一屏好几行，不能只认"当前那组"）----
+
     aiDel(name){
       name = name || this.ai.name;
       if (!name) return;
@@ -1029,8 +956,7 @@ const MossSettings = {
                  async () => {
         const r = await pywebview.api.ai_delete(name);
         if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "没删掉"), true); return; }
-        // ★ 删完一律重新读"当前那组 / 第一组"（传名字的话，删掉的正好是它 ⇒ 读不到 ⇒ 列表不刷新，
-        //   表现就是"点了删除没反应"，V-143 的 bug）
+
         if (this.ai.mode === "edit" && this.ai.name === name){
           this.ai.mode = "list"; this.ai.creating = false; this.ai.draft = {};
         }
@@ -1046,8 +972,7 @@ const MossSettings = {
       this.ai.active = name;
       toast("当前：" + name);
     },
-    // 测连接：**不用先保存**（V-147）—— 把表里现在的值一起送过去，宿主拿它们当临时覆盖。
-    // 密钥只在你这次真填了 / 点过「眼睛」时才送（不然送的是打码那串，等于测不了）。
+
     async aiTest(name){
       name = name || this.ai.name;
       const fields = {};
@@ -1062,7 +987,7 @@ const MossSettings = {
       this.ai.statusOk = !!(r && r.ok);
       const raw = String((r && r.msg) || "").trim();
       this.ai.status = this.aiShort(raw, this.ai.statusOk);
-      // 原始报文只在跟前那句"不一样"的时候才给「详情」（免得重复一遍废话）
+
       this.ai.detail = (raw && raw !== this.ai.status) ? raw : "";
       this.ai.open = false;
     },
@@ -1124,14 +1049,7 @@ const MossSettings = {
       this.aiQueryDone(r);
       this.$forceUpdate();
     },
-    /* ---- 测试可用性（2026-11-02）：挨个问一遍列表里的每个模型 ----
-       ★ 为什么**一个一个来**（不并发）：宿主要真发请求；并发的话结果会串，
-         而且"卡住的那一个"会把别的挤在后面 —— 排队反而最快看清是谁坏了。
-       ★ 花销：每条只几个 token（宿主那条命令写死了"只回两个字 + max_tokens=4"）。
-       ★ 结果**只改内存**，不动配置 —— 要保存才写 config.toml。 */
-    /* 把这张结果表**作废**：清空 + 批次号 +1（正在跑的那一轮回来会自己收手）。
-       ★ 什么时候调：换了一组（`aiLoad`）/ 关了面板（`open`）/ 改了模型列表（`aiSet`）。
-         漏了任何一处，"上一组的模型"就会挂在别人的编辑页上（用户报的那个 bug）。 */
+
     aiPingReset(){
       this.ai.ping.seq = (this.ai.ping.seq || 0) + 1;
       this.ai.ping.rows = [];
@@ -1141,15 +1059,14 @@ const MossSettings = {
       if (this.ai.busy || this.ai.ping.running) return;
       const list = this.aiModelList();
       if (!list.length){ toast("先把「可用模型列表」填上（一行一个模型名）", true); return; }
-      // ★ 记下这一批的号：中途换了组 / 关了面板，号就变了 ⇒ 这一轮**立刻收手**
-      //   （既不要把 A 的结果写进 B，也别在背后接着替 A 问模型花 token）。
+
       const seq = this.ai.ping.seq;
       this.ai.ping.running = true;
       this.ai.ping.rows = list.map(m => ({model: m, state: "wait", ok: false, ms: 0, msg: ""}));
       const fields = this.aiQueryFields();
       const name = this.ai.name || "";
       for (let i = 0; i < this.ai.ping.rows.length; i++){
-        if (seq !== this.ai.ping.seq) return;          // 已经换组了：什么都不动
+        if (seq !== this.ai.ping.seq) return;          
         const row = this.ai.ping.rows[i];
         if (!row) return;
         row.state = "run";
@@ -1157,7 +1074,7 @@ const MossSettings = {
         let r = null;
         try{ r = await pywebview.api.ai_ping(name, row.model, fields); }
         catch(e){ r = {ok: false, msg: String(e && e.message ? e.message : e)}; }
-        if (seq !== this.ai.ping.seq) return;          // 等结果这会儿换组了：丢掉
+        if (seq !== this.ai.ping.seq) return;          
         row.ok = !!(r && r.ok);
         row.ms = (r && r.ms) || 0;
         row.msg = String((r && (r.ok ? r.sample : r.msg)) || "").trim();
@@ -1174,10 +1091,7 @@ const MossSettings = {
       if (r && r.state === "done") return r.msg || (r.ok ? "能通" : "不通");
       return (r && r.state === "run") ? "正在测…" : "排队中…";
     },
-    /* 一键把"不通的"从列表里删掉。
-       ★ 只改内存里的那个文本（`ai.draft.model`），**不落盘** —— 还得点保存。
-       ★ 直接写 draft 而不走 aiSet：aiSet 会把整张结果表清掉（列表一变就过期），
-         而这里我们只想把红的那几行摘掉、绿的留着给人看。 */
+
     aiPingDropBad(){
       const bad = this.aiPingBad.map(r => r.model);
       if (!bad.length) return;
@@ -1189,7 +1103,7 @@ const MossSettings = {
         ? ("已删掉 " + bad.length + " 个不通的（点保存才写进配置）")
         : "全都不通 —— 列表清空了，点「获取可用模型」重新拉一份，或者手动填");
     },
-    // 把宿主那一行文本变成人话：成功 = 「连接成功（HTTP 200 · 模型 xxx）」；失败 = 「连接失败：<原因>」。原始报文另存（上面那个 detail）。
+
     aiShort(raw, ok){
       const s = String(raw || "").replace(/^\[错误\]\s*/, "").trim();
       if (ok){
@@ -1215,7 +1129,6 @@ const MossSettings = {
       return "";
     },
     probText(key){
-      // ★ 原因只写在**主**那一项上；被牵连的那项只标色（同一句话不必说两遍）
       return (this.problems || []).filter(p => p.key === key)
         .map(p => (p.level === "warn" ? "提醒：" : "") + p.why).join(" ");
     },
@@ -1227,10 +1140,9 @@ const MossSettings = {
     },
     clampNum(v){
       const n = parseInt(v, 10);
-      return isFinite(n) ? Math.max(0, Math.min(20, n)) : 0;   // `V-159`：0 也允许（只看当前目录）
+      return isFinite(n) ? Math.max(0, Math.min(20, n)) : 0;   
     },
 
-    /* ---- 打开 / 关闭 / 切换分类 ---- */
     async open(){
       const r = await pywebview.api.settings();
       if (!r || !r.ok){ toast("✗ 读设置失败：" + ((r && r.msg) || ""), true); return; }
@@ -1245,43 +1157,36 @@ const MossSettings = {
       this.msg = r.msg || "";
       this.problems = []; this.notes = {}; this.live = "";
       this.saving = false;
-      // 每次打开面板都把「测试可用性」那张表清掉：那是上一次会话的事（同 `aiLoad` 的规矩）
+
       this.aiPingReset();
       this.setActive((this.groups[0] || {}).name || "");
       this.show = true;
       if (this.msg) toast(this.msg);
-      this.scheduleCheck(0);          // 立刻问一次：把 hover 里那些「现在这样」填上
+      this.scheduleCheck(0);          
     },
     close(){
       if (this._timer) clearTimeout(this._timer);
-      this._seq++;                    // 关掉之后飞回来的检查结果一律作废
+      this._seq++;                    
       this.hideTip();
       this.show = false;
     },
     setActive(gid){
       this.active = gid;
       this.hideTip();
-      // 切到 AI 那一页时才去问宿主（省得每次开设置都多跑两条命令）
+
       if (this.isAiName(gid)){ this.aiLoadPresets(); if (!this.ai.loaded) this.aiLoad(""); this.sndLoad(); }
-      // 切到「命令接入」时才问一次 cd 增强的状态
+
       if (this.isAccessName(gid)) this.cdLoad();
     },
     setVal(key, v){
       this.values[key] = v;
-      /* ★ `V-275`（你定的）：**打字不再问宿主**。以前这里调 `scheduleCheck()` —— 停手 250ms
-         就去起一个 `moss.exe`（真机 ≈1 秒）只为标个红。现在改成：
-           · 有没有改动 = **纯前端**算（`changed` 比 values 和 orig）；
-           · 「保存」按钮亮不亮只看"改没改"（不看宿主回的 problems）；
-           · 校验留到**点保存那一次**（`--settings-set` 本来就一次往返，顺带把
-             problems / notes / live 一起带回来）—— 也就是"点下去才告诉你哪儿不行"。
-         代价：丢掉"边改边标红 + 组底部那段预览实时更新"（预览会标成"按已保存的值算的"）。 */
+
       this.$forceUpdate();
     },
     bump(key, d){
       this.setVal(key, this.clampNum((parseInt(this.values[key], 10) || 1) + d));
     },
 
-    /* ---- 校验（问宿主：规则只有 core 那一份）---- */
     scheduleCheck(delay){
       if (this._timer) clearTimeout(this._timer);
       this._timer = setTimeout(() => this.check(), delay == null ? 250 : delay);
@@ -1290,7 +1195,7 @@ const MossSettings = {
       this._timer = null;
       const seq = ++this._seq;
       const r = await pywebview.api.settings_check(Object.assign({}, this.values));
-      if (seq !== this._seq) return;   // 慢的那次回来了也别盖掉新的
+      if (seq !== this._seq) return;   
       this.problems = (r && r.problems) || [];
       this.notes = (r && r.notes) || {};
       this.live = (r && r.live) || "";
@@ -1298,7 +1203,6 @@ const MossSettings = {
       if (this.tip.show && this.tip.key) this.showTip(this.tip.key);
     },
 
-    /* ---- 保存 / 只送改过的那几项 ---- */
     pairs(){
       const out = {};
       this.changed.forEach(k => { out[k] = this.values[k]; });
@@ -1311,8 +1215,7 @@ const MossSettings = {
       const r = await pywebview.api.settings_save(pairs);
       this.saving = false;
       const list = (r && r.problems) || [];
-      // ★ `V-275`：这一趟的返回里**还带着 notes / live**（宿主 `--settings-set` 是
-      //   `with_notes=True`）—— 存成功就直接用它们刷新，**不再多跑一趟 `--settings-check`**。
+
       if (r && r.notes) this.notes = r.notes;
       if (r && r.live) this.live = r.live;
       if (!r || !r.ok || list.some(p => p.level !== "warn")){
@@ -1321,29 +1224,23 @@ const MossSettings = {
         toast("没保存 —— 看标红的地方", true);
         return;
       }
-      // ★ `V-275`：成功也可能带着 warn（"提醒，不拦保存"）—— **留着**，不然那条提醒白算了。
+
       this.problems = list;
       Object.keys(pairs).forEach(k => { this.orig[k] = this.values[k]; });
-      // ★ `V-305`：**符号改了** ⇒ 界面立刻跟着变（列表行 / 详情 / 标题…都照它拼），
-      //   不用重启（重启也行 —— payload 里也带着）。空串就照空串显示（那是"裸名跑包"档）。
+
       if (this.values["symbols.plugin_mode"] !== undefined){
         PSYM = this.values["symbols.plugin_mode"];
         renderList(); renderHist(); renderDetail();
       }
-      // ★ `V-298`：宿主存完会回"具体做了什么"（加/删 PATH、生成/删哪些短命令）。
-      //   **有具体的就别再弹那句泛泛的「已保存」** —— 否则一次保存冒两个弹窗（你报的）。
-      // ★ `V-367`：现在**连那些具体回执也并进同一条** —— 以前除了"已保存"还会连着弹最多
-      //   4 颗胶囊（改 PATH 一条、生成短命令一条…），一次点保存满屏提示。
+
       const scMsgs = (r && r.shortcut) || [];
       const head = list.length ? ("已保存（有 " + list.length + " 条提醒）")
                                : "已保存到 config.toml";
       const det = scMsgs.slice(0, 4).join("；") + (scMsgs.length > 4 ? ("；…还有 " + (scMsgs.length - 4) + " 条") : "");
       toast(det ? (head + "；" + det) : (head + "（下一次启动 moss 生效）"));
-      // ★ `V-275`：**不关面板** —— 按钮自己变灰（没有改动了）、提醒 / 预览留在眼前，
-      //   这就是你描述的那个状态："点保存 → 灰一下 → 干完回到没编辑过的样子"。
+
     },
 
-    /* ---- hover 提示（`?` 上悬停）---- */
     showTip(key, ev){
       const it = this.items[key];
       if (!it) return;
@@ -1370,7 +1267,6 @@ const MossSettings = {
   },
 };
 
-/* ---- 挂载 + 给外面的几个门面（别的地方只认这几个名字）---- */
 let _settingsApp = null;
 
 function settingsApp(){

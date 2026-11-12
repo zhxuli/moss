@@ -1,15 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-exec 插件的核心层：命令存储 + 执行。不含任何界面代码。
-
-数据位置遵循 QuickTools 规范：宿主 pa 注入 PA_PLUGIN_DATA_DIR
-（= pa_soft/user_data/exec），独立运行时退回插件自身目录。
-
-执行模型刻意拆成两个正交维度，避免"类型"无限膨胀：
-  · runner  —— 怎么执行：python / pythonfile / powershell / shell（都 spawn 进程）
-  · builtin —— 宿主自己动手，不 spawn 进程：url / path / html
-  · combo   —— 组合：按顺序调用已有命令
-"""
 import json
 import locale
 import os
@@ -20,35 +8,24 @@ import threading
 import uuid
 from datetime import datetime
 
-# --- 路径 ---
-# 兼容通过 exec() 或 python -c 启动时没有 __file__ 的情况
 if '__file__' in globals():
     PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 else:
     PLUGIN_DIR = sys.path[0] if sys.path else os.getcwd()
 
-# 宿主 moss 注入的插件专属数据目录 (= user_data/state/exec)；老 pa 的 PA_* 与插件目录作兜底
 DATA_DIR = os.environ.get('MOSS_PLUGIN_DATA_DIR') or os.environ.get('PA_PLUGIN_DATA_DIR') or os.path.join(os.environ.get("MOSS_HOME") or os.path.expanduser("~"),
              "user_data", "state", "exec")
 CMDS_DIR = os.path.join(DATA_DIR, 'cmds')
-PREVIEW_DIR = os.path.join(DATA_DIR, 'preview')     # HTML 页面落盘处
-OUTPUT_DIR = os.path.join(DATA_DIR, 'output')       # "输出存文件"落盘处
-TEMP_DIR = os.path.join(DATA_DIR, 'tmp')            # 提权运行时用的临时脚本
+PREVIEW_DIR = os.path.join(DATA_DIR, 'preview')
+OUTPUT_DIR = os.path.join(DATA_DIR, 'output')
+TEMP_DIR = os.path.join(DATA_DIR, 'tmp')
 
 ALIAS_RE = re.compile(r'^[a-z0-9_-]{1,64}$')
 
-# 子进程管道的默认编码：中文 Windows 上是 cp936。
-# 注意 stdout 被重定向成管道后，python 子进程用的也是它，所以 shell 和 python 一致。
 _PREFERRED_ENCODING = locale.getpreferredencoding(False) or 'utf-8'
 
 _NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
-
-# ---------------------------------------------------------------- 类型表
-# kind: proc=要 spawn 进程 / builtin=宿主自己动手 / combo=组合
-#
-# 这里刻意不再细分"Python 文件"——跑磁盘上的 .py 用命令行类型（python x.py）就够了，
-# 多一个类型只是把同一个能力包装两遍。
 TYPES = {
     'python': {
         'label': 'Python 片段', 'kind': 'proc', 'lang': 'python',
@@ -82,11 +59,6 @@ TYPES = {
     },
 }
 
-# 界面上的可点选项。macOS 里"按类别看列表"的标准答案是**源列表侧栏**
-# （Finder / 邮件 / 备忘录 / 系统设置都是），所以这里是侧栏的导航项，不是筛选标签：
-#   · 一个选项可以覆盖多个底层类型（命令行 = CMD / PowerShell）
-#   · icon 只是给前端挑图标的键，具体图形在界面里
-#   · 冗余的能力合并掉，而不是靠换控件来容纳
 PICKER = [
     {'id': 'python',  'label': 'Python', 'types': ['python'], 'icon': 'code'},
     {'id': 'command', 'label': '命令行', 'types': ['shell', 'powershell'], 'icon': 'terminal'},
@@ -95,10 +67,8 @@ PICKER = [
     {'id': 'html',    'label': 'HTML',   'types': ['html'], 'icon': 'doc'},
 ]
 
-# 一个选项下多个类型时，用这个顺序决定默认值；第一个也用于"切回来时的记忆"
 PICKER_DEFAULT = {'command': 'shell'}
 
-# 新建命令时让用户挑的一份扁平清单（类型一旦定下就不再允许切换）
 NEW_TYPES = [
     {'id': 'python',     'label': 'Python 片段',  'icon': 'code',
      'hint': '在本机解释器里跑一段代码'},
@@ -114,7 +84,6 @@ NEW_TYPES = [
      'hint': '存一段 HTML，可直接预览'},
 ]
 
-# 参数占位符：写进代码/网址/路径里，运行时替换
 PLACEHOLDERS = [
     {'token': '{args}', 'desc': '本次输入的参数'},
     {'token': '{clipboard}', 'desc': '剪贴板文本'},
@@ -123,7 +92,6 @@ PLACEHOLDERS = [
     {'token': '{time}', 'desc': '当前时间，如 14:30:05'},
 ]
 
-# 运行后动作
 AFTER_ACTIONS = [
     {'id': 'none', 'label': '不处理'},
     {'id': 'clipboard', 'label': '把输出复制到剪贴板'},
@@ -131,7 +99,6 @@ AFTER_ACTIONS = [
 ]
 
 DEFAULT_COMMANDS = [
-    # ---------------- Python ----------------
     {
         "alias": "ip", "type": "python", "description": "查询本机 / 指定 IP 的归属信息",
         "code": ("import sys, urllib.request, json\n\n"
@@ -153,7 +120,6 @@ DEFAULT_COMMANDS = [
         "alias": "uuid", "type": "python", "description": "生成一个 UUID",
         "code": "import uuid\nprint(uuid.uuid4())"
     },
-    # ---------------- CMD ----------------
     {
         "alias": "ping", "type": "shell", "description": "ping 指定主机（参数填主机名或 IP）",
         "code": "ping {args}"
@@ -162,7 +128,6 @@ DEFAULT_COMMANDS = [
         "alias": "ports", "type": "shell", "description": "列出本机正在监听的端口",
         "code": "netstat -ano | findstr LISTENING"
     },
-    # ---------------- PowerShell ----------------
     {
         "alias": "top", "type": "powershell", "description": "占用内存最高的 8 个进程",
         "code": ("Get-Process | Sort-Object WS -Descending | Select-Object -First 8 |\n"
@@ -175,7 +140,6 @@ DEFAULT_COMMANDS = [
                  "  ForEach-Object { $_.OwningProcess } | Select-Object -Unique |\n"
                  "  ForEach-Object { Get-Process -Id $_ } | Format-Table Id, Name -AutoSize")
     },
-    # ---------------- 网址 ----------------
     {
         "alias": "bd", "type": "url", "description": "百度搜索（参数填关键词）",
         "code": "https://www.baidu.com/s?wd={args}"
@@ -184,7 +148,6 @@ DEFAULT_COMMANDS = [
         "alias": "gh", "type": "url", "description": "GitHub 搜索仓库（参数填关键词）",
         "code": "https://github.com/search?q={args}&type=repositories"
     },
-    # ---------------- 路径 ----------------
     {
         "alias": "downloads", "type": "path", "description": "打开「下载」文件夹",
         "code": r"%USERPROFILE%\Downloads"
@@ -193,7 +156,6 @@ DEFAULT_COMMANDS = [
         "alias": "tempdir", "type": "path", "description": "打开系统临时文件夹",
         "code": "%TEMP%"
     },
-    # ---------------- HTML ----------------
     {
         "alias": "note", "type": "html",
         "description": "一张极简便签页（示例：HTML 源码直接存成命令）",
@@ -214,40 +176,27 @@ DEFAULT_COMMANDS = [
     },
 ]
 
-
-# ---------------------------------------------------------------- 存储
 def command_path(alias):
     return os.path.join(CMDS_DIR, '%s.json' % alias)
 
-
 def ensure_cmds_dir():
-    """懒加载：只有真正写入数据时才创建数据目录。"""
     if not os.path.isdir(CMDS_DIR):
         os.makedirs(CMDS_DIR, exist_ok=True)
 
-
 def init_cmds_dir():
-    """首次运行（数据目录还不存在）时播种内置示例命令。
-
-    只在目录不存在时播种，这样用户把示例删光之后不会被"复活"。
-    """
     if os.path.isdir(CMDS_DIR):
         return
     ensure_cmds_dir()
     for item in DEFAULT_COMMANDS:
         _write(item)
 
-
 def _spec(type_id):
     return TYPES.get(type_id) or TYPES['python']
 
-
 def normalize(item):
-    """把任意输入规整成完整的一条命令（缺字段补默认值，向后兼容旧数据）。"""
     type_id = item.get('type')
     code = str(item.get('code') or '')
 
-    # 迁移已下线的类型：pythonfile 的语义等价于"用命令行跑 python <路径>"
     if type_id == 'pythonfile':
         type_id = 'shell'
         if code.strip() and not code.strip().lower().startswith('python'):
@@ -256,20 +205,16 @@ def normalize(item):
     if type_id not in TYPES:
         type_id = 'python'
 
-    # 内容按执行方式分开存：codes[类型] = 该类型自己的内容。
-    # 这样切换执行方式时不会把网址当成 cmd 命令显示 —— 切过去是空的，切回来还在。
     codes = {}
     raw_codes = item.get('codes')
     if isinstance(raw_codes, dict):
         for key, value in raw_codes.items():
             if key in TYPES:
                 codes[key] = str(value or '')
-    # 顶层 code 是"当前类型内容"的镜像：显式给了就以它为准（手改 JSON 不会被人忽略，清空也算数）
     if 'code' in item:
         codes[type_id] = code
     elif type_id not in codes:
         codes[type_id] = ''
-    # 顺手清掉空条目（切过但没填的类型），别在 JSON 里留噪音
     codes = {k: v for k, v in codes.items() if v.strip() or k == type_id}
     code = codes.get(type_id, '')
 
@@ -285,9 +230,7 @@ def normalize(item):
         "after": item.get('after') if item.get('after') in ('none', 'clipboard', 'file') else 'none',
     }
 
-
 def validate(item):
-    """返回错误信息；None 表示合法。"""
     item = normalize(item)
     if not item['alias']:
         return "激活命令不能为空。"
@@ -297,7 +240,6 @@ def validate(item):
         return "%s 不能为空。" % (_spec(item['type'])['payload'] or '内容')
     return None
 
-
 def _write(item):
     ensure_cmds_dir()
     payload = normalize(item)
@@ -305,7 +247,6 @@ def _write(item):
     with open(command_path(payload['alias']), 'w', encoding='utf-8') as f:
         json.dump(payload, f, ensure_ascii=False, indent=4)
     return payload
-
 
 def load_all_commands():
     commands = []
@@ -327,7 +268,6 @@ def load_all_commands():
     commands.sort(key=lambda x: x['alias'])
     return commands
 
-
 def load_command(alias):
     path = command_path(alias)
     if not os.path.isfile(path):
@@ -338,27 +278,19 @@ def load_command(alias):
     except Exception:
         return None
 
-
 def save_command(item, original_alias=None):
-    """保存命令。支持改名（original_alias != alias 时迁移文件）。
-
-    返回 (ok, payload)：ok=True 时 payload 是新别名；否则 payload 是错误信息。
-    """
     err = validate(item)
     if err:
         return False, err
     clean = normalize(item)
     alias = clean['alias']
-    # 别名一律小写；original_alias 也要归一，否则大小写不同会被误判成"改名撞车"
     original_alias = str(original_alias or '').strip().lower() or None
 
     try:
         if original_alias is None:
-            # 新建：绝不允许覆盖已有命令，否则是静默的数据丢失
             if os.path.exists(command_path(alias)):
                 return False, "别名 '%s' 已经存在了，换一个吧。" % alias
         elif original_alias != alias:
-            # 改名：目标不能撞车，成功后再删旧文件
             if os.path.exists(command_path(alias)):
                 return False, "别名 '%s' 已经存在了。" % alias
             old = command_path(original_alias)
@@ -368,7 +300,6 @@ def save_command(item, original_alias=None):
     except OSError as e:
         return False, "保存失败：%s" % e
     return True, alias
-
 
 def delete_command(alias):
     path = command_path(alias)
@@ -380,10 +311,6 @@ def delete_command(alias):
         return False, "删除失败：%s" % e
     return True, alias
 
-
-# ---------------------------------------------------------------- 剪贴板
-# ⚠ ctypes 的默认返回值是 32 位 int，而 Windows 的 HANDLE 是 64 位。
-#   不显式声明 restype，句柄会被高位截断 —— 剪贴板会"无声地"读写失败。
 def _clip_types():
     import ctypes
     u, k = ctypes.windll.user32, ctypes.windll.kernel32
@@ -403,7 +330,6 @@ def _clip_types():
     k.GlobalUnlock.restype = ctypes.c_bool
     k.GlobalFree.argtypes = [ctypes.c_void_p]
     return ctypes, u, k
-
 
 def _clipboard_get():
     if sys.platform != 'win32':
@@ -429,7 +355,6 @@ def _clipboard_get():
     except Exception:
         return ''
 
-
 def clipboard_set(text):
     if sys.platform != 'win32':
         return False
@@ -453,7 +378,6 @@ def clipboard_set(text):
                 ctypes.memmove(ptr, data, len(data))
             finally:
                 k.GlobalUnlock(handle)
-            # SetClipboardData 成功后所有权归系统，不能再 GlobalFree
             if not u.SetClipboardData(CF_UNICODETEXT, handle):
                 k.GlobalFree(handle)
                 return False
@@ -464,13 +388,9 @@ def clipboard_set(text):
     except Exception:
         return False
 
-
-# ---------------------------------------------------------------- 占位符
 _DATE_FMT_RE = re.compile(r'\{date(?::([^}]*))?\}')
 
-
 def expand(text, args=''):
-    """把 {args} / {clipboard} / {date} / {time} 替换掉。"""
     if not text:
         return text
     out = str(text)
@@ -490,7 +410,6 @@ def expand(text, args=''):
 
     return _DATE_FMT_RE.sub(_date, out)
 
-
 def _parse_env(text):
     env = {}
     for line in str(text or '').splitlines():
@@ -503,14 +422,7 @@ def _parse_env(text):
             env[key] = value.strip()
     return env
 
-
 def split_args(text):
-    """把参数串拆成列表。
-
-    ⚠ 不能用 shlex.split：它的 posix 模式把反斜杠当转义符，
-      D:\\downloads\\setup.zip 会被拆成 D:downloadssetup.zip ——
-      Windows 上只要"参数填文件路径"就全废。这里按空白拆、双引号可分组、反斜杠原样保留。
-    """
     if not text:
         return []
     if not isinstance(text, str):
@@ -537,18 +449,9 @@ def split_args(text):
         out.append(''.join(buf))
     return out
 
-
-# 内部旧名，保持兼容
 _split_args = split_args
 
-
-# ---------------------------------------------------------------- 命令构造
 def build_command(item, args=None):
-    """返回 (argv, use_shell, extra_argv)。
-
-    规则：代码里写了 {args} 就只做文本替换，不再额外追加命令行参数；
-    没写就沿用老行为，把参数追加到命令后面。
-    """
     item = normalize(item)
     raw_args = args if isinstance(args, str) else ' '.join(args or [])
     extra = _split_args(raw_args)
@@ -567,17 +470,13 @@ def build_command(item, args=None):
         full += ' ' + ' '.join('"%s"' % a if ' ' in a else a for a in tail)
     return full, True, tail
 
-
 def run_cwd(item):
-    """命令自己的 cwd；留空则继承调用者的当前目录。"""
     cwd = expand(normalize(item)['cwd'])
     if cwd and os.path.isdir(cwd):
         return cwd
     return None
 
-
 def make_env(item, extra=None):
-    """命令的运行环境：进程环境 + 命令自带的环境变量 + 宿主补充的少量变量。"""
     env = os.environ.copy()
     for k, v in _parse_env(normalize(item)['env']).items():
         env[k] = expand(v)
@@ -585,8 +484,6 @@ def make_env(item, extra=None):
         env.update({k: str(v) for k, v in extra.items()})
     return env
 
-
-# ---------------------------------------------------------------- 内置动作
 def _open_url(url):
     import webbrowser
     url = (url or '').strip()
@@ -600,14 +497,11 @@ def _open_url(url):
         return False, '无法打开网址：%s' % e
     return True, '已用默认浏览器打开：%s' % url
 
-
 def _open_path(path):
     path = (path or '').strip().strip('"')
     if not path:
         return False, '没有填路径。'
     path = os.path.expandvars(os.path.expanduser(path))
-    # shell: 是 Windows 引用特殊文件夹的标准方式（shell:startup / shell:RecycleBinFolder），
-    # 这种路径 os.path.exists 判断不了，直接交给系统
     if not path.lower().startswith(('shell:', '::{', 'explorer.exe ')) and not os.path.exists(path):
         return False, '路径不存在：%s' % path
     try:
@@ -620,7 +514,6 @@ def _open_path(path):
     except Exception as e:
         return False, '无法打开：%s' % e
     return True, '已打开：%s' % path
-
 
 def _open_html(alias, source):
     import webbrowser
@@ -639,10 +532,7 @@ def _open_html(alias, source):
         return False, '无法打开页面：%s' % e
     return True, '已生成并打开：%s' % page
 
-
-# ---------------------------------------------------------------- 提权运行
 def _shell_execute(exe, params, cwd=None):
-    """ShellExecuteW runas：会弹 UAC。返回 (ok, message)。"""
     if sys.platform != 'win32':
         return False, '只有 Windows 支持提权运行。'
     try:
@@ -656,9 +546,7 @@ def _shell_execute(exe, params, cwd=None):
         return False, '提权运行失败：%s' % e
     return True, '已请求管理员权限运行（提权进程的输出无法被捕获）。'
 
-
 def _elevated_launch(item, args=None):
-    """提权运行：把代码落到临时文件再执行，避免引号地狱。"""
     item = normalize(item)
     raw_args = args if isinstance(args, str) else ' '.join(args or [])
     code = expand(item['code'], raw_args)
@@ -683,10 +571,7 @@ def _elevated_launch(item, args=None):
     open(path, 'w', encoding='mbcs', errors='replace').write(code)
     return _shell_execute('cmd.exe', '/c "%s"' % path, cwd)
 
-
-# ---------------------------------------------------------------- 控制台执行
 def run_in_console(item, args=None):
-    """在前台控制台里执行（保持 pa :exec <别名> 的原语义）。"""
     item = normalize(item)
     kind = _spec(item['type'])['kind']
     raw_args = args if isinstance(args, str) else ' '.join(args or [])
@@ -717,10 +602,7 @@ def run_in_console(item, args=None):
         return 1
     return 0
 
-
-# ---------------------------------------------------------------- 会话
 def _decode(raw):
-    """输出编码嗅探：先按 UTF-8 严格解，失败再按本地代码页（中文 Windows = cp936）。"""
     if not raw:
         return ''
     try:
@@ -732,9 +614,7 @@ def _decode(raw):
     except (UnicodeDecodeError, LookupError):
         return raw.decode('utf-8', 'replace')
 
-
 class _BaseSession:
-    """界面轮询用的会话基类。输出按原始字节累积，轮询时才解码，"""
     MAX_OUTPUT = 200 * 1024
 
     def __init__(self):
@@ -769,10 +649,7 @@ class _BaseSession:
     def stop(self):
         raise NotImplementedError
 
-
 class RunSession(_BaseSession):
-    """单条命令：进程类 spawn 进程并抓输出，内置动作直接做完。"""
-
     def __init__(self, item, args=None):
         super().__init__()
         self.item = normalize(item)
@@ -805,12 +682,6 @@ class RunSession(_BaseSession):
         threading.Thread(target=self._pump, daemon=True).start()
 
     def _env(self, raw_args):
-        """给子进程的环境：额外塞两个宿主变量。
-
-        PA_EXEC_ARGS —— 用户原样输入的参数串。argv 里的引号在拆参数时就被吃掉了，
-                        插件想判断"用户是不是加了引号"只能靠这个。
-        PA_PLUGIN_ALIAS —— 当前命令的别名。
-        """
         return make_env(self.item, {
             'PA_EXEC_ARGS': raw_args or '',
             'PA_PLUGIN_ALIAS': self.item['alias'],
@@ -833,7 +704,7 @@ class RunSession(_BaseSession):
         try:
             read1 = getattr(stream, 'read1', None) or stream.read
             while True:
-                chunk = read1(4096)          # 按块读，有数据就返回
+                chunk = read1(4096)
                 if not chunk:
                     break
                 self._append(chunk)
@@ -884,9 +755,7 @@ class RunSession(_BaseSession):
         except Exception:
             pass
 
-
 def open_in_new_console(alias, args=None):
-    """新开一个独立控制台窗口执行命令（给交互式命令用，比如 ping）。"""
     main_py = os.path.join(PLUGIN_DIR, 'main.py')
     cmd = [sys.executable, main_py, '--run', alias] + _split_args(args)
     flags = getattr(subprocess, 'CREATE_NEW_CONSOLE', 0)
@@ -896,7 +765,5 @@ def open_in_new_console(alias, args=None):
         return False, "无法打开控制台窗口：%s" % e
     return True, alias
 
-
 def session_for(item, args=None):
-    """按命令类型返回合适的会话对象。"""
     return RunSession(normalize(item), args)

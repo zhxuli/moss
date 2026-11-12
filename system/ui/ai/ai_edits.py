@@ -1,20 +1,3 @@
-# -*- coding: utf-8 -*-
-"""AI 的"改文件"那部分：**search/replace 引擎** + **写权限守卫**（`V-230` / `V-231`）。
-
-为什么不让模型重写整个文件（你选的 D①）
-----------------------------------------
-· **省 token**：一个 200 行的文件改 3 行，输出几十 token 就够；整文件重写要几千。
-· **不容易丢内容**：长文件"重写"时模型常在中间悄悄丢一段（它自己看不出来）。
-代价是"找不到那段"会失败 —— 所以这里把失败**写清楚**（给候选行号、给最像的几行），
-让模型下一轮能自己修好，而不是瞎改别处。
-
-★ 写权限（`V-316` 起**只有一份清单**，判据在 `ai_mode.py`）：
-    清单里每条 = 一个目录 + 一对「读 / 写」勾；**当前这个包**（`user_data/pkgs/<包>` 或
-    `system/pkgs/<包>`，`V-347`）不在清单里也**默认读写都开**（算出来的，见 `_scope_allows`）；
-    「放手」= 把 `*`（任意路径）那一行的**写**打开（那时危险操作也不再问）。
-  硬锁（勾了 `*` 也写不了）：`core/`、`moss.exe`、`moss.py`、`venv/`、`.git/`、`backups/`。
-  读不设"当前包"以外的特权（要读 `system/pkgs/skill` 当样板、要读契约），但读也框了范围。
-"""
 import base64
 import json
 import mimetypes
@@ -22,51 +5,32 @@ import os
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent                      # system/ui/ai
+HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-
 def _home():
-    """moss 安装根：优先环境变量，其次从本文件位置往上推（`system/ui/ai/` → 三层）。"""
     env = (os.environ.get("MOSS_HOME") or "").strip()
     if env:
         return Path(env)
     return HERE.parents[2]
 
-
 HOME = _home()
-
 
 def user_data():
     env = (os.environ.get("MOSS_USER_DATA_DIR") or "").strip()
     return Path(env) if env else (HOME / "user_data")
 
-
-#: 「用户包」那个根（`user_data/pkgs/**`）—— 出厂包那个根在 `ai_mode.pkg_roots()` 里
-#: （`system/pkgs/**`，`V-347` 起跟它一样能写）
 def write_root():
     return user_data() / "pkgs"
 
-
 def tool_root():
-    """★ `V-280`/`V-281`：**第二处**可写的地方 —— 它自己造的技能（`:skill` 的数据目录）。
-
-    为什么单开一个根而不是放开 pkgs：那是**面向用户的目录**（插件页 / `:别名` / `--remove`
-    都在那儿），AI 造的东西混进去用户会看着乱、还容易被一键删掉。所以技能住
-    `user_data/state/skill/`（跟 `:exec` 存它那些命令一个位置），用户看不见；
-    「转为插件」是**由人点**的一步，会把它搬到 `user_data/pkgs/<id>/`。
-    """
     return user_data() / "state" / "skill"
 
-
 def write_roots():
-    """能写的地方就这两处：自己的包 + 自己的技能。"""
     return [write_root(), tool_root()]
 
-
 def inside(path, root):
-    """`path` 是不是在 `root` 里面（用 realpath 比，挡 `..` 和符号链接）。"""
     try:
         p = os.path.realpath(str(path))
         r = os.path.realpath(str(root))
@@ -74,48 +38,20 @@ def inside(path, root):
         return False
     return p == r or p.startswith(r + os.sep)
 
-
 def check_writable(path, scope=None):
-    """能写就回 None，不能写就回一句**给人看的原因**（会被原样回给模型）。
-
-    ★ `V-316`：判据在 `ai_mode.can_write()` —— 一份清单（每条一对「读/写」勾选）。
-    ★ `V-343`：`scope` = **这次干活的那个包** —— 它在 scope 里默认就能写，
-      **不需要清单里先有一条记录**（这正是"清单越用越长"的根治）。
-    """
-    import ai_mode as M                                          # noqa: PLC0415（防环）
+    import ai_mode as M
     return M.can_write(path, scope=scope)
 
-
 def read_roots(scope=None):
-    """允许**读**的范围（`V-316` 起：**清单说了算**，这里只列"基础设施"那几处 + 清单里勾了读的）。
-
-    ★ 为什么要管读（`V-232` 实测）：第一次真跑，模型为了搞清"包到底写到哪了"，
-      跑去读 `core/paths.py` / `moss.py` / `config.toml` / 甚至我自己的 `ai_tools.py`
-      —— 12 轮里大半花在这上面，**输入 token 137k**，活还没干完。
-      把"能读哪儿"框住，比在提示词里写"别乱读"硬得多（提示词是劝，这个是拦）。
-    """
-    import ai_mode as M                                          # noqa: PLC0415（防环）
-    return [write_root(),                                    # user_data/pkgs/**（清单外的会被 can_read 拦）
-            tool_root(),                                     # user_data/state/skill/**（它自己造的手）
-            M.tmp_root(),                                    # user_data/ai/tmp/**（全局桶）
-            HOME / "system" / "spec",                        # 契约（唯一真相）
-            HOME / "system" / "pkgs"] + M.readable_extra(scope)  # 样板包 + 这个插件勾了读的
-
+    import ai_mode as M
+    return [write_root(),
+            tool_root(),
+            M.tmp_root(),
+            HOME / "system" / "spec",
+            HOME / "system" / "pkgs"] + M.readable_extra(scope)
 
 def check_readable(path, scope=None):
-    """能读就回 None，不能读就回原因。
-
-    `scope`：**这次干活的目录**（`Tools` 会把 workdir 传进来）—— 现在它只用来兜底：
-    权限本身是**清单**说了算（当前那个包在清单里，同级的别的包不在 ⇒ 自动读不到，
-    真机上"它把 ask/dazi/unwx 挨个翻了一遍"那个毛病从结构上就没了）。
-
-    ★ `V-235` 的一条：**契约只能通过 `spec` 工具读**，不许 `read_file` 整篇读。
-      真机那次模型拿 `read_file` 一段段啃契约（645 行、来回好几趟），14 步烧掉
-      **26.5 万输入 token** —— `spec` 工具本来就是"按小节切、切完还有上限"的那条路。
-    """
-    import ai_mode as M                                          # noqa: PLC0415（防环）
-    # ★ 契约那一处**先判**：`system/spec` 属于"基础设施"（`readable_builtin` 会放过它），
-    #   但它的铁律是"只能用 `spec` 工具按小节读" —— 顺序反了这条闸就形同虚设（探针 G 段抓到过）。
+    import ai_mode as M
     if inside(path, HOME / "system" / "spec"):
         return ("[拒绝] 契约不要用 read_file 整篇读 —— 用 `spec` 工具按小节取："
                 "`spec(\"\")` 看目录、`spec(\"拖放\")` / `spec(\"pkg.json\")` / `spec(\"避坑\")` 取某一节。"
@@ -125,31 +61,18 @@ def check_readable(path, scope=None):
     if scope:
         sc = Path(scope)
         root = write_root()
-        # 只在"路径确实落在 user_data/pkgs 下面、但不在 scope 里"时拦 —— 别的地方交给下面的规则
         if inside(path, root) and not inside(path, sc):
             return ("[拒绝] 这次干活的地方是 `%s` —— **只在这个包下面看**。"
                     "`%s` 是**别的包**，不归这次任务管（样板请看 `system/pkgs/skill`，那是留给你抄的）。"
                     % (sc, path))
-    # ★ `V-316`：**清单说了算**（勾了「读」的目录才给看）
-    #   ★ `V-343`：再加上"这次干活的那个包"—— 它默认就能看，不用清单里有一条。
     return M.can_read(path, scope=scope)
 
-
-#: 视觉模型能直接吃的栅格图片（SVG 不算 —— 它不是像素图，多数视觉接口不收）。
 IMAGE_MIMES = {
     "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp",
 }
-#: 和 loop 的附件上限保持一致：一张图太大就别往上下文里塞。
 IMAGE_DATA_CAP = 12 * 1024 * 1024
 
-
 def image_mime(path):
-    """看文件头认出**视觉模型能直接吃的图片**；不是图片回空串。
-
-    ★ 为什么不能只看扩展名：真机上图片常叫 `微信图片_xxx.jpg`，扩展名可信；
-      但用户也会拖来没扩展名 / 扩展名写错的图。先认 magic bytes，扩展名只做兜底。
-    ★ 为什么不把 SVG 算进来：视觉模型通常只吃像素，SVG 是文本；硬塞会白烧 token。
-    """
     p = Path(path)
     try:
         with p.open("rb") as fh:
@@ -169,9 +92,7 @@ def image_mime(path):
     guess = (mimetypes.guess_type(p.name)[0] or "").lower()
     return guess if guess in IMAGE_MIMES else ""
 
-
 def image_data_url(path, cap=IMAGE_DATA_CAP):
-    """把图片读成 data URL。回 `(data_url, err)`；不是图片 / 太大 / 读不了都回 err。"""
     p = Path(path)
     mime = image_mime(p)
     if not mime:
@@ -185,14 +106,7 @@ def image_data_url(path, cap=IMAGE_DATA_CAP):
         return None, "图片读不了：%s（%s）" % (p, e)
     return "data:%s;base64,%s" % (mime, b64), None
 
-
 def read_text(path, offset=1, limit=400, scope=None):
-    """带行号读一段（行号照 `read` 工具的习惯从 1 开始）。
-
-    ★ 读出来**统一成 `\\n`**（CRLF 的文件也显示成 `\\n`）—— 因为模型是"照抄看见的东西"
-      来写 `find` 的，显示的和匹配的必须是同一份文本（这条是探针抓出来的：文件是 CRLF 时
-      `find` 用 `\\n` 永远匹配不上）。
-    """
     p = Path(path)
     if not p.is_file():
         return None, "没有这个文件：%s" % p
@@ -203,8 +117,6 @@ def read_text(path, offset=1, limit=400, scope=None):
         raw = p.read_bytes()
     except OSError as e:
         return None, "读不了：%s" % e
-    # ★ 真机 bug：图片被 read_file 当文本解码，1652 行乱码灌进上下文，
-    #   一次就烧掉几万 token。图片有专门的路；其它二进制也不许按文本硬读。
     mime = image_mime(p)
     if mime:
         return None, ("[拒绝] `%s` 是图片（%s），不是文本文件。要看图请用 `read_image` "
@@ -221,22 +133,13 @@ def read_text(path, offset=1, limit=400, scope=None):
     head = "（共 %d 行，这是 %d-%d 行）" % (len(lines), start, stop) if lines else "（空文件）"
     return "\n".join([head] + out), None
 
-
 def _split_lines(text):
     return text.split("\n")
-
 
 def _crlf(raw):
     return b"\r\n" in raw
 
-
-
 def _pkg_id_guard(path, old_text, new_text):
-    """禁止 AI 直接改 `pkg.json` 的 `id` —— 那会把包目录 / 数据目录 / AI 会话拆开。
-
-    改名只有一条正路：`run_moss("--rename <旧id> <新id>")`。
-    只改 `name` / `aliases` 是可以的（不碰身份，不动目录）。
-    """
     try:
         if Path(path).name.lower() != "pkg.json":
             return ""
@@ -251,16 +154,11 @@ def _pkg_id_guard(path, old_text, new_text):
                     "也不会搬 `state/<旧id>/` 里的数据，AI 会话会看起来消失。"
                     "改名请用 run_moss(`--rename %s %s`)；只改显示名就改 `name` / `aliases`，不要动 `id`。"
                     % (oid, nid, oid, nid))
-    except Exception:                                                # noqa: BLE001
+    except Exception:
         return ""
     return ""
 
 def apply_edit(path, find, replace, replace_all=False, scope=None):
-    """把 `find` 换成 `replace`。回 `{ok, replaced, error, hint}`。
-
-    ★ 多命中且没写 `replace_all` ⇒ **拒绝**（`V-229` 那类"改错地方"的事故就是这么来的）。
-    ★ 零命中 ⇒ 给**候选行号 + 最像的几行**（模型下一轮能自己对齐）。
-    """
     p = Path(path)
     bad = check_writable(p, scope)
     if bad:
@@ -268,8 +166,6 @@ def apply_edit(path, find, replace, replace_all=False, scope=None):
     if not p.is_file():
         return {"ok": False, "error": "没有这个文件：%s（新建文件用 write_file）" % p}
     raw = p.read_bytes()
-    # ★ 匹配用**统一成 \n** 的文本（模型照 `read_file` 看到的样子抄 find），
-    #   写回去时再还原成原来的换行风格（Windows 上编辑过的文件常是 CRLF，别整文件翻新）。
     text = raw.decode("utf-8", "replace").replace("\r\n", "\n")
     find = str(find or "").replace("\r\n", "\n")
     replace = str(replace or "").replace("\r\n", "\n")
@@ -291,7 +187,6 @@ def apply_edit(path, find, replace, replace_all=False, scope=None):
     if bad:
         return {"ok": False, "replaced": 0, "error": bad}
     try:
-        # 原来的换行风格照旧（Windows 上编辑过的文件常是 CRLF，别整文件翻新）
         if _crlf(raw):
             p.write_bytes(new.replace("\n", "\r\n").encode("utf-8"))
         else:
@@ -300,14 +195,7 @@ def apply_edit(path, find, replace, replace_all=False, scope=None):
         return {"ok": False, "error": "写不进去：%s" % e}
     return {"ok": True, "replaced": (n if replace_all else 1)}
 
-
 def write_new(path, content, overwrite=False, scope=None):
-    """写一个文件。
-
-    ★ 已存在时**默认拒绝**（改已有的用 `apply_edit`，别整文件覆盖 —— 那样最容易悄悄丢内容）。
-      但 `V-242` 真机踩到一个死角：模型想**整篇重写** `AGENT.md`，被拒之后就没路可走了
-      （它没有"覆盖"这个动作可调）。所以给它一条明路：**显式 `overwrite=true`** 才允许覆盖。
-    """
     p = Path(path)
     bad = check_writable(p, scope)
     if bad:
@@ -333,9 +221,7 @@ def write_new(path, content, overwrite=False, scope=None):
     return {"ok": True, "bytes": len(str(content or "").encode("utf-8")),
             "overwrote": bool(overwrite and p.exists())}
 
-
 def _miss_hint(text, find):
-    """没找到时给三样东西：首行出现的行号、最像的几行、常见原因。"""
     import difflib
     lines = _split_lines(text)
     first = (find.split("\n")[0] or "").strip()

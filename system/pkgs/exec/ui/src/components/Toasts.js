@@ -1,4 +1,3 @@
-/* 右下角的轻提示。纯展示，只吃一个 toasts 数组。 */
 export default {
   name: "Toasts",
   props: {

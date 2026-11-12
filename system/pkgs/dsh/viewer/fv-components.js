@@ -1,12 +1,7 @@
-/* ===========================================================================
-   共享视图组件：加载面板 / 进度条 / 状态卡
-   —— 所有需要"等一会儿"的地方都用这里，避免每个视图各画一套。
-   =========================================================================== */
 (function () {
   var Vue = window.Vue, FV = window.FV, U = FV.util;
   if (!Vue) return;
 
-  /* ---------------------------------------------------------------- 进度条 */
   var ProgressBar = {
     name: "ProgressBar",
     props: { state: Object, dark: Boolean, indeterminate: Boolean },
@@ -27,8 +22,6 @@
       "</div>"
   };
 
-  /* ---------------------------------------------------------------- 统计行 */
-  /** 「448.0 KB / 2.0 MB · 64.1 KB/s · 剩余 26 秒」；没总量时只说已读多少。 */
   FV.loadStatsText = function (state) {
     if (!state) return "";
     var parts = [];
@@ -45,12 +38,6 @@
     template: '<div class="pstats" :class="{ dark: dark }">{{ text }}</div>'
   };
 
-  /* ---------------------------------------------------------------- 加载面板 */
-  /**
-   * 唯一的加载界面。两种形态：
-   *   variant="card"   —— 居中卡片（整页读取、视频、PDF），带图标/标题/进度/统计/取消
-   *   variant="inline" —— 只有进度条 + 统计行，塞进已有布局里（音频播放器、字体、十六进制）
-   */
   var LoadingPanel = {
     name: "LoadingPanel",
     components: { ProgressBar: ProgressBar, LoadStats: LoadStats },
@@ -80,8 +67,6 @@
     computed: { svg: function () { return FV.icon(this.icon || "doc"); } }
   };
 
-  /* ---------------------------------------------------------------- 状态卡 */
-  /** 错误 / 空 / 无法预览 共用的一张卡：图标 + 标题 + 说明 + 插槽里的出口按钮。 */
   var StateCard = {
     name: "StateCard",
     props: { icon: { type: String, default: "unknown" }, title: String, text: String, warn: Boolean, dark: Boolean },

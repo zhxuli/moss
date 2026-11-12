@@ -1,8 +1,3 @@
-/* 高级选项（默认折叠）：工作目录 / 环境变量 / 运行后 / 管理员。
- *
- * 直接改 command 的字段 —— 对象 prop 改属性是允许的（重新赋值 prop 本身才会报错），
- * 这样能省掉 4 组 v-model 管道。改动统一抛 change，由父级决定标不标"未保存"。
- */
 export default {
   name: "AdvancedOptions",
   props: {

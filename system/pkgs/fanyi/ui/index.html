@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>快捷翻译工具 Pro</title>
     <style>
-        /* 基础重置与 Mac 字体栈 */
+
         :root {
             --primary: #007aff;
             --primary-light: #e5f1ff;
@@ -30,20 +30,17 @@
             height: 100vh; -webkit-font-smoothing: antialiased; overflow: hidden;
         }
 
-        /* 滚动条美化 */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 10px; }
         ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.3); }
 
-        /* 主容器 —— 不限制最大尺寸：撑满可用宽高 */
         .app-container {
             width: 100%; height: 100%;
             background: var(--bg-card);
             display: flex; flex-direction: column; overflow: hidden;
         }
 
-        /* --- 顶部 Header --- */
         .header {
             flex: 0 0 auto;
             display: flex; justify-content: space-between; align-items: center;
@@ -55,7 +52,6 @@
         .title-group h1 { font-size: 18px; font-weight: 600; }
         .control-group { display: flex; align-items: center; gap: 16px; }
 
-        /* 「保留历史记录」开关 */
         .switch { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-muted); cursor: pointer; user-select: none; }
         .switch-track { position: relative; flex: 0 0 auto; width: 34px; height: 20px; border-radius: 10px; background: #d1d1d6; transition: background .2s; }
         .switch-track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: transform .2s; }
@@ -67,19 +63,16 @@
         .status-dot.running { background-color: var(--success); box-shadow: 0 0 0 rgba(52, 199, 89, 0.4); animation: pulse-green 2s infinite; }
         @keyframes pulse-green { 0% { box-shadow: 0 0 0 0 rgba(52,199,89,0.4); } 70% { box-shadow: 0 0 0 6px rgba(52,199,89,0); } 100% { box-shadow: 0 0 0 0 rgba(52,199,89,0); } }
 
-        /* --- 核心内容区：左右两栏 + 可拖动分隔线 --- */
         .main-content {
             display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden;
         }
 
-        /* 左侧面板 */
         .left-panel {
             flex: 1 1 auto; min-width: 0; min-height: 0;
             padding: 20px; display: flex; flex-direction: column; gap: 16px;
             overflow-y: auto; background: #fafafc;
         }
 
-        /* 可拖动的分隔线 */
         .splitter {
             flex: 0 0 6px; cursor: col-resize; position: relative;
             background: #fafafc;
@@ -93,7 +86,6 @@
             background: var(--primary); width: 2px; margin-left: -1px;
         }
 
-        /* 焦点任务卡片 */
         .focus-card {
             background: var(--bg-card); border-radius: 16px; padding: 18px 20px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.03), inset 0 4px 0 var(--primary);
@@ -107,7 +99,6 @@
             font-size: 13px; font-weight: 600; color: var(--text-secondary);
         }
 
-        /* 微型进度条 (Mini-Stepper) */
         .mini-stepper {
             flex: 0 0 auto;
             display: flex; align-items: center; justify-content: space-between;
@@ -133,7 +124,6 @@
         .step-divider { flex: 1; height: 2px; background: #e5e5ea; margin: 0 10px; border-radius: 1px; transition: 0.3s; min-width: 8px; }
         .step-divider.done { background: var(--success); }
 
-        /* 文本展示区 —— ★ 最小高度调小/去掉，随容器伸缩 */
         .text-box {
             font-size: 15px; line-height: 1.6; color: var(--text-main);
             padding: 12px 14px; border-radius: 8px;
@@ -144,7 +134,6 @@
         .text-box.target { background: var(--primary-light); color: #004085; font-weight: 500; border: 1px solid rgba(0,122,255,0.1); }
         .empty-hint { color: var(--text-muted); font-style: italic; font-size: 14px; padding: 4px 0; }
 
-        /* 骨架屏加载动画 */
         .skeleton-text {
             height: 18px; background: linear-gradient(90deg, #d1d1d6 25%, #e5e5ea 50%, #d1d1d6 75%);
             background-size: 200% 100%; animation: skeleton-loading 1.5s infinite;
@@ -153,7 +142,6 @@
         .skeleton-text.short { width: 60%; }
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
-        /* --- 底部日志 footer：透明底 + 深色字；默认只有 1 行高，悬停展开可滚动 --- */
         .footer-log {
             flex: 0 0 auto; height: 31px; overflow: hidden;
             background: transparent; color: var(--text-secondary);
@@ -165,7 +153,6 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
         .tag { font-weight: 600; color: var(--text-main); }
 
-        /* --- 右侧历史记录 --- */
         .right-panel {
             flex: 0 0 320px; min-width: 0; min-height: 0;
             background: var(--bg-card); display: flex; flex-direction: column; overflow: hidden;
@@ -177,7 +164,6 @@
             border-bottom: 1px solid var(--border-color);
         }
 
-        /* 历史栏里的小按钮（清空 / 再点一次确认） */
         .mini-btn {
             font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
             color: var(--text-secondary); background: var(--bg-page);
@@ -191,7 +177,7 @@
             overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
         }
         .history-item { position: relative; background: var(--bg-page); padding: 12px; padding-right: 34px; border-radius: 10px; border: 1px solid transparent; transition: all 0.2s; animation: slideDown 0.4s ease forwards; cursor: pointer; }
-        /* 单条删除按钮：平时藏着，鼠标移到那条上才出现 */
+
         .history-del {
             position: absolute; top: 8px; right: 8px; width: 20px; height: 20px; padding: 0;
             line-height: 18px; text-align: center; font-size: 14px; font-family: inherit;
@@ -218,7 +204,7 @@
         </div>
         <div class="control-group">
             <span style="font-size: 13px; color: var(--text-muted);">操作: 双击 <kbd>Ctrl</kbd></span>
-            <!-- 保留历史记录开关：开 = 记历史（也能命中缓存）；关 = 新翻译不落盘 -->
+
             <div class="switch" id="keep-switch" title="点一下切换">
                 <div class="switch-track"></div>
                 <span id="keep-label">保留历史</span>
@@ -231,7 +217,7 @@
     </header>
 
     <div class="main-content">
-        <!-- 左侧：焦点卡片 -->
+
         <div class="left-panel">
             <div class="focus-card">
                 <div class="card-header">
@@ -239,7 +225,6 @@
                     <span id="lang-indicator" style="color: var(--text-muted); font-weight: normal; font-size: 12px; background: var(--bg-page); padding: 4px 8px; border-radius: 6px;">自动检测 &rarr; 英文</span>
                 </div>
 
-                <!-- 微型进度条 -->
                 <div class="mini-stepper" id="stepper">
                     <div class="step-item" id="step-1"><div class="step-icon">1</div>提取文本</div>
                     <div class="step-divider" id="div-1"></div>
@@ -250,7 +235,6 @@
                     <div class="step-item" id="step-4"><div class="step-icon">4</div>完成</div>
                 </div>
 
-                <!-- 文本展示区 (随容器伸缩) -->
                 <div id="source-box" class="text-box source">
                     <div class="empty-hint">请选中文本后双击 Ctrl 键，等待任务触发...</div>
                 </div>
@@ -259,22 +243,19 @@
             </div>
         </div>
 
-        <!-- 可拖动分隔线 -->
         <div class="splitter" id="splitter" title="拖动调整左右宽度"></div>
 
-        <!-- 右侧：历史记录 -->
         <div class="right-panel" id="right-panel">
             <div class="history-header" id="history-header">
                 <span id="history-title">历史记录 (近50条)</span>
                 <button type="button" class="mini-btn" id="history-clear" title="清空全部历史记录（连线上的缓存一起删）">清空</button>
             </div>
             <div class="history-list" id="history-list">
-                <!-- 历史项由 app.js 填充 -->
+
             </div>
         </div>
     </div>
 
-    <!-- 底部日志 footer（默认 1 行高，移上去展开） -->
     <div class="footer-log" id="console">
         <div class="log-line"><span class="tag sys">[SYS]</span> 界面初始化完毕，等待操作...</div>
     </div>

@@ -1,24 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""把自带运行时复制进 `system/runtimes/`。
-
-为什么需要这个脚本
-------------------
-`system/runtimes/python/` 有 **181.8 MB / 7863 个文件**。
-这种体量的二进制**不能进 git 历史**（每次改动都会让仓库膨胀到不可用），
-所以仓库里只留说明和这个脚本，运行时本体靠它现场拉取。
-
-这不影响发行：发行包里 `system/` 是整体打包出去的，运行时跟着走。
-只是"克隆仓库"和"拿到发行版"是两件事。
-
-用法
-----
-    python tools\\拉取运行时.py                    # 用默认源（旧项目的 runtime）
-    python tools\\拉取运行时.py "<源目录>"          # 指定源
-    python tools\\拉取运行时.py "<源>" "<目标>"     # 源和目标都指定
-
-退出码：0 成功，非 0 失败。
-"""
 import os
 import shutil
 import sys
@@ -30,7 +9,6 @@ HOME = HERE.parent
 DEFAULT_SRC = Path(r"D:\python\two\QuickTools\pa_soft\bin\runtime")
 DEFAULT_DST = HOME / "system" / "runtimes" / "python" / "3.12"
 
-
 def count(d):
     n = s = 0
     for root, _dirs, files in os.walk(d):
@@ -41,7 +19,6 @@ def count(d):
             except OSError:
                 pass
     return n, s
-
 
 def main():
     src = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SRC
@@ -82,7 +59,6 @@ def main():
     print("[完成] 自带运行时已就位：%s" % exe)
     print("       自检：moss --selfcheck")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

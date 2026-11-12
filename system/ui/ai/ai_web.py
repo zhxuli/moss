@@ -1,11 +1,3 @@
-# -*- coding: utf-8 -*-
-"""AI 的联网能力（只标准库）：web_search / web_fetch / github_api。
-
-- web_search：照 DSH 的 DeepSeek 原生搜索 —— Anthropic 兼容 Messages API 的
-  `web_search_20250305` 服务端工具，解析 `web_search_tool_result` 结构化块。
-- web_fetch：匿名抓公共 http(s) 页面；拒绝私网/本机地址、限制大小和字符数。
-- github_api：GitHub REST API；可用 GITHUB_TOKEN / GH_TOKEN，读公开数据也走得通。
-"""
 import gzip
 import ipaddress
 import json
@@ -22,10 +14,8 @@ MAX_CHARS = 120_000
 DEFAULT_SEARCH_BASE = "https://api.deepseek.com/anthropic/v1"
 DEFAULT_SEARCH_MODEL = "deepseek-v4-flash"
 
-
 class WebError(Exception):
     pass
-
 
 def _public_ip(ip):
     try:
@@ -35,9 +25,7 @@ def _public_ip(ip):
     return not (a.is_private or a.is_loopback or a.is_link_local or a.is_multicast
                 or a.is_reserved or a.is_unspecified)
 
-
 def check_url(url):
-    """只放行 http/https 公网地址；DNS 解析出任何一个私网地址都拒绝。"""
     p = urllib.parse.urlsplit(str(url or "").strip())
     if p.scheme not in ("http", "https"):
         raise WebError("只允许 http / https 地址")
@@ -60,17 +48,14 @@ def check_url(url):
             raise WebError("拒绝私网 / 本机地址：%s" % sockaddr[0])
     return p
 
-
 class _SafeRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         absolute = urllib.parse.urljoin(req.full_url, newurl)
         check_url(absolute)
         return super().redirect_request(req, fp, code, msg, headers, absolute)
 
-
 def _opener():
     return urllib.request.build_opener(_SafeRedirect())
-
 
 def _read_all(resp):
     chunks, n = [], 0
@@ -94,13 +79,11 @@ def _read_all(resp):
         pass
     return raw, n > MAX_BYTES
 
-
 def _charset(content_type):
     mt = (content_type or "").lower()
     if "charset=" in mt:
         return mt.split("charset=", 1)[1].split(";", 1)[0].strip().strip('"\'')
     return "utf-8"
-
 
 def _html_text(html):
     from html.parser import HTMLParser
@@ -143,13 +126,11 @@ def _html_text(html):
             out.append(ln)
     return "\n".join(out)
 
-
 def _decode(raw, content_type):
     try:
         return raw.decode(_charset(content_type), "replace")
     except Exception:
         return raw.decode("utf-8", "replace")
-
 
 def _fmt_fetch(final, status, body, truncated):
     text = body
@@ -163,9 +144,7 @@ def _fmt_fetch(final, status, body, truncated):
         out += ["", "(Content truncated. Fetch a more specific URL or section for the full text.)"]
     return "\n".join(out)
 
-
 def fetch(url, timeout=30):
-    """抓一个公网 http(s) 地址，返回带状态头的纯文本。"""
     check_url(url)
     req = urllib.request.Request(str(url).strip(), headers={
         "User-Agent": UA,
@@ -203,9 +182,7 @@ def fetch(url, timeout=30):
             pass
     return _fmt_fetch(final, status, text, truncated)
 
-
 def search(query, api_key, base_url="", model="", max_results=8):
-    """DeepSeek 原生 web 搜索（Anthropic 兼容 Messages API）。"""
     q = str(query or "").strip()
     if not q:
         raise WebError("query 不能为空")
@@ -279,9 +256,7 @@ def search(query, api_key, base_url="", model="", max_results=8):
     out.append("Cite the relevant URLs above as markdown links in your answer.")
     return "\n".join(out)
 
-
 def github_api(path, method="GET", body=None, timeout=30):
-    """GitHub REST API。`path` 以 / 开头，例如 /repos/owner/repo。"""
     p = str(path or "").strip()
     if not p.startswith("/") or p.startswith("//"):
         raise WebError("path 必须以 / 开头")

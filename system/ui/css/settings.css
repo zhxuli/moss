@@ -1,24 +1,11 @@
-/* 「设置」面板的样式（跟 `js/settings.js` 那个 Vue 组件配套） */
-/* ---------------------------------------------------------------- 「设置」面板（`V-60` ✅ / `V-63` ✅ / `V-66`）
-   内容全部来自宿主（`moss --settings` / `--settings-check`），界面不自己列设置项、
-   也不自己实现校验规则 —— 就不会出现"面板里有、文件里没有""两处规则不一致"这种事。
-
-   ★ 结构（`V-63` + `V-66`）：
-       .card       圆角 + overflow:hidden（**自己不滚**，滚动条压不到圆角）
-       ├ .set-head 标题 + 配置文件 + ×
-       ├ .set-main flex
-       │   ├ .set-nav  左侧分类（点一下切一组，一次只看一组 —— 不再是一长条）
-       │   └ .set-body 右侧内容（**唯一滚动层**，没有圆角）
-       └ .set-foot 状态 + 取消 / 保存
-   ★ 说明放进 `?` 图标的 hover 提示里（不是整格 hover）：面板上只有标签和控件。 */
 #settings{position:fixed;inset:0;background:rgba(0,0,0,.38);display:none;
   align-items:center;justify-content:center;z-index:85}
 #settings.on{display:flex}
-/* ★ V-145：尺寸照 AI 配置那份 UI 稿子 —— 960×680、圆角 16 */
-.card.wide{width:min(960px,94vw);height:min(760px,92vh);max-width:none;padding:0;   /* V-162：比稿子的 680 高一点，长表单（AI 那一页）不用滚 */
+
+.card.wide{width:min(960px,94vw);height:min(760px,92vh);max-width:none;padding:0;   
   border-radius:16px;display:flex;flex-direction:column;overflow:hidden;
   box-shadow:0 25px 50px -12px rgba(0,0,0,.25)}
-/* 顶部那两个可点的路径片段（V-160）：悬停给一点反馈，看着就知道能点 */
+
 .set-link{cursor:pointer;border-radius:4px;padding:1px 3px;transition:background .13s,color .13s}
 .set-link:hover{background:var(--hover);color:var(--accent)}
 .set-head{display:flex;align-items:center;gap:10px;height:56px;padding:0 24px;
@@ -33,19 +20,16 @@
 .set-x svg{width:15px;height:15px}
 .set-main{flex:1;min-height:0;display:flex}
 
-/* 左侧分类 */
 .set-nav{width:220px;flex:none;background:#fafafa;border-right:1px solid #e4e4e7;
   padding:16px 12px;display:flex;flex-direction:column;gap:4px}
 .set-navitem{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;
   font:inherit;font-size:14px;font-weight:500;color:#52525b;background:transparent;border:0;
   cursor:pointer;text-align:left;transition:background .25s cubic-bezier(.4,0,.2,1), color .25s}
-/* ★ 名字里有**连续空格**（"AI  引擎" 那样补宽度）：HTML 默认会把连续空格折叠成一个，
-   所以这一格要 white-space:pre 才留得住（V-164） */
+
 .set-navname{white-space:pre}
 .set-navitem:hover{background:#f4f4f5;color:#18181b}
 .set-navitem.on{background:#fff;color:#2563eb;font-weight:600;
-  /* 稿子选中态是「白底 + 1px 亮线 + 细阴影」：亮线用 inset 阴影画，
-     这样不用给 button 加 border（那条通用闸还管着） */
+
   box-shadow:inset 0 0 0 1px #e4e4e7, 0 1px 2px rgba(0,0,0,.05)}
 .set-navitem svg{width:16px;height:16px;flex:none;opacity:.8}
 .set-navitem.on svg{opacity:1}
@@ -55,25 +39,22 @@
 .set-navitem.has-warn .set-dot{background:#e0a02a;display:block}
 .set-navspacer{flex:1}
 
-/* 右侧内容：一次只显示一组 */
 .set-body{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;padding:0}
 .set-pane{display:none}
-/* ★ V-145：每一页的内边距照稿子的 .view（32px 40px）
-   ★ V-168：**切到哪一页都有「淡入 + 上移 15px」的过场**（以前只有 AI 那一页有）。
-     靠 CSS 动画实现：`display` 从 none 变成 block 时动画会重新播一遍，所以每次切页自动就有。 */
+
 @keyframes setPaneIn{from{opacity:0;transform:translateY(15px)}to{opacity:1;transform:none}}
 .set-pane.on{display:block;padding:32px 40px;animation:setPaneIn .3s ease}
-/* AI 那一页的过场是它自己的 .ai-view 在做，这里别再叠一层（叠了位移变 30px） */
+
 .set-pane.on.is-ai{animation:none}
 .set-ptitle{font-size:24px;font-weight:600;color:#18181b;margin:0 0 8px}
 .set-pdesc{font-size:14px;color:#52525b;line-height:1.6;margin:0 0 24px}
-/* 开关类：一行一个（本来就该一行一个 —— 左边名字、右边开关） */
+
 .set-list{display:flex;flex-direction:column}
 .set-item{display:grid;grid-template-columns:1fr auto;align-items:center;gap:0 10px;
   padding:9px 2px;border-top:1px solid var(--hair)}
 .set-item:first-child{border-top:0}
 .set-item:hover{background:var(--panel2)}
-/* 输入类：两列 */
+
 .set-fields{display:grid;grid-template-columns:1fr 1fr;gap:14px 16px}
 .set-field{display:flex;flex-direction:column;gap:6px;min-width:0}
 .set-lbl{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--fg2);
@@ -94,15 +75,13 @@
 .set-field.bad,.set-field.warn{padding:6px 8px;margin:-6px -8px}
 .set-item.bad,.set-item.warn{padding-left:8px;padding-right:8px}
 
-/* ★ 控件（`V-63` 的教训：这几条**必须带 `#settings ` 前缀** —— 全局那条
-   `.card input{width:100%}`（确认框用的）是"一个类 + 一个元素"，优先级高过单类选择器） */
 #settings .inp{width:100%;height:32px;padding:0 11px;border-radius:8px;
   border:0;background:var(--fill);color:var(--fg);
   font-family:var(--mono);font-size:12.5px;outline:none;
   transition:background .12s,box-shadow .12s}
 #settings .inp::placeholder{color:var(--ph);font-family:inherit}
 #settings .inp:focus{background:var(--panel);box-shadow:0 0 0 3px var(--field-focus)}
-/* 开关（`V-92`：去掉描边，轨道用一层灰；开着就是强调色） */
+
 .sw{width:38px;height:22px;border-radius:99px;border:0;background:var(--fill2);
   position:relative;cursor:pointer;flex:none;padding:0;transition:background .16s}
 .sw::after{content:"";position:absolute;top:1px;left:1px;width:18px;height:18px;border-radius:50%;
@@ -111,10 +90,10 @@
 .sw[aria-checked="true"]{background:var(--accent);border-color:transparent}
 .sw[aria-checked="true"]::after{transform:translateX(16px)}
 .sw:focus-visible{outline:none;box-shadow:0 0 0 3px var(--field-focus)}
-/* 步进器（`V-92`：外壳也去掉描边，用一层灰底；里面那两颗 ± 本来就无底色） */
+
 #settings .step{display:inline-flex;align-items:center;border:0;
   border-radius:8px;overflow:hidden;background:var(--fill);height:32px;flex:none;
-  /* ★ 字段那格是 flex 列，默认 align-items:stretch 会把这块**拉满整行** ⇒ 自己靠左站住（V-160） */
+
   align-self:flex-start}
 #settings .step button{width:30px;height:100%;border:0;background:transparent;color:var(--fg2);
   cursor:pointer;font-size:15px;line-height:1;padding:0;transition:background .12s,color .12s}
@@ -123,21 +102,18 @@
 #settings .step .num{width:44px;height:100%;text-align:center;font-family:var(--mono);
   font-size:13px;border:0;border-left:1px solid var(--hair);border-right:1px solid var(--hair);
   background:transparent;color:var(--fg);outline:none}
-/* 冲突/提醒时控件也变色 */
+
 .set-item.bad .sw,.set-field.bad .inp,.set-field.bad .step{border-color:#d64545;
   box-shadow:0 0 0 3px rgba(214,69,69,.14)}
 .set-item.warn .sw,.set-field.warn .inp,.set-field.warn .step{border-color:#e0a02a;
   box-shadow:0 0 0 3px rgba(224,160,42,.16)}
-/* 快捷命令那页底下的预览行（照那个稿子：一行把四条命令都摆出来） */
-/* 预览：多行显示（`V-156`）—— 一行挤着看不清 */
+
 .set-live{margin-top:16px;padding:12px 14px;border-radius:10px;background:var(--tile);
   font-family:var(--mono);font-size:12px;color:var(--fg2);line-height:1.9;
   white-space:pre-wrap;overflow-x:auto;tab-size:4}
 .set-live b{color:var(--fg);font-weight:600}
 .set-live.bad{background:rgba(214,69,69,.08);color:#d64545}
 
-/* 短名设置那一组（`V-298`）：前缀 + 三段模式 + **一直显示**的左右对比预览（左=原来、右=现在）。
-   ★ 为什么单独画一块：短命令这概念有点抽象，做成"一条线上的三种程度 + 例子对比"才一眼懂。 */
 .set-sc .sc-field{max-width:380px}
 .set-sc .sc-mode{margin-top:18px}
 .set-sc .sc-seg{display:inline-flex;background:var(--tile);border-radius:8px;padding:3px;gap:2px}
@@ -155,11 +131,9 @@
 .set-sc .sc-coltitle{font-size:11px;font-weight:600;color:var(--dim);margin-bottom:8px}
 .set-sc .sc-col pre{margin:0;font-family:var(--mono);font-size:12.5px;color:var(--fg);
   line-height:1.95;white-space:pre-wrap;overflow-x:auto;tab-size:4}
-/* ★ V-298：右列把**前缀**高亮（`mo` 亮、`img` 正常）—— 照那份稿子的视觉引导 */
+
 .set-sc .sc-hl{color:var(--accent);font-weight:600}
 
-/* 命令接入那一页（`V-299`，照那份清爽稿子）：一张卡片 + 两行设置（PATH / CD 增强），
-   CD 下面挂"受控子环境列表"的子面板；关掉 CD 时子面板整块置灰。 */
 .acc-card{border:1px solid var(--hair);border-radius:14px;overflow:hidden;background:var(--panel2)}
 .acc-row{display:flex;align-items:center;gap:16px;padding:18px 22px;border-bottom:1px solid var(--hair)}
 .acc-info{flex:1;min-width:0}
@@ -187,8 +161,6 @@
 .acc-envstat.on{color:var(--accent)}
 .acc-envstat.on::before{background:currentColor}
 
-/* 脚：状态 + 按钮 */
-/* ★ V-167：定高 **36px**（跟主窗口那条状态栏一模一样高）—— 以前是 padding 撑出来的，跟着内容变。 */
 .set-foot{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px 0 18px;
   border-top:1px solid var(--hair);flex:none;background:var(--panel2)}
 .set-state{font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;
@@ -207,8 +179,6 @@
   background:transparent;color:var(--dim);cursor:pointer;font:inherit;font-size:13px}
 .set-foot .btn-quiet:hover{background:var(--hover);color:var(--fg)}
 
-/* hover 提示（`V-66`：从 `?` 图标 / 标签触发）。挂 body 上 + fixed 定位 —— 
-   放滚动层里会被裁掉。 */
 #tip{position:fixed;z-index:95;max-width:320px;padding:9px 12px;border-radius:10px;
   background:var(--panel);border:1px solid var(--line);
   box-shadow:0 12px 34px rgba(0,0,0,.26);font-size:12px;line-height:1.65;color:var(--fg2);
@@ -219,38 +189,26 @@
 #tip .tip-prob.bad{color:#d64545}
 #tip .tip-prob.warn{color:#a86400}
 
-/* ---------------------------------------------------------------- AI（V-145）
-   ★ 这一块**照那份 UI 稿子 1:1 对齐**：zinc 灰 + 蓝 #2563eb 那套配色、960×680 的内容留白、
-   人物图标的虚线空框、加号在上面的虚线添加条、次要按钮 1px 描边（这一块豁免
-   「按钮不许有描边」那条通用闸 —— 稿子就是描边的，见 tools/界面预览.py 的 flat-buttons）。
-   三张视图（列表 / 选服务商 / 编辑）常驻 DOM，靠 .active 做「淡入 + 上移 15px」的切换。 */
 .set-ai{display:block;min-width:0;
-  /* 局部换掉这套令牌：稿子的颜色只在这一块生效，别处不动 */
+
   --accent:#2563eb; --accent-fg:#fff; --line2:#e4e4e7; --ctl:#a1a1aa;
   --fg:#18181b; --fg2:#52525b; --dim:#a1a1aa; --dim2:#a1a1aa;
   --tile:#fafafa; --hover:#f4f4f5; --field-focus:rgba(37,99,235,.12)}
-/* ★ AI 那一页要**撑满可视高度**，底下的动作条（测试连接 / 保存配置）才贴得住最下面；
-   别的设置页还是原来的块状布局（不加 is-ai 那个类）。 */
+
 .set-pane.on.is-ai{display:flex;flex-direction:column;min-height:100%;padding:0;
   box-sizing:border-box}
-/* ★ 中间这层 .set-ai 也得跟着撑高 —— 它原来是 display:block，内容多高就多高，
-   flex 链在它这儿断了，动作条就贴不到底（量出来差 98px）。 */
+
 .set-pane.on.is-ai .set-ai{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
-/* 三张视图一次只渲染一张（v-if），每张进来时做稿子那个「淡入 + 上移 15px」 */
-/* ★ 视图 = [滚动区][动作条] 两兄弟：内容多高都在 .ai-scroll 里滚，
-   动作条 flex:none 永远钉在最下面（不再靠 margin-top:auto / sticky —— 那两个内容一高就失效） */
+
 .ai-view{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;
   overflow:hidden;animation:aiViewIn .3s ease}
 .ai-scroll{flex:1;min-height:0;overflow-y:auto;box-sizing:border-box;padding:32px 40px 24px}
 @keyframes aiViewIn{from{opacity:0;transform:translateY(15px)}to{opacity:1;transform:none}}
 
-/* 视图头 */
 .ai-vhead{margin-bottom:24px}
 .ai-vtitle{font-size:24px;font-weight:600;color:#18181b;margin:0 0 8px}
 .ai-vdesc{font-size:14px;color:#52525b;margin:0}
 
-/* 返回：**只有箭头、没有字**，热区 36×36（不要那种小得不好点的） */
-/* 热区是**一整条**（132×36），箭头靠左放 —— 箭头右边那片也能点，不用去戳那一个小方块 */
 .ai-back{width:132px;height:36px;flex:none;display:inline-flex;align-items:center;
   justify-content:flex-start;padding:0 0 0 9px;margin:-6px 0 18px -9px;align-self:flex-start;
   border:0;border-radius:8px;background:transparent;color:#52525b;cursor:pointer;
@@ -259,7 +217,6 @@
 .ai-back:active{transform:scale(.97)}
 .ai-back svg{width:18px;height:18px}
 
-/* 空状态：虚线框 + 人物图标 + 标题 + 一句（照稿子） */
 .ai-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;
   padding:48px 20px;border:1px dashed #e4e4e7;border-radius:10px;background:#fafafa;
   text-align:center;margin-bottom:16px}
@@ -268,7 +225,6 @@
 .ai-empty h4{font-size:15px;font-weight:600;color:#52525b;margin:0 0 4px}
 .ai-empty p{font-size:13px;color:#a1a1aa;margin:0}
 
-/* 列表：卡片（16×20 / 圆角 10） */
 .ai-list{display:flex;flex-direction:column;gap:12px}
 .ai-card{display:flex;justify-content:space-between;align-items:center;gap:12px;
   padding:16px 20px;border:1px solid #e4e4e7;border-radius:10px;background:#fff;
@@ -282,7 +238,6 @@
 .ai-cdot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block;margin-right:8px;
   background:#10b981;box-shadow:0 0 0 3px #ecfdf5}
 
-/* 「添加新的 AI 配置」：虚线框、加号在上（照稿子） */
 .ai-add{display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px;
   margin-top:12px;border:1px dashed #a1a1aa;border-radius:10px;color:#52525b;
   font-size:14px;font-weight:500;cursor:pointer;
@@ -290,7 +245,6 @@
 .ai-add:hover{border-color:#2563eb;color:#2563eb;background:#eff6ff}
 .ai-add svg{width:24px;height:24px}
 
-/* 选服务商：三列网格（格子 20 / 图标 40） */
 .ai-tplgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
 .ai-tpl{display:flex;align-items:center;gap:12px;padding:20px;border:1px solid #e4e4e7;
   border-radius:10px;background:#fff;cursor:pointer;
@@ -306,7 +260,6 @@
 .ai-tinfo i{font-size:12px;font-style:normal;color:#a1a1aa;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 
-/* 编辑：表单（照稿子的 form-group / form-control） */
 .ai-frow{display:grid;grid-template-columns:1fr 1fr;gap:20px}
 .ai-fgroup{display:flex;flex-direction:column;margin-bottom:20px;min-width:0}
 .ai-flabel{display:block;font-size:13px;font-weight:600;color:#52525b;margin-bottom:8px}
@@ -315,8 +268,7 @@
   transition:border-color .25s cubic-bezier(.4,0,.2,1), box-shadow .25s}
 .ai-input:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
 .ai-textarea{resize:vertical;min-height:80px;font-family:var(--mono);font-size:13px;line-height:1.7}
-/* 密钥框里那只小眼睛（V-149）：贴右侧内侧，默认藏；悬停 / 聚焦且**有内容**才出现。
-   ★ 同时关掉浏览器自带那只（Edge 的 ::-ms-reveal）—— 它失焦再聚焦就不出来了，行为不受控。 */
+
 .ai-keywrap{position:relative;display:block}
 .ai-keywrap .ai-input{padding-right:36px}
 .ai-eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);
@@ -326,11 +278,11 @@
   transition:opacity .15s ease-out, color .15s ease-out, background .15s ease-out}
 .ai-keywrap:hover .ai-eye,
 .ai-keywrap:focus-within .ai-eye{opacity:1;pointer-events:auto}
-/* ★ 类名别用 `empty`：全局那条 `.empty{margin-top:70px}` 会把它顶下去 70px（踩过） */
+
 .ai-keywrap.nokey .ai-eye{opacity:0;pointer-events:none}
 .ai-eye:hover{color:#52525b;background:#f4f4f5}
 .ai-eye svg{width:16px;height:16px}
-/* ★ 快捷操作：接口地址 / key 填了之后才出现。两颗图标按钮，点了不用先保存。 */
+
 .ai-query-btns{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .ai-query-btn{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border-radius:8px;
   border:1px solid #e4e4e7;background:#fafafa;color:#52525b;cursor:pointer;font:inherit;
@@ -339,9 +291,7 @@
 .ai-query-btn:active:not(:disabled){transform:scale(.98)}
 .ai-query-btn:disabled{opacity:.5;cursor:default}
 .ai-query-btn svg.i{width:15px;height:15px;flex:none}
-/* ★ 2026-11-02：测试可用性 —— 一次问一个模型，结果一行一个列在按钮下面。
-   绿的能通（后面跟耗时 + 它回了什么），红的不能通（跟原因），黄的还在排队 / 正在测。
-   ★ 表头那颗「清掉不通的」只在真有红行时才出现（平时一个字都不多）。 */
+
 .ai-ping{margin-top:10px;border:1px solid #e4e4e7;border-radius:8px;background:#fff;
   overflow:hidden}
 .ai-ping-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
@@ -372,7 +322,6 @@
 input[type="password"]::-ms-reveal,
 input[type="password"]::-ms-clear{display:none}
 
-/* 结果横幅（照稿子：淡绿底 + 淡绿边） */
 .ai-banner{display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-radius:10px;
   font-size:13px;line-height:1.5;margin-top:10px;animation:aiFadeIn .3s}
 .ai-banner.ok{background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46}
@@ -380,7 +329,7 @@ input[type="password"]::-ms-clear{display:none}
 .ai-bico{display:flex;flex:none;margin-top:2px}
 .ai-bico svg{width:18px;height:18px}
 .ai-btxt{min-width:0;word-break:break-all}
-/* 「详情」那颗小字按钮 + 展开后的原始报文 */
+
 .ai-more{margin-left:8px;border:0;background:transparent;padding:0;color:inherit;
   cursor:pointer;font:inherit;text-decoration:underline;text-underline-offset:2px;opacity:.75}
 .ai-more:hover{opacity:1}
@@ -390,11 +339,6 @@ input[type="password"]::-ms-clear{display:none}
   word-break:break-all;text-align:left}
 @keyframes aiFadeIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
 
-/* 底部动作条（照稿子：细线隔开、贴底） */
-/* 动作条：内容短时靠 margin-top:auto 贴底；内容比框高时靠 sticky **钉在可视区底部**，
-   反正它和上面那条线永远在最下面（V-153 量过：普通放法会差 17px，因为表单比框高一点点）。 */
-
-/* 按钮（照稿子：10×20、圆角 6、14px/500；次要按钮 1px 描边） */
 .ai-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;
   padding:10px 20px;border-radius:6px;border:1px solid transparent;background:#fff;
   color:#18181b;border-color:#e4e4e7;cursor:pointer;font:inherit;font-size:14px;font-weight:500;
@@ -407,23 +351,13 @@ input[type="password"]::-ms-clear{display:none}
 .ai-btn.primary:hover{background:#1d4ed8}
 .ai-btn.danger{color:#ef4444;border-color:#e4e4e7}
 .ai-btn.danger:hover{background:#fef2f2;border-color:#fca5a5;color:#ef4444}
-/* 卡片右边那两颗小按钮（照稿子的 .btn-icon：6×12、圆角 6、13px） */
+
 .ai-cacts .ai-btn{padding:6px 12px;border-radius:6px;font-size:13px}
 
-/* ---------------------------------------------------------------- 音效提醒（「AI 引擎」页底部）
-   照你给的那份极简稿子：一张浅色卡片 + 两列，一种音效一行
-     [名字 · 文件名（可点）]                     [恢复] [▶] (小开关)
-   ★ 点文件名 = 换音效；把音频拖到这一行上也行（行变蓝虚线 = 收得下）。
-   ★ 「恢复」只在**自己换过**的时候才有，而且平时是**隐身**的（鼠标放到这一行上才显）——
-     静止状态就是稿子那一版，一个字都不多。
-   ★ 开关是稿子那个 32×18 的小号（不是别处那个 38×22 的 .sw）—— 刻意不共用，
-     免得以后有人动 .sw 把这一块带歪。 */
 .ai-snd{margin-top:22px;padding:16px 18px 8px;border-radius:12px;background:#f7f8fa}
 .ai-snd-title{font-size:14px;font-weight:600;color:#1f2937;letter-spacing:.5px;
   margin-bottom:14px}
-/* ★ 2026-11-02：「音效提醒」那几个字现在是**链接**（点了去 sounddino 挑音效素材），
-   但外观**一点都不变** —— 同色、同字重、没有下划线。只有鼠标停上去变小手。
-   ★ `a` 自带的蓝字 + 下划线必须显式压掉，不然这一行会突然变样（那就不是"外观不变"了）。 */
+
 .ai-snd-title a{color:inherit;font:inherit;letter-spacing:inherit;text-decoration:none;
   cursor:pointer}
 .ai-snd-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
@@ -445,14 +379,14 @@ input[type="password"]::-ms-clear{display:none}
   cursor:pointer;opacity:0;pointer-events:none;transition:opacity .15s, color .15s}
 .ai-snd-item:hover .ai-snd-reset{opacity:1;pointer-events:auto}
 .ai-snd-reset:hover{color:#3b82f6;text-decoration:underline}
-/* ▶ 试听：无边框的小符号（稿子里就是一颗 ▶） */
+
 .ai-snd-play{display:inline-flex;align-items:center;justify-content:center;border:0;
   background:none;padding:4px;color:#6b7280;cursor:pointer;
   transition:color .2s, transform .1s}
 .ai-snd-play:hover{color:#1f2937}
 .ai-snd-play:active{transform:scale(.94)}
 .ai-snd-play svg{width:13px;height:13px}
-/* 极简开关（稿子的 .switch / .slider，换个前缀免得和别处撞名） */
+
 .ai-snd-switch{position:relative;display:inline-block;width:32px;height:18px;flex:none;
   cursor:pointer}
 .ai-snd-switch input{position:absolute;opacity:0;width:0;height:0}
@@ -463,6 +397,5 @@ input[type="password"]::-ms-clear{display:none}
 .ai-snd-switch input:checked + .ai-snd-slider{background:#3b82f6}
 .ai-snd-switch input:checked + .ai-snd-slider::before{transform:translateX(14px)}
 .ai-snd-switch input:focus-visible + .ai-snd-slider{box-shadow:0 0 0 3px rgba(59,130,246,.25)}
-/* 面板太窄就一行一种（两列挤在一起的话，文件名会被截得看不出是什么） */
-@media (max-width:640px){ .ai-snd-grid{grid-template-columns:1fr} }
 
+@media (max-width:640px){ .ai-snd-grid{grid-template-columns:1fr} }

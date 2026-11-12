@@ -74,7 +74,7 @@ moss ui → 选它 → 运行     # 内嵌进 moss 的「界面」选项卡里�
 >   `UnhookWindowsHookEx` 拿着半个句柄**卸不掉** → 残留一个死钩子把**整机键盘卡死**。
 > ② **慢活儿不能放钩子回调里**（开线程/发网络会让回调超时，系统摘钩甚至卡键盘）。
 >   所以是"装钩子+消息循环"一个线程、"真正干活"另一个常驻工作线程，回调只做**判定+入队**；
->   卸载放在 `finally` 并**检查返回值**。护栏见 `tools/fanyi热键探针.py`（断言 `_unhook_ok`）。
+>   卸载放在 `finally` 并**检查返回值**。
 
 **缓存迁移**：首次启动时若新缓存（`cache/translation_cache.jsonl`）不存在，会读旧版
 `MOSS_PLUGIN_DATA_DIR/translation_cache.txt`（一行 `a | b`）**一次性导入**（按脚本猜语言，

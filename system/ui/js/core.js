@@ -1,59 +1,26 @@
-/* ★ 出错要看得见（`V-76`）：这个界面没有能随手打开的控制台，某处一抛异常，表现就是
-   "左边空了 / 某块没了"，谁也看不出为什么。所以 onerror / unhandledrejection 全部收下来，
-   写到右下角状态栏（红字，一直在）+ toast + 日志文件（`user_data/state/_ui_drop.log`）。
-   （外一层的"资源加载失败"捕获在 `index.html` 里内联着 —— 那一层要防的是 js 自己都没加载上。） */
-/* ★ 出错要看得见（`V-76` / `V-81`）：这个界面没有能随手打开的控制台，
-   某处一抛异常，表现就是“左边空了 / 某块没了”，谁也看不出为什么。
-   ★ 唯一“一定跑得到”的那份在 `index.html` 里**内联**着（资源加载失败 + 页内报错
-   → 状态栏红字 + `user_data/state/_ui_drop.log`）—— 因为 `js/*.js` 自己没加载上时，
-   写在 js 里的报错处理根本跑不到（鸡生蛋）。所以这里**不再重复挂** window 上的
-   `error` / `unhandledrejection`（以前重复挂了三份，一个错误会被报三四次），只补一件它管不到的事：
-   **Vue 组件里的异常** —— Vue 默认只把它写进控制台，而这个界面没有控制台。
-   （`V-81` 就是这么摸出来的：详情页接线里一个变量名写错 ⇒ 后面那串按钮全没绑上，
-   界面上却一个字都不报。） */
 window.__errors = window.__errors || [];
 
 function reportError(what, msg, stack){
   const line = what + "：" + msg + (stack ? ("\n" + stack) : "");
   try{ console.error(line); }catch(e){}
   if (typeof window.__mossTell === "function"){
-    try{ window.__mossTell(line); }catch(e){}     // 状态栏红字 + 日志文件，都由它写
+    try{ window.__mossTell(line); }catch(e){}     
   }else{
     try{ window.__errors.push(line); }catch(e){}
   }
   try{ if (typeof toast === "function") toast("⚠ " + msg, true); }catch(e){}
 }
 
-/* ★ 光靠上面那条 `__mossTell` 还管不到 **Vue 组件里的异常**：Vue 默认把它只写进控制台，
-   而这个界面没有能随手打开的控制台 ⇒ 必须挂 errorHandler。
-   ⚠️ 实测（`V-81`）：`vue.global.prod.js`（3.5.43）里**没有 `Vue.config`**
-   （`typeof Vue.config === "undefined"`），所以 Vue 2 那种"设全局 config"的写法在这儿
-   **一声不响地失效** —— 我第一版就是这么写的，结果你从 devtools 里看到的那条报错
-   （`Proxy.rows` 读 `DATA.packages`），界面上一个字都没留下，我还差点当它是旧页面残留。
-   只能**按 app 设**：`app.config.errorHandler`。 */
 function onVueError(err, vm, info){
   reportError("组件出错" + (info ? ("（" + info + "）") : ""),
               (err && err.message) || String(err), (err && err.stack) || "");
 }
 
-/* 这一页是不是"浮动窗口"那一份（`V-192`）：宿主开的第二个窗口加载同一份页面，只多一个
-   `#float=<包id>`。
-
-   ★ **为什么定义在这儿（core.js，第一个加载的文件）而不是用它的 app.js**：`embed.js` 在
-     `app.js` **之前**加载，而它挂载组件是**当场**发生的（`mountVue` 一调就渲染）——
-     那一刻 `app.js` 里的 `const FLOAT_PID` 还没执行到，于是 `isFloat` 这个计算属性直接
-     `ReferenceError: FLOAT_PID is not defined`：**页面一启动就报错**（`V-202` 实测）。
-     `const` 虽然跨脚本共享，但那是对**已经跑过**的脚本成立 —— 加载顺序是硬约束。
-   ★ 一处定义，两个文件都读它（`window.__mossFloatPid`）。 */
 window.__mossFloatPid = (function () {
   const m = /^#float=([A-Za-z0-9_-]{1,32})$/.exec(location.hash || "");
   return m ? m[1] : "";
 })();
 
-/* 建 Vue app 一律走这个 —— 省得哪一处忘了挂 errorHandler（忘了就又是"静悄悄死掉"）。
-   返回值与 `Vue.createApp(x).mount(y)` 一样（根组件实例），调用点别的都不用改。
-   `globals`：往 `app.config.globalProperties` 上摊一份（文件管理那套模板助手要用）。
-   自测这条路的场景：预览里的 `err-path`（用**这个函数**建一个会在 computed 里抛错的组件）。 */
 function mountVue(comp, target, globals){
   const app = Vue.createApp(comp);
   app.config.errorHandler = onVueError;
@@ -61,45 +28,22 @@ function mountVue(comp, target, globals){
   return app.mount(target);
 }
 
-/* moss 界面 · core.js —— 从 index.html 拆出来的（`V-67`），内容与拆分前一致。 */
-
-/* ============================================================================
-   moss 界面：详情 / 命令行 / **文件管理**
-   文件管理是**每个包自己的一套**（上下文按包 id 分），里面的子选项卡：
-       「文件」固定不可关（目录浏览，资源管理器那套操作）
-       + 每打开一个文件一个子选项卡（可关、带未保存黄点）
-   高亮与编辑器结构照抄 exec；图标用 Lucide。
-   ========================================================================== */
-
 let DATA = null, cur = null, tab = "detail";
-/* ★ `V-305`：**跑包那个符号**（默认 `:`，可在 设置→符号 改）。界面**不许把它硬编码** ——
-   任何地方要显示"怎么敲这个包"（列表行 / 详情 / 命令行标题 / 拖放提示 / toast …）
-   都用它。宿主在 payload 的 `symbols.plugin` 里给（改了设置重启就变）。
-   ★ 为什么是个全局 `let` 而不是写进模板：`js/*.js` 共享一个脚本作用域，模板里读不到全局。 */
+
 let PSYM = ":";
-/* ★ 右边那三个选项卡的"当前对象"有两种：**包**（`cur`）和**一条历史**（`curH`）。
-   两者互斥 —— 选了一个就把另一个清掉，左边的高亮跟着走。
-   为什么不合成一个对象：包有一堆历史没有的字段（版本/层/参数表/AI 开关/卸载），
-   历史有的是包没有的（目标绝对路径 / 当初的 cwd / 那次的结果）；
-   合成一个就得到处判空，不如分成两份、用一个 `selObj()` 取"现在是谁"。 */
+
 let curH = null;
-function isHist(o){ return !!o && !o.id && !!o.target; }   // 包有 id，历史有 target
+function isHist(o){ return !!o && !o.id && !!o.target; }   
 function selObj(){ return curH || cur; }
 let lastRun = null;
-/* 上一次输入框里写的参数，**按包各记一份**。
-   ★ 为什么要记：详情页在"一次运行结束"时会重画（`finishRun` → `renderDetail`），
-     重画会把输入框整个换掉 —— 于是你刚填的参数（或者刚拖进来的那个路径）
-     在跑完的一瞬间就消失了，看着像没生效。记一份、重画时放回去。 */
+
 const ARGS = {};
-/* 包 id 的规矩（宿主 `core/paths.py` 的 `ID_RE`，`F-26`）：它是身份，还要当目录名用
-   （`state/<id>`），所以只允许小写字母开头 + 小写字母/数字/下划线/连字符，最长 32。
-   界面这边也存一份：保存清单时能**当场**说清楚哪儿不合法，不用等宿主把包丢掉。 */
+
 const ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
-/* 上一次弹过的"包表没读回来"的原因 —— 同一个原因只弹一次，别每 5 秒刷一次屏。 */
+
 let lastStaleReason = "";
 const $ = s => document.querySelector(s);
 
-/* ---------------------------------------------------------------- 后缀 → 图标/颜色/语言 */
 const EXT = {
   py:{i:"file-code",c:"#3572A5",l:"python"}, pyw:{i:"file-code",c:"#3572A5",l:"python"},
   js:{i:"file-code",c:"#c9a227",l:"javascript"}, mjs:{i:"file-code",c:"#c9a227",l:"javascript"},
@@ -175,14 +119,6 @@ function escapeHtml(s){
 }
 const esc = escapeHtml;
 
-/* ---------------------------------------------------------------- 拖着调宽（`V-92`）
-   左侧列表和「版本快照」边栏都得能调宽（你的原话：「应该允许调节尺寸 防止显示的内容不全」）。
-   一条 7px 宽的细线（`.grip`，绝对定位贴在元素边上），按住横拖改那个元素的 `width`。
-     grip = 那条线；el = 要改宽度的元素；sign = +1（线在元素**右边**，如左侧列表）/
-            -1（线在元素**左边**，如快照边栏）；min/max/def = 上下限 + 双击复原值。
-   ★ 宽度只活在这一会话里（页面是从 `127.0.0.1:<随机端口>` 现起现发的，`localStorage`
-     按"源"隔离、每次端口都变 ⇒ 存进去也读不回来）；不改磁盘、不动任何状态。
-   ★ 用 pointer 事件 + `setPointerCapture`：鼠标划出那条 7px 也能继续拖（不然一快就掉）。 */
 function bindColResize(grip, el, sign, min, max, def){
   if (!grip || !el) return;
   const hi = () => (typeof max === "function" ? max() : max);
@@ -210,17 +146,8 @@ function bindColResize(grip, el, sign, min, max, def){
   grip.addEventListener("dblclick", () => { el.style.width = clamp(def) + "px"; });
 }
 
-/* ---------------------------------------------------------------- 差异视图（`V-94`）
-   「快照 vs 现在」的左右对照：状态容器 + 两个**给模板用**的助手。
-   ★ 为什么放在这里（`core.js`）而不是 `js/backup.js`：文件管理那张表是**在自己脚本末尾**
-     挂载的（`files.js`），比 `backup.js` 早 —— 模板里 `bkDiffRow(e.rel)` 要是一开始不存在，
-     整张表渲染就失败（症状：文件列表空白、还什么都不报）。函数声明在这儿就万无一失。
-   ★ 容器用 `Vue.reactive`：边栏那几个 computed 直接读它，值一填就自动重画。 */
 const BKD = Vue.reactive({diff: null, title: ""});
-/* 左边（文件管理那张表）该怎么上色：**左边大就左边更深**（你的原话"左侧的多 就左侧文字更深"）。
-   ★ `V-250` 你重定的配色：变了=琥珀（深浅分大小）、添加=蓝深、缺少=蓝浅、**不变=不动**。
-     左边这张表**不给"没变化"上灰** —— 一整屏文件绝大多数都没变，全灰就分不出重点了；
-     灰只用在右边快照边栏（`mirrorCls` 里那条 `df-same`）。 */
+
 function bkDiffRow(rel){
   const d = BKD.diff && BKD.diff.byRel ? BKD.diff.byRel[rel] : null;
   if (!d) return null;
@@ -229,15 +156,14 @@ function bkDiffRow(rel){
                                                   : {"df-chg": true, "df-soft": true};
   if (d.state === "empty") return {"df-empty": true};
   if (d.state === "snap-only" || d.state === "gone") return {"df-gone": true};
-  return null;                                  // 一致 → 正常色，不打扰
+  return null;                                  
 }
-/* `V-250`：方向记号 —— 变了看 ↑/↓（谁大谁小），增缺看 +/−（多了还是少了）。
-   左边那张表、右边快照边栏用的是**同一个**函数，所以两边的记号永远一致。 */
+
 function bkDiffMark(rel){
   const d = BKD.diff && BKD.diff.byRel ? BKD.diff.byRel[rel] : null;
   if (!d) return "";
   if (d.state === "now-only") return "+";
-  if (d.state === "snap-only") return "−";      // 注意是减号 U+2212，不是连字符
+  if (d.state === "snap-only") return "−";      
   if (d.state === "diff") return d.deep === "now" ? "↑" : (d.deep === "snap" ? "↓" : "≠");
   return "";
 }
@@ -247,7 +173,6 @@ function bkDiffWhy(rel){
   return "和快照（" + (BKD.title || "选中的那次") + "）比：" + d.why;
 }
 
-/* `V-109`：这个文件有没有快照版本（文件列表里那颗对比图标**只在有得比时才出现**） */
 function bkHasSnap(rel){
   const d = (typeof BKD !== "undefined" && BKD.diff && BKD.diff.byRel) ? BKD.diff.byRel[rel] : null;
   return !!(d && d.snap && d.snap.fp);

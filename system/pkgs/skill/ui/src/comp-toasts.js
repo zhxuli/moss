@@ -1,8 +1,3 @@
-/* comp-toasts.js —— 提示条（Toast）
-   ============================================================================
-   ★ 一次只干一件事：把 `toasts` 画在底部居中，下边那条细线是倒计时
-     （`--toast-ms` 由根组件按存活时长给，两边用的是同一个数）。
-   ========================================================================== */
 (function () {
   'use strict';
 
@@ -15,7 +10,7 @@
     methods: {
       ico: I.of,
       fil: I.fill,
-      /* 长句子多停一会儿（读得完），短句子 2.6 秒就够 */
+
       ms: function (t) { return Math.min(5200, 1900 + String(t.text || '').length * 55); },
       cls: function (t) { return 'toast ' + (t.kind || 'ok') + (t.closing ? ' out' : ''); },
       ic: function (t) {

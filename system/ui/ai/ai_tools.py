@@ -1,16 +1,3 @@
-# -*- coding: utf-8 -*-
-"""AI 的手和脚（`V-230`）：**进程内**直接干的那些活 —— 读 / 列 / 搜 / 改 / 跑包 / 切契约。
-
-为什么是"进程内直接干"而不是"让 AI 自己敲命令"
-----------------------------------------------
-它待的地方是**宿主界面进程**（`system/ui/`），包列表、运行状态、命令行输出这些全在这一侧。
-真让它 `shell` 去敲，等于把已经拿到手的东西再绕一圈，而且**每绕一圈都要模型多花 token**。
-唯一必须绕回 `moss.exe` 的只有"真跑一个包"（和用户手敲走同一条路，界面不另开执行通道）。
-
-★ 验收闸（你选的 B① 的硬条件）：**loop 的结束条件不是"模型说完成了"**，而是
-  `done` 之前**有过一次成功的运行**，且那次运行**发生在最后一次改动之后**。
-  这条在这儿记账（`edit_seq` / `run_seq` 两个计数器），由 loop 判断。
-"""
 import json
 import os
 import re
@@ -25,23 +12,18 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-import ai_edits as E                                                  # noqa: E402
+import ai_edits as E
 
-# ★ `V-281`：技能那一层的规矩住在 `system/ai/skill_lib.py`（**宿主和 `:skill` 插件共用一份**）。
 _SK = str(E.HOME / "system" / "ai")
 if _SK not in sys.path:
     sys.path.insert(0, _SK)
-import skill_lib as ST                                                # noqa: E402
-import ai_web as W                                                   # noqa: E402
+import skill_lib as ST
+import ai_web as W
 
 NO_WINDOW = 0x08000000
-#: `V-307`：给跑包的子进程单独开一个进程组 —— 停止时 `taskkill /T` 才能把它**整个家族**
-#: （moss → python → 包自己的子进程）一次收干净。
 CREATE_NEW_PROCESS_GROUP = 0x00000200
-#: 契约就在这儿（唯一真相）。提示词里**不抄**它的正文，要用就当场切一段。
 def spec_path():
     return E.HOME / "system" / "spec" / "插件契约.md"
-
 
 TOOLS = [
     {"type": "function", "function": {
@@ -195,49 +177,26 @@ TOOLS = [
             "required": ["summary"]}}},
 ]
 
-#: `V-307`：**每一步都要写清目的**。为什么不在上面 12 份 schema 里一份份抄：
-#: 那 12 份是"工具自己的参数"，`why` 是**所有**工具共同的一条约定 —— 抄 12 遍必然漂移。
-#: 所以在 `tools_for()` 里统一注进去（一处实现）。
 WHY_PROP = {"type": "string",
             "description": ("★ 这一步**为什么**做它（给用户看的一句话目的，8~40 字，中文）。"
                             "**每次调用都必须写** —— 用户只看 `run_moss` 这种工具名是看不懂你要干嘛的。"
                             "例：why=\"跑一遍确认包还能启动\"")}
 
-
 def builtin_names():
-    """内置那些的名字（**技能撞名的一律不进表** —— 否则会盖掉 read_file 那种）。"""
     return tuple(t["function"]["name"] for t in TOOLS)
 
-
 def tools_for(self_tools=None):
-    """这次跑交给模型的**完整工具表** = 内置那些 + **已经允许它用的技能**（`V-280`/`V-281`）。
-
-    ★ 技能那几张是从"这一次跑开工时的那份表"建出来的（`Loop.__init__` 定死），
-      所以**它这一刻新造的技能**不会混进来 —— 正好卡在"用户还没点允许"那一步。
-    ★ `V-307`：顺手给**每一张**表都补上 `why`（统一注入，见 `WHY_PROP`）。
-    """
     out = []
     for t in list(TOOLS) + ST.specs_from(self_tools or {}):
         try:
-            t = json.loads(json.dumps(t, ensure_ascii=False))       # 深拷一份，别改原表
+            t = json.loads(json.dumps(t, ensure_ascii=False))
             t["function"]["parameters"].setdefault("properties", {})["why"] = dict(WHY_PROP)
         except (KeyError, TypeError, ValueError):
             pass
         out.append(t)
     return out
 
-
 def host_cmd():
-    """真正跑包用的宿主命令。
-
-    ★★ `V-235` 真机踩到：`MOSS_HOST_CMD` 是 **JSON 数组**（`'["D:\\\\python\\\\two\\\\moss\\\\moss.exe"]'`），
-      不是"命令行字符串"。第一版我用 `shlex.split` 去拆 ⇒ 得到
-      `['[D:\\python\\two\\moss\\moss.exe]']` 这种带方括号、反斜杠还翻倍的怪 token
-      ⇒ `subprocess` 报 **`[WinError 2] 系统找不到指定的文件`** —— 而那个 exe 明明在。
-      （界面的日志里那句"宿主命令：[D:\\...\\moss.exe]"就是把方括号一起打出来了，我当时看漏了。）
-      所以：**先按 JSON 解**，不是 JSON 才退回"命令行字符串"那种写法（自检脚本爱这么写）。
-    兜底顺序：JSON/字符串 → `MOSS_HOME/moss.exe` → `python moss.py`（源码跑）。
-    """
     env = (os.environ.get("MOSS_HOST_CMD") or "").strip()
     if env:
         try:
@@ -253,112 +212,60 @@ def host_cmd():
         return [str(exe)]
     return [sys.executable, str(E.HOME / "moss.py")]
 
-
 def child_env(run_id="", workdir=""):
-    """给子进程一套**干净**的环境：清掉 `MOSS_*` 里的"我是谁的儿子"那一族。
-
-    ★ `V-220` 的血教训：`MOSS_PKG_ID` / `MOSS_PKG_PARAMS` 会顺着子进程漏下去，
-      漏出去的进程会被宿主当成"这个包还在跑"（严重时点「停止」把 explorer 关掉）。
-      只保留 MOSS_HOME / MOSS_USER_DATA_DIR（不然子进程会去别的地方找包和数据）。
-    ★ `V-307`：**顺手把临时目录指到 AI 自己的 tmp 空间**（`TMP` / `TEMP` / `MOSS_AI_TMP`）
-      —— 用户原话"我们似乎没有给 ai 划分一个可以使用的 tmp 空间 让他可以执行某些程序
-      这样我们可以放心的清理"。这样它跑出来的中间产物不会洒进系统临时目录。
-    ★ `V-314`：那个 tmp **按插件分**（`state/<包id>/ai/tmp/`），所以要 `workdir` 才定位得到。
-    """
     keep = {"MOSS_HOME", "MOSS_USER_DATA_DIR"}
     env = {k: v for k, v in os.environ.items()
            if not (k.startswith("MOSS_") and k not in keep)}
     env.setdefault("PYTHONIOENCODING", "utf-8")
     try:
-        import ai_mode as M                                        # noqa: PLC0415
+        import ai_mode as M
         return M.child_env(env, run_id=run_id, workdir=workdir)
-    except Exception:                                              # noqa: BLE001
+    except Exception:
         return env
 
-
 def mode_now(workdir=""):
-    """**现在**能不能"放手写"（现读权限清单；读不到就当不能 —— 最保守）。
-
-    ★ `V-316`：以前这里是"三档模式"，现在只有一份清单：`*`（任意路径）那一行勾了**写**
-      才叫放手 —— 那时**危险操作也不再问**（`ai_mode.needs_confirm`）。
-    ★ 权限清单按插件分文件存；这里必须带上 workdir，不能读别的插件那一份。
-    """
     try:
-        import ai_mode as M                                        # noqa: PLC0415
+        import ai_mode as M
         return "free" if M.wildcard_write(workdir) else "limited"
-    except Exception:                                              # noqa: BLE001
+    except Exception:
         return "limited"
 
-
 class Tools:
-    """工具执行器。`workdir` 是这次任务的默认目录（通常是那个包的目录）。
-
-    `before_write`（`V-269`）：**第一次真要写文件之前**喊一声 —— 用来"动手前存快照"。
-    ★ 为什么挂在这儿而不是开工就存：你问「你是哪个大模型」那种**纯问答**也开工就存，
-      等于白写一条备份（还占列表一格）；而且快照点越贴近改动越准。
-
-    `V-307` 新加三样：
-      · `stop_check`：**每一步、每一小段时间**都要问的"要不要停"（用户按了停止 ⇒ 立刻收手，
-        正在跑的子进程**连子孙一起杀掉**）—— 这是"进程越堆越多"和"停不下来"的正解。
-      · `asker`：`ai_ask.Asker`。危险操作（`ai_mode.danger_of`）在执行前**问用户点头**；
-        `allow_path` 工具也用它。
-      · `procs`：这一次跑起过的子进程（按 pid）。跑完 / 停止时一律**杀干净**。
-    """
-
     def __init__(self, workdir=None, before_write=None, self_tools=None,
                  stop_check=None, asker=None, mode_fn=None, run_id="", perm_gate=None,
                  client=None):
         self.workdir = Path(workdir) if workdir else E.write_root()
-        self.client = client                # 联网搜索要复用当前 AI 组的 DeepSeek Key
-        self.before_write = before_write    # `V-269`：第一次写文件之前叫一次
-        #: ★ `V-307`：这一次跑的 id（临时空间按它分格；子进程的 TMP/TEMP 指到那一格）
+        self.client = client
+        self.before_write = before_write
         self.run_id = str(run_id or "")
-        #: ★ `V-280`：**这一次跑**已经允许它用的自制工具（开工那一刻定死的那份表）
         self.self_tools = dict(self_tools or {})
-        self._wrote = False                 # 只叫一次（失败重试也不重复存）
-        self.edit_seq = 0          # 第几次成功改动
-        self.run_seq = 0           # 第几次跑
-        self.last_ok_run_seq = -1  # 最后一次"退出码 0"的跑，发生在第几回合
-        self.log = []              # [(工具名, 摘要)]，给人看的步骤流
-        self.changed = []          # 这次任务**真动过**的文件（界面要拿它列"改了哪些"）
-        self.reads = {}            # 每个文件读了几次（`V-237`：读第三回就提醒别再磨）
-        #: `read_image` 读到的图片先存这儿；loop 会把它们作为视觉输入附在下一轮消息后。
-        #: 工具结果本身只能是文本，塞不进 `image_url`，所以走这条宿主内的侧信道。
+        self._wrote = False
+        self.edit_seq = 0
+        self.run_seq = 0
+        self.last_ok_run_seq = -1
+        self.log = []
+        self.changed = []
+        self.reads = {}
         self.pending_images = []
         self.images_read = 0
-        self.greps = {}            # 每组 (路径, 正则) 搜了几次（`V-241`：同一组搜三回就喊停）
-        self.grep_files = {}       # 每个文件被搜了几次（换正则也算 —— 那是"一行行刨文件"）
-        #: ★ `V-382`：同一条 `run_moss` 命令跑了几次（第 3 回就顶一句"换个证据来源"）
+        self.greps = {}
+        self.grep_files = {}
         self.runs = {}
-        # ---- `V-307`：停止 / 进程 / 提问 ----
         self.stop_check = stop_check or (lambda: False)
         self.asker = asker
         self.mode_fn = mode_fn or mode_now
-        #: ★ `V-319`/`V-323`：**权限请求走的闸**（宿主给的）—— `perm_gate(path, why, need)` 会让
-        #:   权限卡**上半段**那一条请求显示出来（琥珀底 + 允许 / 拒绝）、**阻塞**到他点一下，
-        #:   回 `{granted, read, write, reason}`。没有它（命令行 / 探针）就当"没人可问"。
         self.perm_gate = perm_gate
-        # ★ `V-343`：这里原来会 `ensure_pkg()` —— **把当前这个包写进权限清单**。
-        #   现在不写了：`can_read/can_write` 会拿 `scope=self.workdir` 当场判"这是这次干活的
-        #   那个包 ⇒ 默认放行"（`ai_mode._scope_allows`），清单里因此干干净净。
-        self.procs = {}            # {pid: Popen} 这一次跑起过的、可能还活着的
-        self.killed = []           # 杀掉的 pid（如实报给界面）
-        self.last_stop_ms = 0.0    # 上一次"停止"到子进程真死花了多久（证据）
+        self.procs = {}
+        self.killed = []
+        self.last_stop_ms = 0.0
 
-    # ------------------------------------------------------------------ 停止 / 收摊
     def stopped(self):
         try:
             return bool(self.stop_check())
-        except Exception:                                          # noqa: BLE001
+        except Exception:
             return False
 
     def _kill_tree(self, pid):
-        """把一个进程**连子孙**杀掉（`taskkill /T /F`）。
-
-        ★ 为什么不用 `proc.kill()`：moss.exe 起包 = moss → python → 包自己的子进程，
-          只杀第一层，后面两层就成了孤儿 —— 用户看到的"几十个 moss 和 python 进程"
-          就是这么来的（真机现场）。`/T` 是"连子进程一起"。
-        """
         p = str(int(pid))
         try:
             subprocess.run(["taskkill", "/F", "/T", "/PID", p],
@@ -368,24 +275,19 @@ class Tools:
                 proc = self.procs.get(int(pid))
                 if proc is not None:
                     proc.kill()
-            except Exception:                                      # noqa: BLE001
+            except Exception:
                 pass
         self.procs.pop(int(pid), None)
         if int(pid) not in self.killed:
             self.killed.append(int(pid))
 
     def kill_children(self, why="收工"):
-        """把这一次跑起过的子进程**全部**杀掉（停止 / 跑完 / 出异常时都要调）。
-
-        用户原话："它会运行一些程序 但是 它似乎有可能不关闭 导致我的电脑 出现了
-        几十个 moss 和 python 进程"。所以**每次收摊都清一遍**，别指望它们自己退。
-        """
         t0 = time.time()
         pids = list(self.procs.keys())
         for pid in pids:
             try:
                 self._kill_tree(pid)
-            except Exception:                                      # noqa: BLE001
+            except Exception:
                 pass
         self.last_stop_ms = round((time.time() - t0) * 1000, 1)
         return {"killed": len(pids), "pids": pids, "why": why, "ms": self.last_stop_ms}
@@ -394,14 +296,7 @@ class Tools:
         return [pid for pid, p in list(self.procs.items())
                 if getattr(p, "poll", lambda: 0)() is None]
 
-    # ------------------------------------------------------------------ 问用户
     def confirm(self, reason):
-        """危险操作点头（`V-307`）。回 `None` = 放行；回字符串 = **拒绝的理由**。
-
-        ★ `V-316`：**要不要问**已经在调用点定了（`ai_mode.needs_confirm`：清单里勾了
-          「任意路径」的写 = 放手 ⇒ 不问）。这里只管"问一次、按答案放行或拒绝"。
-        ★ 没有 asker（命令行直跑 loop / 探针）⇒ 不问，放行 —— 别把"没有人可问"变成"干不了活"。
-        """
         if not self.asker:
             return None
         got = self.asker.ask(
@@ -419,10 +314,8 @@ class Tools:
         return ("[拒绝] 用户**没允许**这一步：%s\n（换一条不需要它点头的路，或者先问他为什么。）"
                 % reason)
 
-    # ------------------------------------------------------------------ 派发
     def call(self, name, args):
         fn = getattr(self, "_t_" + str(name or ""), None)
-        # ★ `V-280`：内置的优先（撞名的自制工具压根进不了表）；没有同名的就交给自制工具。
         if fn is None:
             if str(name or "") in self.self_tools:
                 out = ST.run(name, args or {})
@@ -430,58 +323,40 @@ class Tools:
                 return out
             return "[错误] 没有这个工具：%s（可用：%s）" % (
                 name, "、".join(t["function"]["name"] for t in tools_for(self.self_tools)))
-        # ★ `V-307`：**危险操作先问用户**（写在 `fn(...)` 之前，问的就是"要不要做这一步"）。
-        #   被拒 / 停止 ⇒ 直接把理由当工具结果回给模型（它会另想办法）。
-        # ★ `V-316`：**"放手"= 用户在清单里勾了「任意路径」的写** —— 那种情况下不再问
-        #   （他都已经说随便写了，再拦一次就是"两个开关控同一件事"）。
         try:
-            import ai_mode as M                                    # noqa: PLC0415
+            import ai_mode as M
             danger = M.danger_of(name, args or {})
             _ask = M.needs_confirm(danger, self.workdir)
-        except Exception:                                          # noqa: BLE001
+        except Exception:
             danger, _ask = None, False
         if danger and _ask:
             bad = self.confirm(danger)
             if bad:
                 self.log.append((name, str(bad).replace("\n", " ")[:110]))
                 return bad
-        # ★ `V-269`：写文件之前先让 loop 存快照（`before_write` 里做的事**必须**在
-        #   `fn(...)` 之前跑完 —— 不然存下来的就是"已经改了一半"的样子）。
-        #   只认第一次：同一轮里连改三个文件也只存一条。存不上不影响改（loop 那边自己会记）。
-        # ★ `V-382`：① 把**这个文件**交给 loop（以前只按 workdir 存 —— workdir 是 A、实际在改 B
-        #   的时候，存下来的是 A 那个空壳）；② 只写自己的 tmp / 备份库**不触发**（那是中间产物：
-        #   为它白存一条既浪费，又把真正的快照点推远了）。
         if not self._wrote and name in ("edit_file", "write_file") and self.before_write:
             target = self._path(args)
             try:
-                import ai_snap as _S                                     # noqa: PLC0415
+                import ai_snap as _S
                 _scratch = _S.is_scratch(target)
-            except Exception:                                            # noqa: BLE001
+            except Exception:
                 _scratch = False
             if not _scratch:
                 try:
-                    # `"later"` = 要改的东西还没建出来（新建包）：**这一次没存成，但别把
-                    # 机会用掉** —— 等它建出来、下一次动它之前再存（见 `_before_first_write`）。
                     state = self.before_write(target)
-                except Exception as e:                                   # noqa: BLE001
+                except Exception as e:
                     self.log.append(("(快照)", "动手前存快照失败：%s" % e))
                     state = "done"
                 self._wrote = (state != "later")
         try:
             out = fn(args or {})
-        except Exception as e:                                       # noqa: BLE001
+        except Exception as e:
             return "[工具自己炸了] %s: %s" % (type(e).__name__, e)
         out = self._nudge_repeat(name, args, out)
         self.log.append((name, str(out).replace("\n", " ")[:110]))
         return out
 
     def _nudge_repeat(self, name, args, out):
-        """同一条 `run_moss` 命令**第 3 回**还跑？在结果前面顶一句硬提醒（`V-382`）。
-
-        真机证据（autokey 那几轮）：`:autokey daemon start` 连跑 5 回、`:autokey check` 4 回，
-        每回输出一模一样 —— 它不肯换证据来源，就在原地打转，一轮烧掉 16.7M token。
-        提醒**不拦**（万一它真有理由），只是把"你已经在原地转了几圈"摆到它眼前。
-        """
         if name != "run_moss":
             return out
         cmd = " ".join(str((args or {}).get("args") or "").split())
@@ -499,7 +374,6 @@ class Tools:
         raw = str((args or {}).get(key) or "").strip()
         return Path(raw) if raw else self.workdir
 
-    # ------------------------------------------------------------------ 各个工具
     def _t_list_dir(self, args):
         p = self._path(args)
         bad = E.check_readable(p, scope=self.workdir)
@@ -512,7 +386,6 @@ class Tools:
             if it.is_dir():
                 rows.append("  [目录] %s/" % it.name)
             else:
-                # 把图片标出来：模型一眼就知道下一步该走 read_image，而不是 read_file。
                 mark = "  [图片]" if E.image_mime(it) else ""
                 rows.append("  %8d  %s%s" % (it.stat().st_size, it.name, mark))
         out = "%s\n%s" % (p, "\n".join(rows) or "（空）")
@@ -520,18 +393,9 @@ class Tools:
             out += "\n（带 [图片] 的文件用 `read_image` 看；不要用 read_file，也不要找 OCR。）"
         return out
 
-    #: 一次 read_file 最多回多少字符（`V-243`：2200 只够 ~60 行、6000 只够 ~130 行，
-    #  一个 400 行的源文件要分 3~4 次读 —— 这正是它"不停读同一个文件"的一半原因。
-    #  现在给到 20000 字符 ≈ 400~500 行：**一个源文件基本能一次读完**。）
     READ_CHARS = 20000
 
     def _t_read_image(self, args):
-        """把图片放进"下一轮视觉输入"队列；工具结果本身只回一句人话。
-
-        OpenAI Chat Completions 的 `tool` 消息内容只能是字符串，不能直接带图片。
-        所以这里把 data URL 暂存在宿主侧，loop 在所有 tool 结果发完后追加一条
-        user 多模态消息（text + image_url）。模型下一轮就能真正看见图。
-        """
         p = self._path(args)
         bad = E.check_readable(p, scope=self.workdir)
         if bad:
@@ -557,20 +421,14 @@ class Tools:
                 % (p, mime, p.stat().st_size))
 
     def take_images(self):
-        """取走这一轮 `read_image` 攒下的图片（loop 在 tool 消息之后注入）。"""
         got = list(self.pending_images)
         self.pending_images.clear()
         return got
 
     def _t_read_file(self, args):
         p = self._path(args)
-        # ★ 真机 bug：模型对 jpg 调 read_file，底层把二进制 decode 成乱码文本，
-        #   1652 行脏东西直接进上下文。这里自动转给 read_image；图片永远不按文本读。
         if p.is_file() and E.image_mime(p):
             return self._t_read_image(args)
-        # 默认 200 行 / 单次最多 20000 字符（够读完一个源文件）。
-        # ★ 读同一个文件到**第三回**时：干脆把整篇给它（到上限为止）—— 与其让它继续换
-        #   offset 磨，不如一次给全（`V-243`）。
         key0 = str(p)
         third = self.reads.get(key0, 0) >= 2
         limit = 2000 if third else (args.get("limit") or 200)
@@ -603,10 +461,6 @@ class Tools:
         bad = E.check_readable(root, scope=self.workdir)
         if bad:
             return bad
-        # ★ `V-241`：真机那次它把 `ask/AGENT.md` 用 grep **一行一行搜了十几遍**
-        #   （一眼看去像"一直在压缩"，其实是它在原地打转）。两条：
-        #   ① 同一组 (文件, 正则) 重复 ≥3 次 ⇒ 明说"别这么搜了"；
-        #   ② 同一个文件不管什么正则搜到 ≥6 次 ⇒ 让它直接读那个文件。
         key = "%s||%s" % (root, pat)
         self.greps[key] = self.greps.get(key, 0) + 1
         self.grep_files[str(root)] = self.grep_files.get(str(root), 0) + 1
@@ -639,7 +493,7 @@ class Tools:
                     if len(hits) >= limit:
                         break
         body = "\n".join(hits) or ("（%d 个文件里没搜到）" % scanned)
-        return body + note      # ★ 括号别省：`a or b + note` 会变成 `a or (b+note)`，有命中时提示就丢了
+        return body + note
 
     def _t_web_search(self, args):
         q = str(args.get("query") or "").strip()
@@ -649,11 +503,11 @@ class Tools:
         try:
             if self.client is not None and "deepseek" in str(getattr(self.client, "base_url", "")).lower():
                 key = str(getattr(self.client, "api_key", "") or "")
-        except Exception:                                                # noqa: BLE001
+        except Exception:
             key = ""
         try:
             return W.search(q, key, max_results=args.get("max_results") or 8)
-        except Exception as e:                                           # noqa: BLE001
+        except Exception as e:
             return "[错误] web_search：%s" % e
 
     def _t_web_fetch(self, args):
@@ -662,7 +516,7 @@ class Tools:
             return "url 不能空"
         try:
             return W.fetch(url)
-        except Exception as e:                                           # noqa: BLE001
+        except Exception as e:
             return "[错误] web_fetch：%s" % e
 
     def _t_github_api(self, args):
@@ -672,7 +526,7 @@ class Tools:
         try:
             return W.github_api(pth, method=args.get("method") or "GET",
                                 body=args.get("body"))
-        except Exception as e:                                           # noqa: BLE001
+        except Exception as e:
             return "[错误] github_api：%s" % e
 
     def _t_edit_file(self, args):
@@ -703,20 +557,11 @@ class Tools:
         line = str(args.get("args") or "").strip()
         if not line:
             return "args 不能空（比如 \":我的包 参数\"）"
-        # ★ `V-236`/`V-382` 的硬闸：**删快照这条命令不给走**。
-        #   而且现在连 `snap_clean` 也没有了（工具表里删掉了）—— 快照是 AI 和用户的退路，
-        #   删它只能由人（界面「版本快照」页 / `moss --snap rm`）。
         low = line.lower()
         if "--snap" in low and any(w in low for w in (" rm", " del", " delete", " drop", " gc")):
             return ("[拒绝] 删快照不许用 run_moss —— 快照是**你和用户的退路**，AI 一律不能删"
                     "（`snap_clean` 这个工具也已经没有了）。要清请用户去「文件管理 → 版本快照」。")
-        # ★ `V-281` 的硬闸：**`:skill` 里那几个"要人点头"的动作不给走**。
-        #   技能那一层的整个设计就是"人点一次允许"。要是它能 `run_moss(":skill allow --x")`，
-        #   就等于自己给自己发通行证 —— 那道闸白设。`new` / `list` 这类不含"决定"的照旧随便用。
         toks = [t.lower() for t in shlex.split(line)] if line else []
-        # ★ 换层（user ↔ system）也不给走：那决定"这个包升级时会被替换还是留着"，
-        #   是**包归置**的事，归用户（界面详情页那颗「层」徽章上就有按钮）。
-        #   和 `:skill` 那几条一个性质：不是能力不够，是**授权**不在你这边。
         if any(t in ("--layer", "--move-layer") for t in toks):
             return ("[拒绝] 换层（user ↔ system）不许你用 run_moss 调 —— 它决定这个包"
                     "**升级时会不会被整体替换**，是包归置的事，归用户。"
@@ -732,13 +577,7 @@ class Tools:
         cwd = str(E.HOME) if os.path.isdir(str(E.HOME)) else None
         timeout = int(args.get("timeout") or 120)
         proc, err = None, ""
-        # ★ `V-307`：**不再用 `subprocess.run`** —— 它有两个要命的地方（真机上都出过）：
-        #   ① 用户按「停止」时它正阻塞着，只能等它自己跑完（"停在下一轮"就是这么来的）；
-        #   ② `timeout` 到点时它只杀**第一层**，moss 底下的 python 全成了孤儿
-        #      ⇒ 用户机器上堆了几十个 moss/python 进程。
-        #   现在：Popen + 一个读线程（防止管道写满互等死锁）+ 主线程小步轮询停止/超时，
-        #   停的时候 `taskkill /T` 连子孙一起收。
-        for use_cwd in (cwd, None):                  # 先按安装根跑；不行再退回"继承当前目录"
+        for use_cwd in (cwd, None):
             try:
                 proc = subprocess.Popen(cmd, cwd=use_cwd,
                                         env=child_env(self.run_id, str(self.workdir)),
@@ -749,21 +588,16 @@ class Tools:
             except OSError as e:
                 err = "%s（cwd=%r，存在=%s）" % (e, use_cwd, os.path.isdir(str(use_cwd)) if use_cwd else "继承")
         if proc is None:
-            # ★ 报错里必须带上**到底跑了什么命令、cwd 在不在**（`V-235` 就是靠这个查出来的：
-            #   命令里那个方括号、和"exe 明明在却报找不到"这两条线索缺一不可）
-            # `V-367`：末尾那句"提醒：`MOSS_HOST_CMD` 是 JSON 数组…"是**写给写探针的人**的，
-            #   可它会跟着这段一起显示在步骤卡的「输出」里 ⇒ 删掉。
             return ("[跑不起来] %s\n  命令 = %r\n  cwd = %r\n  用的宿主 = %r"
                     % (err, cmd, cwd, os.environ.get("MOSS_HOST_CMD") or "（没设，按安装根推）"))
         self.procs[int(proc.pid)] = proc
-        # 读线程：把输出攒起来（主线程要一边轮询"要不要停"，不能自己去阻塞读管道）
         chunks = []
 
         def _drain():
             try:
                 for ln in proc.stdout or ():
                     chunks.append(ln)
-            except Exception:                                        # noqa: BLE001
+            except Exception:
                 pass
 
         reader = threading.Thread(target=_drain, daemon=True)
@@ -781,9 +615,9 @@ class Tools:
                 break
             time.sleep(0.15)
         if killed:
-            self._kill_tree(proc.pid)                # 连子孙一起（`/T`）
+            self._kill_tree(proc.pid)
             reader.join(2.0)
-            self.run_seq -= 1                        # 被停/超时的这次不算"跑过一次"
+            self.run_seq -= 1
             body = "$ %s\n%s" % (" ".join(cmd[1:]), "".join(chunks))
             if "停止" in killed:
                 return "[已停止] 用户按了停止 —— 这条命令**连它的子进程一起被杀掉了**。\n%s" % body
@@ -798,11 +632,6 @@ class Tools:
         return "退出码 %d（第 %d 次运行）\n%s" % (code, self.run_seq, out)
 
     def _t_ask(self, args):
-        """**问用户**（`V-308`）—— 工具本身只是把问题递过去，等人答完再返回。
-
-        回给模型的是"用户怎么答的"：选了哪个选项 / 打了什么字 / 拒绝 / 超时 / 停止。
-        ★ 没有 asker（命令行跑 loop）⇒ 如实说"现在没人可问"，别假装问过。
-        """
         a = args or {}
         q = str(a.get("question") or "").strip()
         if not q:
@@ -810,7 +639,6 @@ class Tools:
         if not self.asker:
             return ("[没人可问] 这次是在命令行里跑的（没有界面），用户看不到你的问题。"
                     "**自己按最合理的做法继续**，并在 done/answer 里写清你替他做了什么假设。")
-        # Recover gateways that accidentally stringify the complete ask argument object.
         if q.startswith("{"):
             try:
                 parsed = json.loads(q)
@@ -839,34 +667,20 @@ class Tools:
                 "继续做完，并在 done/answer 里写清你替他做的假设。" % int(got.get("seconds") or 0))
 
     def _t_allow_path(self, args):
-        """**请求放行一个目录**：**不弹浮层卡片** —— 请求出现在权限卡**上半段那一条**里
-        （琥珀底 + 允许 / 拒绝），这边阻塞等他点一下。
-
-        ★ 界面这条流程是用户 2026-10-07 把设计稿重发一遍时定死的（`V-323`）：
-          点「允许」⇒ 那一条消失、目录进下面的清单；点「拒绝」⇒ 那一条消失，清单里什么都不加。
-          所以早期那套"在清单里闪一行、勾读/写"（`V-319`）已经**不存在**了。
-        """
         a = args or {}
         raw = str(a.get("path") or "").strip()
         if not raw:
             return "path 不能空（要放行哪个目录？）"
-        import ai_mode as M                                        # noqa: PLC0415
+        import ai_mode as M
         p = Path(raw)
         bad = M.protected(p)
         if bad:
             return bad
-        # ★ `V-328`：**别拿猜的路径去麻烦用户** —— 绝对路径 / 存在 / 是目录，先自己过一遍
-        #   （打错一个字母、目录压根不存在，都会在界面上弹一条请求，用户点了允许也没用）。
         problem = M.path_problem(p)
         if problem:
             return ("[拒绝] %s\n先自己确认路径：`list_dir` 看一眼父目录、或者用 `read_file` "
                     "试一下；要新建目录的话，申请的应该是**它的父目录**（那个是存在的）。" % problem)
         _need = "read" if str(a.get("need") or "").strip().lower().startswith("r") else "write"
-        # ★ `V-384`：**已经能碰的地方，别再拿请求去打断用户**。
-        #   真机证据（2026-10-19 那次 `my-first → junk`）：用户勾了「完全权限」，它还是为
-        #   "改名之后的新目录"和"新造的技能"弹了两张请求卡（记录 `20261019-180546-e84f`
-        #   的第 47 / 90 步）。判据直接用宿主自己的守卫 —— `can_write/can_read` 说"能"，
-        #   那就根本没有要申请的东西，别把这件事推给人。
         _now = (M.can_write(p, scope=self.workdir) if _need == "write"
                 else M.can_read(p, scope=self.workdir))
         if _now is None:
@@ -899,13 +713,7 @@ class Tools:
                 "换个地方做，或者把你的需要写进 answer/done 让他自己决定。" % p)
 
     def _t_skill(self, args):
-        """读一份技能（`V-278`）。**名字必须在清单里**（不许拿它当任意文件读取的口子）。
-
-        ★ 为什么要走工具而不是让它 `read_file`：读守卫按"干活目录"放行（`E.check_readable`），
-          `system/skills/**` 不在那里面 —— 而且技能目录里的样板/骨架**本来就不该**进
-          "能随便读"的范围；由这里按名字取，一条不多一条不少。
-        """
-        import ai_skills as K                                          # noqa: PLC0415
+        import ai_skills as K
         want = str((args or {}).get("name") or "").strip()
         got = K.usable().get(want)
         if not got:
@@ -918,61 +726,22 @@ class Tools:
                 % (got["name"], got["path"].parent, got["body"]))
 
     def _t_done(self, args):
-        """★ 别回显 `summary`（`V-269` 补）：那一行会原样出现在步骤卡右边，而 summary
-        马上又出现在结论卡里 ⇒ 同一段话两遍。这里只回一句"收到"。"""
         return "收到。"
 
     def _t_answer(self, args):
-        """纯问答收工（`V-269`）。工具本身不做判断 —— **闸在 loop 里**：
-        只有"一个文件都没动过"才准用它收工（动过文件的必须走 `done` + 跑一遍）。
-
-        ★ 别把 `text` 回显进来（第一版就是 `…。text=<整段回答>`）：那一行会原样出现在
-          步骤卡的右边（`note`），于是同一段回答在界面上出现两遍，还把那一行撑满
-          —— 真机截图里就是这样，你一眼就看出多余。
-        ★★ `V-280` 顺手修一个真 bug：**这个方法的函数头以前被 `_t_done` 顶掉了** ——
-          下面这两行（docstring + return）一直挂在 `_t_done` 的 `return` **之后**，
-          是死代码 ⇒ `answer` 这个工具实际回给模型的是
-          「[错误] 没有这个工具：answer（可用：…、answer、…）」（自相矛盾的一句话），
-          而且这句话会被当成工具结果**存进会话记录**、下一轮接着聊时又发回给模型。
-          步骤卡上那张是 `mute` 的，界面上一直没露馅，所以谁都没发现。
-          探针里也没有一条断言盯过 `answer` 的返回值 —— 这次一并补上。
-        """
         return "收到（这次是回答，没动文件）。"
 
     def _t_snap_clean(self, args):
-        """**不给删**（`V-382`）。
-
-        以前这里有这个工具（"AI 只能清自己存的"）。查会话记录才看清它被用成了什么：
-        那几轮收尾都调它，理由写着"清掉我自己开工时自动存的快照，别占着用户地方"
-        —— 于是**动手前那条快照一条都没留下**，用户的原话就变成了
-        「你给我改代码也不先创建快照？现在整个都废了」。
-
-        所以现在：工具表里没有它（模型根本调不到），这一份留着当**兜底** —— 万一它照着
-        老会话的记忆硬调这个名字，回它一句人话，而不是真把退路删掉。
-        人要清：界面「版本快照」那一页（`backup_clean_ai`）或 `moss --snap rm`。
-        """
         return ("[拒绝] 快照（备份）是**你和用户的退路**，AI 一律不能删 —— 连自己存的也不行。"
                 "要清请用户去「文件管理 → 版本快照」点「清掉 AI 的」，或者他自己敲 "
                 "`moss --snap rm`。你接着干你的活。")
 
-    # ------------------------------------------------------------------ 验收闸
     def _remember(self, p):
-        """记下"这次真动过的文件"（界面要拿它列"改了哪些"；同一个文件只记一次）。"""
         s = str(p)
         if s not in self.changed:
             self.changed.append(s)
 
     def verified(self):
-        """能不能收工。
-
-        ★ `V-237` 修的那条：**"看完了发现不用改"也是合法结局**。
-          真机那次任务（让 `calc` 支持指数/开方）本来就支持 —— 模型读了一圈、跑了两条命令
-          （退出码 0）证明"它会算"，然后步数用完。原来这道闸要求"必须有改动"，
-          于是这种任务**永远过不了**（哪怕它做对了）。
-          现在的规矩：**跑过一次、而且成功**就够；有改动时仍然要求"改动之后跑过"。
-          （"什么都不干只跑一次就说完成"会被 step 预算和 `done` 里的 summary 审出来 ——
-           而且这比"做对了却判失败"划算。）
-        """
         if self.edit_seq == 0:
             return self.run_seq > 0 and self.last_ok_run_seq >= 0
         return self.last_ok_run_seq >= self.edit_seq
@@ -987,13 +756,9 @@ class Tools:
         return ("最后一次改动（第 %d 次）之后**没有成功的运行**（最近一次成功在第 %d 次时）。"
                 "先 `run_moss` 跑一次、退出码 0，再来说收工。" % (self.edit_seq, self.last_ok_run_seq))
 
-
-# ---------------------------------------------------------------------- 契约切片
 _HEAD = re.compile(r"^(#{1,4})\s+(.*)$", re.M)
 
-
 def spec_index():
-    """契约的目录（标题 + 行号），给模型一个"我该读哪一节"的入口。"""
     if not spec_path().is_file():
         return "契约文件不在：%s" % spec_path()
     text = spec_path().read_text(encoding="utf-8", errors="replace")
@@ -1005,9 +770,7 @@ def spec_index():
                                           text[:m.start()].count("\n") + 1))
     return "插件契约 %s\n%s" % (spec_path(), "\n".join(rows))
 
-
 def spec_slice(section, max_lines=220):
-    """按标题关键词切一段契约出来（**唯一真相还是那个文件**，这里只是"递给模型看"）。"""
     if not section:
         return spec_index()
     if not spec_path().is_file():

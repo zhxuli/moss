@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>图片工具</title>
-<!-- 主题：先用系统偏好顶上，避免首帧闪一下；boot 时再用后端读到的值覆盖 -->
+
 <script>
   document.documentElement.dataset.theme =
     (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
@@ -13,10 +13,7 @@
 <link rel="stylesheet" href="./css/base.css">
 <link rel="stylesheet" href="./css/layout.css">
 <link rel="stylesheet" href="./css/components.css">
-<!-- ★ 内嵌垫片（`V-225`）：内嵌进 moss 时把 `moss.call` 接到宿主那条路上，
-     独立窗口时直接走 `window.pywebview.api`。**必须在 ESM 之前**
-     （`src/bridge.js` 要用 window.moss）。
-     ★ 这一行原样保留（`tools/包界面检查.py` 就是按它换桩的）。 -->
+
 <script src="moss-embed.js"></script>
 </head>
 <body>
@@ -26,10 +23,8 @@
     <section class="detail">
       <div class="card">
 
-        <!-- ── 上半：挑图。占满剩余高度 —— 这是唯一的主动作 ───────────── -->
         <div class="card-body">
 
-          <!-- 第一行：刷新 / 地址栏（自带最近使用下拉）/ 选择 -->
           <div class="srcbar">
             <button class="btn ghost icon" id="btnRefresh" title="刷新（Ctrl+R）"
                     data-icon="refresh"></button>
@@ -45,7 +40,6 @@
             <button class="btn ghost" id="btnClearFiles" hidden><span data-icon="trash"></span>清空</button>
           </div>
 
-          <!-- 第二行：文件夹 / 文件清单 这个模式开关，然后是类型快捷选择 -->
           <div class="typebar">
             <div class="seg mode-seg" id="segMode"></div>
             <span class="vsep"></span>
@@ -56,7 +50,6 @@
             <button class="btn ghost" id="btnSelNone"><span data-icon="xSquare"></span>清除</button>
           </div>
 
-          <!-- 缩略图网格（≤100 张）或紧凑列表（>100 张）。高度自适应 -->
           <div class="picker" id="picker" tabindex="0">
             <div class="picker-empty" id="pickerEmpty">
               <span class="pe-ico" data-icon="image"></span>
@@ -70,8 +63,6 @@
           <div class="field-note" id="srcNote"></div>
         </div>
 
-        <!-- ── 下半：输出设置。全部摊平，不藏 —— 这些是常用项。
-             两行装完：第一行 格式 / 宽度 / 质量(或 ico 尺寸)，第二行 保存模式 ── -->
         <div class="settings">
           <div class="setrow">
             <span class="settings-label">输出</span>
@@ -100,16 +91,11 @@
             <span class="settings-label">保存</span>
             <div class="seg save-seg" id="segSave"></div>
 
-            <!-- ★ 右边这一个是**共用槽位**：
-                 选「新文件夹」时它是输出目录（可拖放设置）；
-                 选「覆盖原图 / 删除原图」时它是警告。
-                 两个状态高度一样，所以切换保存模式时**整块高度不会跳**。
-                 （原来是"说明一行 + 警告一行"，一切换就多出两行，用户指出太浪费。） -->
             <span class="outdir" id="outDirWrap" hidden>
               <input type="text" id="outDir" class="mono" spellcheck="false" autocomplete="off"
                      placeholder="默认：源目录\compressed_output">
               <button class="btn ghost" id="btnOutDir"><span data-icon="folder"></span>选择…</button>
-              <!-- 只在设过自定目录时出现：把它清掉就回到默认 -->
+
               <button class="btn ghost icon" id="btnOutDirReset" hidden
                       title="恢复默认（源目录\compressed_output）"><span data-icon="undo"></span></button>
             </span>
@@ -117,9 +103,6 @@
           </div>
         </div>
 
-        <!-- 危险模式的警告**不单独占行**了：它和输出目录共用下面那一行的右侧槽位
-             （见上面的 .warn-inline），这样切换保存模式时整块高度不会跳。 -->
-        <!-- 日志折叠时**零高度**，展开才占地方 -->
         <div class="output boxed" id="logBox" hidden><pre id="log"></pre></div>
 
         <div class="actions">
@@ -147,7 +130,6 @@
     </div>
   </div>
 
-  <!-- 悬停某个图片时的详情卡片（跟着鼠标走） -->
   <div class="hovercard" id="hoverCard" hidden>
     <div class="hc-thumb" id="hcThumb"></div>
     <div class="hc-body">
@@ -160,8 +142,6 @@
 
   <div class="toast-wrap" id="toasts"></div>
 
-  <!-- 帮助：命令行怎么用。用法文本是后端从 cli.py 直接取的 ——
-       命令行那套东西只在 cli.py 里写了一份，帮助面板不能自己再抄一遍。 -->
   <div class="sheet-wrap" id="helpSheet" hidden>
     <div class="scrim" id="helpScrim"></div>
     <div class="sheet">

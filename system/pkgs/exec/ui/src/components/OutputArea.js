@@ -1,5 +1,3 @@
-/* 运行输出的抽屉。
- * "输出变长自动跟到底"的 watch 原来挂在根组件上，现在跟着它自己走。 */
 export default {
   name: "OutputArea",
   props: {

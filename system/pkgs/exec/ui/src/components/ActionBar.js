@@ -1,6 +1,3 @@
-/* 底部操作栏：运行 / 参数 / 新窗口 / 保存 / 删除。
- * 删除走行内二次确认（不弹窗），确认态由父级持有，这里只抛 set-confirming。
- */
 export default {
   name: "ActionBar",
   props: {
@@ -12,7 +9,6 @@ export default {
   },
   emits: ["set-confirming", "set-last-args", "run", "save", "delete", "console", "save-run"],
   computed: {
-    /* 参数框用 v-model 绑这个中转属性：直接绑 prop 会报"不能改 prop" */
     argsLocal: {
       get() { return this.lastArgs; },
       set(v) { this.$emit("set-last-args", v); },

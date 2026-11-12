@@ -15,7 +15,6 @@
   h1{font-size:1.45rem;margin:0 0 6px;letter-spacing:.3px}
   .sub{color:#64748b;font-size:.88rem;margin:0}
 
-  /* ---- 标准步骤条 ---- */
   .steps{display:flex;margin-bottom:24px}
   .step-item{flex:1;position:relative;text-align:center;cursor:pointer;user-select:none}
   .snode{width:32px;height:32px;border-radius:50%;margin:0 auto;position:relative;
@@ -27,13 +26,11 @@
   .slabel{margin-top:9px;font-size:.8rem;color:#94a3b8;font-weight:500;
         transition:.2s;white-space:nowrap}
 
-  /* 已完成：浅蓝节点 + 蓝勾；连线浅蓝；标签蓝 */
   .step-item.done .snode{background:#e0e7ff;border-color:#a5b4fc;color:#4d6bfe;
         box-shadow:0 3px 8px rgba(77,107,254,.2)}
   .step-item.done::after{background:#a5b4fc}
   .step-item.done .slabel{color:#4d6bfe;font-weight:600}
 
-  /* 当前：白底蓝描边 + 蓝数字 + 深色标签 */
   .step-item.active .snode{border-color:#4d6bfe;color:#4d6bfe;
         box-shadow:0 0 0 4px rgba(77,107,254,.15)}
   .step-item.active .slabel{color:#0f172a;font-weight:700}
@@ -53,7 +50,7 @@
   .card{background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:22px;
         box-shadow:0 4px 16px rgba(15,23,42,.05)}
   .card h2{font-size:1rem;margin:0 0 14px;color:#0f172a}
-  /* 完成视图：全宽正方形状态卡片（宽=高，大留白）+ 弱化的小重新按钮 */
+
   .donebox{width:100%;aspect-ratio:1;background:#eef2ff;
         border:1px solid #c7d2fe;border-radius:28px;color:#4d6bfe;
         display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -97,7 +94,6 @@
     <p class="sub">三步完成配置</p>
   </div>
 
-  <!-- 标准步骤条 -->
   <div class="steps">
     <div class="step-item active" id="item1" onclick="gotoStep(1)" title="点击切换：二级密码">
       <div class="snode" id="snode1">1</div>
@@ -113,7 +109,6 @@
     </div>
   </div>
 
-  <!-- 第 1 步 -->
   <div class="panel active" id="panel1">
     <div class="card">
       <h2>第 1 步 · 设置二级密码</h2>
@@ -135,7 +130,6 @@
     </div>
   </div>
 
-  <!-- 第 2 步 -->
   <div class="panel" id="panel2">
     <div class="card">
       <h2>第 2 步 · 登录 zeen 账号</h2>
@@ -160,7 +154,6 @@
     </div>
   </div>
 
-  <!-- 第 3 步 -->
   <div class="panel" id="panel3">
     <div class="card">
       <h2>第 3 步 · 连接</h2>
@@ -192,7 +185,7 @@ function gotoStep(n){
 }
 function refreshViews(){
   if(!lastStatus) return;
-  // 已完成步骤显示"完成视图"，否则显示表单（尊重用户点过"重新设置"）
+
   var pwDone=!!lastStatus.password_set, tkDone=!!lastStatus.token_set, cnDone=!!lastStatus.connected;
   $('done1').style.display = (pwDone && !override[1]) ? '' : 'none';
   $('form1').style.display  = (pwDone && !override[1]) ? 'none' : '';
@@ -207,7 +200,7 @@ function showForm(n){ override[n]=true; refreshViews(); }
 function status(){
   fetch('/setup/status').then(function(r){return r.json()}).then(function(s){
     lastStatus=s;
-    // 步骤条完成状态（真实配置驱动）
+
     $('item1').classList.toggle('done', !!s.password_set);
     $('snode1').textContent = s.password_set ? '✓' : '1';
     $('item2').classList.toggle('done', !!s.token_set);

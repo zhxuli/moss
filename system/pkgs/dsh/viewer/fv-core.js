@@ -1,10 +1,5 @@
-/* ===========================================================================
-   核心：启动数据、工具、解析器、语法着色、插件注册表
-   —— 不依赖 Vue，先于视图脚本加载。
-   =========================================================================== */
 window.FV = window.FV || {};
 
-/* ------------------------------------------------------------------ 启动数据 */
 FV.boot = (function () {
   var box = document.getElementById("boot");
   var nameEl = document.getElementById("boot-name");
@@ -31,13 +26,6 @@ FV.boot = (function () {
   };
 })();
 
-/* ------------------------------------------------------------------ 带进度的读取 */
-/**
- * 流式读取一个文件，边读边回报进度：大文件时进度条、速度、剩余时间都靠它。
- * @param url - 要读的地址（桥的 file.fetch）。
- * @param options - `{ kind: "text"|"bytes", total: number, onProgress: (state) => void }`。
- * @returns `{ promise, abort, state }`；promise 兑现为文本或 Uint8Array。
- */
 FV.loadStream = function (url, options) {
   var opts = options || {};
   var controller = new AbortController();
@@ -96,7 +84,6 @@ FV.loadStream = function (url, options) {
   };
 };
 
-/* ------------------------------------------------------------------ 工具 */
 FV.util = (function () {
   function escapeHtml(text) {
     return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -121,12 +108,12 @@ FV.util = (function () {
     var mm = (h > 0 && m < 10 ? "0" : "") + m;
     return (h > 0 ? h + ":" : "") + mm + ":" + (s < 10 ? "0" : "") + s;
   }
-  /** 速率：B/s → 人类可读。 */
+
   function humanRate(bytesPerSecond) {
     if (!bytesPerSecond || !isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "";
     return humanBytes(bytesPerSecond) + "/s";
   }
-  /** 剩余时间：秒 → "12 秒" / "1 分 20 秒"。 */
+
   function humanEta(seconds) {
     if (seconds === null || seconds === undefined || !isFinite(seconds) || seconds < 0) return "";
     if (seconds < 1) return "不到 1 秒";
@@ -134,7 +121,7 @@ FV.util = (function () {
     var minutes = Math.floor(seconds / 60);
     return minutes + " 分 " + Math.round(seconds % 60) + " 秒";
   }
-  /** 只允许安全协议，避免 data: 之外的 javascript: 之类。 */
+
   function safeUrl(url) {
     return /^(https?:|mailto:|#|\/|\.)/i.test(url) ? url : "#";
   }
@@ -161,7 +148,7 @@ FV.util = (function () {
       ok ? resolve() : reject(new Error("copy failed"));
     });
   }
-  /** 带缓存的内容读取（文本 / 字节）。 */
+
   function makeLoader(url, kind) {
     var cache = null, pending = null;
     return function load(onProgress) {
@@ -175,7 +162,7 @@ FV.util = (function () {
       return pending;
     };
   }
-  /** 稳定的扩展名 → 大类，用于徽标配色。 */
+
   function kindOf(ext) {
     if (["png","jpg","jpeg","gif","webp","bmp","ico","avif","svg","tif","tiff"].indexOf(ext) >= 0) return "media";
     if (["mp4","webm","mov","m4v","mkv","avi","mp3","wav","ogg","m4a","aac","flac"].indexOf(ext) >= 0) return "media";
@@ -188,7 +175,6 @@ FV.util = (function () {
   return { escapeHtml: escapeHtml, parseSize: parseSize, humanBytes: humanBytes, humanRate: humanRate, humanEta: humanEta, clock: clock, safeUrl: safeUrl, download: download, copy: copy, makeLoader: makeLoader, kindOf: kindOf };
 })();
 
-/* ------------------------------------------------------------------ 语法着色 */
 FV.hl = (function () {
   var KW = {
     js: "var let const function return if else for while do break continue new class extends super this typeof instanceof in of try catch finally throw switch case default delete void yield await async import export from as static get set null true false undefined NaN".split(" "),
@@ -215,22 +201,17 @@ FV.hl = (function () {
   };
   var MARKUP = ["html","htm","xml","svg","vue","svelte"];
   var STYLE_ATTRS = ["css","scss","less"];
-  /**
-   * 只有这些语言族有 C 风格的块注释 `/* … *​/`。
-   * Python/Shell/Ruby 用 `#`，绝不能把代码里的 `/api/*` 当成块注释开头 —— 那会让
-   * 从那儿往后的所有行都渲染成灰色注释。
-   */
+
   var BLOCK_COMMENT = ["js","sql","c","css","php"];
-  /** 有三引号多行字符串的语言族（docstring 要整段按字符串着色）。 */
+
   var TRIPLE_QUOTE = ["py"];
-  var CAN_HIGHLIGHT = 400000; // 字符上限：超过就纯文本，避免卡顿
+  var CAN_HIGHLIGHT = 400000; 
 
   function familyOf(lang) {
     for (var key in FAMILY) if (FAMILY[key].indexOf(lang) >= 0) return key;
     return null;
   }
 
-  /** 一行一个 token 数组：[{t, c}]；c 为 null 表示普通文本。 */
   function tokenize(line, family, lang, state) {
     var out = [];
     var i = 0, n = line.length;
@@ -244,7 +225,6 @@ FV.hl = (function () {
     function push(text, cls) { flush(); out.push({ t: text, c: cls }); }
 
     if (isMarkup) {
-      // HTML/SVG/XML：标签、属性、注释、内嵌文本
       while (i < n) {
         if (state.htmlComment) {
           var endC = line.indexOf("-->", i);
@@ -289,7 +269,7 @@ FV.hl = (function () {
 
     while (i < n) {
       var ch = line[i];
-      // 三引号多行字符串：跨行保持"字符串"状态，docstring 才不会被当成注释或普通文本。
+
       if (state.triple) {
         var endTriple = line.indexOf(state.triple, i);
         if (endTriple < 0) { push(line.slice(i), "str"); i = n; }
@@ -344,12 +324,11 @@ FV.hl = (function () {
     return out;
   }
 
-  /** 把整段代码切成 [{tokens, text}]，text 用于查找/复制。 */
   function highlight(code, lang) {
     var family = familyOf(lang);
     var markup = MARKUP.indexOf(lang) >= 0;
     var lines = code.split("\n");
-    // 标记语言（html/xml/svg）没有关键字表，但有自己的标签/属性分词路径，不能一起挡掉。
+
     if ((!family && !markup) || code.length > CAN_HIGHLIGHT) {
       return lines.map(function (line) { return { tokens: [{ t: line, c: null }], text: line }; });
     }
@@ -363,11 +342,9 @@ FV.hl = (function () {
   return { highlight: highlight, familyOf: familyOf, isMarkup: function (lang) { return MARKUP.indexOf(lang) >= 0; } };
 })();
 
-/* ------------------------------------------------------------------ 解析器 */
 FV.parse = (function () {
   var U = FV.util;
 
-  /** key=value / [section] / #comment；env/properties/ini/conf 通吃。 */
   function ini(text) {
     var out = [{ name: null, entries: [], notes: [] }];
     var cur = out[0];
@@ -391,10 +368,8 @@ FV.parse = (function () {
     return out.filter(function (s) { return s.name !== null || s.entries.length || s.notes.length; });
   }
 
-  /** 极简 TOML：只管 [table] 与 key = value（含数组/内联表按原样显示）。 */
   function toml(text) { return ini(text); }
 
-  /** 缩进树（YAML 的 key: value / - item）。 */
   function yaml(text) {
     var root = { name: null, entries: [], notes: [] };
     var stack = [{ indent: -1, section: root }];
@@ -427,7 +402,6 @@ FV.parse = (function () {
     }
   }
 
-  /** CSV/TSV：引号包裹、双引号转义、分隔符自动识别。 */
   function delimited(text, ext) {
     var sep = ext === "tsv" ? "\t" : null;
     var sample = text.slice(0, 4000);
@@ -461,7 +435,6 @@ FV.parse = (function () {
     return { rows: rows, sep: sep };
   }
 
-  /** Markdown → HTML（先整体转义，再按块解析；链接只放行安全协议）。 */
   function markdown(src) {
     var esc = U.escapeHtml;
     function inline(text) {
@@ -505,7 +478,7 @@ FV.parse = (function () {
         html.push("<blockquote>" + markdown(quote.join("\n")) + "</blockquote>");
         continue;
       }
-      // 表格：表头 + 分隔行
+
       if (/^\s*\|/.test(line) && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1] || "")) {
         closeLists(0);
         var head = splitRow(line);
@@ -545,11 +518,10 @@ FV.parse = (function () {
     function splitRow(row) { return row.trim().replace(/^\||\|$/g, "").split("|").map(function (c) { return c.trim(); }); }
   }
 
-  /** JSON → 树节点；解析失败返回 null。 */
   function json(text) {
     try { return JSON.parse(text); } catch (e) { return null; }
   }
-  /** JSONL：每行一个对象。 */
+
   function jsonl(text) {
     var out = [];
     text.split(/\r?\n/).forEach(function (line, index) {
@@ -562,7 +534,6 @@ FV.parse = (function () {
   return { ini: ini, toml: toml, yaml: yaml, delimited: delimited, markdown: markdown, json: json, jsonl: jsonl };
 })();
 
-/* ------------------------------------------------------------------ 插件注册表 */
 FV.registry = (function () {
   var plugins = [];
   function register(plugin) {
@@ -570,7 +541,7 @@ FV.registry = (function () {
     plugins.push({
       id: plugin.id,
       order: 100,
-      needs: null, // "text" | "bytes" | null
+      needs: null, 
       kind: "doc",
       label: plugin.label || plugin.id,
       match: plugin.match,
@@ -585,11 +556,7 @@ FV.registry = (function () {
     plugins[plugins.length - 1].kind = plugin.kind || "doc";
     return plugins[plugins.length - 1];
   }
-  /**
-   * 按优先级列出所有能处理该文件的插件。
-   * 同一 group 里只保留优先级最高的那个：例如 .csv 既有「表格」也有专门的
-   * 「源码」和通用「文本」，通用文本就不必再出现在切换器里。
-   */
+
   function resolve(ctx) {
     var list = plugins.filter(function (p) {
       try { return p.match(ctx) === true; }
@@ -609,4 +576,3 @@ FV.registry = (function () {
   }
   return { register: register, resolve: resolve, byId: byId, all: function () { return plugins.slice(); } };
 })();
-

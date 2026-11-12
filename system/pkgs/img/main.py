@@ -1,28 +1,3 @@
-# -*- coding: utf-8 -*-
-"""图片工具 —— 入口 / 模式选择。
-
-一个包，三种用法：
-
-    moss :img                              不带参数 → 打开界面
-    moss :img webp 60% 1200 *.png          带参数   → 走命令行
-    （宿主内嵌）                            MOSS_UI_EMBED=1 → 在 stdio 上答 JSON 行（`V-225`）
-
-界面优先 WebView（和 exec 同一套外观：pywebview + WebView2 + 设计令牌），
-WebView2 或 pywebview 起不来时**自动退回** Tkinter 界面，
-保证在没装 WebView2 Runtime 的机器上照样能用。
-
-★ 「一份界面两种跑法」（`V-48` / `V-225`）：同一份 `ui/` 页面，既能被嵌进 moss 的
-  「界面」选项卡（宿主给 `MOSS_UI_EMBED=1`，见 `embed.py`），也能自己开一扇窗
-  （`gui_web.py`）；两条路共用同一份 `gui_web.Api`。
-
-调试用的强制开关：
-    moss :img --tk          即使带了参数也开 Tkinter 界面
-    moss :img ui            强制开界面（不带参数时的同义词）
-    set MOSS_IMG_UI=tk      环境变量，同上
-
-宿主把「包名后面那一整串」放在 `MOSS_PKG_PARAMS` 的 `args` 字段里
-（pkg.json 的 params 上标了 rest:true），本文件只判断它空不空。
-"""
 import json
 import os
 import sys
@@ -31,9 +6,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-
 def raw_args():
-    """拿到宿主给的那一串参数（没有就是空串）。"""
     raw = os.environ.get('MOSS_PKG_PARAMS')
     if raw:
         try:
@@ -44,9 +17,7 @@ def raw_args():
             pass
     return ' '.join(sys.argv[1:]).strip()
 
-
 def _pick_ui(tokens):
-    """返回 'tk' / 'web' / ''(=先试 web 再退 tk)。"""
     low = [t.lower() for t in tokens]
     if '--tk' in low or '--tkinter' in low:
         return 'tk'
@@ -54,7 +25,6 @@ def _pick_ui(tokens):
         return 'web'
     want = (os.environ.get('MOSS_IMG_UI') or '').strip().lower()
     return want if want in ('tk', 'web') else ''
-
 
 def open_ui(tokens):
     want = _pick_ui(tokens)
@@ -80,10 +50,7 @@ def open_ui(tokens):
     gui_tk.run_gui()
     return 0
 
-
 def main():
-    # ★ `V-225`：宿主让我们跑"内嵌界面"时**绝不开窗** —— 在 stdio 上说 JSON 行就行。
-    #   （放最前面：这条路上参数一个都不用看。）
     try:
         from embed import Embedded, embedded_now
         if embedded_now():
@@ -93,7 +60,6 @@ def main():
 
     text = raw_args()
 
-    # 没参数 → 界面。这就是「一个包两种用法」的分岔点，只此一处。
     if not text:
         return open_ui([])
 
@@ -104,7 +70,6 @@ def main():
 
     import cli
     return cli.run(tokens)
-
 
 if __name__ == '__main__':
     sys.exit(main())

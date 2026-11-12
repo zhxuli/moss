@@ -1,22 +1,3 @@
-/* app.js —— 图片工具前端
-   ---------------------------------------------------------------------------
-   不引框架：骨架写在 index.html 里，JS 只做四件事 ——
-   渲染选择器、接事件、轮询日志、接拖放。
-
-   选择器交互跟资源管理器对齐：
-     单击 = 选中它 / Ctrl+单击 = 加选或取消 / Shift+单击 = 连选一段
-     空白处拖框 = 框选（按住 Ctrl 则并进原有选择）
-     双击 = 用系统默认程序打开 / Ctrl+A 全选 / Esc 清除 / Delete 从清单去掉
-   **选中的那几个就是要处理的；一个都没选 = 全部处理。**
-
-   缩略图：≤ thumbLimit(100) 张画网格，超了画紧凑列表。
-   （几千张图生成缩略图要几十秒、几十 MB 内存，而"挑几张来转"本来也不需要看几千张） */
-
-/* 保存模式：短标签 + 完整说明放 tooltip。
-   原来写「保存到源文件夹 (覆盖)」「转换并删除源文件」，三个标签占掉一整行 470px，
-   又长又啰嗦；现在三个词就够了。
-   顺序也是刻意的：**把「新文件夹」放最后**，因为它选中时右边会冒出「输出目录 + 选择」，
-   挨着放才顺手（用户要求）。 */
 const SAVE_LABELS = {
   source: '覆盖原图',
   source_delete: '删除原图',
@@ -39,7 +20,7 @@ const MODE_LABELS = { folder: '文件夹', files: '文件清单' };
 const MODE_TITLES = { folder: '处理一个文件夹里的图片', files: '只处理手挑出来的这几个文件' };
 
 import { svg, mountIcons } from './icons.js';
-/* 后端桥（`V-225`）：位置参数 → 后端的字段名，两种跑法（内嵌 / 独立窗口）都在 bridge.js 里分流 */
+
 import { makeApi, isEmbedded, onHostDrop, onHostEvent } from './bridge.js';
 
 const DEFAULTS = { save_mode: 'separate', output_format: 'jpg', quality: 80, width: '', ico_sizes: [] };
@@ -53,10 +34,10 @@ const state = {
   api: null, cfg: null, meta: null,
   history: [],
   mode: 'folder',
-  scan: null,                  // 文件夹扫描结果 {ok, exts, count, files, message}
+  scan: null,                  
   dir: '',
-  items: [],                   // 当前网格里的全部条目
-  selected: new Set(),         // 选中的 path（小写）
+  items: [],                   
+  selected: new Set(),         
   anchor: null,
   showThumbs: false,
   thumbDone: 0,
@@ -67,13 +48,10 @@ const state = {
   logOpen: false,
 };
 
-/* ------------------------------------------------------------------ 桥 */
-/* 拿到 api 对象（方法名/签名跟以前一样，参数怎么发由 bridge.js 决定） */
 function apiReady() {
   return makeApi();
 }
 
-/* ------------------------------------------------------------------ 小工具 */
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -111,7 +89,6 @@ function applyAppearance(r) {
 
 const key = (p) => String(p).toLowerCase();
 
-/* ------------------------------------------------------------------ 静态块 */
 function renderMode() {
   const box = $('segMode');
   box.textContent = '';
@@ -125,11 +102,6 @@ function renderMode() {
     b.onclick = () => {
       if (state.mode === m) return;
       if (m === 'files') {
-        /* ★ 不要在这里先把 state.mode 改掉！
-           原来的写法是「先切模式 → 再弹对话框」，用户一取消，
-           模式已经变成 files 了：路径框、「选择…」、最近使用全被隐藏，
-           而清单是空的 —— 看着就是"点了选择、取消之后那个元素没了"，还回不去。
-           现在改成**挑到文件才切**，取消就留在原来的文件夹模式。 */
         pickFiles();
         return;
       }
@@ -139,11 +111,11 @@ function renderMode() {
     };
     box.appendChild(b);
   }
-  /* 模式决定这一行显示哪些控件：文件夹模式给路径+选择，文件清单模式给加/清 */
+
   const folder = state.mode === 'folder';
   $('src').hidden = !folder;
   $('btnPick').hidden = !folder;
-  $('combo').hidden = !folder;   // 地址栏（含自带的下拉）在文件清单模式下不适用
+  $('combo').hidden = !folder;   
   $('btnAddFiles').hidden = folder;
   $('btnClearFiles').hidden = folder || !state.items.length;
 }
@@ -194,10 +166,6 @@ function renderIcoSizes() {
   }
 }
 
-/* 地址栏自带的下拉：最近使用过的文件夹。
-   原来是独立的一个 <select>，现在并进地址栏 —— 少一个控件、少占一段宽度，
-   而且"我要去哪"和"我去过哪"本来就是同一件事。
-   点它 / 点小三角 → 展开；打字 → 边打边过滤；↑↓ 选、回车确认、Esc 关掉。 */
 let histIndex = -1;
 
 function histMatches(filter) {
@@ -206,7 +174,7 @@ function histMatches(filter) {
   return state.history.filter((p) => p.toLowerCase().includes(f));
 }
 
-function renderHistory() {   // 保持这个名字：很多地方在调它
+function renderHistory() {   
   if (!$('histMenu').hidden) openHistory($('src').value);
 }
 
@@ -224,7 +192,7 @@ function openHistory(filter) {
       b.type = 'button';
       b.title = p;
       b.dataset.path = p;
-      b.onmousedown = (e) => { e.preventDefault(); pickHistory(p); };   // 别让 input 先 blur
+      b.onmousedown = (e) => { e.preventDefault(); pickHistory(p); };   
       b.onmouseenter = () => setHistIndex(i);
       menu.appendChild(b);
     });
@@ -255,10 +223,6 @@ function pickHistory(path) {
 }
 
 function bindHistory() {
-  /* 打开下拉。**focus 和 click 都要挂** ——
-     focus 只在"获得焦点"那一刻触发；如果输入框本来就还有焦点（比如点空白处收起下拉时，
-     框选逻辑 preventDefault 了 mousedown，输入框根本没失焦），再点它不会再有 focus 事件，
-     下拉就永远出不来了（用户实测到的）。所以 click 上再补一次。 */
   const openIfClosed = () => {
     if ($('histMenu').hidden) {
       openHistory($('src').value === state.dir ? '' : $('src').value);
@@ -288,14 +252,12 @@ function bindHistory() {
     }
     if (e.key === 'Enter') { e.preventDefault(); closeHistory(); loadDir($('src').value, false); }
   };
-  /* 点别处就收起来 */
+
   document.addEventListener('mousedown', (e) => {
     if (!$('combo').contains(e.target)) closeHistory();
   });
 }
 
-/* 类型芯片 = **快捷选择**：点一下把这一类全选上（不再是"过滤"）。
-   这样"选中"只剩一套模型，不会和"全选/清除"打架。 */
 function renderTypes() {
   const box = $('types');
   box.textContent = '';
@@ -316,7 +278,6 @@ function renderTypes() {
   }
 }
 
-/* ------------------------------------------------------------------ 选择器 */
 function visiblePaths() { return state.items.map((f) => key(f.path)); }
 
 function rebuild() {
@@ -330,10 +291,6 @@ function rebuild() {
   renderSelection();
 }
 
-/* 空状态。**分两种**，语气完全不同：
-     · 还没选目录      → 引导（"把图片拖进来"）
-     · 目录里没有图片  → 这只是"这里没东西"，不是错误，别报红、别说"失败"
-   支持的格式直接列出来，省得用户猜为什么他的图不算数。 */
 const SUPPORTED_TEXT = '支持 jpg / jpeg / png / webp / bmp / gif / tiff';
 
 function renderEmpty() {
@@ -374,13 +331,11 @@ function renderGrid() {
   for (const f of state.items) {
     const tile = el('div', 'tile' + (f.exists === false ? ' gone' : ''));
     tile.dataset.path = key(f.path);
-    /* 不用原生 title：那个要停 1 秒才出、样式也不能改。
-       详情走自己的悬停卡片（见 bindHover）。 */
 
     if (state.showThumbs) {
       const box = el('div', 'thumb');
       const k = tile.dataset.path;
-      if (!f.data && thumbCache.has(k)) f.data = thumbCache.get(k);   // 命中缓存，不闪
+      if (!f.data && thumbCache.has(k)) f.data = thumbCache.get(k);   
       if (f.data) {
         const img = el('img');
         img.src = f.data; img.alt = ''; img.draggable = false;
@@ -409,11 +364,6 @@ function renderGrid() {
 let thumbQueue = [];
 let thumbBusy = false;
 
-/* 缩略图缓存，按路径存。
-   ★ 为什么必须有：后端每次 scan 返回的都是**全新的对象**，
-     旧对象上挂着的缩略图 data 会跟着一起丢掉。没有这层缓存的话，
-     每次刷新 / 窗口重新获得焦点，整个网格都会**先清空再一张张补回来**
-     （看着就像"图没了"）。 */
 const thumbCache = new Map();
 const THUMB_CACHE_MAX = 1200;
 
@@ -473,12 +423,9 @@ function renderSelection() {
   renderTypes();
 }
 
-/* 网格下面那行提示：**只在真有话说的时候出现**。
-   「不选 = 全部 N 个 / 将处理 N 个」不写了 —— 右上角有「已选 x / y」，
-   右下按钮上写着「开始处理 (N)」，说三遍是啰嗦。 */
 function renderNote() {
   const note = $('srcNote');
-  if (note.classList.contains('err')) return;      // 出错信息优先，别被进度顶掉
+  if (note.classList.contains('err')) return;      
   const total = state.items.length;
   const parts = [];
   if (state.showThumbs && state.thumbDone < total) parts.push(`缩略图 ${state.thumbDone}/${total}`);
@@ -490,7 +437,7 @@ function renderSource() {
   const total = state.items.length;
   const n = state.selected.size;
   const effective = n || total;
-  /* 只改文字那一截 —— 直接写 btnStart.textContent 会把左边的图标抹掉 */
+
   $('startLabel').textContent = state.running ? '正在处理…'
                               : (effective ? `开始处理 (${effective})` : '开始处理');
   $('btnClearFiles').hidden = state.mode !== 'files' || !total;
@@ -508,8 +455,6 @@ function renderSource() {
   syncTitle();
 }
 
-/* 标题栏写"图片工具 — 目录"：原来顶栏那一行整条去掉之后，
-   目录信息就靠系统标题栏承载（用户提的） */
 let lastTitle = '';
 function syncTitle() {
   const total = state.items.length;
@@ -522,20 +467,18 @@ function syncTitle() {
   if (title === lastTitle) return;
   lastTitle = title;
   document.title = title;
-  /* 内嵌时**没有自己的窗口标题栏**（窗口是 moss 的），别去写它（`V-225`） */
+
   if (!state.embedded && state.api && state.api.set_title) state.api.set_title(title);
 }
 
-/* 格式 / 保存模式一变，整块跟着更新 */
 function renderConditional() {
   const fmt = state.cfg.output_format;
   const isIco = fmt === 'ico';
-  /* 质量在 ico 下完全没用 —— 直接把那一格**换成 ico 尺寸**，不白占地方 */
+
   $('qualitySlot').hidden = isIco;
   $('icoSlot').hidden = !isIco;
   renderIcoSizes();
 
-  /* 宽度非法就直接把输入框标红，不再单独占一行提示 */
   const width = String(state.cfg.width || '').trim();
   const bad = !!width && (!/^\d+$/.test(width) || Number(width) === 0);
   $('width').classList.toggle('invalid', bad);
@@ -543,18 +486,14 @@ function renderConditional() {
     ? '只认正整数像素值（0 和字母会被忽略，等于保持原尺寸）'
     : '只缩不放：原图比它窄就保持原样；留空 = 保持原始尺寸';
 
-  /* 保存行右侧那个共用槽位：separate → 输出目录，危险模式 → 警告。
-     两者互斥、高度一致，所以切来切去整块不会跳。 */
   const separate = state.cfg.save_mode === 'separate';
   $('outDirWrap').hidden = !separate;
   if (separate) $('outDir').value = state.cfg.output_dir || '';
-  /* 设过自定目录才给「恢复默认」—— 没设过就没有可恢复的，按钮别占位 */
+
   $('btnOutDirReset').hidden = !(state.cfg.output_dir || '').trim();
   renderWarn();
 }
 
-/* 危险模式的警告：占**保存行右侧那个槽位**，不单独起一行。
-   藏起来的是设置，不是警告 —— 所以只要选中了就一定看得见。 */
 function renderWarn() {
   const box = $('warnInline');
   const mode = state.cfg.save_mode;
@@ -568,7 +507,6 @@ function renderWarn() {
   box.innerHTML = svg('alert') + '<span>' + text + '</span>';
 }
 
-/* ------------------------------------------------------------------ 选择 */
 function setSelection(paths, additive) {
   if (!additive) state.selected = new Set();
   for (const p of paths) state.selected.add(p);
@@ -607,7 +545,6 @@ function clickItem(pathKey, e) {
   state.anchor = pathKey;
 }
 
-/* ------------------------------------------------------------------ 框选 */
 function bindMarquee() {
   const picker = $('picker');
   const box = $('marquee');
@@ -620,14 +557,12 @@ function bindMarquee() {
 
   picker.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
-    if (e.target.closest('.tile') && e.detail > 1) return;   // 双击的第二下不参与
+    if (e.target.closest('.tile') && e.detail > 1) return;   
     const p = local(e);
     sx = p.x; sy = p.y;
     active = true; moved = false;
     base = new Set(state.selected);
-    /* 不主动 focus：键盘快捷键都挂在 document 上，不需要焦点。
-       主动 focus 会让整个网格套上一圈焦点环（看着像选中了全部）。
-       原生点击带来的焦点不会触发 :focus-visible，键盘 Tab 进来仍然有环。 */
+
     e.preventDefault();
   });
 
@@ -680,7 +615,6 @@ async function openFile(path) {
   if (!got || !got.ok) toast((got && got.message) || '打不开这个文件。', true);
 }
 
-/* ------------------------------------------------------------------ 悬停详情 */
 let hoverTimer = null;
 let hoverPath = null;
 
@@ -703,7 +637,7 @@ function bindHover() {
     hoverPath = p;
     card.hidden = true;
     clearTimeout(hoverTimer);
-    /* 停一下才查：鼠标扫过一排时不要每张都去问后端 */
+
     hoverTimer = setTimeout(() => showCard(tile, p), 180);
   });
 
@@ -712,7 +646,6 @@ function bindHover() {
 }
 
 function placeCard(card, tile) {
-  /* 默认贴在瓦片右边，出界就翻到左边 / 收进窗口内 */
   const r = tile.getBoundingClientRect();
   const w = card.offsetWidth || 380;
   const h = card.offsetHeight || 100;
@@ -727,11 +660,10 @@ function placeCard(card, tile) {
 }
 
 async function showCard(tile, pathKey) {
-  if (hoverPath !== pathKey) return;                 // 期间鼠标已经移开了
+  if (hoverPath !== pathKey) return;                 
   const item = state.items.find((f) => key(f.path) === pathKey);
   if (!item) return;
 
-  /* 先把已知的画出来（缩略图 + 名字），别等后端 */
   const thumb = $('hcThumb');
   thumb.textContent = '';
   if (item.data) {
@@ -764,7 +696,6 @@ async function showCard(tile, pathKey) {
   placeCard($('hoverCard'), tile);
 }
 
-/* ------------------------------------------------------------------ 数据 */
 function scanSig(scan) {
   if (!scan) return '';
   return JSON.stringify([scan.ok, scan.count, (scan.exts || []).map((i) => [i.ext, i.count])]);
@@ -809,13 +740,13 @@ async function loadDir(dir, useDialog) {
   const scan = await state.api.scan(state.dir);
   applyScan(scan);
   if (scan && scan.history) { state.history = scan.history; renderHistory(); }
-  /* 目录里没有图片**不是错误** —— 空状态里已经好好说了，不再弹红字 */
+
 }
 
 async function pickFiles() {
   const got = await state.api.pick_files(state.items.length ? state.items[0].dir : state.dir);
   if (!got || !got.ok) { toast((got && got.message) || '打开选择框失败。', true); return; }
-  /* 取消 = 什么都不动（包括模式）。这是"取消"该有的样子。 */
+
   if (!got.files || !got.files.length) return;
   if (state.mode !== 'files') { state.mode = 'files'; state.items = []; }
   const added = setFileItems(got.files);
@@ -825,7 +756,6 @@ async function pickFiles() {
   toast(added ? `已加入 ${added} 个文件。` : '这些文件已经在清单里了。');
 }
 
-/* ------------------------------------------------------------------ 刷新 */
 async function refresh(quiet) {
   if (state.mode === 'files') {
     if (!state.items.length) { if (!quiet) toast('清单是空的。'); return; }
@@ -861,7 +791,6 @@ async function refresh(quiet) {
   }
 }
 
-/* ------------------------------------------------------------------ 运行 */
 function setLogOpen(open) {
   state.logOpen = !!open;
   $('logBox').hidden = !state.logOpen;
@@ -910,9 +839,7 @@ async function start() {
   if (state.running) return;
   const picked = targets();
   if (!picked.length) { toast('没有可处理的文件。', true); return; }
-  /* 文件夹模式 + 没勾选 → 交回后端扫目录（几千张也不会被前端的名单上限截断），
-     过滤条件用"当前目录里出现的类型"（界面上已经没有类型过滤了）。
-     只要动了选择，就按"明确的一批文件"来跑。 */
+
   const explicit = state.mode === 'files' || state.selected.size > 0;
   const exts = ((state.scan && state.scan.exts) || []).map((i) => i.ext);
   const payload = {
@@ -938,15 +865,8 @@ async function start() {
   pollOnce();
 }
 
-/* ------------------------------------------------------------------ 拖放 */
-/* ★ 现在有**两个**拖放目标，靠"松手时鼠标压在哪个元素上"来分：
-     · 压在「输出」那一格上 → 设为输出目录（大遮罩隐藏，只高亮那一格）
-     · 压在其它任何地方   → 还是给「源」
-   位置在 dragover 时记下来，drop 到达时直接用 —— 后端只把路径递过来，
-   不带坐标，所以这个判断必须在前端做。 */
 let dropZone = 'source';
-/* 内嵌时：这一次拖放的**落点**先记着 —— 真路径要等宿主那条（`onHostDrop`）才到
-   （浏览器不给页面 `File.path`，只有宿主拿得到；见契约 §8）。 */
+
 let pendingZone = null;
 
 function setDropZone(zone) {
@@ -961,8 +881,6 @@ function setDropZone(zone) {
   }
 }
 
-/* 向后端要"这次拖进来的路径" —— 独立窗口那条路：pywebview 把路径塞进后端篮子，
-   页面轮询取走（后端顺手判文件夹/清单、按配置过滤、记历史）。 */
 function pollTakeDrop(zone) {
   let tries = 0;
   const tick = async () => {
@@ -975,8 +893,6 @@ function pollTakeDrop(zone) {
   tick();
 }
 
-/* 松手那一下。**内嵌时这里不轮询** —— 真路径只有宿主拿得到，它作为 `drop` 事件
-   送到页面（`onHostDrop`），我们先把"落点"记下，等那条路到了再往后端塞。 */
 function onDropEvent() {
   clearDragHint();
   const zone = dropZone;
@@ -1028,10 +944,6 @@ async function applyDrop(got, zone) {
 function showVeil() { $('dropVeil').hidden = false; }
 function hideVeil() { $('dropVeil').hidden = true; }
 
-/* 拖放那层提示（大遮罩 + 「输出」那一格的高亮）全收掉。
-   ★ 内嵌时**这是唯一可靠的出口**：宿主铺了罩子接住这一拖之后，页面就再也收不到
-     `drop`（被罩子接走了），而 `dragleave` 收到的那次是"假的"（罩子盖上来引起的）。
-     所以"松手之后提示要消失"这件事，只能由宿主的 `dragend` 来通知（`V-226`）。 */
 function clearDragHint() {
   hideVeil();
   const wrap = $('outDirWrap');
@@ -1040,16 +952,9 @@ function clearDragHint() {
 
 function bindDrop() {
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
-  /* ★ `V-205` / `V-226`：内嵌时宿主会铺一张透明罩子把这一拖接住（真路径只有它那侧
-     拿得到）—— 罩子一盖上来，这一帧立刻会收到一次 `dragleave`（鼠标底下的元素被换掉了），
-     那是**假**的"拖走了"。信了它，提示会被白白收掉；而罩子把 drop 接走之后页面又再也
-     收不到 `drop` —— 两头一凑，就是"松手之后提示一直挂在那儿"。
-     规矩（和 `path` 那份垫片同一个口径）：
-       captured 到 dragend 之间：不认 `dragleave`；
-       dragend（宿主说拖完了）/ 我们自己收到 drop：把提示收掉。 */
+
   let captured = false;
-  /* ★ 只认**系统文件**（`dataTransfer.types` 里有 `Files`）—— 页面里拖选文字 / 拖别的东西
-     不该把"松手就转换"那层提示叫出来（`path` 的口径；`V-228` 补上）。 */
+
   const hasFiles = (e) => !!(e.dataTransfer && (e.dataTransfer.types || []).indexOf('Files') >= 0);
   window.addEventListener('dragover', (e) => {
     if (!hasFiles(e)) return;
@@ -1063,21 +968,20 @@ function bindDrop() {
   window.addEventListener('dragleave', (e) => {
     if (!hasFiles(e)) return;
     stop(e);
-    if (captured) return;                       // 罩子盖上来引起的那次 leave 不算
+    if (captured) return;                       
     if (e.relatedTarget === null) clearDragHint();
   });
   window.addEventListener('drop', (e) => { stop(e); onDropEvent(); });
-  /* 拖出窗口 / 取消（Esc）/ 窗口失焦：提示也得收干净（独立窗口那条路主要靠这个）。 */
+
   window.addEventListener('dragend', () => { captured = false; clearDragHint(); });
   window.addEventListener('blur', () => { captured = false; clearDragHint(); });
-  /* ★ `V-225`：内嵌时挂上宿主那条拖放 —— 宿主给的是**真路径**，
-     我们把它塞回后端（`push_drop`），后面那条 take_drop 管线原样复用。 */
+
   onHostEvent('captured', () => { captured = true; });
   onHostEvent('dragend', () => { captured = false; clearDragHint(); });
   onHostDrop(async (paths) => {
     const zone = pendingZone || 'source';
     pendingZone = null;
-    clearDragHint();                            // 松手了，提示该收了（`V-226`）
+    clearDragHint();                            
     try {
       await state.api.push_drop(paths);
     } catch (err) {
@@ -1088,12 +992,6 @@ function bindDrop() {
   });
 }
 
-/* ------------------------------------------------------------------ 事件 */
-/* 「打开输出目录」到底该开哪：
-   · 跑过一次 → 用那次真实的输出目录
-   · 还没跑过 → 按当前设置推一个（自定输出目录，否则源目录）。
-     推出来的那个可能还不存在，没关系 —— 后端会往上找第一个存在的打开，
-     所以「新文件夹」没生成时会开源目录，正是用户想要的。 */
 function outputTarget() {
   if (state.outputDir) return state.outputDir;
   const custom = (state.cfg.output_dir || '').trim();
@@ -1108,8 +1006,7 @@ function bind() {
   $('btnAddFiles').onclick = () => pickFiles();
   $('btnClearFiles').onclick = () => {
     state.items = [];
-    /* 清空之后文件清单就空了，留在那个模式没意义 —— 退回文件夹模式，
-       否则路径框和「选择…」会一直是隐藏的，用户就"回不去"了。 */
+
     state.mode = 'folder';
     renderMode();
     rebuild();
@@ -1147,12 +1044,11 @@ function bind() {
     $('outDir').value = picked.path;
     renderConditional();
   };
-  /* 恢复默认 = 把自定输出目录清掉，回到「源目录\compressed_output」。
-     拖放设过一次之后没办法undo，这条是补上的退路。 */
+
   $('btnOutDirReset').onclick = () => {
     state.cfg.output_dir = '';
     $('outDir').value = '';
-    state.outputDir = '';          // 上次跑出来的那个也别再记着
+    state.outputDir = '';          
     renderConditional();
     toast('输出目录已恢复默认。');
   };
@@ -1161,7 +1057,7 @@ function bind() {
   $('src').oninput = () => {
     state.dir = $('src').value;
     syncTitle();
-    /* 边打字边过滤最近使用 —— 找不到就自动收起来，别挡着 */
+
     if (!$('histMenu').hidden) {
       const hit = histMatches(state.dir);
       if (hit.length) openHistory(state.dir); else closeHistory();
@@ -1173,7 +1069,7 @@ function bind() {
       applyScan(scan);
       if (scan && scan.history) { state.history = scan.history; renderHistory(); }
     }, 350);
-  };   // 地址栏的下拉/键盘逻辑见 bindHistory()
+  };   
 
   $('btnReset').onclick = () => {
     state.cfg.output_format = DEFAULTS.output_format;
@@ -1212,7 +1108,6 @@ function bind() {
   });
 }
 
-/* ------------------------------------------------------------------ 帮助 */
 async function openHelp() {
   const sheet = $('helpSheet');
   sheet.hidden = false;
@@ -1238,22 +1133,14 @@ function bindHelp() {
   });
 }
 
-/* ------------------------------------------------------------------ 启动 */
-/* 记录走到哪一步炸的。原来只报一句"界面初始化失败：<英文>"，
-   既不知道哪一步、也看不到细节 —— 用户没法贴给我，窗口一关线索就没了。 */
 let bootStage = '启动';
 
-/* 出错时：中文说清哪一步 + 原文附在后面，并且**写进后端日志** */
 function reportFailure(where, e) {
   const raw = (e && e.message) ? e.message : String(e);
   toast(`界面初始化失败（${where}）：${raw}`, true);
   reportToBackend(`${where}: ${raw}\n${(e && e.stack) || ''}`);
 }
 
-/* ★ 报错通道**不能再把自己的失败再报一遍**（`V-225` 真踩到）：
-   桥不可用时（垫片没加载上 / 后端已经死了），`report_error` 自己会抛 ⇒ 那次失败又触发
-   `unhandledrejection` ⇒ 又调 `report_error` ⇒ **无限循环**，页面彻底卡死
-   （实测：无头浏览器被卡 120 秒超时）。所以这里只认第一次失败，之后闭嘴。 */
 function reportToBackend(text) {
   if (state.reportBroken) return;
   try {
@@ -1261,7 +1148,7 @@ function reportToBackend(text) {
     const p = state.api.report_error(text);
     if (p && typeof p.catch === 'function') p.catch(() => { state.reportBroken = true; });
   } catch (_) {
-    state.reportBroken = true;      // 报错通道本身坏了：别再往里灌
+    state.reportBroken = true;      
   }
 }
 
@@ -1275,7 +1162,7 @@ async function boot() {
 
   bootStage = '应用外观';
   applyAppearance(r);
-  state.embedded = !!r.embedded;      // `V-225`：内嵌时没有自己的窗口标题可写
+  state.embedded = !!r.embedded;      
   state.cfg = r.config;
   state.history = r.history || [];
   state.meta = { formats: r.formats, saveModes: r.saveModes, icoSizes: r.icoSizes,
@@ -1314,8 +1201,6 @@ async function boot() {
 
 boot().catch((e) => reportFailure(bootStage, e));
 
-/* 任何脚本错误都显出来并记档。WebView 里没有控制台，静默失败最难查
-   （踩过：绑事件时抛异常 → 点哪儿都没反应，界面上却看不出任何异常）。 */
 window.addEventListener('error', (e) => {
   const where = '脚本运行时';
   toast(`界面脚本出错：${e.message || e.type}`, true);
@@ -1328,7 +1213,6 @@ window.addEventListener('unhandledrejection', (e) => {
   reportToBackend(`未处理的 Promise 拒绝: ${raw}\n${(r && r.stack) || ''}`);
 });
 
-/* 调试口子：开 MOSS_IMG_DEBUG=1 起窗口后，可以在 devtools 里直接看状态。 */
 window.__img = {
   get state() { return state; },
   selectAll, clearSelection, selectType, rebuild, refresh, start, clickItem, targets,

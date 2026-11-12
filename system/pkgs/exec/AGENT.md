@@ -39,12 +39,7 @@ moss :exec
 ★ 规矩：**stdout 只许出 JSON 行**。日志走 `_log()`（stderr）—— 宿主对"不是 `{` 开头"的行
 会当输出收进命令行（无害），但**把一条 JSON 拆成两行就真把协议撕了**（别用多行 print）。
 
-**怎么验**（改完先跑这两条）：
-```bash
-.\system\runtimes\python\3.12\python.exe tools\exec内嵌探针.py   # 内嵌后端：协议+业务 27 条
-python tools\包界面检查.py exec                                  # 这一页还画得出来吗
-python tools\界面预览.py exec-ui                                 # 宿主→iframe→后端 整条链
-```
+**怎么验**：检查内嵌后端协议、页面渲染和宿主 → iframe → 后端链路。
 
 ## 副作用
 - 声明能力：`{"run": ["python"], "net": []}`

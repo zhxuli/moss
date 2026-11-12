@@ -1,6 +1,3 @@
-/* 新建命令：先定类型。
- * 类型定下之后就不再允许切换 —— 避免内容跟着类型乱跑。
- * 只负责选，选完把 typeId 抛给父级，建命令的逻辑留在父级。 */
 import { iconFor } from "../icons.js";
 
 export default {

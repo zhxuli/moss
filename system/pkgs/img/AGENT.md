@@ -54,14 +54,7 @@
 `moss.on('dragend')` / `moss.on('drop')` 里都收掉（独立窗口那条路另挂 `window` 的
 `dragend` / `blur` 兜底）。规矩原文在 `system/spec/插件契约.md` §8 第 8 条。
 
-**怎么验**（改完先跑这三条）：
-```bash
-.\system\runtimes\python\3.12\python.exe tools\img内嵌探针.py   # 内嵌后端：协议+业务 24 条
-python tools\包界面检查.py img                                   # 这一页还画得出来吗
-python tools\界面预览.py img-ui                                  # 宿主→iframe→后端 整条链
-```
-（探针自己会去起无头 `msedge`，本机两边都用 3.12 跑过；系统 python 3.13 那份也跑通了 ——
-后端真正的运行时是 moss 自己挑的那个，跟用哪个 python 起探针无关。）
+**怎么验**：检查内嵌后端协议、拖放行为、页面渲染和宿主 → iframe → 后端链路。
 
 ## 调用方式
 

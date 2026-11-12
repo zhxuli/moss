@@ -4,20 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>极简同步</title>
-<!-- ★ ?v= 是"界面版本号"：每次改界面就 +1。
-     浏览器/WebView 会按 URL 缓存 css/js，不加这个就会出现"我明明改了代码，
-     打开还是旧界面"（真机踩过：云端版本列表加了但看不到，白查半天）。
-     改界面时**三处一起 bump**：css 的 v、js 的 v、下面 footer 里那个 UI_VER。 -->
+
 <link rel="stylesheet" href="style.css?v=22">
-<!-- ★ 错误兜底：**必须排在所有界面脚本最前面** —— 它要接住 app.js 里的异常；
-     也早于垫片加载：早到的错误先排队，等 `moss` ready 再补发上报。
-     内嵌 / 独立窗口两种跑法都走它（内部统一用 `window.moss.call`，垫片自己分流）。 -->
+
 <script src="error-guard.js?v=1"></script>
 <script src="moss-embed.js"></script>
 </head>
 <body>
 
-<!-- 拖文件夹进来时铺满窗口的提示 -->
 <div id="hint" class="hint">
   <div class="hint-box">
     <div class="hint-big">松手 = 打开这个文件夹</div>
@@ -27,7 +21,6 @@
 
 <div class="wrap">
 
-  <!-- ==================== 头部：只有一个"扫描变动" ==================== -->
   <header class="head">
     <div class="brand">
       <div class="logo" id="icoLogo"></div>
@@ -47,7 +40,6 @@
     <div class="dir-menu" id="dirMenu"></div>
   </header>
 
-  <!-- ==================== 环境状态条：缺什么一眼看到、点一下就补 ==================== -->
   <section id="envBar" class="envbar hide">
     <div class="env-main">
       <span id="envIco" class="env-ico"></span>
@@ -61,7 +53,6 @@
 
   <main class="flow">
 
-    <!-- ==================== 1. 本地工作区 ==================== -->
     <section id="cardWork" class="node node-active-amber">
       <div class="node-top">
         <div class="node-id">
@@ -72,7 +63,7 @@
           </div>
         </div>
         <div class="node-acts">
-          <!-- 统计：点开看这个文件夹一共有多少行代码（按文件行数，空行注释都算） -->
+
           <button id="statBtn" class="ico-btn" data-act="loc-open"
                   title="统计代码行数（多少行代码）"><span id="icoStat"></span></button>
           <button id="filesBtn" class="count-pill" data-act="files-drawer" title="点开看看改了哪些文件">
@@ -87,21 +78,18 @@
         <div class="collapse-inner">
           <div class="work-body">
 
-            <!-- 二级抽屉：挑选文件 -->
             <div id="fileDrawer" class="collapse">
               <div class="collapse-inner">
                 <div class="file-drawer" id="fileList"></div>
               </div>
             </div>
 
-            <!-- 一句话说明 -->
             <div class="input-wrap">
               <input id="note" type="text" spellcheck="false"
                      placeholder="用一句话描述你做了什么修改...">
               <span class="enter-hint mono">↵ 回车</span>
             </div>
 
-            <!-- 快捷填入：点一下就填进说明框，不用自己打字 -->
             <div class="qf-row">
               <span class="lb">快捷填入：</span>
               <button class="qf" type="button" data-text="打包修复：">📦 打包修复</button>
@@ -114,7 +102,6 @@
       </div>
     </section>
 
-    <!-- ==================== 管道 1：工作区 → 本地历史 ==================== -->
     <div class="pipe">
       <svg viewBox="0 0 24 56" preserveAspectRatio="none">
         <line x1="12" y1="0" x2="12" y2="56" stroke-width="2.5" class="pipe-base"/>
@@ -127,7 +114,6 @@
       </button>
     </div>
 
-    <!-- ==================== 2. 本地历史记录 ==================== -->
     <section id="cardLocal" class="node">
       <div class="node-top">
         <div class="node-id">
@@ -151,7 +137,6 @@
       <div id="histMore" class="hist-more"></div>
     </section>
 
-    <!-- ==================== 管道 2：本地 ⇅ 云端 ==================== -->
     <div class="pipe">
       <svg viewBox="0 0 24 56" preserveAspectRatio="none">
         <line x1="12" y1="0" x2="12" y2="56" stroke-width="2.5" class="pipe-base"/>
@@ -171,7 +156,6 @@
       </div>
     </div>
 
-    <!-- ==================== 3. GitHub 云端 ==================== -->
     <section id="cardCloud" class="node node-done">
       <div class="node-top">
         <div class="node-id">
@@ -193,7 +177,6 @@
         </div>
       </div>
 
-      <!-- 云端版本列表：想知道"云端有哪些版本、能不能挑一个拿回来"，就看这里 -->
       <div id="cloudBody" class="collapse open">
         <div class="collapse-inner">
           <div class="cloud-body">
@@ -221,8 +204,7 @@
   <footer class="foot">
     <span class="log mono" id="log">正在启动…</span>
     <span class="grow"></span>
-    <!-- 界面版本：改了界面就 +1（跟上面 css/js 的 ?v= 一起改）。
-         万一以后又出现"改了看不到"，看一眼这个数就知道是不是旧页面。 -->
+
     <span class="uiver mono" id="uiVer" title="界面版本（不是你的仓库版本）">界面 v23</span>
     <button class="link" data-act="env-detail" title="Git / GitHub 那几项是否就绪、下一步做什么（快捷键 F8）">环境检查 F8</button>
     <button class="link" data-act="more" title="分支 / 标记版本 / 镜像备份 / 命令记录…">更多功能</button>

@@ -1,24 +1,3 @@
-# -*- coding: utf-8 -*-
-"""配置（TOML）+ 输入法全角前缀还原。
-
-★ 配置文件是 `user_data/config.toml`，格式 **TOML**（`D-23`）。
-  为什么不是 JSON：
-    · 配置是**给人手改**的，而 JSON 不能写注释 —— 用户打开只看见一堆键值，
-      根本不知道某个空串是"没设"还是"故意的"，也就无从下手去改。
-    · TOML 能写 `#` 注释，所以**自动生成的默认文件本身就是说明书**（见下面的
-      `CONFIG_TEMPLATE`：每一项后面都有一句白话）。
-    · 解析零依赖：Python 3.11+ 标准库自带 `tomllib`（只读），自带运行时是 3.12。
-    · 宿主**只需要读**：写只发生在"文件不存在时生成默认"，那时直接写那份带注释的
-      模板字符串即可 —— Python 标准库没有 TOML 写入库，这里也不需要。
-  旧的 `config.json` **不做兼容**（尚未发布，直接换）：现在只认 `.toml`，
-  老文件留在磁盘上也不会被读。
-
-★ 字段名与默认值照抄 pa.py:53-78（`E-20` 照抄原则），一个不改：
-  `symbols` / `output` / `search` / `ctrl_c` 四组齐全。
-★ 首次运行自动创建并提示（照抄 pa.py:80-106 的行为）。
-★ `FULLWIDTH_TO_HALF` + `restore_prefix()`：只还原**开头的模式前缀**，
-  参数内容一律不碰（中文文件名里的（）、，、。都是合法字符）。
-"""
 import copy
 import os
 import re
@@ -27,27 +6,10 @@ from pathlib import Path
 
 from . import paths
 
-#: 默认配置。**改这里的时候，`CONFIG_TEMPLATE` 要一起改** —— 自检会核对两者是否一致
-#: （`template_problems()`，挂 `moss --selfcheck`），免得"默认值改了、模板没跟上"。
-#: **命令行里有特殊含义的字符**（`V-156`）：这些不能当命令前缀。
-#: ★ 为什么只挡这些：`/` 本来就是我们的默认值，`~` `.` `-` `:` 之类也只是普通字符，
-#:   它们不会引起什么特殊执行；真正会出事的是 `>`（重定向 / 管道）、`@`（把命令本身藏起来）、
-#:   `%` `!`（cmd 的变量 / 延迟展开）、`$` 和反引号（PowerShell 的变量 / 求值）、
-#:   `*` `?`（通配）、`&` `|` `;`（连接多条命令）、括号和引号（分组 / 引号）。
 SYMBOL_BAD = set('&|<>^%!*?()$`"\'=#@,;[]{}')
 
-#: AI 那几组参数的字段（`V-139` 精简到**四样**）：组名（= `[ai.profiles.<组名>]` 那个表名）
-#: 加下面三个键 —— `base_url` / `api_key` / `model`。
-#: ★ 为什么把 `stream` / `temperature` / `max_tokens` / `top_p` / `timeout` / `note` 拿掉了
-#:   （你的话：「其他的可以由程序根据需求来设置 不必遵守这些规矩」）：那些是**每次调用**
-#:   该由代码当场定的东西，摆在设置面板里只会让普通用户看不懂 —— 面板上只留
-#:   「连哪儿、拿什么钥匙、这个服务有哪些模型」。
-#: ★ `model` **可以是多个**（TOML 里写成数组，第一个当默认）；旧配置里写成字符串照样读得动。
 AI_FIELDS = ("base_url", "api_key", "model")
 
-#: 常见服务商**预制参数**（`V-139`）：名字 + 接口地址 + 模型清单，点一下就把这几样填进面板，
-#: 用户只需要粘一把 key。★ 表放在 core 里是为了**只有一份真相** —— 面板（走 `--ai-presets`）
-#: 和命令行看到的是同一份；地址都是 **OpenAI 兼容**的那个入口（`{base_url}/chat/completions`）。
 AI_PRESETS = [
     {"name": "DeepSeek", "desc": "官方 API", "base_url": "https://api.deepseek.com/v1",
      "model": ["deepseek-flash"]},
@@ -67,13 +29,7 @@ AI_PRESETS = [
      "model": ["qwen2.5:7b"]},
 ]
 
-
 def ai_models(prof):
-    """一组里的模型清单 —— **永远是列表**（旧配置里写成字符串的也认）。
-
-    为什么要有这个函数：`model` 有两种历史写法（字符串 / 数组），凡是用到它的地方
-    （注入环境变量、测试连接、面板）都得先归一化，各写一遍早晚不一致。
-    """
     v = (prof or {}).get("model")
     if isinstance(v, (list, tuple)):
         return [str(x).strip() for x in v if str(x).strip()]
@@ -81,11 +37,9 @@ def ai_models(prof):
     return [s] if s else []
 
 DEFAULT_CONFIG = {
-    # ★ `V-137`：AI 那几组（`[ai] active` + `[ai.profiles.<组名>]`）—— **不声明在这里，
-    #   `load()` 会把整段当"不认识的段"丢掉**（实测踩过：写了组、读回来是空的）。
     "ai": {"active": "", "profiles": {}},
     "symbols": {
-        "path_mode": "",           # 空串 = 裸名就是路径调用（默认档，见 bare_owner()）
+        "path_mode": "",
         "no_chdir_mode": "/",
         "plugin_mode": ":",
         "no_force_kill_mode": "~",
@@ -103,166 +57,87 @@ DEFAULT_CONFIG = {
         "symbol": "",
     },
     "search": {
-        "max_parent_depth": 0,          # `V-159`：0 = 只看当前目录（严谨的人喜欢这个）
+        "max_parent_depth": 0,
     },
     "ctrl_c": {
         "force_kill": True,
     },
-    # ★ `V-298`：短命令（`core/shortcut.py` 读它）。前缀可改，别写死。
     "shortcut": {
-        "prefix": "mo",            # 短命令前缀：`<前缀>` = moss，`<前缀><包名>` = moss :包名
-        "mo": False,               # 生成 `<前缀>`（就是 moss）
-        "pkg": False,              # 生成 `<前缀><包名>`（= moss :包名）
+        "prefix": "mo",
+        "mo": False,
+        "pkg": False,
     },
-    # ★ `V-299`：命令接入 —— 把 moss 自己的目录加进用户 PATH（`core/shortcut.py` 读它）。
     "path": {
-        "moss": False,             # true = 把 moss.exe 所在目录加进当前用户 PATH
+        "moss": False,
     },
-    # ★ `V-354`：**界面自己的开关** —— 关掉 moss 界面时怎么收场。
-    #   值放在这儿（和别的设置一样手改 config.toml 也生效），但**读它的是界面进程**
-    #   （`system/ui/main.py::_cfg`，界面不 import core ⇒ 自己读这个文件）。
     "ui": {
-        "kill_pkgs_on_exit": False,   # true = 关界面时把还在跑的插件进程一并收掉（连子孙）
+        "kill_pkgs_on_exit": False,
     },
-    # ★ 音效提醒（设置 → AI 引擎里那两行）：AI 跑完 / 有事要你确认时响一下。
-    #   `*_file` 留空 = 用**出厂自带**的那一个（`system/sound/<种类>.mp3`）；
-    #   换成自己的 = 文件被复制到 `user_data/sound/`，这里记**相对 user_data 的路径**
-    #   （`sound/finish.mp3`）—— 整个 moss 目录搬走也不失效。
-    #   ★ 读这两个开关的也是**界面进程**（`system/ui/main.py`，它不 import core）。
     "sound": {
-        "finish_on": True,             # AI 跑完一轮时响
-        "finish_file": "",             # 空 = 出厂自带 finish.mp3
-        "warn_on": True,               # 有事要你确认（问话 / 要放行目录）时响
-        "warn_file": "",               # 空 = 出厂自带 warn.mp3
+        "finish_on": True,
+        "finish_file": "",
+        "warn_on": True,
+        "warn_file": "",
     },
 }
 
-#: 当前生效的配置（`load()` 会用用户文件覆盖它）。
 CONFIG = copy.deepcopy(DEFAULT_CONFIG)
 
-#: 首次运行写出去的默认配置：**带注释的 TOML 模板**。
-#: 为什么是死字符串而不是序列化出来的：① tomllib 只读，标准库没有 TOML 写入器；
-#: ② 需要的正是"注释"—— 模板里那些说明就是给用户的文档，序列化不出一句人话。
-#: 每条注释都刻意写"这个值是干什么的 + 有没有坑"，不是复述键名。
-CONFIG_TEMPLATE = '''# moss 配置 —— 改完存盘即生效（下一次运行 moss 时读它）。
-# 这个文件管的是**宿主**：命令前缀符号 / 输出横幅 / 搜索层数 / Ctrl-C 策略。
-# 什么都不改也能用；下面每一项都写了它是干什么的。
-#
-# ★ 不想开编辑器也行：`moss ui` 界面**右下角那颗齿轮**就是这份文件的面板
-#   ——「设置」里改的和这里手改的是同一个文件，它按行换值，注释和排版一字不动。
+CONFIG_TEMPLATE = '''[symbols]
 
-[symbols]
-# 命令前缀符号。四项都可以改成你顺手的字符 —— `moss` 会先去掉前缀再判断类型。
-#
-# ★ 裸名（不带前缀）归谁，就看这两条：**谁留空，裸名就归谁**。
-#   下面这样是"默认档"：裸名 = 路径调用（`moss m` 跑当前项目里的脚本），包要写 `:`。
-#   如果主要用途是"跑装好的包"（不常写脚本），可以把这两行对调：
-#       plugin_mode = ""
-#       path_mode   = ":"
-#   那样 `moss img` 直接跑包，`moss :m` 才是找文件。
-#   注意：**两项不能同时留空**（那就说不清裸名算哪种了，宿主会提示并按"裸名=路径"处理）。
-path_mode          = ""     # 路径调用（**空串 = 裸名**）：   moss m
-no_chdir_mode      = "/"    # 跑路径但**不切目录**：          moss /m
-plugin_mode        = ":"    # 跑**装好的包**：                moss :img
-no_force_kill_mode = "~"    # **后台脱离**运行（脱离后 Ctrl+C 也管不到它）：moss ~m
+path_mode          = ""
+no_chdir_mode      = "/"
+plugin_mode        = ":"
+no_force_kill_mode = "~"
 
 [output]
-# 每次运行前后的那几行提示。嫌吵就关掉对应的项（false / 空串）。
-auto_clear_screen = true    # 运行前清屏
-start_banner      = ""      # 起始横幅文本（空 = 不打印）
-end_banner        = ""      # 结束横幅文本（空 = 不打印）
-start_time        = true    # 打印开始时间
-end_time          = true    # 打印结束时间
-duration          = true    # 打印运行总长
-pid               = true    # 打印子进程 PID
-directory         = true    # 打印工作目录
-command           = true    # 打印将要执行的命令
-symbol            = ""      # 行首符号（空 = 用内置的）
+
+auto_clear_screen = true
+start_banner      = ""
+end_banner        = ""
+start_time        = true
+end_time          = true
+duration          = true
+pid               = true
+directory         = true
+command           = true
+symbol            = ""
 
 [search]
-# 运行 `moss m` 时"向上找几层目录"。0 = 只看当前目录，不往上找。
+
 max_parent_depth = 0
 
 [ctrl_c]
-# Ctrl+C 怎么停：true = 第一次就强杀整棵树；false = 先温和 terminate，再按一次才强杀。
+
 force_kill = true
 
 [ui]
-# 界面自己的开关。**关掉 moss 界面**（右上角 × / 任务栏关闭 / 界面里退出）时，
-# 要不要把还在后台跑的**插件进程**一并结束掉（连它拉起的子孙进程）。
-#   false（默认）= 保持老行为：插件继续在后台跑（长驻服务那种就靠这个）。
-#   true         = 关界面顺手收干净，不留后台孤儿（服务型的包会被一起收掉，所以默认没开）。
-# ★ 界面进程直接读这个文件，改完**下一次关界面**就生效（不用重启 moss、也不用重打包）。
+
 kill_pkgs_on_exit = false
 
 [sound]
-# 音效提醒（「设置 → AI 引擎」那两行）：AI 跑完一轮 / 有事要你确认的时候响一下。
-#   *_on   = 开不开（两种各自独立，关掉就不响）
-#   *_file = 用哪个音频。留空 = 用**出厂自带**的（system/sound/finish.mp3 / warn.mp3）；
-#            换成自己的：界面上点「换一个」选文件，或者直接把音频拖到那一行上 ——
-#            选好的会被**复制到 user_data/sound/**，这里只记它在那儿的相对路径，
-#            所以你原来那个文件删掉、挪走都不影响。
-# 只认 mp3 / wav / m4a / aac / wma / ogg / flac（用系统自带的能力放，不用装播放器）。
+
 finish_on = true
 finish_file = ""
 warn_on = true
 warn_file = ""
 
 [path]
-# 命令接入（`V-299`）：把 moss 自己所在的目录加进 PATH，让 `moss` 命令在任何终端都能直接敲。
-# 只改**当前用户**的 PATH（不用管理员、不动系统 PATH）。改完**新开一个终端**才生效（不用重启电脑）。
-# 界面「设置 → 命令接入」里那颗开关，改的就是这里。
+
 moss = false
 
 [shortcut]
-# 短命令（`V-298`）：把 `moss :img` 缩成一条直接能敲的命令。
-# 打开后 moss 会在 PATH 上加一个目录（user_data/shortcuts），往里放一批小启动器（.cmd）：
-#   prefix = "mo"  → 前缀（随便改，只要字母开头、只含字母/数字/-/_、1~8 个字符）
-#   mo  = true     → 生成 `<前缀>`：它就是 moss（可以敲 mo :img、mo --help、mo ~m …）
-#   pkg = true     → 生成 `<前缀><包名>`：moimg 就等于 moss :img；新建 / 改名 / 删除包会自动跟着变
-# 前缀的作用是降低撞上系统命令的概率。改完存盘即生效（新开一个终端才看得到新命令）。
-# 界面「设置 → 短命令」里那几项，改的就是这里。
+
 prefix = "mo"
 mo  = false
 pkg = false
 
-
-# ---------------------------------------------------------------- AI（`V-137` / `V-139`）
-# 一组 = `[ai.profiles.<组名>]`；`active` 指当前用哪一组。参数**明文**存在这个文件里
-# （它在 user_data/ 下、不进仓库）；跑包时宿主会把当前那组注入成 `MOSS_AI_*` 环境变量。
-#   就四样：**组名** + base_url 接口地址 / api_key 密钥 / model 模型（可以多个，第一个当默认）
-#   —— 像 temperature / max_tokens / stream / timeout 这些**不往这里放**：
-#   它们是"每次调用"该由代码当场定的，摆在这儿只会让人不敢动（你的话：不必遵守这些规矩）。
-# 加一组（命令行最省事，也可以照这个样子手写）：
-#   moss --ai-profile-set DeepSeek base_url=https://api.deepseek.com/v1 model=deepseek-chat,deepseek-reasoner api_key=sk-xxx
-#   moss --ai-presets      # 看常见的几家（DeepSeek / Gemini / OpenAI / Kimi / 通义千问 / 智谱 / 硅基流动 / 本地 Ollama）
-# ★ 这里**只声明 active**：示例写在注释里 —— 模板和默认值（`DEFAULT_CONFIG`）必须对得上，
-#   不然 `--selfcheck` 的"模板和默认值一致"那条会报错（实测踩过）。
 [ai]
 active = ""
-# 各组：一组一张表（`moss --ai-profile-set <组名> …` 会往里加；也可以照注释里的样子手写）
+
 [ai.profiles]
-# [ai.profiles.DeepSeek]
-# base_url = "https://api.deepseek.com/v1"
-# api_key = "sk-xxx"
-# model = ["deepseek-chat", "deepseek-reasoner"]
 '''
 
-
-# ================================================================ 「设置」面板（`V-60` ✅ / `V-63` ✅）
-# 界面上那颗齿轮点开就是这份清单：**把 user_data/config.toml 里已有的键用控件呈现出来**。
-#
-# ★ 它不新增任何配置项，也不是"第二处设置"：改完还是写回同一个 `config.toml`
-#   （按行换值、注释一字不动，见 `set_values`）。所以手改文件和用面板改，
-#   结果完全一样，不会出现"面板说 A、文件说 B"。
-# ★ **这里的分组顺序 ≠ 文件里的顺序**：写回是"按键找那一行"，不按顺序生成文件，
-#   所以可以放心把最常改的摆前面、把相关的排在一起。
-# ★ 每一项都得把话说明白（`V-63` 的教训：原来「向上找几层目录」这种写法，
-#   人根本不知道它在说什么）——`label` 是名字，`hint` 是"它到底干什么、什么时候用"。
-# ★ `type` 决定面板画什么控件：`symbol`（前缀符号，单个字符的小框）、`text`（文本）、
-#   `bool`（开关）、`int`（步进器）。
-# ★ `settings_problems()` 会核对这份清单和 `DEFAULT_CONFIG` 对不对得上（键、类型、
-#   以及每条该有的说明有没有写），挂在 `moss --selfcheck` 上。
 SETTINGS_GROUPS = [
     {"name": "命令接入", "icon": "globe",
      "blurb": "让 moss 在命令行里好用：把 moss 加进 PATH（任何终端都能直接敲 moss），"
@@ -341,30 +216,17 @@ SETTINGS_GROUPS = [
          {"key": "ctrl_c.force_kill", "label": "第一次按 Ctrl+C 就强杀整棵树", "type": "bool",
           "hint": "在终端里按 Ctrl+C 时，第一次就强杀整棵进程树。关掉之后：第一次只温和地"
                   "请它退出，再按一次才强杀 —— 有收尾工作的包适合关掉。"},
-         # ★ `V-354`（用户 2026-10-09 提的）：关界面时把插件进程一起收掉 —— **默认关**。
          {"key": "ui.kill_pkgs_on_exit", "label": "退出时结束所有插件进程", "type": "bool",
           "hint": "关掉 moss 界面时，把还在后台跑的插件进程**一起结束掉**（连它拉起的子孙进程）"
                   "—— 不留后台孤儿。默认关：插件会继续在后台跑（长驻服务那种适合这样）。"},
      ]},
-    # ★ `V-137` / `V-138`：AI 参数（多组），**放在最后** —— 前面那四组是「配置项」，
-    #   这一组是「账号 / 通道」，性质不同；而且它的界面是专门画的一块（选组 + 一串动作），
-    #   不是「一个键一行」。这两个键留着是为了让「面板清单和 DEFAULT_CONFIG 对得上」
-    #   那条自检能过；真正在面板上渲染的是 `js/settings.js` 里那块 `.set-ai`。
     {"name": "A I 引擎", "icon": "activity",
      "blurb": "配置 AI 服务的地址和密钥（可以多组）",
      "items": [
          {"key": "ai.active", "label": "当前组", "type": "text",
           "hint": "跑包时用哪一组。"},
-         # ★ `V-159`：`ai.profiles` 是**表**（dict），以前声明成 text ⇒ 通用校验每次都说
-         #   「要的是字符串，收到 {}」—— 于是 AI 页永远挂着"1 处冲突"、底栏还标红。
-         #   给它一个 `raw` 类型：通用校验直接跳过它（它由 AI 那块界面自己管）。
          {"key": "ai.profiles", "label": "各组", "type": "raw",
           "hint": "每组：接口地址 / 密钥 / 模型；在面板上点「新建」或某行的「编辑」改。"},
-         # ★ 音效提醒：也长在「AI 引擎」这一页上（用户要的「在设置 AI引擎这里设置音效」），
-         #   由 `js/settings.js` 那块 `.set-ai` 自己画两行（开关 + 试听 + 换文件 + 拖入）。
-         #   声明在这儿有两个用处：① 面板清单和 `DEFAULT_CONFIG` 对得上（`--selfcheck` 查这个）；
-         #   ② `set_values` 按这里的 `type` 决定写进 TOML 的样子（bool 就得写成 true / false，
-         #   写成字符串 "true" 读回来永远是"开"）。
          {"key": "sound.finish_on", "label": "任务结束音效", "type": "bool",
           "hint": "AI 跑完一轮、把结论摆出来的时候响一下。关掉就不响（也可以换成自己的音频）。"},
          {"key": "sound.finish_file", "label": "任务结束音效文件", "type": "text",
@@ -382,18 +244,14 @@ def _split_key(key):
     section, _, name = str(key).partition(".")
     return section, name
 
-
 def _setting_spec(key):
-    """按键（`段.键`）取面板上那一项的定义；没有返回 None。"""
     for g in SETTINGS_GROUPS:
         for it in g["items"]:
             if it["key"] == key:
                 return it
     return None
 
-
 def _after_values(values):
-    """把「这次要改的」叠在「当前生效的」上面 —— 校验看的是改完之后的整体。"""
     after = {}
     for g in SETTINGS_GROUPS:
         for it in g["items"]:
@@ -402,9 +260,7 @@ def _after_values(values):
     after.update(values or {})
     return after
 
-
 def _live_lines(after):
-    """底部那块预览（多行）：一个能照抄的例子 + 搜索逻辑（`V-156` / `V-157`）。"""
     p = after.get("symbols.path_mode") or ""
     g = after.get("symbols.plugin_mode") or ""
     n = after.get("symbols.no_chdir_mode") or ""
@@ -439,14 +295,10 @@ def _live_lines(after):
         out.append("⚠ 两个都有前缀 —— 谁也没占住裸名，moss m 现在按「找文件」处理")
     return "\n".join(out)
 
-
 def _live_line(after):
-    """旧名字（调用点还在用）—— 直接转给多行那版。"""
     return _live_lines(after)
 
-
 def _notes_for(after):
-    """每一行底下那句「现在这样」（宿主算、界面只显示）：键 → 一句话。"""
     notes = {}
     p = after.get("symbols.path_mode") or ""
     g = after.get("symbols.plugin_mode") or ""
@@ -470,27 +322,17 @@ def _notes_for(after):
                                         % (v, v + 1))
     return notes
 
-
 def _check_values(values):
-    """看这批值合不合法 / 有没有该提醒的地方。
-
-    返回 `[{"key", "why", "level"}]`：`level` 是 `"error"`（不许保存）或
-    `"warn"`（只是提醒，能存）。
-    ★ 为什么要把 `key` 带上：面板得把出问题的那一行标红，只有一句话不知道该红哪儿。
-    """
     values = dict(values or {})
     after = _after_values(values)
     problems = []
 
-    # ★ `also`：这条冲突**还牵涉哪几行** —— 面板要把它们一起标红
-    #   （"两个前缀不能同时留空"是两行一起错，只红一行会让人以为改那一行就行）。
     def err(key, why, also=None):
         problems.append({"key": key, "why": why, "level": "error", "also": list(also or [])})
 
     def warn(key, why, also=None):
         problems.append({"key": key, "why": why, "level": "warn", "also": list(also or [])})
 
-    # ① 逐项：类型 / 范围 / 字符
     for key, val in values.items():
         it = _setting_spec(key)
         if it is None:
@@ -498,7 +340,7 @@ def _check_values(values):
             continue
         kind = it.get("type") or "text"
         if kind == "raw":
-            continue                    # `V-159`：表 / 结构化的项，通用校验管不着
+            continue
         if kind == "bool":
             if not isinstance(val, bool):
                 err(key, "要的是开关（true / false），收到 %r" % (val,))
@@ -516,35 +358,25 @@ def _check_values(values):
                     err(key, "最多 4 个字符（现在 %r）" % (val,))
                 if any(c.isspace() for c in val):
                     err(key, "里不能有空格 / 换行（现在 %r）" % (val,))
-                # ★ `V-156`：只挡**在命令行里有特殊意思**的字符。
-                #   以前 `#` `=` 引号之外还会把 `/` 当成"路径里常见、容易看错"来提醒 ——
-                #   可 `/` 本来就是我们的默认值，它和一封普通字符一样不会引起什么特殊执行，
-                #   白提醒只会让人以为配错了。真正会出事的是 `>`（重定向/管道）、`@`（把命令
-                #   本身藏起来）、`%` `!`（cmd 变量 / 延迟展开）这些。
                 _bad = sorted({c for c in val if c in SYMBOL_BAD})
                 if _bad:
                     err(key, "「%s」在命令行里有特殊意思（重定向 / 管道 / 变量 / 通配那一类），"
                              "当前缀会出事 —— 换一个普通的，比如 / : ~ . - _ 或者一个字母"
                              % " ".join(_bad))
             else:
-                # TOML 的基本字符串不能跨行：横幅文本里混进换行会把整个文件写坏
                 if "\n" in val or "\r" in val:
                     err(key, "里不能有换行（现在 %r）" % (val,))
 
-    # ★ `V-298`：短命令前缀要**同时能当命令名和文件名** —— 字母开头、只含字母/数字/-/_。
     pv = after.get("shortcut.prefix")
     if pv is not None and not re.match(r"^[A-Za-z][A-Za-z0-9_-]{0,7}$", str(pv)):
         err("shortcut.prefix", "前缀要字母开头、只含字母/数字/-/_，1~8 个字符（现在 %r）" % (pv,))
 
-    # ② 跨项：裸名归谁（这是这两种前缀符号互相干扰的地方）
     if not after.get("symbols.path_mode") and not after.get("symbols.plugin_mode"):
         pair = ["symbols.path_mode", "symbols.plugin_mode"]
         main = next((k for k in pair if k in values), pair[0])
         err(main, "「路径调用」和「跑包」不能同时留空 —— 那样裸名（moss m）算哪一种"
                   "就说不清了", also=[k for k in pair if k != main])
 
-    # 同一个符号用两次：把**同一组的键**收在一起，然后报在"用户刚动过的那一行"上
-    # （不然红字会落在另一行上，看着像在说别人）
     def _label(k):
         it = _setting_spec(k) or {}
         return it.get("label") or k
@@ -553,7 +385,7 @@ def _check_values(values):
     for key in ("symbols.path_mode", "symbols.no_chdir_mode",
                 "symbols.plugin_mode", "symbols.no_force_kill_mode"):
         v = after.get(key) or ""
-        if v:                           # 空串不是符号，是"这一类不带前缀"，不参与查重
+        if v:
             by_value.setdefault(v, []).append(key)
     for v, keys in by_value.items():
         if len(keys) < 2:
@@ -563,7 +395,6 @@ def _check_values(values):
         err(main, "和「%s」用了同一个符号 %r —— 命令含义会有歧义"
             % ("、".join(_label(k) for k in others), v), also=others)
 
-    # ③ 提醒（能存，但值得知道）
     try:
         depth = int(after.get("search.max_parent_depth", 3))
     except (TypeError, ValueError):
@@ -572,9 +403,6 @@ def _check_values(values):
         warn("search.max_parent_depth",
              "找得有点远（一共 %d 个目录）—— 容易撞上上层项目里的同名文件，"
              "撞上就会停下来问你" % (depth + 1))
-    # ★ 注意 `after` 里的键是**扁平的**（`output.pid` 这种），不是嵌套 dict ——
-    #   这里踩过一次：写成 `after.get("output")` 拿到 None，于是"全关"那条提醒
-    #   不管怎么配都会响。
     flags = ("output.command", "output.directory", "output.pid",
              "output.start_time", "output.end_time", "output.duration")
     if (not any(bool(after.get(k)) for k in flags)
@@ -584,12 +412,7 @@ def _check_values(values):
                                "它到底跑没跑、跑了什么")
     return problems
 
-
 def settings_check(values=None):
-    """只校验、不写盘：面板每改一下就来问一次，用来标红 + 决定保存按钮能不能点。
-
-    回 `{"ok", "problems", "notes", "live"}`：`ok` = 没有 error（warn 不算）。
-    """
     values = dict(values or {})
     after = _after_values(values)
     problems = _check_values(values)
@@ -598,14 +421,7 @@ def settings_check(values=None):
             "notes": _notes_for(after),
             "live": _live_line(after)}
 
-
 def settings_problems():
-    """自检用：面板清单和 `DEFAULT_CONFIG` 对不对得上。返回问题清单（空 = 一致）。
-
-    两边键集合必须完全一样：面板漏一个键 = 用户改不到；面板多一个键 =
-    点保存时写不进去（`set_values` 会说"文件里没找到那一行"）。两个方向都查。
-    另外查"该有的说明有没有写"（`V-63`：说不清的设置项等于没写）。
-    """
     problems = []
     seen = set()
     for g in SETTINGS_GROUPS:
@@ -647,29 +463,24 @@ def settings_problems():
                 problems.append("默认配置里有 %s，但设置面板清单里没有它" % key)
     return problems
 
-
 def settings_groups():
-    """给「设置」面板的那份数据：分组 + 每项的当前值 / 默认值 / 说明。"""
     out = []
     for g in SETTINGS_GROUPS:
         items = []
         for it in g["items"]:
             section, name = _split_key(it["key"])
             value = CONFIG.get(section, {}).get(name, DEFAULT_CONFIG[section][name])
-            # ★ `V-299`：`path.moss` 显示的是**真实状态**（moss 现在在不在 PATH 里），
-            #   不是 config 里那个初始值 —— 已经在 PATH 里就别显示成"关"（否则"能用、开关却关着"）。
             if it["key"] == "path.moss":
                 try:
-                    from . import shortcut as _sc                         # noqa: PLC0415
+                    from . import shortcut as _sc
                     value = _sc.moss_on_path()
-                except Exception:                                         # noqa: BLE001
+                except Exception:
                     pass
             items.append({
                 "key": it["key"],
                 "label": it["label"],
                 "type": it.get("type") or "text",
                 "hint": it.get("hint") or "",
-                # ★ `V-298`：少数项自带占位提示（如短命令前缀），没有就交回模板那个默认口径。
                 "placeholder": it.get("placeholder") or "",
                 "value": value,
                 "default": DEFAULT_CONFIG[section][name],
@@ -679,19 +490,10 @@ def settings_groups():
                     "items": items})
     return out
 
-
 def settings_payload():
-    """`moss --settings` 输出给界面的东西（纯 JSON）。
-
-    为什么要有这条命令：界面跑在自带运行时里，而 `core` 是编进 exe 的
-    （`K-10` 内核最小化）—— 磁盘上根本没有 core 这个目录，界面 import 不到它。
-    所以界面要读设置、要改设置，都只能回来叫宿主（和跑包、`--ui-payload` 同一条路）。
-    """
     return {"path": str(paths.USER_CONFIG), "groups": settings_groups()}
 
-
 def _toml_literal(value, kind):
-    """按 TOML 语法写出一个值（这一步决定文件里长什么样）。"""
     if kind == "bool":
         return "true" if value else "false"
     if kind == "int":
@@ -699,13 +501,7 @@ def _toml_literal(value, kind):
     s = str(value)
     return '"%s"' % s.replace("\\", "\\\\").replace('"', '\\"')
 
-
 def _split_comment(rest):
-    """把一行的「值 + 后面那段注释」拆开，返回 (值连着它的留白, 注释段)。
-
-    ★ 为什么得扫一遍字符串：符号是用户随便填的，`path_mode = "#"` 是合法值 ——
-      用 `rest.find("#")` 去切会把值本身当成注释切掉，于是"改了、看着没变"。
-    """
     quote = ""
     i = 0
     while i < len(rest):
@@ -723,14 +519,7 @@ def _split_comment(rest):
         i += 1
     return rest, ""
 
-
 def _ensure_sections(raw, sections):
-    """把用户文件里缺的段按默认值补到末尾（**只增不改**，原有的字一个不动）。
-
-    为什么要它（`V-298`）：`config.toml` 是"首次运行按模板建的"，而模板后来会长出新段
-    （这次是 `[shortcut]`）—— 老用户的文件里没有它，可 `set_values` 是**按行找键**改值的，
-    找不到那一行就直接报错。补上之后，新设置项对老用户也存得进去。
-    """
     have = set()
     for line in raw.splitlines():
         s = line.strip()
@@ -751,12 +540,7 @@ def _ensure_sections(raw, sections):
         text += nl
     return text + nl.join(block) + nl
 
-
 def set_values(values, path=None):
-    # ★ `V-137`：`ai.*` 单独处理 —— `ai.profiles` 是**表**，通用那条"逐键写 TOML"的路子会把它写成
-    #   一个字符串，下次读就崩（`ai_profiles()` 拿到的不是 dict）。所以：
-    #     ai.active     → 切当前组（`ai_set_active`）
-    #     ai.profiles   → **忽略**（只认 `--ai-profile-set`，免得手滑写坏）
     try:
         _ai = {k: v for k, v in (values or {}).items() if str(k).startswith("ai.")}
         if _ai:
@@ -766,7 +550,7 @@ def set_values(values, path=None):
                 values.pop(k, None)
             if not values:
                 return True, []
-    except Exception:                                                   # noqa: BLE001
+    except Exception:
         pass
     """把面板上改过的值写回配置文件，返回 `{"ok", "problems"}`。
 
@@ -790,10 +574,9 @@ def set_values(values, path=None):
         return {"ok": False,
                 "problems": [{"key": "", "why": "读不了配置文件：%s" % e, "level": "error"}]}
 
-    # ★ `V-298`：老配置缺段时先补上（只增不改），否则新设置项永远"找不到那一行"存不进去。
     try:
         raw = _ensure_sections(raw, [_split_key(k)[0] for k in values])
-    except Exception:                                                     # noqa: BLE001
+    except Exception:
         pass
 
     nl = "\r\n" if "\r\n" in raw else "\n"
@@ -811,7 +594,7 @@ def set_values(values, path=None):
         if key in left:
             kind = (_setting_spec(key) or {}).get("type") or "text"
             val, comment = _split_comment(rest)
-            if val.strip():                                  # 值两边原来的留白照抄
+            if val.strip():
                 lead = val[:len(val) - len(val.lstrip())]
                 trail = val[len(val.rstrip()):]
             else:
@@ -842,7 +625,7 @@ def set_values(values, path=None):
     try:
         with open(target, "rb") as f:
             got = tomllib.load(f)
-    except Exception as e:                                   # noqa: BLE001
+    except Exception as e:
         problems.append({"key": "", "why": "写完之后这个文件读不回来了：%s" % e,
                          "level": "error"})
     else:
@@ -854,26 +637,15 @@ def set_values(values, path=None):
                                  "why": "没写进去：想要 %r，文件里是 %r" % (want, have),
                                  "level": "error"})
             else:
-                CONFIG.setdefault(sec, {})[name] = want      # 内存里那份也跟着更新
+                CONFIG.setdefault(sec, {})[name] = want
     return {"ok": not any(p["level"] == "error" for p in problems),
             "problems": problems}
 
-
 def _collect_problems(user, problems):
-    """把用户配置里"明显写错"的地方挑出来：类型不对 / 段名不认识。
-
-    ★ 为什么要有这道：TOML 里 `max_parent_depth = "3"`（带引号）是**字符串**，
-      直接进 `for depth in ...` 之类的比较会抛异常；而段名写错（`[symbol]`）
-      会让整段配置**静默失效**。两种都是"用户以为改了、其实没生效"，
-      所以一律**打一行说明 + 退回默认值**，不静默、也不崩。
-    """
-    # ① 段名不认识
     for section in user:
         if section not in DEFAULT_CONFIG:
             problems.append("配置里有不认识的段 [%s]，已忽略（是不是拼错了？）" % section)
 
-    # ② 符号本身写得不合理（重复 / 两个都留空）—— 这两种都会让"命令是什么意思"变得说不清，
-    #    必须在用户改完的当场说出来，而不是等他敲命令时莫名其妙。
     sym = user.get("symbols")
     if isinstance(sym, dict):
         names = ("path_mode", "no_chdir_mode", "plugin_mode", "no_force_kill_mode")
@@ -885,7 +657,7 @@ def _collect_problems(user, problems):
         seen = {}
         for n in names:
             v = vals[n]
-            if not v:              # 空串不是符号，是"这一类不带前缀"，不参与查重
+            if not v:
                 continue
             if v in seen:
                 problems.append("symbols 里 %s 和 %s 都用了同一个符号 %r —— "
@@ -893,7 +665,6 @@ def _collect_problems(user, problems):
             else:
                 seen[v] = n
 
-    # ③ 类型不对
     for section, defaults in DEFAULT_CONFIG.items():
         got = user.get(section)
         if not isinstance(got, dict):
@@ -914,17 +685,12 @@ def _collect_problems(user, problems):
                 problems.append("%s.%s 要的是 %s，你写的是 %s（%r）→ 本次用默认值 %r"
                                 % (section, key, type(want).__name__,
                                    type(val).__name__, val, want))
-                got.pop(key)          # 让默认值接手
+                got.pop(key)
 
-
-# ---------------------------------------------------------------- AI 那几组（`V-137`）
 def _ai_section_text(profiles, active):
-    """把 AI 那几节拼成 TOML 文本（整段重建，文件其它部分一字不动）。"""
     out = ['[ai]', 'active = %s' % _toml_str(active or ""), '']
     for name in sorted(profiles or {}):
         pr = profiles[name] or {}
-        # ★ 组名不是"裸键"（中文 / 空格 / @ 之类）就得加引号 —— TOML 的
-        #   `[ai.profiles.深度求索]` 是不合法的，必须是 `[ai.profiles."深度求索"]`。
         key = name if re.fullmatch(r"[A-Za-z0-9_-]+", str(name)) else _toml_str(name)
         out.append('[ai.profiles.%s]' % key)
         for k in AI_FIELDS:
@@ -932,7 +698,6 @@ def _ai_section_text(profiles, active):
                 continue
             v = pr.get(k)
             if isinstance(v, (list, tuple)):
-                # ★ `model` 可以是**多个**（`V-139`）：写成 TOML 数组，读回来还是列表。
                 out.append('%s = [%s]' % (k, ", ".join(_toml_str(x) for x in v)))
             elif isinstance(v, bool):
                 out.append('%s = %s' % (k, 'true' if v else 'false'))
@@ -943,17 +708,11 @@ def _ai_section_text(profiles, active):
         out.append('')
     return '\n'.join(out)
 
-
 def _toml_str(v):
     t = str(v if v is not None else "")
     return '"' + t.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n') + '"'
 
-
 def _write_ai_section(profiles, active, path=None):
-    """只替换文件里的 `[ai]`/`[ai.profiles.*]` 那几节，别的一个字不动。
-
-    ★ 为什么整段重建而不是逐行改：profiles 是**动态表**（增删组、组名字数不一），
-      逐行改要处理"删组""改组名"这些情况，容易把文件弄坏；整段换掉最稳。"""
     p = Path(path or paths.USER_CONFIG)
     txt = p.read_text(encoding="utf-8") if p.is_file() else CONFIG_TEMPLATE
     lines = txt.splitlines()
@@ -971,20 +730,15 @@ def _write_ai_section(profiles, active, path=None):
     body = "\n".join(keep).rstrip("\n")
     p.write_text(body + "\n\n" + _ai_section_text(profiles, active), encoding="utf-8")
 
-
 def ai_profiles(path=None):
-    """当前的 AI 各组（`{组名: {字段…}}`）。"""
     cfg = load().get("ai") or {}
     profs = cfg.get("profiles") or {}
     return {k: dict(v or {}) for k, v in profs.items()}
 
-
 def ai_active_name(path=None):
     return str((load().get("ai") or {}).get("active") or "")
 
-
 def ai_active_profile(path=None):
-    """当前那组的参数（`active` 为空或那组不存在时，取第一组）。"""
     profs = ai_profiles(path)
     name = ai_active_name(path)
     if name not in profs:
@@ -993,21 +747,13 @@ def ai_active_profile(path=None):
         return "", {}
     return name, dict(profs[name])
 
-
 def ai_profile_set(name, fields, path=None):
-    """加/改组（给了哪几个字段就写哪几个；其它字段保持）。"""
-    # ★ 组名允许中文（`V-138`：面板上让人自己起名，"深度求索" 是最自然的一种）。
-    #   只挡掉会把 TOML 表名写坏的那几个字符；写文件时非 ASCII 的表名会加引号
-    #   （见 `_ai_section_text`）。**点也要挡**：`[ai.profiles.a.b]` 在 TOML 里是
-    #   **嵌套表**，组名会被拆成两层，读回来就是一个空组。
     name = re.sub(r'["\\\[\]\.\r\n\t]', "_", str(name or "").strip())[:40].strip() or "default"
     profs = ai_profiles(path)
     cur = dict(profs.get(name) or {})
     for k, v in (fields or {}).items():
         if k not in AI_FIELDS:
             continue
-        # ★ `model` 一律**存成列表**（`V-139`：可以多个）。字符串也接受（命令行 / 手写），
-        #   顺手把逗号 / 换行拆开并去掉空的 —— 不然 `model="a,b"` 会变成一个叫 "a,b" 的模型名。
         if k == "model":
             if isinstance(v, (list, tuple)):
                 cur[k] = [str(x).strip() for x in v if str(x).strip()]
@@ -1020,7 +766,6 @@ def ai_profile_set(name, fields, path=None):
     _write_ai_section(profs, active, path)
     return name, cur
 
-
 def ai_profile_del(name, path=None):
     profs = ai_profiles(path)
     profs.pop(str(name), None)
@@ -1030,24 +775,13 @@ def ai_profile_del(name, path=None):
     _write_ai_section(profs, active, path)
     return sorted(profs)
 
-
 def ai_set_active(name, path=None):
-    _, _ = ai_profile_set(name, {}, path)          # 组不存在就先建个空壳，免得指到一个不存在的组
+    _, _ = ai_profile_set(name, {}, path)
     profs = ai_profiles(path)
     _write_ai_section(profs, str(name), path)
     return str(name)
 
-
 def ai_rename(old, new, path=None):
-    """给一组**改名**：整块搬过去（`profs[new] = profs.pop(old)`）。
-
-    ★ 为什么要有它（`V-139`）：面板上「名字」是个可改的框，改完保存就是换一组。
-      如果走"按新名字再存一遍"那条路，`base_url` / `model` 还能从面板拿到，
-      **密钥拿不到**（面板上只有打码那串，除非用户点「露出来」）—— 一不小心就把 key 弄丢。
-      搬整块表最省事：明文一个字节都不用离开磁盘。
-    ★ 目标名字**已经存在**就不动（返回 None）：那多半是想"合并两组"，而合并得用户自己拿主意；
-      悄悄把另一组的 key 覆盖掉是最坏的结果。
-    """
     old = str(old or "").strip()
     new = re.sub(r'["\\\[\]\.\r\n\t]', "_", str(new or "").strip())[:40].strip()
     if not old or not new or old == new:
@@ -1060,16 +794,14 @@ def ai_rename(old, new, path=None):
     _write_ai_section(profs, new if active == old else active, path)
     return new
 
-
 def ai_import_legacy(path=None, legacy=None):
-    """把老的 `user_data/state/ai/config.json` 导成一组（`V-137` 的迁移）。"""
     f = Path(legacy) if legacy else (paths.USER_DIR / "state" / "ai" / "config.json")
     if not f.is_file():
         return None
     try:
         import json as _json
         j = _json.loads(f.read_text(encoding="utf-8"))
-    except Exception:                                                   # noqa: BLE001
+    except Exception:
         return None
     fields = {}
     if j.get("BASE_URL"):
@@ -1082,13 +814,7 @@ def ai_import_legacy(path=None, legacy=None):
     name, _ = ai_profile_set("legacy-ai", fields, path)
     return name
 
-
 def load():
-    """读用户配置并覆盖默认值；缺文件就自动创建（带注释的模板）。
-
-    照抄 pa.py:80-106 的行为（含"未找到配置文件，将为您自动创建一个"的提示），
-    只把格式从 JSON 换成 TOML。
-    """
     global CONFIG
     CONFIG = copy.deepcopy(DEFAULT_CONFIG)
     try:
@@ -1096,7 +822,7 @@ def load():
         cfg_path = paths.USER_CONFIG
 
         if cfg_path.is_file():
-            with open(cfg_path, "rb") as f:          # tomllib 只吃二进制流
+            with open(cfg_path, "rb") as f:
                 user = tomllib.load(f)
             if isinstance(user, dict):
                 problems = []
@@ -1132,13 +858,7 @@ def load():
 
     return CONFIG
 
-
 def template_problems():
-    """自检用：`CONFIG_TEMPLATE` 和 `DEFAULT_CONFIG` 是否一致。
-
-    防止"以后给 DEFAULT_CONFIG 加了新键、忘了往模板里加"—— 那样用户打开
-    `config.toml` 就看不到这个键，等于文档缺失。返回问题清单（空 = 一致）。
-    """
     try:
         parsed = tomllib.loads(CONFIG_TEMPLATE)
     except Exception as e:
@@ -1159,31 +879,16 @@ def template_problems():
             problems.append("模板里有默认配置里没有的段 [%s]" % section)
     return problems
 
-
-# ---------------------------------------------------------------- 取值helper
 def symbols():
     return CONFIG.get("symbols", {})
-
 
 def plugin_symbol():
     return symbols().get("plugin_mode", ":")
 
-
 def path_symbol():
-    """路径调用的前缀。**空串 = 裸名就是路径调用**（默认档）。"""
     return symbols().get("path_mode", "")
 
-
 def bare_owner():
-    """裸名（不带任何前缀）归哪个命名空间：`"path"` 还是 `"package"`。
-
-    规则一句话：**谁的前缀是空串，裸名就归谁**（`CL-12`）。
-      · 默认 `path_mode = ""`、`plugin_mode = ":"` → 裸名 = 路径调用（`moss m`）
-      · 对调成 `plugin_mode = ""`、`path_mode = ":"` → 裸名 = 跑包（`moss img`）
-
-    两个都空（配置非法）或两个都非空（谁也没占裸名）→ 一律按 `"path"`：
-    `load()` 已经就此打过提示，这里**不再自作聪明**，免得"配置写错"变成"命令乱跑"。
-    """
     p = path_symbol()
     g = plugin_symbol()
     if not p and g:
@@ -1192,42 +897,27 @@ def bare_owner():
         return "package"
     return "path"
 
-
 def no_chdir_symbol():
     return symbols().get("no_chdir_mode", "/")
-
 
 def detach_symbol():
     return symbols().get("no_force_kill_mode", "~")
 
-
 def output_cfg():
     return CONFIG.get("output", {})
-
 
 def force_kill():
     return CONFIG.get("ctrl_c", {}).get("force_kill", True)
 
-
 def auto_clear():
     return CONFIG.get("output", {}).get("auto_clear_screen", True)
-
 
 def max_parent_depth():
     return CONFIG.get("search", {}).get("max_parent_depth", 3)
 
-
 def restore_prefix(arg):
-    """把参数开头被输入法打成全角的模式前缀还原成半角。
-
-    照抄 pa.py:126-149 —— 只处理开头最多两个字符，而且只认 moss 自己在用的
-    三个前缀符号（`:` 插件、`/` 不切目录、`~` 后台脱离）。
-    后面的内容一概不动：中文文件名里的（）、，、。都是合法字符，
-    把整个参数一起转反而会把 `moss 报告（终稿）` 这种东西改坏。
-    """
     if not arg:
         return arg
-    # ★ 空串符号要滤掉：它是"配置没填"的意思，不是"匹配任何开头"
     prefixes = {s for s in (plugin_symbol(), no_chdir_symbol(), detach_symbol()) if s}
     out = list(arg)
     for i in range(min(2, len(out))):
@@ -1238,8 +928,6 @@ def restore_prefix(arg):
             break
     return "".join(out)
 
-
-# pa.py:116-123 原样
 FULLWIDTH_TO_HALF = {
     '：': ':', '；': ';', '，': ',', '。': '.', '、': '\\', '／': '/',
     '＝': '=', '－': '-', '～': '~', '！': '!', '？': '?', '＠': '@',

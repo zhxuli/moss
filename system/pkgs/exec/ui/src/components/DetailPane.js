@@ -1,10 +1,3 @@
-/* 右侧详情：一张卡片 + 空状态。
- *
- * 表单字段直接绑在 command 上（改对象 prop 的属性能省掉十几组 v-model 管道），
- * 任何改动统一抛 change，由父级决定标不标"未保存"。
- * 事件名一律用 set-xxx 这种全小写形式 —— in-DOM 模板会把属性名小写化，
- * 用 update:modelValue 这类驼峰事件名对不上。
- */
 import AdvancedOptions from "./AdvancedOptions.js";
 import OutputArea from "./OutputArea.js";
 import ActionBar from "./ActionBar.js";
@@ -32,7 +25,6 @@ export default {
   emits: ["change", "set-html-view", "set-last-args", "set-confirming", "set-code",
           "pick", "save", "run", "delete", "stop", "close-run", "console", "save-run"],
   computed: {
-    /* 编辑器/输入框用 v-model 绑这个中转属性 */
     codeLocal: {
       get() { return this.code; },
       set(v) { this.$emit("set-code", v); },
@@ -65,7 +57,7 @@ export default {
                  autocomplete="off" @input="$emit('change')">
         </div>
 
-        <!-- 多行内容：高亮层 + 透明文本框；HTML 可直接内嵌预览 -->
+        
         <div class="field code" v-if="spec.multiline">
           <div class="label">
             <span>{{ spec.payload }}</span>
@@ -79,13 +71,13 @@ export default {
           </div>
           <code-editor v-show="htmlView === 'code'" v-model="codeLocal"
                        :language="spec.lang" @change="$emit('change')"></code-editor>
-          <!-- 用 iframe 渲染：样式被 iframe 边界隔离，不会污染主界面 -->
+          
           <iframe v-if="isHtml && htmlView === 'preview'" class="preview-frame"
                   :srcdoc="code" sandbox="allow-scripts allow-same-origin"></iframe>
           <div class="field-note"></div>
         </div>
 
-        <!-- 单行内容：网址 / 路径 -->
+        
         <div class="field" v-else>
           <div class="label">{{ spec.payload }} <span class="hint">{{ placeholderHint }}</span></div>
           <div class="alias-row">

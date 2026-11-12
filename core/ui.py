@@ -1,27 +1,3 @@
-# -*- coding: utf-8 -*-
-"""宿主界面（v0）：把 `system/ui/main.py` 交给自带运行时去跑。
-
-为什么界面不编进 exe（`K-10` 内核最小化）
-----------------------------------------
-界面要 pywebview + pythonnet + WebView2。编进 exe 会让 6.3 MB 的产物翻倍，
-而且**每改一次界面都要重新打包**。所以界面跟"包"一样放在 exe 外面：
-`system/ui/` 是**宿主自己的界面** —— 它不属于任何包，也不能用 `moss --remove` 删掉。
-
-三个进程的角色（别搞混）
-------------------------
-    moss.exe            宿主。负责解析、找解释器、把包列表写成 JSON、等界面退出。
-    system/ui/main.py   界面本体，用**自带运行时**跑（那里有 pywebview）。
-                        它**不 import core** —— 发行版里 core 编在 exe 里，
-                        磁盘上根本没有这个目录。
-    包（`moss :img`）    界面要跑包时，去调 **moss.exe 自己**
-                        （`MOSS_HOST_CMD`，打包后就是 exe，源码运行时是 python + moss.py），
-                        和用户手敲命令走的是同一条路，不另开一条通道。
-
-为什么要 `CREATE_NO_WINDOW`
----------------------------
-界面模式（双击 / `moss ui`，见 `shell.gui_mode()`）下起子进程一律带
-`CREATE_NO_WINDOW`，否则点一下闪一个黑框（`E-27` ✅）。
-"""
 import base64
 import ctypes
 import json
@@ -37,31 +13,18 @@ from . import shell as shell_mod
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-#: `docs` 里**每个文件**最多读这么多字符（`V-388`）——够写一份用法说明，
-#: 又不至于让一份大 README 把整个 payload 撑大（界面每次都整份拿）。
 DOCS_MAX = 24000
 
 UI_DIR = paths.SYSTEM_DIR / "ui"
 UI_MAIN = UI_DIR / "main.py"
 UI_PAGE = UI_DIR / "index.html"
 
-# 界面能显示图标的前提是"宿主把图变成 data URI 塞进 JSON"（见 `_icon_uri`）。
-# 为什么不传路径：WebView2 里页面是 file:// 源，直接 <img src="file:///...">
-# 会被当跨源子资源挡掉；转成 data URI 最省事，18 个 svg 一共才几 KB。
 _MIME = {".svg": "image/svg+xml", ".png": "image/png", ".webp": "image/webp",
          ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
          ".bmp": "image/bmp", ".ico": "image/x-icon"}
 _ICON_MAX_BYTES = 200 * 1024
 
-
 def _icon(pkg, pkg_dir):
-    """图标给界面用。返回 (data URI, 内联 svg 文本)。
-
-    ★ svg 要**内联**（而不是塞进 `<img src=...>`）：那 18 个图标画的是
-      `stroke="currentColor"`，只有内联进 DOM 才会跟着主题变色；
-      放进 `<img>` 里 currentColor 会退化成黑色，深色主题下直接看不见。
-      图标是**数据不是指令**（`X-16`），前端内联前会剥掉 script / 事件属性。
-    """
     p = pkg_mod.icon_path(pkg, pkg_dir)
     if not p:
         return "", ""
@@ -77,34 +40,23 @@ def _icon(pkg, pkg_dir):
     mime = _MIME.get(suffix, "application/octet-stream")
     return "data:%s;base64,%s" % (mime, base64.b64encode(raw).decode("ascii")), ""
 
-
 def _python(table):
-    """找一个能跑界面的 Python。返回 (路径 或 None, 说明)。
-
-    ★ 用 `kind="package"` 的顺序（**自带运行时优先**）：界面要 pywebview，
-      而这台机器上只有自带运行时里那份是齐的（pythonnet + clr_loader + WebView2）。
-      系统 Python 得用户自己 pip install pywebview。
-    """
     spec = (table or {}).get("python") or {}
     info = runners_mod.probe("python", spec, {"cwd": str(paths.HOME)}, kind="package")
     return info.get("interpreter"), info.get("why")
 
-
 def _has_webview(exe):
-    """这个解释器旁边有没有 pywebview。只看文件，不起子进程（自检要快）。"""
     if not exe:
         return False
     root = Path(exe).resolve().parent
     cands = [
-        root / "Lib" / "site-packages" / "webview" / "__init__.py",   # 自带运行时 / venv
+        root / "Lib" / "site-packages" / "webview" / "__init__.py",
         root / ".." / "Lib" / "site-packages" / "webview" / "__init__.py",
         root / "lib" / "site-packages" / "webview" / "__init__.py",
     ]
     return any(c.is_file() for c in cands)
 
-
 def available(table=None):
-    """界面能不能开。返回 (ok, 说明)。`--selfcheck` 与 `launch()` 共用。"""
     if not UI_MAIN.is_file():
         return False, "缺文件：%s" % UI_MAIN
     if not UI_PAGE.is_file():
@@ -115,29 +67,13 @@ def available(table=None):
     if not exe:
         return False, "找不到能跑界面的 Python（%s）" % (why or "没配解释器")
     if not _has_webview(exe):
-        # `V-367`：这句会出现在**弹给用户的 MessageBox** 里 ⇒ 说人话。
-        #   以前写的是"这个 Python 里没有 pywebview：<路径>\n       自带运行时
-        #   （system\runtimes\python\）里是带的；系统 Python 需要自己 pip install
-        #   pywebview" —— 里面既有内部目录，又有一段**源码缩进漏进了文案**（那 7 个空格）。
         return False, ("界面缺一个组件（pywebview），跑不起来。\n"
                        "用 moss 自带的 Python 跑界面就行；%s 里没有这个组件。" % exe)
     return True, exe
 
-
-#: WebView2 运行时的下载页（`V-390`）。缺它界面会**静默**退回 IE 内核 —— 只有这一条路能救
 WEBVIEW2_URL = "https://developer.microsoft.com/microsoft-edge/webview2/"
 
-
 def webview2_status(table=None):
-    """界面能不能用 Chromium 内核渲染。返回 (True / False / None, 说明)。
-
-    ★ 为什么让**界面进程**自己回答（`system/ui/main.py --check-webview2`），而不是宿主直接
-      读注册表：判据是 pywebview 的 `winforms._is_chromium()`（.NET 4.6.2+ **且**注册表里
-      有 WebView2 运行时）。那份逻辑**只能有一处**，否则 pywebview 换判据时必然漏改一边。
-      宿主这边也不该 import pywebview —— 那是界面进程的事，而且会把 CLR 拖进 exe。
-    ★ 返回 None = "问不出来"（运行时缺了 / 界面文件坏了 / 超时），跟 False（确实缺）分开：
-      自检要能分清"这台机器要装 WebView2"和"这份发行版本身不完整"。
-    """
     if table is None:
         table = runners_mod.load()
     exe, why = _python(table)
@@ -147,13 +83,13 @@ def webview2_status(table=None):
         p = subprocess.run([exe, str(UI_MAIN), "--check-webview2"],
                            cwd=str(paths.HOME), capture_output=True, timeout=25,
                            creationflags=_NO_WINDOW)
-    except Exception as e:                                            # noqa: BLE001
+    except Exception as e:
         return None, "问不出来：%s" % e
     out = (p.stdout or b"").decode("utf-8", "replace")
     for line in reversed(out.strip().splitlines()):
         try:
             data = json.loads(line)
-        except Exception:                                             # noqa: BLE001
+        except Exception:
             continue
         if isinstance(data, dict) and "ok" in data:
             return bool(data.get("ok")), str(data.get("detail") or "")
@@ -161,53 +97,19 @@ def webview2_status(table=None):
     return None, ("界面进程没回话（退出码 %s）%s"
                   % (p.returncode, ("：" + err[-1]) if err else ""))
 
-
 def host_cmd():
-    """界面要跑包时该调谁：打包后是 moss.exe 自己，源码运行时是 python + moss.py。
-
-    （界面**不 import core**，所以它没法自己解析包 —— 必须回到宿主这条路上来。）
-
-    ★ **绝对不能用 `sys.executable`**（2026-09-27 实测踩到）：nuitka onefile 下
-      它指的是**临时解包目录**里那个解释器 ——
-      `C:\\Users\\…\\AppData\\Local\\moss_build\\134350634283468622\\python.exe`，
-      那个目录随进程结束就没了。界面上点"运行"于是报
-      `启动失败：[WinError 2] 系统找不到指定的文件`（截图里当场看见的）。
-      改用 **`sys.argv[0]`**：它指向"真正被启动的那个文件" —— 打包后是 moss.exe、
-      源码运行是 moss.py。`core/paths.py` 定位安装根用的也是它（同一个理由）。
-    """
     argv0 = os.path.abspath(sys.argv[0]) if sys.argv else ""
     exe = os.path.abspath(sys.executable or "")
     if argv0.lower().endswith(".py") and os.path.isfile(argv0):
-        return [exe, argv0]                 # 源码运行：<python> moss.py
+        return [exe, argv0]
     if os.path.isfile(argv0):
-        return [argv0]                      # 打包后：moss.exe 自己
+        return [argv0]
     return [exe]
 
-
 def _docs_of(pkg, pkg_dir):
-    """包的「说明」文件（`V-388` ✅）：`"docs": {"readme": "README.md"}`。
-
-    声明里写的是**相对包目录**的路径；这里把它**读成文本**再交给界面 ——
-    界面只管渲染，不用读盘、也不用认识包格式（沿用 `_ui_of` 那条分工）。
-
-    ★ 为什么加这个：`docs` 在契约里早就留着（一直标 ⬜ 没实现），于是像 `pip`
-      这种"一句话 desc + 没有参数"的包，详情页**一个字的使用方法都没有** ——
-      用户的原话："详情里面 并没有它的使用方法的介绍呀"。
-
-    ★ 读法只有一份：`pkg.docs_of()`（`moss --info --docs` 走的是同一个函数）。
-      这里只负责把它**截到 `DOCS_MAX`** —— 界面每次都整份拿 payload，
-      一份大 README 就能把它撑爆。
-    """
     return pkg_mod.docs_of(pkg, pkg_dir, limit=DOCS_MAX)
 
-
 def _ui_of(pkg, pkg_dir):
-    """包的「界面」声明（`V-48` ✅）：`"ui": {"embed": "ui/index.html"}`。
-
-    声明里写的是**相对包目录**的路径；这里解析成**绝对路径**再交给界面 ——
-    界面只管把它变成 `file://` 塞进 iframe，不用自己拼包目录（也不用认识包格式）。
-    文件不存在就当没声明（并在 stderr 说一句），免得界面上多出一个点进去空白的选项卡。
-    """
     raw = pkg.get("ui")
     if not isinstance(raw, dict):
         return None
@@ -224,15 +126,10 @@ def _ui_of(pkg, pkg_dir):
         title = title.get("zh-CN") or title.get("en") or ""
     return {"embed": str(full), "title": str(title or "")}
 
-
 def build_payload():
-    """交给界面的全部数据（界面只是个渲染器，不认识 pkg.json 的格式）。"""
     pkgs = []
     for rec in registry.scan_all():
         p = rec["pkg"]
-        # ★ 多语言 name/desc 要**先摊平**：`display_name` 是**就地改 pkg 并返回 pkg
-        #   自己**（不是返回名字字符串）。曾经把它当名字字符串用，18 个包
-        #   全显示成 `[object Object]`。
         pkg_mod.display_name(p)
         ai = p.get("ai") or {}
         icon_uri, icon_svg = _icon(p, rec["dir"])
@@ -247,11 +144,7 @@ def build_payload():
             "aliases": [str(a) for a in (p.get("aliases") or [])],
             "tags": [str(t) for t in (p.get("tags") or [])],
             "params": p.get("params") or [],
-            # 「拖进来」声明（`V-38` ✅）：已经是"命令数组"了（`pkg.normalize_drop` 归一化过），
-            # 空数组 = 这个包不收拖入。界面拖动时**只列收得下的包**、只画对应的投放框。
             "drop": p.get("drop") or [],
-            # 「界面能不能内嵌」（`V-48` ✅）：`_ui_of()` 已经把相对路径解析成绝对路径。
-            # `None` = 这个包没有可内嵌的界面（界面上那个选项卡就不出现）。
             "ui": _ui_of(p, rec["dir"]),
             "docs": _docs_of(p, rec["dir"]),
             "ai_expose": bool(ai.get("expose")),
@@ -269,11 +162,7 @@ def build_payload():
         "user_data": str(paths.USER_DIR),
         "host_cmd": host_cmd(),
         "launch_kind": shell_mod.launch_kind(),
-        # 图标后缀顺序由宿主带过去：界面那侧要按同一套顺序去"历史目标目录"里
-        # 找 `icon.xxx`，两边共用一份顺序，免得以后 `F-29` 改了漏改
         "icon_exts": list(pkg_mod.ICON_EXTS),
-        # ★ `V-305`：界面**不再硬编码 `:`** —— 「跑包 / 路径 / 不切目录 / 后台」这几个符号
-        #   都是 `symbols` 段里可改的（设置→符号），界面照搬显示、并照它拼命令行。
         "symbols": {
             "plugin": config.plugin_symbol(),
             "path": config.path_symbol(),
@@ -283,14 +172,7 @@ def build_payload():
         "packages": pkgs,
     }
 
-
 def _alert(text):
-    """GUI 模式下没有控制台，`print` 等于丢进 NUL —— 那种情况要弹窗。
-
-    ★ 2026-10-31：判据从 `has_console()` 改成 `gui_mode()` **或者** `_own_console_launch()`。
-      `hide` 档下双击启动**是有控制台的**（只是窗口在 Windows Terminal 那边），以前这里
-      会认为"有控制台"就往那个看不见的地方 print —— 双击启动时报的错用户一个字都看不到。
-    """
     if not (shell_mod.gui_mode() or _own_console_launch()):
         out.print_cyan(text)
         return
@@ -299,19 +181,9 @@ def _alert(text):
     except Exception:
         pass
 
-
-#: 「我这一份已经**没有控制台**了」—— 旧方案留下的记号，现在不用了（留着防老环境串味）
 NO_CONSOLE_ENV = "MOSS_NO_CONSOLE"
 
-
 def _launch_note(text):
-    """把"这次是怎么启动的 / 判成了什么 / 走哪条路"记一行到 `user_data/state/_ui_launch.log`。
-
-    ★ 为什么留这份日志：双击那条路上出问题（多一个命令行窗口、界面起不来）时**屏幕上
-      什么都看不到** —— 这份日志能说清"当时判成了什么、有没有走'拉起就走'那条路"。
-      和 `_ui_drop.log` / `_ui_http.log` 一个路子：只记事，坏了也不影响启动。
-      只留最近一截，别长成山。
-    """
     try:
         p = paths.STATE_DIR / "_ui_launch.log"
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -320,32 +192,16 @@ def _launch_note(text):
             p.write_text(keep, encoding="utf-8")
         with open(p, "a", encoding="utf-8") as f:
             f.write("%s pid=%s %s\n" % (time.strftime("%H:%M:%S"), os.getpid(), text))
-    except Exception:                                                  # noqa: BLE001
+    except Exception:
         pass
 
-
 def _own_console_launch():
-    """这次启动，那个控制台是不是**为我们新建的**（双击 / 快捷方式 / 快速启动栏 /
-    `build.py` 的 DETACHED 重启都算）。
-
-    ★ 判据在 `shell_mod.console_is_only_ours()`：**这个控制台上一个 shell 都没有**。
-    ★ 为什么不看 `gui_mode()` 里"控制台藏没藏"：这台机器把默认终端设成了 Windows
-      Terminal —— 双击时 WT 用**自己的窗口**显示那个新控制台，nuitka 的 `SW_HIDE` 藏的
-      只是 conhost 的伪窗口，所以"藏没藏"反映不出来（`gui_mode()` 也可能判成 False）。
-    ★ 为什么不用"父链上有没有 shell"：`build.py` 是从终端跑的，它 DETACHED 拉起的那一份
-      仍然是**自己新造的控制台**（同样会留一扇窗），可父链里有 pwsh。
-    ★ 这为什么要紧：那个控制台窗口**只有等占着它的进程退出才会关**（实测：`FreeConsole()`
-      之后它还在，前 8.9 秒一直在；进程一退，0.3 秒内就消失）。所以走这条路时，宿主把
-      界面拉起来就**立刻退出**，窗口跟着关掉（见 `launch()`）。
-    """
     try:
         return bool(shell_mod.console_is_only_ours())
-    except Exception:                                                  # noqa: BLE001
+    except Exception:
         return False
 
-
 def launch(args=None):
-    """开界面。返回退出码（界面窗口关掉就返回）。"""
     table = runners_mod.load()
     ok, why = available(table)
     if not ok:
@@ -356,12 +212,6 @@ def launch(args=None):
     fd, tmp = tempfile.mkstemp(prefix="moss-ui-", suffix=".json")
     os.close(fd)
     tmp_path = Path(tmp)
-    # ★ 2026-10-31：双击 / 快捷方式那条路**拉起界面就走**（不等）。
-    #   为什么：那个控制台窗口是 Windows 单独给我们建的（这台机器上是 Windows Terminal
-    #   开的窗口），它**只有占着它的进程退出才会关**。宿主本来就是"等界面退出才返回"，
-    #   于是那扇窗会整场挂着 —— 用户报的就是这个。
-    #   所以这条路：把界面（`CREATE_NO_WINDOW`，它自己不会有窗口）拉起来，宿主**立刻退出**
-    #   ⇒ 控制台没人占了 ⇒ 窗口关掉；界面在后台照常跑（它是独立进程，不靠宿主活着）。
     leave_now = _own_console_launch()
     keeps_payload = False
     try:
@@ -387,12 +237,9 @@ def launch(args=None):
         _launch_note("launch args=%r gui_mode=%s own_console=%s flags=0x%X pid=%s"
                      % (list(args or []), gui, leave_now, flags, proc.pid))
         if leave_now:
-            # ★ 这个临时文件**不能**在这儿删：界面可能还没读到它。交给界面读完自己删
-            #   （`system/ui/main.py::_load_data`）。
             keeps_payload = True
             return 0
 
-        # 终端里敲的那条路：等界面退出（关掉窗口 = 这次调用结束；Ctrl+C 连带把界面收掉）。
         try:
             while proc.poll() is None:
                 time.sleep(0.1)

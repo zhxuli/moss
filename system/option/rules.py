@@ -1,45 +1,16 @@
-# -*- coding: utf-8 -*-
-"""**设置面板的规则**（纯函数）—— 宿主和界面**共用这一份**（`V-276`）。
-
-为什么要独立出来
-----------------
-你说得对：「后台的 python 代码自己为什么不干，还得重起一个进程？」。原来的做法是
-**界面 → 起一个 `moss.exe` → 它在里面算**（真机实测那一趟 **0.73~1.07 秒**，
-而真正算这几行只要 **≈20ms**）。根因是 `U-16` 那条分层规矩被一刀切了：
-发行版里 `core/` 编进 exe、磁盘上没有，界面 `import core` 会失败 ⇒ 于是连
-"纯读纯算"的活也一律回头叫宿主。
-
-现在把规则搬到这里：**`system/` 下的一个普通模块**（随发行版走、磁盘上一定有），
-* 宿主 `core/config.py` 调它（CLI / 打包后的 exe 都走这条）；
-* 界面进程 `system/ui/main.py` 也 import 它 ⇒ **同进程、0 进程、<1ms**。
-
-三条纪律
---------
-1. **不许 import `core`**（否则界面又拿不到）—— 这里的默认值来自 `settings.json`；
-2. 与 `core/config.py` 里的实现**行为必须逐字一致** —— `tools/设置规则探针.py` 拿同一批
-   输入把两边的 `problems / notes / live` 逐字对比（谁改了都得两边一起改，否则探针红）；
-3. 面板清单（有哪些键、标签、说明、默认值）是**数据**：`settings.json`
-   （由 `tools/导出设置清单.py` 从 `core/config.py` 的 `SETTINGS_GROUPS` 生成）。
-"""
 import json
 import os
 import re
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent                 # system/option
+HERE = Path(__file__).resolve().parent
 SPEC_FILE = HERE / "settings.json"
 
-
 def _moss_on_path():
-    """moss 的安装目录在不在 PATH 里（用户 / 系统 / 当前环境任一）。
-
-    ★ `V-299`：和 `core/shortcut.py::moss_on_path()` **同一口径**（两处都要对得上，
-      `tools/设置规则探针.py` 的 C 段拿它俩比面板数据）。
-    """
-    home = str(HERE.parent.parent)                     # system/option 的上两级 = 安装根
+    home = str(HERE.parent.parent)
     cands = []
     try:
-        import winreg                                   # noqa: PLC0415
+        import winreg
         hives = [(winreg.HKEY_CURRENT_USER, "Environment"),
                  (winreg.HKEY_LOCAL_MACHINE,
                   r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")]
@@ -48,20 +19,16 @@ def _moss_on_path():
                 with winreg.OpenKey(hive, sub) as k:
                     v, _ = winreg.QueryValueEx(k, "Path")
                 cands += [p.strip() for p in str(v).split(";") if p.strip()]
-            except Exception:                                             # noqa: BLE001
+            except Exception:
                 pass
-    except Exception:                                                     # noqa: BLE001
+    except Exception:
         pass
-    # ★ 只认注册表里的 PATH（用户/系统）—— 不算当前进程环境 PATH（`V-299`：会持久生效的才算）
     want = os.path.normpath(home).lower()
     return any(os.path.normpath(p).lower() == want for p in cands)
 
-#: 读一次就够（面板是静态资产）
 _CACHE = {}
 
-
 def spec():
-    """`settings.json` 的内容（读不到就返回一个空壳 —— 调用方自己会退回宿主那一路）。"""
     if "spec" in _CACHE:
         return _CACHE["spec"]
     try:
@@ -71,17 +38,13 @@ def spec():
     _CACHE["spec"] = data
     return data
 
-
 def symbol_bad():
     return set(spec().get("symbol_bad") or "")
-
 
 def groups():
     return spec().get("groups") or []
 
-
 def items():
-    """`{键: 那一项的定义}`（键是 `段.键`）。"""
     if "items" in _CACHE:
         return _CACHE["items"]
     out = {}
@@ -91,17 +54,10 @@ def items():
     _CACHE["items"] = out
     return out
 
-
 def setting_spec(key):
     return items().get(str(key or ""))
 
-
 def after_values(values, current=None):
-    """把"这次要改的"叠在"当前生效的"上面 —— 校验看的是**改完之后**的整体。
-
-    `current` = 当前生效值（界面手里是打开面板时拿到的 `orig`；宿主那边是 `CONFIG`）。
-    界面每次都会把**整份面板状态**发过来，所以 `current` 通常用不上；它只是兜底。
-    """
     cur = dict(current or {})
     after = {}
     for key, it in items().items():
@@ -109,9 +65,7 @@ def after_values(values, current=None):
     after.update(values or {})
     return after
 
-
 def live(after):
-    """底部那块预览（多行）：一个能照抄的例子 + 搜索逻辑（`V-156` / `V-157`）。"""
     p = after.get("symbols.path_mode") or ""
     g = after.get("symbols.plugin_mode") or ""
     n = after.get("symbols.no_chdir_mode") or ""
@@ -146,9 +100,7 @@ def live(after):
         out.append("⚠ 两个都有前缀 —— 谁也没占住裸名，moss m 现在按「找文件」处理")
     return "\n".join(out)
 
-
 def notes(after):
-    """每一行底下那句「现在这样」（宿主算、界面只显示）：键 → 一句话。"""
     out = {}
     p = after.get("symbols.path_mode") or ""
     g = after.get("symbols.plugin_mode") or ""
@@ -173,13 +125,7 @@ def notes(after):
                                       % (v, v + 1))
     return out
 
-
 def problems(values, current=None):
-    """看这批值合不合法 / 有没有该提醒的地方。
-
-    返回 `[{"key", "why", "level", "also"}]`：`level` 是 `"error"`（不许保存）或
-    `"warn"`（只是提醒，能存）。**逐字照抄 `core/config.py::_check_values`**（行为要对上）。
-    """
     values = dict(values or {})
     after = after_values(values, current)
     out = []
@@ -191,7 +137,6 @@ def problems(values, current=None):
     def warn(key, why, also=None):
         out.append({"key": key, "why": why, "level": "warn", "also": list(also or [])})
 
-    # ① 逐项：类型 / 范围 / 字符
     for key, val in values.items():
         it = setting_spec(key)
         if it is None:
@@ -199,7 +144,7 @@ def problems(values, current=None):
             continue
         kind = it.get("type") or "text"
         if kind == "raw":
-            continue                    # `V-159`：表 / 结构化的项，通用校验管不着
+            continue
         if kind == "bool":
             if not isinstance(val, bool):
                 err(key, "要的是开关（true / false），收到 %r" % (val,))
@@ -223,23 +168,19 @@ def problems(values, current=None):
                              "当前缀会出事 —— 换一个普通的，比如 / : ~ . - _ 或者一个字母"
                              % " ".join(_bad))
             else:
-                # TOML 的基本字符串不能跨行：横幅文本里混进换行会把整个文件写坏
                 if "\n" in val or "\r" in val:
                     err(key, "里不能有换行（现在 %r）" % (val,))
 
-    # ★ `V-298`：短命令前缀要**同时能当命令名和文件名** —— 字母开头、只含字母/数字/-/_。
     pv = after.get("shortcut.prefix")
     if pv is not None and not re.match(r"^[A-Za-z][A-Za-z0-9_-]{0,7}$", str(pv)):
         err("shortcut.prefix", "前缀要字母开头、只含字母/数字/-/_，1~8 个字符（现在 %r）" % (pv,))
 
-    # ② 跨项：裸名归谁（这是这两种前缀符号互相干扰的地方）
     if not after.get("symbols.path_mode") and not after.get("symbols.plugin_mode"):
         pair = ["symbols.path_mode", "symbols.plugin_mode"]
         main = next((k for k in pair if k in values), pair[0])
         err(main, "「路径调用」和「跑包」不能同时留空 —— 那样裸名（moss m）算哪一种"
                   "就说不清了", also=[k for k in pair if k != main])
 
-    # 同一个符号用两次：把**同一组的键**收在一起，然后报在"用户刚动过的那一行"上
     def _label(k):
         it = setting_spec(k) or {}
         return it.get("label") or k
@@ -248,7 +189,7 @@ def problems(values, current=None):
     for key in ("symbols.path_mode", "symbols.no_chdir_mode",
                 "symbols.plugin_mode", "symbols.no_force_kill_mode"):
         v = after.get(key) or ""
-        if v:                           # 空串不是符号，是"这一类不带前缀"，不参与查重
+        if v:
             by_value.setdefault(v, []).append(key)
     for v, keys in by_value.items():
         if len(keys) < 2:
@@ -258,7 +199,6 @@ def problems(values, current=None):
         err(main, "和「%s」用了同一个符号 %r —— 命令含义会有歧义"
             % ("、".join(_label(k) for k in others), v), also=others)
 
-    # ③ 提醒（能存，但值得知道）
     try:
         depth = int(after.get("search.max_parent_depth", 3))
     except (TypeError, ValueError):
@@ -276,9 +216,7 @@ def problems(values, current=None):
                                "它到底跑没跑、跑了什么")
     return out
 
-
 def check(values=None, current=None):
-    """面板要的那一份：`{"ok", "problems", "notes", "live"}`（跟宿主 `--settings-check` 同形）。"""
     vals = dict(values or {})
     after = after_values(vals, current)
     probs = problems(vals, current)
@@ -287,24 +225,17 @@ def check(values=None, current=None):
             "notes": notes(after),
             "live": live(after)}
 
-
 def panel(current=None):
-    """给「设置」面板的那份数据：分组 + 每项的当前值 / 默认值 / 说明。
-
-    `current` = 当前生效值（界面手里是宿主给的 `value`；宿主那边是 `CONFIG`）。
-    缺了就用 `settings.json` 里的 `default`。
-    """
     cur = dict(current or {})
     out = []
     for g in groups():
         its = []
         for it in (g.get("items") or []):
             value = cur.get(it["key"], it.get("default"))
-            # ★ `V-299`：`path.moss` 显示真实状态（moss 现在在不在 PATH 里），和 core 同口径。
             if it["key"] == "path.moss":
                 try:
                     value = _moss_on_path()
-                except Exception:                                         # noqa: BLE001
+                except Exception:
                     pass
             its.append({"key": it["key"], "label": it["label"],
                         "type": it.get("type") or "text", "hint": it.get("hint") or "",

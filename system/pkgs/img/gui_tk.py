@@ -1,14 +1,3 @@
-# -*- coding: utf-8 -*-
-"""图片工具 —— Tkinter 界面（退路）。
-
-WebView2 / pywebview 起不来时走这里（旧机器、精简系统可能没有 WebView2）。
-界面与旧版 `QuickTools/bin/soft/img/main.py` 一致，业务全部改调 `core.py`，
-所以两条路的处理结果一定相同。
-
-保留它还有一个只有它能做到的原因：**拖放文件夹**。
-WebView2 里拿不到拖进来的文件的**真实路径**（Chromium 的 File 对象不给 path，
-pywebview 也没开放 AllowExternalDrop），所以 WebView 界面只能用「选择…」按钮。
-"""
 import os
 import threading
 import tkinter as tk
@@ -22,7 +11,6 @@ try:
 except ImportError:
     WINDND_AVAILABLE = False
 
-
 class ImageCompressorApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -34,7 +22,6 @@ class ImageCompressorApp(tk.Tk):
         self.config_data, load_msg = core.load_config()
         self.startup_msg = load_msg
 
-        # --- Variables ---
         self.source_dir = tk.StringVar()
         self.output_format = tk.StringVar(value=self.config_data['output_format'])
         self.quality = tk.IntVar(value=self.config_data['quality'])
@@ -47,7 +34,6 @@ class ImageCompressorApp(tk.Tk):
         self.history = list(self.config_data['history'])
         self.current_job = None
 
-        # --- UI Init ---
         self._create_widgets()
         self._load_initial_state()
         self._enable_drag_and_drop()
@@ -55,9 +41,7 @@ class ImageCompressorApp(tk.Tk):
         self._on_format_change()
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
-    # ------------------------------------------------------------------ 构建
     def _create_widgets(self):
-        # --- Source Folder with History ---
         source_frame = ttk.Labelframe(self, text="源文件夹", padding="10")
         source_frame.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")
         source_frame.columnconfigure(0, weight=1)
@@ -68,7 +52,6 @@ class ImageCompressorApp(tk.Tk):
         ttk.Button(source_frame, text="选择...", command=self._select_folder) \
             .grid(row=0, column=1, padx=5, pady=5)
 
-        # --- Options Frame ---
         options_frame = ttk.Labelframe(self, text="压缩与保存选项", padding="10")
         options_frame.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
         options_frame.columnconfigure(1, weight=1)
@@ -91,7 +74,6 @@ class ImageCompressorApp(tk.Tk):
         self.quality_label = ttk.Label(q_frame, text=f"{self.quality.get()}%", width=5)
         self.quality_label.grid(row=0, column=1, padx=5)
 
-        # --- Dynamic Width Frame ---
         self.width_frame = ttk.Frame(options_frame)
         self.width_frame.grid(row=2, column=0, columnspan=4, sticky="ew")
         ttk.Label(self.width_frame, text="目标宽度 (选填):") \
@@ -101,7 +83,6 @@ class ImageCompressorApp(tk.Tk):
         ttk.Label(self.width_frame, text="px (留空则保持原始尺寸)") \
             .grid(row=0, column=2, padx=5, pady=5, sticky="w")
 
-        # --- Dynamic ICO Frame ---
         self.ico_options_frame = ttk.Frame(options_frame)
         self.ico_options_frame.grid(row=2, column=0, columnspan=4, sticky="ew")
         ttk.Label(self.ico_options_frame, text="ICO 尺寸:") \
@@ -115,7 +96,6 @@ class ImageCompressorApp(tk.Tk):
                   text="（可多选；Windows 按场景自动挑：任务栏 32、资源管理器 16/48、预览 256）") \
             .grid(row=1, column=1, padx=5, sticky="w")
 
-        # --- Save Mode and Other UI ---
         ttk.Label(options_frame, text="保存模式:") \
             .grid(row=4, column=0, padx=5, pady=10, sticky="w")
         save_mode_frame = ttk.Frame(options_frame)
@@ -153,9 +133,7 @@ class ImageCompressorApp(tk.Tk):
         style.theme_use('clam')
         style.configure("Accent.TButton", foreground="white", background="#0078D7")
 
-    # ------------------------------------------------------------------ 状态
     def _load_initial_state(self):
-        """旧版：打开就把当前工作目录设成源目录，并写进历史。"""
         current_path = os.getcwd()
         self.source_dir.set(current_path)
         core.push_history(self.config_data, current_path)
@@ -197,7 +175,6 @@ class ImageCompressorApp(tk.Tk):
         self._save_config()
         self.destroy()
 
-    # ------------------------------------------------------------------ 目录
     def _handle_folder_selection(self, folder_path):
         self.source_dir.set(folder_path)
         self.log_text.delete('1.0', tk.END)
@@ -248,7 +225,6 @@ class ImageCompressorApp(tk.Tk):
         if folder:
             self._handle_folder_selection(folder)
 
-    # ------------------------------------------------------------------ 运行
     def _start_processing(self):
         cfg = self._collect_config()
         params = core.build_params(cfg, self.source_dir.get())
@@ -257,7 +233,6 @@ class ImageCompressorApp(tk.Tk):
             messagebox.showerror("错误", bad)
             return
 
-        # ### 修改点 2 ###: 移除了危险操作的二次确认（照抄旧版，别再"好心"加回来）
         self.start_button.config(state="disabled", text="正在处理...")
         self.log_text.delete('1.0', tk.END)
         self.current_job = core.Job(params)
@@ -265,7 +240,6 @@ class ImageCompressorApp(tk.Tk):
         self.after(120, self._drain_job)
 
     def _drain_job(self):
-        """Tk 主线程里轮询作业输出 —— 和 WebView 界面同一套 Job，不用全局 stdout 重定向。"""
         job = self.current_job
         if job is None:
             return
@@ -279,14 +253,12 @@ class ImageCompressorApp(tk.Tk):
             self.start_button.config(state="normal", text="开始处理")
             self._save_config()
 
-
 def run_gui():
     app = ImageCompressorApp()
     print("--- 欢迎使用智能图片压缩工具 ---")
     if WINDND_AVAILABLE:
         print("提示: 您可直接拖动文件夹到此窗口。")
     app.mainloop()
-
 
 if __name__ == '__main__':
     run_gui()

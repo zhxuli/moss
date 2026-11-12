@@ -1,28 +1,9 @@
-/* moss 界面垫片（从示例包 bmi 抄来的，一个字没改逻辑）
-   ============================================================================
-    一句话：**让同一份界面代码，既能被嵌进 moss 的「界面」选项卡，也能自己开窗口。**
-
-    它在页面里提供一套统一的东西给界面用：
-
-      await moss.call('snapshot', {path: 'D:\\code\\x'})   → 调后端的一个方法
-      moss.on('drop', d => { ... })                        → 接宿主/后端推过来的事件
-      moss.env                                            → {embedded, pid?...}
-
-   ★ 两种环境自动分流，界面代码一个字都不用改：
-     · 被内嵌（moss 的 iframe 里）→ 跟宿主 postMessage，宿主再转发给包的**后端进程**；
-     · 独立窗口（包自己开的 pywebview）→ 直接走 `window.pywebview.api.<方法>`，
-       事件则靠后端调 `window.moss.__emit(name, data)` 送进来。
-
-   ★★ `ready` 是**粘的**（`V-287`）：这一枪打得很早（内嵌时就在本文件这一句上），
-     晚一步订阅的 app.js 就收不到 ⇒ 页面永远停在"正在读"。所以 ready 一发就记下来
-     （`moss.ready`），**晚订阅的人补一枪**。别的（drop / visible …）不粘。
-   ============================================================================ */
 (function () {
   'use strict';
 
   const EMBEDDED = window.parent && window.parent !== window;
-  const handlers = {};          // 事件名 -> [fn]
-  const waiting = {};           // 请求 id -> {resolve, reject}
+  const handlers = {};          
+  const waiting = {};           
   let seq = 0;
   let readyFired = false;
   let readyInfo = null;
@@ -64,16 +45,6 @@
   };
   window.moss = moss;
 
-  /* ★ 每次调用都带**超时**：内嵌时这条链是
-     iframe → 宿主 JS → 宿主 Python → 包的后端进程（stdin/stdout）→ 原路回来，
-     中间任何一环漏掉一条回复，界面就永远等下去 —— 真机上的表现是安装窗死死停在
-     「正在启动 · 已经 0 秒」、点什么都没反应，而控制台里一个字都没有。
-     有超时至少会 reject，让上层能把"等不到回话"画到界面上。 */
-  /* ★ 90 秒（原来是 30 秒，这就是"三十秒没反应"那句话的出处）：
-     首次推送大仓库时它真的会跑上几分钟，30 秒一到界面就判死刑 —— 可 git 还在传，
-     人以为失败又点一次，越点越乱。长操作现在改走「后台任务 + 轮询」（见 app.js 的
-     job_start / job_state），那条路一秒内就回、根本用不到这个上限；
-     这里只是给普通调用留点余地。真超时了，提示里会告诉你去「同步日志」看。 */
   const CALL_TIMEOUT_MS = 90000;
 
   function callViaHost(method, params) {
@@ -108,7 +79,6 @@
     });
   }
 
-  /* 老包用的那套桥：内嵌时把它垫出来（方法名转发到宿主） */
   if (EMBEDDED) {
     const api = new Proxy({}, {
       get: function (_t, name) {
@@ -119,7 +89,6 @@
     window.pywebview = { api: api };
   }
 
-  /* 宿主 → 页面：结果、事件 */
   window.addEventListener('message', function (ev) {
     const m = ev.data;
     if (!m || m.moss !== 1) return;
@@ -133,7 +102,6 @@
     }
   });
 
-  /* 拖放进来了 → **告诉宿主**（`V-204`）：真实路径只有父页面那侧拿得到。 */
   if (EMBEDDED) {
     let over = false;
     let captured = false;

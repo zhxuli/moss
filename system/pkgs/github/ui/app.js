@@ -1,19 +1,5 @@
 'use strict';
-/* 极简同步 —— 前端（三段垂直流）
-   ============================================================================
-   界面就一条竖线：本地工作区 → 本地历史记录 → GitHub 云端，中间是管道。
-   状态自己抢焦点（不用 Tab、不用菜单）：
-     有未保存改动 → 第一段琥珀发光、管道 1 往下流
-     有版本待备份 → 第二段电光蓝、管道 2 往下流
-     云端有新版本 → 第三段引力紫、管道 2 往上流
-   全部对齐 → 三段都退成静默态（半透明、低调）。
 
-   ★ 不引任何外部资源：图标是下面 ICON 表里的内嵌 SVG（照 lucide 的画法手画的线条），
-     样式全在 style.css 里手写。
-   ★ 所有数据都来自后端（main.py）的真 git 仓库状态，没有一处是假数据。
-   ============================================================================ */
-
-/* ---------------------------------------------------------------- 图标 */
 var ICON = {
   feather: '<path d="M20.2 3.8a5 5 0 0 0-7 0L4 13v7h7l9.2-9.2a5 5 0 0 0 0-7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M16 8 8 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
   folder: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3c.7 0 1.3.3 1.7.9l1 1.4h7.3A2.5 2.5 0 0 1 21 9.8v7.7A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
@@ -53,7 +39,6 @@ function put(id, name) {
   if (n) { n.innerHTML = svg(name); }
 }
 
-/* ---------------------------------------------------------------- 小工具 */
 function el(id) { return document.getElementById(id); }
 function sub(s) { return document.querySelector(s); }
 function esc(s) {
@@ -74,7 +59,6 @@ function stamp() {
   return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
 }
 
-/* ---------------------------------------------------------------- 忙碌 / 提示 */
 var busyN = 0, busyT = null;
 function busyOn(t) {
   busyN++;
@@ -98,7 +82,6 @@ function toast(text, kind) {
   setTimeout(function () { if (t.parentNode) { t.parentNode.removeChild(t); } }, 5000);
 }
 
-/* ---------------------------------------------------------------- 跟后端说话 */
 function call(m, p) {
   if (!window.moss || typeof moss.call !== 'function') {
     return Promise.reject(new Error('界面垫片 moss-embed.js 没加载'));
@@ -111,8 +94,6 @@ function fail(e) {
   toast('出了点问题：' + why, 'no');
 }
 
-/* ------------------------------------------------ v12：搜索 / 快捷填入（小配件）
-   ★ 列表是"重画"的，输入框本身在 HTML 里、不会被换掉，所以边打字边筛不会丢焦点。 */
 function bindSearch(inputId, wrapId) {
   var inp = el(inputId), wrap = el(wrapId);
   if (!inp || !wrap) { return; }
@@ -135,7 +116,6 @@ function bindSearch(inputId, wrapId) {
   }
 }
 
-/* 「快捷填入」：点一下把常用的开头填进说明框（已经填过就不重复堆） */
 function bindQuickFill() {
   Array.prototype.forEach.call(document.querySelectorAll('.qf'), function (b) {
     b.addEventListener('click', function () {
@@ -147,10 +127,6 @@ function bindQuickFill() {
   });
 }
 
-/* ============================================================ v14：环境状态
-   这一块的目标只有一个：**任何"用不了"都必须在界面上说出来，并给一颗能点的按钮。**
-   （之前"没装 git"和"这文件夹不是仓库"长得一模一样，人只能猜 —— 真机反馈过。）
-   ============================================================================ */
 var ENV_STEPS = {
   git: '这台电脑上还没有 git —— 记录版本、保存、上传全靠它，先把它装上。',
   gh: '缺 gh（GitHub CLI）。装了它，「备份到云端」就能替你**一键建仓库并上传**，'
@@ -161,8 +137,6 @@ var ENV_STEPS = {
   net: '连不上 github.com。本地保存不受影响，但上传/拉取暂时不行 —— 有代理的话打开代理再试。'
 };
 
-/* 带超时的 Promise：界面**绝不允许**无限等下去（真机反馈"点了一下就卡着，
-   等一分钟也不行"——后端一条线程被 git/gh 拖住时，前端就是这么干等的） */
 function withTimeout(p, ms, tag) {
   return new Promise(function (resolve, reject) {
     var done = false;
@@ -177,10 +151,7 @@ function withTimeout(p, ms, tag) {
   });
 }
 
-/* 拉一次环境状态，画到顶部那条 + 决定按钮给几颗
-   ★ 8 秒还不回来就明确说"太慢 / 超时了"，并给命令行自查的办法，不让人对着转圈发愣。 */
 function refreshEnv(fresh) {
-  /* 等待上限 6 秒：真机上一分钟都没反应，这个上限必须硬 */
   return withTimeout(call('env_check', { path: S.path, fresh: fresh ? 1 : 0 }), 6000, 'env')
     .then(function (r) {
       S.env = r || {};
@@ -196,7 +167,6 @@ function refreshEnv(fresh) {
     });
 }
 
-/* 超时/出错时顶部那条长什么样 */
 function paintTimeout(isTimeout) {
   var bar = el('envBar');
   if (!bar) { return; }
@@ -219,7 +189,6 @@ function paintEnv() {
   var bad = items.filter(function (i) { return i.state === 'bad'; });
   var warn = items.filter(function (i) { return i.state === 'warn'; });
 
-  /* 正在装东西时，状态条优先报"正在装"（带秒数），别的都往后放 */
   if (e.pendingInstall) {
     var pw = e.pendingInstall.what || '';
     bar.className = 'envbar';
@@ -230,7 +199,7 @@ function paintEnv() {
     el('envBtns').innerHTML =
       '<button class="env-btn" data-act="env-progress" data-what="' + esc(pw) + '">看进度</button>' +
       '<button class="env-btn alt" data-act="env-recheck">再检查一次</button>';
-    /* 三秒后再看一次，让秒数自己走（只在这一种状态下才定时） */
+
     if (S.envTimer) { clearTimeout(S.envTimer); }
     S.envTimer = setTimeout(function () {
       S.envTimer = null;
@@ -240,11 +209,9 @@ function paintEnv() {
   }
   if (S.envTimer) { clearTimeout(S.envTimer); S.envTimer = null; }
 
-  /* 全好：不占地方，收起来（只在缺东西时才占一条） */
   if (!bad.length && !warn.length && !e.pendingInstall) {
     bar.className = 'envbar ok';
     if (items.length && !S.envSeen) {
-      /* 第一次检查就全好 —— 也别刷屏，直接收起来 */
       bar.classList.add('hide');
       S.envSeen = 1;
       return;
@@ -259,7 +226,7 @@ function paintEnv() {
 
   bar.className = 'envbar' + (bad.length ? ' red' : '');
   el('envIco').innerHTML = svg(bad.length ? 'warn' : 'warn');
-  /* 一次只说**一件最要紧的**，别把五条错误糊人一脸 */
+
   var first = bad[0] || warn[0] || {};
   var rest = bad.length + warn.length - 1;
   el('envTitle').textContent = bad.length
@@ -284,10 +251,9 @@ function paintEnv() {
     h += '<button class="env-btn alt" data-act="env-detail">看详情</button>';
   }
   h += '<button class="env-btn alt" data-act="env-recheck" title="装完 / 登录完之后点这个">再检查一次</button>';
-  /* 真搞不定时的最后一颗按钮：一键把这段求助文字复制走，粘给 moss 的 AI 就行 */
+
   h += '<button class="env-btn alt" data-act="env-askai" title="把现在的情况复制成一段话，粘给 AI">告诉 AI</button>';
   if (!bad.length) {
-    /* 本地能用、只是传不上云：给一条"也能不装 gh"的退路 */
     h += '<button class="env-btn alt" data-act="env-detail">别的办法</button>';
   }
   el('envBtns').innerHTML = h;
@@ -298,18 +264,17 @@ var URL_GIT_DL = 'https://git-scm.com/download/win';
 var URL_GH_DL = 'https://cli.github.com/';
 var URL_SIGNUP = 'https://github.com/signup';
 
-/* 环境详情：把每一条都摆出来，每条该点什么 */
 function dialogEnv() {
   openModal('环境检查', '<div class="note">正在检查…（最多等 8 秒，不会一直转）</div>',
     [{ text: '再检查一次', key: 'ok', kind: 'primary' },
      { text: '关闭', key: 'close', kind: 'ghost' }], true);
-  /* ★ 「再检查一次」要强制重查（fresh=1），否则 4 秒缓存会让你以为没反应 */
+
   S.modalActs.ok = function () { refreshEnv(true).then(function () { dialogEnv(); }); };
   refreshEnv(true).then(function (r) {
     var e = r || S.env || {};
     var b = sub('.dlg-b');
     if (!b || !el('modal').classList.contains('show')) { return; }
-    /* 超时 / 后端没答：把话说清楚，别留一个"正在检查…" */
+
     if (S.envTimeout) {
       b.innerHTML = '<div class="note"><b>这次检查没能按时完成。</b><br>' +
         '多半是这台机器上 git 或 gh 在某一步卡住了（网络不通 / 目录特别大）。' +
@@ -365,14 +330,6 @@ function dialogEnv() {
   });
 }
 
-/* 帮人装：点了之后立刻说清"接下来会发生什么"，别让人对着没反应的屏幕猜 */
-/* ==================================================== 装东西：进度条 + 实时日志
-   ★ 这一段是照真机反馈重写的：第一版点了「帮我装 gh」之后**既没进度条也没日志**，
-     只能干等，人根本不知道在动还是在卡。现在：
-       ① 点下去**立刻**出窗口（不等后端返回，避免"点了没反应"）；
-       ② 每秒问一次后端「到哪一步了」，画进度条 + 读日志尾巴；
-       ③ 装完 / 失败都当场换成对应的脸，并把下一步按钮摆好。
-   ============================================================================ */
 var INST = { timer: null, what: '', t0: 0, lastLog: '', lastBtnSig: '', lastSig: '' };
 
 function stopInstPoll() {
@@ -392,7 +349,7 @@ function instFace(what, st) {
     ? '<div class="pbar done"><i style="width:100%"></i></div>'
     : (bad ? '<div class="pbar bad"><i style="width:100%"></i></div>'
       : (pct === null
-        ? '<div class="pbar indet"><i></i></div>'          /* 抠不到百分比就走不确定态 */
+        ? '<div class="pbar indet"><i></i></div>'          
         : '<div class="pbar"><i style="width:' + pct + '%"></i></div>'));
 
   var head =
@@ -408,13 +365,11 @@ function instFace(what, st) {
         : ('已经 ' + secs + ' 秒' + (pct !== null ? ' · ' + pct + '%' : '') +
            ' · 可以关掉这个窗口，安装会继续'))) +
     '</div></div></div>';
-  /* ★ 注意：进度条只在最后拼一次（以前这里多写了个 `+ bar`，
-     结果界面上出现两条一模一样的进度条 —— 真机反馈过）。 */
 
   var log = (st && st.log) ? st.log : '';
   var box = '<div class="inst-logbox"><div class="inst-loglabel">安装日志（实时）</div>' +
     '<pre class="inst-log" id="instLog">' + esc(log || '（还没输出，等一下下…）') + '</pre></div>';
-  /* 卡住了就说清"可能卡在哪、还能怎么办" —— 别让人干等 */
+
   var hint = (st && st.hint) ? '<div class="inst-hint">' + esc(st.hint) + '</div>' : '';
 
   return head + bar + hint + box;
@@ -441,27 +396,18 @@ function envInstall(what) {
   var label = (what === 'git') ? 'Git' : 'GitHub CLI';
   INST.what = what;
   INST.t0 = Date.now();
-  INST.lastLog = '';      /* 换一次安装就重来，否则日志框会沿用上一次的内容 */
+  INST.lastLog = '';      
   INST.lastBtnSig = '';
 
-  /* ① 立刻出窗口：先给一个"正在启动"，不让屏幕空着 */
   openModal('正在装 ' + label,
     instFace(what, { phase: 'run', text: '正在启动', secs: 0, log: '' }),
     instButtons(what, null), true);
   S.modalActs.next = function () { refreshEnv().then(dialogEnv); };
   S.modalActs.dl = function () { call('open_url', { url: what === 'git' ? URL_GIT_DL : URL_GH_DL }); };
 
-  /* ★★ ② 关键顺序：**先起轮询，再发"开始装"**。
-     以前是先等 `install_tool` 回话、回到话里才起轮询 —— 那个响应一旦不回来
-     （内嵌模式下宿主串行转发，慢调用会把后面全堵住），轮询就永远不启动，
-     界面死死停在"正在启动 已经 0 秒"，等多久都一样（真机就是这样）。
-     现在不管那个响应来不来，进度都会自己往下走。 */
   startInstPoll(what);
 
-  /* ③ 再真的去装（它的回复只用来补充说明，不影响进度） */
   call('install_tool', { what: what }).then(function (r) {
-    /* ★★ 后端说"已经装好了"（`installed`）：**立刻收摊**，不要再假装装一遍。
-       真机踩过：界面上的状态是旧的，人一点就重下一份，装十次都是同一个结果。 */
     if (r && r.installed) {
       stopInstPoll();
       INST.what = '';
@@ -489,8 +435,6 @@ function envInstall(what) {
     }
     toast(r.already ? (label + ' 已经在装了') : ('开始装 ' + label + ' 了，看进度'), 'ok');
   }).catch(function (e) {
-    /* ★ 触发失败也**不能撤掉进度窗**（以前这里 stopInstPoll + 一闪而过的提示，
-       人看到的就是"弹窗永远停在正在启动 0 秒"）。把原因写进窗口里，让进度继续试。 */
     var why = (e && e.message) || String(e);
     var sub2 = sub('.inst-sub');
     if (sub2) { sub2.textContent = '启动请求没成功（' + why + '），正在重试…'; }
@@ -506,15 +450,11 @@ function envInstall(what) {
   });
 }
 
-/* 把一次安装状态**就地画到已有窗口上**（不重画整窗）。
-   ★ 以前是"变了就 openModal 重画一遍"，副作用是日志框被重建、滚动位置丢失、
-     而且每重画一次窗口就闪一下。现在只改文字和进度条宽度。 */
 function paintInst(what, st) {
   var label = (what === 'git') ? 'Git' : 'GitHub CLI';
   var phase = (st && st.phase) || 'run';
   var done = phase === 'done', bad = phase === 'fail';
-  /* 秒数取"后端说的"和"我们自己掐的表"里大的那个 ——
-     后端没回话时也能继续走，绝不冻在 0 秒（真机就是这个症状）。 */
+
   var secs = Math.max((st && st.secs) || 0, Math.round((Date.now() - INST.t0) / 1000));
   var pct = (st && typeof st.percent === 'number') ? st.percent : null;
 
@@ -531,27 +471,27 @@ function paintInst(what, st) {
         : ('已经 ' + secs + ' 秒' + (pct !== null ? ' · ' + pct + '%' : '') +
            ' · 可以关掉这个窗口，安装会继续'));
   }
-  /* 转圈 / 对勾 / 警告 */
+
   var ico = sub('.inst-ico') || sub('.inst-spin');
   if (ico) {
     if (done) { ico.className = 'inst-ico ok'; ico.innerHTML = svg('check'); }
     else if (bad) { ico.className = 'inst-ico no'; ico.innerHTML = svg('warn'); }
   }
-  /* 进度条：确定百分比 / 不确定 / 完成 / 失败 */
+
   var bar = sub('.pbar');
   if (bar) {
     bar.className = 'pbar' + (done ? ' done' : (bad ? ' bad' : (pct === null ? ' indet' : '')));
     var fill = bar.querySelector('i');
     if (fill) { fill.style.width = (pct === null && !done && !bad) ? '' : ((pct === null ? 100 : pct) + '%'); }
   }
-  /* 日志：跟着滚到底 */
+
   var box = el('instLog');
   if (box && st && st.log && st.log !== INST.lastLog) {
     INST.lastLog = st.log;
     box.textContent = st.log;
     box.scrollTop = box.scrollHeight;
   }
-  /* 提示（卡在哪、还能怎么办） */
+
   var old = sub('.inst-hint');
   if (st && st.hint) {
     if (old) { old.textContent = st.hint; }
@@ -567,7 +507,6 @@ function paintInst(what, st) {
   } else if (old) { old.remove(); }
 }
 
-/* 按钮也按状态换（装好了就该出现「登录 gh」） */
 function paintInstButtons(what, st) {
   var sig = [what, st && st.phase].join('|');
   if (sig === INST.lastBtnSig) { return; }
@@ -582,7 +521,7 @@ function paintInstButtons(what, st) {
     btn.textContent = b.text;
     f.appendChild(btn);
   });
-  /* 「下一步」按状态给对的东西：装好 gh 就该直接去登录，别让人再翻菜单 */
+
   S.modalActs.next = function () {
     if (st && st.phase === 'done' && what === 'gh') {
       closeModal();
@@ -594,9 +533,6 @@ function paintInstButtons(what, st) {
   S.modalActs.dl = function () { call('open_url', { url: what === 'git' ? URL_GIT_DL : URL_GH_DL }); };
 }
 
-/* 带超时的 call。
-   ★ 内嵌模式下宿主是串行转发的：一个慢调用会把后面的全堵住，而 `moss.call`
-     的 promise 没有超时 —— 一旦不回来，等多久都是它。所以这里自己掐表。 */
 function callTimeout(m, p, ms) {
   return new Promise(function (resolve, reject) {
     var done = false;
@@ -611,11 +547,6 @@ function callTimeout(m, p, ms) {
   });
 }
 
-/* 每秒读一次进度。
-   ★ 三条铁律（都是真机踩出来的）：
-     ① 任何一次读都**必须带超时**，否则一个不回来的请求会让界面永远停在"0 秒"；
-     ② 读不到也要**把计时刷起来**，让人觉得界面是活的、只是后端慢；
-     ③ 别急着下结论：刚开始那几秒后端可能还没写好状态，要容忍几次"没有记录"。 */
 function startInstPoll(what) {
   stopInstPoll();
   var tick = 0, silent = 0, noneSeen = 0;
@@ -628,7 +559,7 @@ function startInstPoll(what) {
       if (!el('modal') || !el('modal').classList.contains('show')) { stopInstPoll(); return; }
       if (!st || st.phase === 'none') {
         noneSeen += 1;
-        /* 前几秒"还没记录"很正常（后端正在起下载进程），只把计时刷起来 */
+
         paintInst(what, { phase: 'run', text: '正在启动', secs: local(), log: '' });
         if (noneSeen >= 8) {
           stopInstPoll();
@@ -658,10 +589,10 @@ function startInstPoll(what) {
       }
       if (st.phase === 'fail') { stopInstPoll(); refreshEnv(); return; }
       tick += 1;
-      if (tick > 600) { stopInstPoll(); }      /* 10 分钟兜底，别无限轮询 */
+      if (tick > 600) { stopInstPoll(); }      
     }).catch(function (e) {
       silent += 1;
-      /* 后端没回话 ≠ 安装停了。把秒数刷起来，让人看到"界面在等"，而不是冻住 */
+
       paintInst(what, { phase: 'run', text: '正在等后端回话', secs: local(), log: '' });
       if (silent >= 3) {
         instPollBroken((e && e.message) || String(e));
@@ -672,7 +603,6 @@ function startInstPoll(what) {
   INST.timer = setInterval(poll, 1000);
 }
 
-/* 读进度这条路本身坏了 —— 也要让人看见，而不是停在"0 秒" */
 function instPollBroken(why) {
   stopInstPoll();
   openModal('读不到安装进度',
@@ -722,11 +652,6 @@ function envLogin() {
   }).catch(function (e) { busyOff(); fail(e); });
 }
 
-/* 「告诉 AI」：把当前体检结果拼成一段人话复制到剪贴板。
-
-   ★ 为什么做这个：人描述"我这用不了"往往说不清是哪一项缺了，AI 只能瞎猜。
-     这里直接把**机器读到的事实**（哪一项什么状态、报的什么）拼好，粘过去就能对症。
-     剪贴板走 navigator.clipboard（WebView2 里可用），不行就退回"让人自己复制"。 */
 function envAskAi() {
   var e = S.env || {};
   var lines = ['我这个 moss 的 github 包用不了，帮我看看。', '',
@@ -773,7 +698,6 @@ function envIdentity() {
   }).catch(fail);
 }
 
-/* 搜索命中判断：版本号 / 说明 / 短哈希 / 文件名都能搜 */
 function hitQ(q, parts) {
   if (!q) { return true; }
   for (var i = 0; i < parts.length; i++) {
@@ -782,27 +706,24 @@ function hitQ(q, parts) {
   return false;
 }
 
-/* ---------------------------------------------------------------- 状态 */
 var S = {
   boot: null, gh: null, actions: [], groups: [],
   snap: null, tl: null, cloud: null, path: '', picks: null, limit: 20,
   last: null, drawer: false, cloudOpen: true,
-  /* ★ 弹窗按钮的动作表：**开窗时**由 `openModal()` 重置（不能只靠 `closeModal`） */
+
   modalActs: {},
-  /* v12 新增：两个列表的搜索词、文件行内 Diff 的展开状态与缓存 */
+
   qLocal: '', qCloud: '', openDiff: {}, diffs: {}
 };
 
-/* ================================================================ 启动 */
 function boot() {
   put('icoLogo', 'feather'); put('icoFolder', 'folder'); put('icoScan', 'refresh');
   put('icoLaptop', 'laptop'); put('icoHistory', 'history'); put('icoCloud', 'cloud');
-  /* 本地工作区右上角那颗「统计」图标：点开就是代码行数面板 */
+
   put('icoStat', 'chart');
   put('drawerArrow', 'chevronDown');
   put('icoDown', 'arrowDown'); put('icoDown2', 'arrowDown'); put('icoUp', 'arrowUp');
 
-  /* v12：两个搜索框的清空按钮 + 快捷键/快捷填入的绑定 */
   [['qLocalX', 'x'], ['qCloudX', 'x'],
    ['icoSearchL', 'search'], ['icoSearchC', 'search']].forEach(function (p) {
     var b = el(p[0]); if (b) { b.innerHTML = svg(p[1]); }
@@ -810,17 +731,10 @@ function boot() {
   bindSearch('qLocal', 'qLocalWrap');
   bindSearch('qCloud', 'qCloudWrap');
   bindQuickFill();
-  bindEnvRecheck();          // 页面重新被看见 ⇒ 重查环境（见函数上那段说明）
+  bindEnvRecheck();          
 
   busyOn('正在准备…');
-  /* ★ 打开页面这一段原来是**一条链慢慢串下来**：
-       boot → actions → gh（各自等回话）→ loadAll（里面又串三个）→ refreshEnv
-     每个后端都要跑好几条 git（这台机器每条启进程 0.26 秒），加起来就是十几秒。
-     用户的原话："每次打开这个页面都特别慢，不知道哪里出了问题"。
-     现在：① boot/actions/gh 一起发；② 三个只读请求 loadAll 内部并行；
-           ③ **环境检查不再挡路** —— 它最慢，但界面不用等它，先画出来再说，
-              结果回来了往顶部那条提示里填（本来就有一条独立的提示条）。
-     加起来等待 ≈ 最慢那一个，而不是所有之和。 */
+
   var pBoot = call('boot', {}).then(function (b) {
     S.boot = b;
     S.path = b.preferred || '';
@@ -828,12 +742,11 @@ function boot() {
   });
   var pActs = call('actions', {}).then(function (a) {
     S.actions = a.actions || []; S.groups = a.groups || [];
-  }).catch(function () { /* 菜单没读到不影响主流程 */ });
+  }).catch(function () {  });
   var pGh = call('gh', {}).then(function (g) { S.gh = g; })
-    .catch(function () { /* 没 gh 不影响主流程 */ });
+    .catch(function () {  });
 
   return pBoot.then(function () {
-    // 环境检查**和**数据加载一起发，谁也不等谁；界面的骨架立刻画出来
     var pEnv = refreshEnv().catch(function () { return null; });
     return loadAll().then(function () { busyOff(); }).catch(function () { busyOff(); })
       .then(function () { return Promise.all([pActs, pGh]); })
@@ -841,12 +754,6 @@ function boot() {
   }).catch(function () { busyOff(); });
 }
 
-/* 读全部状态。★ 三个请求**一起发**：
-   以前是 snapshot 回来才发 timeline、timeline 回来才发 cloud_versions ——
-   后端每个都要跑十几条 git（这台机器每条启进程 0.26 秒），串着等就是十几秒，
-   用户的原话是"每次打开这个页面都特别慢"。三个都是只读、互不依赖，并行发就行；
-   后端那边也改成并发处理只读请求了（Embedded.loop / PARALLEL_METHODS）。
-   谁先回谁先画，最后一起 syncUI。 */
 function loadAll() {
   busyOn('正在读取…');
   var got = 0, want = 3;
@@ -855,7 +762,7 @@ function loadAll() {
 
   var pSnap = call('snapshot', { path: S.path }).then(function (s) {
     S.snap = s; S.path = s.path || S.path;
-    /* v12：刷新后旧的行内 Diff 缓存作废（文件可能已经变了） */
+
     S.diffs = {}; S.openDiff = {};
     renderHead();
     if (!s.isRepo) { S.tl = null; S.cloud = null; syncUI(); got = want; busyOff(); }
@@ -866,12 +773,9 @@ function loadAll() {
     .then(function (t) { S.tl = t; })
     .catch(function (e) { S.tl = S.tl || {}; fail(e); });
 
-  // 云端版本列表（只读本地那份远端跟踪记录，不联网，所以很快）
   var pCloud = call('cloud_versions', { path: S.path, limit: 30 })
     .then(function (c) { S.cloud = c; })
     .catch(function (e) {
-      // ★ 拿不到就说清为什么（以前这里静默吞掉，界面上就是"什么都没有"，
-      //   根本看不出是后端没这个方法、还是仓库没数据）。
       S.cloud = { ok: false, commits: [],
                   why: '读不到云端版本：' + ((e && e.message) || e) +
                        '（界面比后端新？把包重新运行一次）' };
@@ -884,7 +788,6 @@ function loadAll() {
   ]);
 }
 
-/* 联网刷新云端信息（fetch），刷完再读一遍列表 */
 function refreshCloud() {
   busyOn('正在联网读云端…');
   shootOrb('track2', 'up', 'purple');
@@ -895,7 +798,6 @@ function refreshCloud() {
   }).catch(fail).then(function () { busyOff(); });
 }
 
-/* ================================================================ 头部 */
 function renderHead() {
   var s = S.snap || {};
   var name = s.isRepo ? baseName((s.repo || {}).root || s.path) : baseName(s.path);
@@ -934,8 +836,6 @@ function renderDirMenu(open) {
 }
 function closeDirMenu() { if (dirOpen) { renderDirMenu(false); } }
 
-/* ================================================================ 状态引擎
-   算清"现在最该干什么"，然后一次性把三段卡片 / 两条管道 / 按钮都渲染成对应样子。 */
 function viewState() {
   var s = S.snap || {}, r = s.repo || {}, n = s.net || {}, t = S.tl || {};
   var hasRemote = !!(n.ok && n.remote);
@@ -962,7 +862,6 @@ function viewState() {
 function syncUI() {
   var v = viewState();
 
-  /* ---- 第一段：本地工作区 ---- */
   var cardWork = el('cardWork'), workIcon = el('workIcon'), workStatus = el('workStatus');
   cardWork.className = 'node' + (v.isRepo && v.dirty ? ' node-active-amber' : ' node-done');
   workIcon.className = 'node-ico ' + (v.isRepo && v.dirty ? 'amber' : 'gray');
@@ -985,7 +884,6 @@ function syncUI() {
   el('drawerArrow').style.transform = S.drawer ? 'rotate(180deg)' : '';
   el('note').placeholder = v.isRepo ? '用一句话描述你做了什么修改...' : '这是新建记录，写一句说明...';
 
-  /* ---- 管道 1 + 保存按钮 ---- */
   var p1 = el('pipe1'), p1a = el('pipe1Arrow'), btnSave = el('btnSave');
   if (!v.isRepo) {
     p1.setAttribute('class', 'pipe-amber');
@@ -1007,7 +905,6 @@ function syncUI() {
     el('btnSaveTxt').textContent = '已保存';
   }
 
-  /* ---- 第二段：本地历史记录 ---- */
   var cardLocal = el('cardLocal'), localIcon = el('localIcon'), localVer = el('localVer');
   if (v.dirty) {
     cardLocal.className = 'node';
@@ -1023,7 +920,6 @@ function syncUI() {
   localVer.textContent = v.ver || '—';
   localVer.className = 'ver-pill mono ' + (v.unpushed > 0 && !v.dirty ? 'blue' : 'gray');
 
-  /* ---- 管道 2 + 备份/获取按钮 ---- */
   var p2 = el('pipe2'), p2d = el('pipe2Down'), p2u = el('pipe2Up');
   var btnBackup = el('btnBackup'), btnFetch = el('btnFetch');
   p2u.classList.remove('on');
@@ -1054,7 +950,6 @@ function syncUI() {
   btnFetch.className = 'pipe-btn soft ghostish' + (v.behind > 0 ? ' pulse' : '');
   el('btnFetchTxt').textContent = v.behind > 0 ? ('获取最新版 (' + v.behind + ')') : '获取最新版';
 
-  /* ---- 第三段：GitHub 云端 ---- */
   var cardCloud = el('cardCloud'), cloudIcon = el('cloudIcon'),
       cloudStatus = el('cloudStatus'), cloudVer = el('cloudVer'), cloudDot = el('cloudDot');
   if (!v.isRepo) {
@@ -1094,7 +989,6 @@ function syncUI() {
     el('cloudVerNum').textContent = v.cloudVer || v.ver || '—';
   }
 
-  /* 云端那张卡的展开状态跟着走 */
   var cb = el('cloudBody'), ct = el('cloudCaret');
   if (cb) { cb.classList.toggle('open', S.cloudOpen); }
   if (ct) { ct.innerHTML = svg('chevronDown'); ct.style.transform = S.cloudOpen ? 'rotate(180deg)' : ''; }
@@ -1109,7 +1003,6 @@ function syncUI() {
     : ('当前：' + (S.path || '—') + '（还不是托管文件夹）');
 }
 
-/* ---- 文件清单（第一段里那个可折叠抽屉） ---- */
 function renderFiles(v) {
   var box = el('fileList');
   if (!v.isRepo || !v.dirty) { box.innerHTML = ''; return; }
@@ -1139,10 +1032,9 @@ function renderFiles(v) {
   bindInlineDiff();
 }
 
-/* ---- 行内 Diff（v12）：不弹窗，直接在文件名下面展开红绿对比 ---- */
 function diffBlock(p) {
   var d = S.diffs[p];
-  if (d === 0) { return '<span class="wait">正在读改动…</span>'; }   /* 0 = 正在读 */
+  if (d === 0) { return '<span class="wait">正在读改动…</span>'; }   
   if (d === null) { return '<span class="wait">看不到这个文件的改动</span>'; }
   if (typeof d === 'string') { return colorDiff(d); }
   return '<span class="wait">点右侧箭头展开…</span>';
@@ -1189,14 +1081,10 @@ function bindFileChecks() {
   });
 }
 
-/* ---- 云端版本列表（第三段）
-   ★ 这是"从云端拉取"的入口：能看见云端有哪些版本，挑一条就能取到本地。
-     后端 `cloud_versions` 读的是本地那份「远端跟踪分支」的记录（不联网，秒开），
-     想拿真的最新数据就点「刷新云端」。 */
 function renderCloudList(v) {
   var box = el('cloudList'), more = el('cloudMore'), refEl = el('cloudRef');
   if (!box) { return; }
-  var c = S.cloud;                       // null = 还没读到
+  var c = S.cloud;                       
   if (refEl) {
     refEl.textContent = (c && c.ref) ? ('看的是 ' + c.ref) : '';
   }
@@ -1231,7 +1119,7 @@ function renderCloudList(v) {
     if (more) { more.innerHTML = ''; }
     return;
   }
-  /* v12：云端列表也支持搜索 */
+
   var qc = (S.qCloud || '').toLowerCase();
   var shown = (c.commits || []).filter(function (cm) {
     return hitQ(qc, [cm.ver, cm.subject, cm.short, cm.hash]);
@@ -1243,7 +1131,7 @@ function renderCloudList(v) {
   }
   var h = '';
   shown.forEach(function (cm) {
-    var missing = !cm.inLocal;            // 本地还没有这个版本
+    var missing = !cm.inLocal;            
     h += '<div class="hrow cloud ' + (missing ? 'missing' : 'haslocal') + '">' +
       '<div class="hl"><span class="hdot"></span>' +
       '<span class="hver mono">' + esc(cm.ver || '') + '</span>' +
@@ -1265,7 +1153,6 @@ function renderCloudList(v) {
   }
 }
 
-/* 挑一个云端版本取到本地：跟本地「切回」一样给两条路，安全的排前面 */
 function cloudTake(hash) {
   var v = viewState();
   openModal('把这个云端版本取到本地',
@@ -1283,7 +1170,6 @@ function cloudTake(hash) {
     '</div>', [{ text: '取消', key: 'close', kind: 'ghost' }], true);
 }
 
-/* ---- 历史记录列表 ---- */
 function renderHistory(v) {
   var box = el('historyList'), more = el('histMore');
   if (!v.isRepo) {
@@ -1296,7 +1182,7 @@ function renderHistory(v) {
       '写一句说明，点「保存到本地」，第一条就出来了。</div>';
     more.innerHTML = ''; return;
   }
-  /* v12：本地历史支持搜索（版本号 / 说明 / 短哈希都能搜） */
+
   var q = (S.qLocal || '').toLowerCase();
   var list = (v.commits || []).filter(function (c) {
     return hitQ(q, [c.ver, c.subject, c.short, c.tag]);
@@ -1307,11 +1193,7 @@ function renderHistory(v) {
     return;
   }
   var h = '';
-  /* ★ 待上传的那一条自己带一个「上传」按钮。
-     用户报的 bug：本地列表里明明写着「待上传云端」，界面上却找不到任何上传按钮
-     （下面那个大按钮还是灰的「云端已最新」）。根因在后端 ahead 算成 0，已修；
-     这里再补一个就近的入口：git push 一次会把所有未上传的版本一起推上去，
-     所以只在**最上面那条**待上传的记录上标出来，不重复刷屏。 */
+
   var firstUnsent = -1;
   for (var ui = 0; ui < list.length; ui++) {
     if (!list[ui].pushed) { firstUnsent = ui; break; }
@@ -1345,7 +1227,6 @@ function renderHistory(v) {
     : '<span class="hintline">已经到底了</span>';
 }
 
-/* ================================================================ 三个主动作 */
 function shootOrb(trackId, dir, color) {
   var track = el(trackId);
   if (!track) { return; }
@@ -1355,16 +1236,6 @@ function shootOrb(trackId, dir, color) {
   setTimeout(function () { if (o.parentNode) { o.parentNode.removeChild(o); } }, 600);
 }
 
-/* ============================================ 长操作：后台跑 + 看得见的进度
-   ★ 为什么改成这样（真机"三十秒没反应"的根因之一）：
-     以前界面发一条 RPC 然后干等，而垫片里那条 RPC 的上限写死 **30 秒** ——
-     首次推送两百多兆时，三十秒一到就报"后端没回话"，可 git 其实还在传；
-     人以为失败了又点一次，越点越乱。现在：
-       ① 发 `job_start` 立刻拿到号（这条一定秒回，永远不会超时）；
-       ② 界面拿号每 0.5 秒问一次 `job_state`，把每一行进度画出来；
-       ③ 想停就 `job_cancel` —— 真的把那个子进程杀掉；
-       ④ 静默太久就直说"还没回话"，不让人对着转圈发愣。
-   ============================================================================ */
 var JOB = { id: '', timer: null, t0: 0, lastSig: '', after: null };
 
 function stopJobPoll() { if (JOB.timer) { clearInterval(JOB.timer); JOB.timer = null; } }
@@ -1393,7 +1264,6 @@ function jobFace(st, title) {
   return h;
 }
 
-/* 开一个长操作；跑完自动收尾（after 是"跑完之后接着干什么"，可选） */
 function startJob(method, params, title, orb, after) {
   busyOn(title + '…');
   if (orb) { shootOrb(orb[0], orb[1], orb[2]); }
@@ -1414,7 +1284,7 @@ function startJob(method, params, title, orb, after) {
     openModal(title || '正在处理', jobFace(null, title),
       [{ text: '停下', key: 'stop', kind: 'ghost' }], true);
     S.modalActs.stop = function () {
-      call('job_cancel', { id: JOB.id }).catch(function () { /* 无所谓 */ });
+      call('job_cancel', { id: JOB.id }).catch(function () {  });
       toast('已经让它停下了', 'ok');
     };
     startJobPoll(title);
@@ -1429,7 +1299,7 @@ function startJobPoll(title) {
       if (!st || !st.ok) { return; }
       if (el('modal').classList.contains('show')) {
         var b = sub('.dlg-b');
-        /* 只在"有变化"时重画：每拍重建 DOM 会让人选中不了日志、也会闪 */
+
         var sig = String(st.state) + '|' + ((st.lines || []).length) + '|' +
           Math.round((st.elapsed || 0) / 5) + '|' + (st.silent >= 12 ? 1 : 0);
         if (b && sig !== JOB.lastSig) {
@@ -1443,7 +1313,7 @@ function startJobPoll(title) {
         stopJobPoll();
         finishJob(st, title);
       }
-    }).catch(function () { /* 一次没问到不要紧，下一拍再问 */ });
+    }).catch(function () {  });
   }, 500);
 }
 
@@ -1471,7 +1341,6 @@ function doSteps(method, params, title, orb, after) {
   return startJob(method, params, title, orb, after);
 }
 
-/* ① 保存到本地 */
 function saveLocal() {
   var s = S.snap || {}, r = s.repo || {};
   if (!s.isRepo) { startRepo(); return; }
@@ -1481,11 +1350,6 @@ function saveLocal() {
     '保存到本地', ['track1', 'down', 'amber']);
 }
 
-/* ② 备份到云端（有改动先存再传，一个按钮到底）
-   ★ 推之前先"体检"一次：这一推多大、有没有 GitHub 装不下的文件（单文件 100MB 上限）。
-     真事：一个项目的初版提交里有个 182MB 的模型文件，那一推**必然失败**，可失败前
-     先把它整个传一遍 —— 界面上三十秒没动静，人只会以为软件坏了。现在先警告、先问，
-     想屏蔽的话一键处理（写进 .gitignore + 从库里去掉，磁盘上的文件一个不删）。 */
 function backup() {
   var v = viewState();
   if (!v.isRepo) { startRepo(); return; }
@@ -1502,7 +1366,6 @@ function backup() {
   });
 }
 
-/* 推之前体检：没问题就直接往下走；有偏大/推不上去的文件就摆出来问一句 */
 function pushGuard(next) {
   busyOn('正在看这一推有多大…');
   call('push_check', { path: S.path }).then(function (r) {
@@ -1545,7 +1408,6 @@ function pushGuard(next) {
   }).catch(function (e) { busyOff(); fail(e); });
 }
 
-/* ③ 获取最新版 */
 function fetchNew() {
   var v = viewState();
   if (!v.isRepo) { toast('先选一个文件夹', 'no'); return; }
@@ -1567,8 +1429,7 @@ function fetchNew() {
 
 function startRepo() {
   var s = S.snap || {};
-  /* ★ 没装 git 的话，这里点下去一定失败。与其让人看一句英文报错，
-     不如现在就换成"怎么把它装上"（v14）。 */
+
   if (S.env && S.env.ready === false) {
     openModal('还没法开始记录：缺 Git',
       '<div class="note">记录版本要用 Git，但这台电脑上还没装。' +
@@ -1594,14 +1455,7 @@ function startRepo() {
   };
 }
 
-/* ================================================================ 弹层 */
 function openModal(title, body, buttons, wide) {
-  /* ★★ 每次开窗都**重开一张动作表**。以前只在 `closeModal()` 里 `S.modalActs = {}`，
-     于是**页面刚打开、还没关过任何窗口**时它是 `undefined` —— 谁要在这时候挂
-     `S.modalActs.ok = …` 就当场抛 `TypeError: Cannot set properties of undefined`，
-     而那一句之后的所有代码（起轮询、发 install_tool）全都不会执行：
-     界面就停在「正在启动 · 已经 0 秒」不动（真机踩了三次、AI 三次都没找到）。
-     现在开窗就初始化，页面第一次弹窗也一定是好的。 */
   S.modalActs = {};
   var h = '<div class="mask" data-act="modal-close"></div><div class="dlg' + (wide ? ' wide' : '') + '">' +
     '<div class="dlg-h">' + esc(title) + '</div><div class="dlg-b">' + body + '</div><div class="dlg-f">';
@@ -1614,11 +1468,8 @@ function openModal(title, body, buttons, wide) {
   el('modal').classList.add('show');
 }
 function closeModal() {
-  /* 关窗口就停掉安装进度轮询（安装本身还在后台跑，只是不再刷新界面） */
   if (typeof stopInstPoll === 'function') { stopInstPoll(); }
-  /* ★ 关掉"安装/登录"那类窗口之后**重查一次环境** —— 以前不查，于是关窗之后
-     顶上那条还是旧结论（"建议补上：GitHub CLI" + 帮我装 gh），人一点就重下一份。
-     真机就是这么"每次打开都装一次"的。 */
+
   if (INST && INST.what) {
     INST.what = '';
     if (typeof refreshEnv === 'function') { refreshEnv(); }
@@ -1628,17 +1479,11 @@ function closeModal() {
   S.modalActs = {};
 }
 
-/* ★ 页面重新被看见就重查环境。
-   包的内嵌帧是**长期存活**的（切走只是藏起来），重新打开「界面」标签并不会重载页面 ——
-   不重查的话，环境条会一直停在"上次打开那一刻"的结论上。三种入口都接：
-     · 内嵌：宿主发的 `visible` 事件（`moss-embed.js` 的 on('visible')）；
-     · 独立窗口：窗口拿到焦点；
-     · 浏览器/WebView 自己的 visibilitychange。 */
 function bindEnvRecheck() {
   var last = 0;
   function recheck() {
     var t = Date.now();
-    if (t - last < 1500) { return; }                  // 防抖：三个入口可能一起响
+    if (t - last < 1500) { return; }                  
     last = t;
     if (typeof refreshEnv === 'function') { refreshEnv(); }
   }
@@ -1646,7 +1491,7 @@ function bindEnvRecheck() {
     if (window.moss && typeof moss.on === 'function') {
       moss.on('visible', function (d) { if (!d || d.visible !== false) { recheck(); } });
     }
-  } catch (e) { /* 无妨 */ }
+  } catch (e) {  }
   window.addEventListener('focus', recheck);
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden) { recheck(); }
@@ -1695,7 +1540,6 @@ function showResult(title) {
   openModal(title || '这次做了什么', h, [{ text: '知道了', key: 'close', kind: 'ghost' }], true);
 }
 
-/* ================================================================ 看某条记录 / 切回 */
 function showCommit(hash) {
   openModal('这条改了什么', '<div class="note" style="padding:12px 0">正在读…</div>',
     [{ text: '关闭', key: 'close', kind: 'ghost' }], true);
@@ -1767,7 +1611,6 @@ function restoreHard(hash) {
   };
 }
 
-/* ================================================================ 删掉某个版本 */
 function findCommit(hash) {
   var list = ((S.tl || {}).commits) || [];
   for (var i = 0; i < list.length; i++) {
@@ -1776,7 +1619,6 @@ function findCommit(hash) {
   return null;
 }
 
-/* 两种「删」，先说清差别再让人点（不写术语，普通人看得懂的话） */
 function deleteDialog(hash) {
   var c = findCommit(hash) || {};
   openModal('删掉这个版本',
@@ -1818,7 +1660,6 @@ function purgeConfirm(hash) {
   };
 }
 
-/* ================================================================ 看文件改动 */
 function fileDiff(file) {
   busyOn('正在读…');
   call('file_op', { path: S.path, op: 'diff', file: file }).then(function (r) {
@@ -1829,7 +1670,6 @@ function fileDiff(file) {
   }).catch(fail).then(function () { busyOff(); });
 }
 
-/* ================================================================ 更多功能 */
 function moreMenu() {
   var v = viewState();
   var items = [
@@ -1883,10 +1723,7 @@ function moreItem(w) {
   if (w === 'init') { closeModal(); return startRepo(); }
   if (w === 'all') { return dialogAll(); }
 }
-/* ============================ 屏蔽清单 / 体积排行 / 同步日志 / 推送前体检
-   四张小面板的共同心思：**把黑盒打开**。以前"什么没跟着提交""为什么推不上去"
-   只能去翻隐藏文件或者找 AI，现在界面上直接看、直接改。
-   ============================================================================ */
+
 function dialogIgnore() {
   openModal('屏蔽清单', '<div class="note" style="padding:12px 0">正在读…</div>',
     [{ text: '关闭', key: 'close', kind: 'ghost' }], true);
@@ -1956,22 +1793,17 @@ function dialogBigfiles() {
   }).catch(fail);
 }
 
-/* 一条文件路径 → 它所在目录（给"屏蔽这一类"用，省得一个个点） */
 function pathDir(p) {
   var s = String(p || '').replace(/\\/g, '/');
   var i = s.lastIndexOf('/');
   return i > 0 ? (s.slice(0, i) + '/') : s;
 }
 
-/* 代码行数：两种口径并排（git 跟踪的 / 磁盘上全部），每种语言一行 */
 function dialogLoc() {
   openModal('代码行数', '<div class="note" style="padding:12px 0">正在数…（文件多的话要几秒）</div>',
     [{ text: '关闭', key: 'close', kind: 'ghost' }], true);
   var libs = S.locLibs ? 1 : 0;
-  /* ★ 两段加载（用户原话："每次都要等"）：
-     第一段只数「跟着提交的」那一份 —— 0.3 秒就回来，先让人看到数字；
-     第二段再去扫「磁盘上全部」—— 你这种项目里有几十万个素材文件，要好几秒。
-     不让用户对着一个空转圈等到最后才看见结果。 */
+
   call('loc', { path: S.path, libs: libs, fast: 1 }).then(function (r0) {
     var b0 = sub('.dlg-b');
     if (b0 && el('modal').classList.contains('show') && r0 && r0.ok) {
@@ -2013,7 +1845,7 @@ function dialogLoc() {
 
 function locBlock(title, d, key) {
   d = d || {};
-  /* 没走完的那一份加「≥」——数字是数到哪儿算哪儿，不标就像数全了 */
+
   var h = '<div class="inst-loglabel" style="margin-top:12px">' + esc(title) + '　' +
     '<b>' + (d.cut ? '≥ ' : '') + n0(d.lines || 0) + '</b> 行　<span class="hintline">' +
     n0(d.files || 0) + ' 个文件</span></div>';
@@ -2209,7 +2041,7 @@ function dialogStash() {
     closeModal();
     doSteps('run_action_key', { name: 'stash_pop' }, '把收起来的改动放回来', ['track1', 'up', 'blue']);
   };
-  /* v12：列出每一份，多的可以一份一份删掉（原来只能看到"有几份"） */
+
   call('stashes', { path: S.path }).then(function (r) {
     S.stashItems = (r && r.items) || [];
     var b = sub('.dlg-b');
@@ -2232,7 +2064,7 @@ function dialogStash() {
       h += '</div>';
     }
     b.innerHTML = h;
-  }).catch(function () { /* 列不出来就保持原来的说明，不影响「放回来」 */ });
+  }).catch(function () {  });
 }
 function stashDrop(index, label) {
   if (!label) {
@@ -2311,7 +2143,7 @@ function mirrorMenu() {
       : '要先装 gh 并登录一次（可选功能）。不想弄就直接选下面「我已经有一个仓库」——'
         + '上传用的是 git 自己的登录，跟 gh 没关系') +
     '</span></span></button>' +
-    /* ★ 缺 gh / 没登录时，别只把按钮变灰让人发愣：就地给一条能走的路 */
+
     (hasGh ? '' :
       '<div class="note" style="padding:2px 0 6px">' +
       '<button class="env-btn" data-act="env-install" data-what="gh">帮我装 gh</button> ' +
@@ -2377,7 +2209,6 @@ function mirrorForm(mode) {
   };
 }
 
-/* ================================================================ 选文件夹 */
 function pickDir() {
   S.pick = { path: S.path };
   openModal('选一个文件夹', '<div class="note" style="padding:12px 0">正在读…</div>',
@@ -2444,7 +2275,6 @@ function openPath(p) {
   }).catch(fail).then(function () { busyOff(); });
 }
 
-/* ================================================================ 点击分发 */
 document.addEventListener('click', function (ev) {
   var node = ev.target.closest ? ev.target.closest('[data-act]') : null;
   if (!node) { closeDirMenu(); return; }
@@ -2554,7 +2384,7 @@ document.addEventListener('click', function (ev) {
     case 'env-identity': envIdentity(); break;
     case 'env-open': call('open_url', { url: d('url') }); break;
     case 'env-askai': envAskAi(); break;
-    /* 「看进度」= 重新开那个进度窗口（关掉之后还能回来看） */
+
     case 'env-progress':
       INST.what = d('what') || 'gh';
       INST.t0 = Date.now() - (((S.env || {}).pendingInstall || {}).secs || 0) * 1000;
@@ -2619,8 +2449,7 @@ document.addEventListener('click', function (ev) {
           var v = (fieldValues().arg || '').trim();
           closeModal();
           if (!v) { toast('还没填', 'no'); return; }
-          /* 走后台任务：这类动作可能很慢（比如屏蔽一整年的日志目录），
-             不能因为一条 RPC 等太久就判它失败 */
+
           startJob('run_action', { name: name, arg: v }, a.label || name);
         };
       } else {
@@ -2632,18 +2461,15 @@ document.addEventListener('click', function (ev) {
   }
 });
 
-/* 输入框回车 = 保存到本地（设计稿里那个「↵ 回车」） */
 document.addEventListener('keydown', function (ev) {
   if (ev.key === 'Enter' && ev.target && ev.target.id === 'note') {
     saveLocal();
   }
   if (ev.key === 'Escape') { closeDirMenu(); }
-  /* v14：F8 = 环境检查（出问题时不用满界面找入口） */
+
   if (ev.key === 'F8') { ev.preventDefault(); dialogEnv(); }
 });
 
-/* ================================================================ 拖放
-   契约 §4.2 / §8：提示只能靠宿主的 dragend / drop 收；真路径在 moss.on('drop') 里。 */
 var dragCaptured = false;
 function hasFiles(e) {
   return !!(e.dataTransfer && (e.dataTransfer.types || []).indexOf('Files') >= 0);

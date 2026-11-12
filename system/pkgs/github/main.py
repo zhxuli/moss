@@ -1,16 +1,3 @@
-# -*- coding: utf-8 -*-
-"""GitHub 可视化助手 —— **每个按钮 = 一条 git / gh 命令**。
-
-三种跑法，共用同一份 `ui/`：
-
-    moss :github                          开一个窗口（界面）
-    在 moss 界面里点「运行」               内嵌到「界面」选项卡里（宿主给 MOSS_UI_EMBED=1）
-    moss :github action=status path=D:\\x  命令行跑一个动作：先打「等价命令」，再打输出
-
-两条设计上的规矩：
-  ① **界面不做业务**：仓库 / 磁盘 / 同步状态全在这个文件里算好，前端只负责画。
-  ② **每个动作都必须同时给出「等价命令行」** —— 这是这个包存在的意义（用多了自然会敲）。
-"""
 import collections
 import json
 import concurrent.futures
@@ -35,36 +22,23 @@ TOOLS_DIR = os.path.join(os.environ.get('MOSS_PLUGIN_DATA_DIR') or
 DATA_DIR = os.environ.get('MOSS_PLUGIN_DATA_DIR') or os.path.join(HERE, '.data')
 STORE = os.path.join(DATA_DIR, 'paths.json')
 
-#: 起子进程时不要弹黑框（内嵌模式下特别明显）
 NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
 
-# ★ gh 自己会偷偷去 api.github.com 查"有没有新版本"，网络一卡它就把我们拖住。
-#   这几个环境变量让它闭嘴 + 不联网，`gh auth status` 才能秒回。
 os.environ.setdefault('GH_NO_UPDATE_NOTIFIER', '1')
 os.environ.setdefault('GH_PROMPT_DISABLED', '1')
 os.environ.setdefault('GH_PAGER', 'cat')
 os.environ.setdefault('GH_NO_COLOR', '1')
 
-#: 缺东西时给人点的网址（都不需要登录就能开）
 URL_GIT = 'https://git-scm.com/download/win'
 URL_GH = 'https://cli.github.com/'
 URL_SIGNUP = 'https://github.com/signup'
 URL_LOGIN = 'https://github.com/login'
 
-#: 环境真的搞不定时，把这句话摆在人面前（别让人自己摸）
 HELP_AI = ('实在弄不明白？在这个窗口外面跟 moss 的 AI 说一句'
            '「帮我把这台电脑的 Git / GitHub 环境弄好」——它能看到同样的信息，'
            '装什么、点哪儿，它替你弄。')
 
-
 def refresh_tools():
-    """重新找一遍 git / gh（含我们自己装在包里的便携版）。
-
-    ★ 必须每次都重找：`GIT`/`GH` 是模块加载那一刻定下来的，用户刚装完 git 时
-      这两个常量还是旧的（GIT 甚至是字符串 'git'），不刷新就永远"没装"。
-    ★ 还要找 TOOLS_DIR 里的便携版 —— 那是不需要管理员权限就能装上的那份，
-      真机上 winget 半天没动静时靠它（见 install_tool 里的说明）。
-    """
     global GIT, GH
     got = shutil.which('git') or local_tool('git')
     if got:
@@ -74,9 +48,7 @@ def refresh_tools():
         GH = got
     return GIT, GH
 
-
 def local_tool(what):
-    """我们替用户装在包自己目录里的便携版（不需要管理员权限那份）在哪儿。"""
     if what == 'gh':
         for rel in (('gh', 'bin', 'gh.exe'), ('gh', 'gh.exe')):
             p = os.path.join(TOOLS_DIR, *rel)
@@ -90,42 +62,25 @@ def local_tool(what):
                 return p
     return ''
 
-
-#: 便携版从哪儿下（GitHub 官方 release 资产，不需要管理员权限）
 PORTABLE = {
     'gh': dict(repo='cli/cli', pick=r'windows_amd64\.zip$', label='GitHub CLI'),
     'git': dict(repo='git-for-windows/git', pick=r'MinGit-.*-64-bit\.zip$', label='Git'),
 }
 
-
 def _http_json(url, timeout=20):
-    import urllib.request                                            # noqa: PLC0415
+    import urllib.request
     req = urllib.request.Request(url, headers={'User-Agent': 'moss-github',
                                               'Accept': 'application/vnd.github+json'})
-    with urllib.request.urlopen(req, timeout=timeout) as r:          # noqa: S310
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode('utf-8', 'replace'))
 
-
-#: 下不动 github.com 时的备用通道（国内常见：直连被断，走加速反而能下）
 MIRRORS = ('', 'https://ghproxy.net/', 'https://mirror.ghproxy.com/',
            'https://gh-proxy.com/', 'https://ghfast.top/')
 
-#: 查不到最新版本时退而求其次的固定版本（老一点但一定能下、能用）
 FALLBACK_VER = {'gh': ('v2.63.2', 'gh_2.63.2_windows_amd64.zip'),
                 'git': ('v2.47.1', 'MinGit-2.47.1-64-bit.zip')}
 
-
 def install_portable(what):
-    """下载官方便携版 zip → 解到 TOOLS_DIR → 记 EXIT_OK。
-
-    ★ 为什么不用 winget 当主力（真机实测）：`winget install` 把输出重定向到文件时
-      **一个字都不写**，还可能弹 UAC 半天不出来，人只能干等。便携版则：
-      不需要管理员、进度能精确到百分比（边下边写日志）、装完马上就能用。
-
-    ★ 再加一层保险（国内实测）：直连 github.com 经常 SSL 被断
-      （`UNEXPECTED_EOF_WHILE_READING`）—— 查版本和下载都会失败。
-      所以每条都按 MIRRORS 逐个试，一个通了就往下走；全不通才报失败。
-    """
     spec = PORTABLE.get(what)
     js, log = install_paths(what)
     t0 = datetime.now()
@@ -134,12 +89,11 @@ def install_portable(what):
         try:
             with open(log, 'a', encoding='utf-8') as f:
                 f.write('%s  %s\n' % (datetime.now().strftime('%H:%M:%S'), line))
-        except Exception:                                            # noqa: BLE001
+        except Exception:
             pass
 
     try:
         say('开始下载 %s 的官方便携版（不需要管理员权限）' % spec['label'])
-        # ① 先问发布页"最新是哪个版本"（直连 / 镜像都试一遍）
         tag, name, size, dl = '', '', 0, ''
         meta_err = ''
         for m in MIRRORS:
@@ -156,11 +110,10 @@ def install_portable(what):
                     if m:
                         say('走的是加速通道 %s' % m)
                     break
-            except Exception as e:                                   # noqa: BLE001
+            except Exception as e:
                 meta_err = '%s: %s' % (type(e).__name__, e)
                 say('查版本没成（%s）：%s' % (m or '直连', str(e)[:80]))
         if not dl:
-            # ② 查不到就用固定版本（老一点，但文件路径是可预测的）
             tag, name = FALLBACK_VER[what]
             say('查不到最新版本（%s），改用固定版本 %s' % (meta_err[:60] or '网络不通', tag))
             dl = 'https://github.com/%s/releases/download/%s/%s' % (spec['repo'], tag, name)
@@ -168,8 +121,7 @@ def install_portable(what):
         os.makedirs(TOOLS_DIR, exist_ok=True)
         zpath = os.path.join(TOOLS_DIR, name)
 
-        import urllib.request                                        # noqa: PLC0415
-        # ③ 下载本体：同样一个通道一个通道试（直连 SSL 断掉很常见）
+        import urllib.request
         got = 0
         last_err = ''
         for m in MIRRORS:
@@ -178,7 +130,7 @@ def install_portable(what):
                 say('正在连 %s …' % (m or 'github.com 直连'))
                 req = urllib.request.Request(src, headers={'User-Agent': 'moss-github'})
                 got, last = 0, -10
-                with urllib.request.urlopen(req, timeout=60) as r, open(zpath, 'wb') as f:  # noqa: S310
+                with urllib.request.urlopen(req, timeout=60) as r, open(zpath, 'wb') as f:
                     while True:
                         chunk = r.read(256 * 1024)
                         if not chunk:
@@ -198,14 +150,14 @@ def install_portable(what):
                     if m:
                         say('这个通道通了：%s' % m)
                     break
-            except Exception as e:                                   # noqa: BLE001
+            except Exception as e:
                 last_err = '%s: %s' % (type(e).__name__, e)
                 say('这个通道不行（%s）：%s' % (m or '直连', str(e)[:80]))
                 got = 0
         if got <= 0:
             raise RuntimeError('所有下载通道都失败了，最后一个错误：%s' % last_err)
         say('下载完成，正在解压…')
-        import zipfile                                               # noqa: PLC0415
+        import zipfile
         dest = os.path.join(TOOLS_DIR, what)
         if os.path.isdir(dest):
             shutil.rmtree(dest, ignore_errors=True)
@@ -225,55 +177,39 @@ def install_portable(what):
         say('EXIT_OK')
         mark_install(what, log=log, done=True, code=0)
         return True, found
-    except Exception as e:                                           # noqa: BLE001
+    except Exception as e:
         say('下载/解压失败：%s: %s' % (type(e).__name__, e))
         say('EXIT_FAIL')
         mark_install(what, log=log, done=True, code=1)
         return False, str(e)
 
-
 def browse_url(url):
-    """用系统默认浏览器打开一个网址。返回 True/False（永远不抛）。"""
     url = str(url or '').strip()
     if not re.match(r'^https?://', url):
         return False
     try:
-        import webbrowser                                            # noqa: PLC0415
+        import webbrowser
         return bool(webbrowser.open(url))
-    except Exception:                                                # noqa: BLE001
+    except Exception:
         return False
 
-
 def open_url(url):
-    """同上（给 Core 的方法用，名字短一点）。"""
     ok = browse_url(url)
     print('[github] 打开网址 %s → %s' % (url, 'ok' if ok else '失败'), flush=True)
     return ok
 
-
 _NET_CACHE = {'at': 0.0, 'ok': False}
 
-#: 环境检查结果缓存（4 秒）—— 界面上连点不会反复跑 git/gh 全套
 _ENV_CACHE = {'path': '', 'at': 0.0, 'data': None}
 
-
 def net_touch(host='github.com', port=443, timeout=3, cache=20):
-    """能不能连上 github.com:443 —— 只判断"网通不通"，不下载任何东西。
-
-    ★★ 这里踩过一个真坑（用户："点环境检查就一直卡着，等一分钟也不行"）：
-      `socket.create_connection(timeout=3)` 的 timeout **只管 connect，不管 DNS**。
-      国内解析 github.com 经常卡十几秒甚至更久，于是整个"环境检查"卡死；
-      而界面内嵌模式下后端是**一条线程**在跑，卡住 = 整个界面点不动。
-      所以现在：① DNS 放到单独线程里跑，超过 timeout 直接判"连不上"，绝不等；
-      ② 结果缓存 20 秒，反复点检查不会反复去试网。
-    """
     now = time.time()
     if now - _NET_CACHE['at'] < cache:
         return _NET_CACHE['ok']
     ok = [False]
 
     def probe():
-        import socket                                                # noqa: PLC0415
+        import socket
         try:
             infos = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
             for fam, typ, proto, _cn, addr in infos[:2]:
@@ -285,25 +221,17 @@ def net_touch(host='github.com', port=443, timeout=3, cache=20):
                     return
                 finally:
                     s.close()
-        except Exception:                                            # noqa: BLE001
+        except Exception:
             ok[0] = False
 
-    import threading                                                 # noqa: PLC0415
+    import threading
     th = threading.Thread(target=probe, daemon=True)
     th.start()
-    th.join(timeout + 0.5)          # 等不到就当作"连不上"，绝不拖住界面
+    th.join(timeout + 0.5)
     _NET_CACHE.update({'at': time.time(), 'ok': bool(ok[0])})
     return bool(ok[0])
 
-
 def repo_probe(path):
-    """只问三件事的"轻量探针"：这是不是仓库、在哪个根、远端是什么。
-
-    ★ 为什么单独写一个：`repo_info()` 要跑十几个 git 命令（status / log / stash /
-      tag / rev-list…）。环境检查只需要"是不是仓库 + 远端类型"，却把 repo_info
-      调了两遍 —— 在慢盘 / 网络盘 / 大仓库上就是几十秒，界面直接冻住。
-      这里只要 3 个命令、每个 6 秒上限，并且**每步失败就立刻返回**。
-    """
     if not os.path.isdir(path):
         return None
     top = git(path, 'rev-parse', '--show-toplevel', timeout=6)
@@ -317,25 +245,14 @@ def repo_probe(path):
     return {'root': root, 'branch': (br['out'].strip() if br['ok'] else ''),
             'remote': url}
 
-
 def push_ability(path, info=None):
-    """**能不能往 GitHub 推送** —— 只看 git 自己的凭证，跟 gh 登录无关。
-
-    ★ 这里踩过一个真坑（用户原话："之前还能推送呢，现在就提示我没登录"）：
-      我一开始把「gh 没登录」当成了「不能推送」。这是错的 ——
-      推送走的是 **git 的 credential**（Windows 上一般是 Git Credential Manager，
-      第一次推会弹浏览器让你授权一次），跟 GitHub CLI 一点关系都没有。
-      gh 只是"替你自动建仓库"用得上。所以两者必须分开判断。
-
-    返回 {'can': 能不能推, 'how': 走的哪条路, 'why': 人话, 'need': 该做什么}
-    """
     if info is None:
         info = repo_probe(path)
     if not info:
         return {'can': False, 'how': '', 'need': 'repo',
                 'why': '这个文件夹还不是 git 仓库 —— 先「开始记录」'}
     root = info['root']
-    url = info.get('remote') or ''          # repo_info 里这个字段叫 remote
+    url = info.get('remote') or ''
     if not url:
         return {'can': False, 'how': 'none', 'need': 'remote',
                 'why': '还没连云端仓库 —— 先点「备份到 GitHub」把仓库建上/填上地址'}
@@ -361,7 +278,6 @@ def push_ability(path, info=None):
                 'why': '这个仓库用 SSH 地址，但这台电脑没找到 SSH 密钥 —— 要么换成 '
                        'https 地址，要么去 GitHub 加一把公钥'}
 
-    # https：有凭证助手（GCM 之类）就基本能推，第一次会弹浏览器授权
     if helper:
         nice = helper.split()[0] if helper.split() else helper
         return {'can': True, 'how': 'https', 'helper': helper,
@@ -372,27 +288,14 @@ def push_ability(path, info=None):
                    'Personal Access Token；Win 上装了 Git 一般自带凭据管理器，会自动弹窗',
             'soft': True}
 
-
 def git_identity(path=''):
-    """读 git 署名（user.name / user.email）。给了仓库就读仓库那份。"""
     base = [GIT] + (['-C', path] if path and os.path.isdir(path) else [])
     nm = run(base + ['config', '--get', 'user.name'], timeout=10)
     em = run(base + ['config', '--get', 'user.email'], timeout=10)
     return {'name': (nm['out'] or '').strip() if nm['ok'] else '',
             'email': (em['out'] or '').strip() if em['ok'] else ''}
 
-
 def ensure_identity(path, force=False):
-    """没有署名就替人填一个。
-
-    ★ 这是"第一次保存版本就失败"的头号原因：新装的 Git 没配 user.name/email，
-      `git commit` 直接报 "Author identity unknown ... tell me who you are"。
-      普通用户看到这句只会觉得"这软件坏了"。
-
-    只写**这个仓库自己的** `.git/config`（不动全局，也不动别人的仓库）；
-      万一这里还不是仓库，就先不写，等 init 之后再填。
-    返回一句人能看懂的说明；什么都没动就返回空串。
-    """
     refresh_tools()
     argv_git = [GIT] + (['-C', path] if path else [])
     inside = run(argv_git + ['rev-parse', '--git-dir'], timeout=15)['ok']
@@ -412,41 +315,28 @@ def ensure_identity(path, force=False):
             '想换成自己的名字和邮箱，之后在设置里改就行。'
             % (name, mail, '这个仓库' if inside else '全局配置'))
 
-
-#: 安装任务的状态文件 / 日志文件都在这里
 def install_paths(what):
     os.makedirs(DATA_DIR, exist_ok=True)
     return (os.path.join(DATA_DIR, 'install.json'),
             os.path.join(DATA_DIR, 'install-%s.log' % what))
 
-
 def mark_install(what, log='', done=False, code=None, kind=''):
-    """记下安装这件事的状态。
-
-    ★ 这一版是**为了让人看得见进度**才这么写的（V-14x 真机反馈）：
-      第一版只 `Popen` 一下就把输出全丢了（DEVNULL），结果界面上既没有进度条
-      也没有一行日志，人只能干等、也不知道到底在动还是在卡。
-      现在改成：**把 winget 的输出整个写进日志文件**，界面每秒来读一次尾巴。
-    """
     js, _ = install_paths(what)
     try:
         with open(js, 'w', encoding='utf-8') as f:
             json.dump({'what': what, 'at': time.time(), 'log': log,
                        'done': bool(done), 'code': code, 'kind': kind or ''}, f)
-    except Exception:                                                # noqa: BLE001
+    except Exception:
         pass
-
 
 def read_install():
     try:
         with open(os.path.join(DATA_DIR, 'install.json'), encoding='utf-8') as f:
             return json.load(f)
-    except Exception:                                                # noqa: BLE001
+    except Exception:
         return None
 
-
 def pending_install():
-    """有没有刚起步的安装（最近 15 分钟内还没结束），有就说一句。"""
     d = read_install()
     if not d or d.get('done'):
         return None
@@ -456,21 +346,18 @@ def pending_install():
     return {'what': d.get('what') or '', 'ago': rel_time(ts),
             'secs': int(time.time() - ts)}
 
-
 def tail_log(path, limit=4000):
-    """读日志尾巴（只读最后几 KB，文件再大也不会卡）。"""
     try:
         size = os.path.getsize(path)
         with open(path, 'rb') as f:
             if size > limit:
                 f.seek(size - limit)
             blob = f.read()
-    except Exception:                                                # noqa: BLE001
+    except Exception:
         return ''
     text = blob.decode('utf-8', 'replace')
     if size > limit:
-        text = text.split('\n', 1)[-1]        # 砍掉被截断的半行
-    # winget 的进度条用 \r 反复覆写同一行 —— 只留最后那一段，不然满屏是碎片
+        text = text.split('\n', 1)[-1]
     out = []
     for line in text.replace('\r\n', '\n').split('\n'):
         seg = line.split('\r')[-1].rstrip()
@@ -478,15 +365,7 @@ def tail_log(path, limit=4000):
             out.append(seg)
     return '\n'.join(out[-40:])
 
-
 def install_phase(text, found):
-    """从日志里猜"现在到哪一步了"，好给人一句话。
-
-    ★ 猜不准就显示"正在装"，别瞎报百分比。
-    ★ 别拿 `found`（机器上有这个程序）当"装完了"—— 那会把"本来就有"
-      和"正在下第 30%"混为一谈（真机上进度条会突然跳 100% 骗人）。
-      这里只认日志里的 EXIT_OK / EXIT_FAIL。
-    """
     low = (text or '').lower()
     if 'fail' in low or 'error' in low or '0x8' in low:
         if 'successfully' not in low and '已成功' not in low:
@@ -502,9 +381,7 @@ def install_phase(text, found):
             return ('run', v)
     return ('run', '正在装')
 
-
 def install_percent(text):
-    """从输出里抠最后一个百分比（抠不到返回 None，让界面显示"不确定"那种条）。"""
     hits = re.findall(r'(\d{1,3})\s*%', text or '')
     for h in reversed(hits):
         try:
@@ -515,11 +392,8 @@ def install_percent(text):
             return v
     return None
 
-
-# ------------------------------------------------------------------ 小工具
 def now_text():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
 
 def rel_time(ts):
     d = time.time() - float(ts or 0)
@@ -531,7 +405,6 @@ def rel_time(ts):
         return '%d 小时前' % (d // 3600)
     return '%d 天前' % (d // 86400)
 
-
 def human_size(n):
     n = float(n or 0)
     for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
@@ -540,9 +413,7 @@ def human_size(n):
         n /= 1024.0
     return '%.1f TB' % n
 
-
 def display(argv):
-    """把 argv 拼成**能敲的那一串**（教命令用，所以要像人敲的）。"""
     out = []
     for a in argv:
         if a == '' or re.search(r'[\s"]', a):
@@ -551,9 +422,7 @@ def display(argv):
             out.append(a)
     return ' '.join(out)
 
-
 def run(argv, cwd=None, timeout=30):
-    """跑一条命令。返回 {ok, code, out, ms, cmd}；**永不抛异常**。"""
     t0 = time.time()
     env = dict(os.environ)
     env.update({'GIT_TERMINAL_PROMPT': '0', 'GIT_PAGER': 'cat', 'PAGER': 'cat',
@@ -568,49 +437,26 @@ def run(argv, cwd=None, timeout=30):
         code, out = 127, '找不到命令：%s —— 装了吗？在 PATH 里吗？' % argv[0]
     except subprocess.TimeoutExpired:
         code, out = 124, '超时：%s 秒还没回来（网络慢 / 要你输密码？）' % timeout
-    except Exception as e:                                               # noqa: BLE001
+    except Exception as e:
         code, out = 1, '%s: %s' % (type(e).__name__, e)
     got = {'ok': code == 0, 'code': code, 'out': (out or '').strip('\n'),
            'ms': int((time.time() - t0) * 1000), 'cmd': display(argv)}
-    # 慢的 / 失败的留一条日志（快而成功的直接跳过，别把日志冲成垃圾）
     log_cmd(argv, cwd, got, timeout)
     return got
 
-
-# ------------------------------------------------------------------ 同步日志 / 带进度地跑
-#: 每条"慢的 / 失败的"命令都在这儿留一条 —— 推送卡住时能回看它到底走到了哪一步。
-#: 界面里的「同步日志」和 `moss :github action=gitlog` 读的就是这个文件。
 SYNC_LOG = os.path.join(DATA_DIR, 'sync.log')
-LOG_KEEP = 300          # 最多留多少条（再多就把最老的挤掉）
+LOG_KEEP = 300
 LOG_MAX = 512 * 1024
 
-#: 这几条会真的上传 / 下载 —— 要补 `--progress`，还要边跑边打进度
 PROGRESS_SUBS = ('push', 'fetch', 'pull', 'clone')
 
-
-#: 内嵌模式（界面里的 iframe）—— 这时候 stdout 是协议通道，进度不能往里 print。
 EMBEDDED = str(os.environ.get('MOSS_UI_EMBED') or '').strip().lower() in ('1', 'true', 'yes')
 
-
-# ---------------------------------------------------------------- 长任务（后台跑 + 界面看进度）
-#: 一次只跑一个长操作（推 / 拉 / 保存…）；界面拿 `id` 来轮询，能看到每一行进度的出处。
 _JOB = {'cur': None}
 _JOB_LOCK = threading.Lock()
-#: 没有任务在跑时说过的话（内嵌模式下没法 print，先攒着）—— 开任务时当前情补在前面
 _IDLE = collections.deque(maxlen=40)
 
-
 def _live(line):
-    """把一行进度交给"正在被看的那个任务"；没有任务就先攒着，等下开任务时补在前面。
-
-    ★ 为什么不直接 print：内嵌模式下 stdout 是**协议通道**（一行一个 JSON），
-      进度混进去宿主只会当垃圾丢弃 —— 用户那边就是"什么也看不到"。
-      所以进度先进任务缓冲，界面 `job_state` 一取就有；命令行跑的时候照样打印。
-
-    ★★ 这里**绝对不能再 print**（`_StdoutToProgress` 会把 print 转回本函数，
-       变成自己叫自己 —— 递归到 RecursionError）。内嵌模式下没有任务时，
-       攒进 `_IDLE` 就行：下次开任务会把它当作"前情"接在进度最前面。
-    """
     text = str(line).rstrip()
     if not text:
         return
@@ -626,29 +472,17 @@ def _live(line):
         _IDLE.append(text)
         return
     if EMBEDDED:
-        # ★ 到这儿就不能再 print 了：内嵌模式下 print 已经被 `_StdoutToProgress`
-        #   改回 `_live`，再 print 一次就是自己叫自己 —— 探针里那条
-        #   「同一行刷了 80 遍」就是它（不是显示问题，是真的在递归）。
         return
     print(text, flush=True)
 
-
 def _job_proc(proc):
-    """把正在跑的子进程挂到当前任务上 —— 界面点「停一下」时能真的杀掉它。"""
     with _JOB_LOCK:
         job = _JOB.get('cur')
     if job is not None:
         with job['lock']:
             job['proc'] = proc
 
-
 def _job_cancelled():
-    """用户是不是点了「停一下」。
-
-    ★ 探针抓到的：光靠 `p.kill()` 不够 —— 读输出的那条线程可能还阻塞在管道上，
-      主循环于是继续一动不动地等（界面看着像"点了停也没停"）。所以主循环**自己**
-      查这个标志，一看到就主动收尾，不等管道。
-    """
     with _JOB_LOCK:
         job = _JOB.get('cur')
     if job is None:
@@ -656,9 +490,7 @@ def _job_cancelled():
     with job['lock']:
         return bool(job.get('cancel'))
 
-
 def _kill_tree(proc):
-    """连子孙一起杀（Windows 上 git 会拉起 git-remote-https 之类的小弟）。"""
     if proc is None:
         return
     try:
@@ -668,15 +500,13 @@ def _kill_tree(proc):
                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         else:
             proc.kill()
-    except Exception:                                                    # noqa: BLE001
+    except Exception:
         try:
             proc.kill()
-        except Exception:                                                # noqa: BLE001
+        except Exception:
             pass
 
-
 def log_write(text):
-    """往 sync.log 追加一段。**永不抛**（记日志不能拖累正事）。"""
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
         old = []
@@ -685,7 +515,6 @@ def log_write(text):
                 old = [x for x in f.read().splitlines() if x.strip()]
         except OSError:
             old = []
-        # 一条记录以 "[时间]" 开头 —— 照它切条数，别把一条几行的记录拆散
         rows, cur = [], []
         for ln in old:
             if ln.startswith('[') and cur:
@@ -703,23 +532,16 @@ def log_write(text):
         with open(SYNC_LOG, 'w', encoding='utf-8') as f:
             f.write(data)
         return True
-    except Exception:                                                    # noqa: BLE001
+    except Exception:
         return False
 
-
 def _sub(argv):
-    """argv 里的子命令（`git push -u origin main` → `push`）。
-
-    ★ 要跳过"带值的选项"：`git -c http.sslBackend=openssl fetch` 里的
-      `http.sslBackend=openssl` 不以 `-` 开头，以前会被当成子命令 ⇒
-      `fetch/push` 就认不出来（重试和进度条那道判断全失效）。`-C <目录>` 同理。
-    """
     rest = list(argv)[1:]
     i = 0
     while i < len(rest):
         a = rest[i]
         if a in ('-c', '--config', '-C', '--git-dir', '--work-tree', '--exec-path'):
-            i += 2                     # 连它的值一起跳过
+            i += 2
             continue
         if a.startswith('-'):
             i += 1
@@ -727,18 +549,10 @@ def _sub(argv):
         return a
     return ''
 
-
 def log_cmd(argv, cwd, got, timeout=0, note=''):
-    """把一条命令的"耗时 / 退出码 / 输出尾巴"记进 sync.log。
-
-    ★ 只记**慢的（≥3 秒）和失败的**：正常命令一秒能跑几十条，全记会把有用的冲掉，
-      真卡住的时候反而翻不到那一条。
-    """
     ms = int(got.get('ms') or 0)
     if got.get('ok') and ms < 3000 and not note:
         return
-    # 「探路」的命令天天失败（没配 upstream 时 rev-parse @{u} 必然 exit=128），
-    # 记下来只会把真正慢的那条挤掉 —— 跳过它。
     joined = ' '.join(str(a) for a in argv)
     if not got.get('ok') and ms < 3000 and ('@{u}' in joined or 'rev-parse' in joined
                                             or 'symbolic-ref' in joined):
@@ -754,17 +568,7 @@ def log_cmd(argv, cwd, got, timeout=0, note=''):
         lines.append('    | ' + t[:300])
     log_write('\n'.join(lines))
 
-
 def run_progress(argv, cwd=None, timeout=300, tick=5.0, label=''):
-    r"""跑一条会联网的命令：**边跑边把 git 的进度打出来**，每 tick 秒还报一次「还在跑」。
-
-    ★ 由来（真机反馈）：第一次 `git push` 要传 178MB，可输出被 `subprocess.run`
-      一口气攒到最后 —— 界面三十秒一个字都没有，人只能当成它死了。所以现在：
-      ① 有 `--progress` 就让 git 在非终端下也报百分比；
-      ② 逐块读输出、边读边打（git 的 `\r` 原地刷新改成一行一行）；
-      ③ 每 tick 秒没新输出就打一行「还在跑…已 N 秒」—— 卡住也看得出是在动还是死了；
-      ④ 整条命令记进 sync.log，事后能查。返回值跟 `run()` 完全一样。
-    """
     t0 = time.time()
     cmd = list(argv)
     sub = _sub(cmd)
@@ -784,13 +588,13 @@ def run_progress(argv, cwd=None, timeout=300, tick=5.0, label=''):
                              stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                              text=True, encoding='utf-8', errors='replace',
                              env=env, creationflags=NO_WINDOW)
-        _job_proc(p)                      # 挂上去，「停一下」才杀得掉
+        _job_proc(p)
     except FileNotFoundError:
         got = {'ok': False, 'code': 127, 'ms': 0, 'cmd': display(cmd),
                'out': '找不到命令：%s —— 装了吗？在 PATH 里吗？' % cmd[0]}
         log_cmd(cmd, cwd, got, timeout)
         return got
-    except Exception as e:                                               # noqa: BLE001
+    except Exception as e:
         got = {'ok': False, 'code': 1, 'ms': 0, 'cmd': display(cmd),
                'out': '%s: %s' % (type(e).__name__, e)}
         log_cmd(cmd, cwd, got, timeout)
@@ -807,7 +611,7 @@ def run_progress(argv, cwd=None, timeout=300, tick=5.0, label=''):
                     break
                 with lock:
                     chunks.append(bit)
-        except Exception:                                                # noqa: BLE001
+        except Exception:
             pass
         finally:
             ended[0] = True
@@ -829,7 +633,6 @@ def run_progress(argv, cwd=None, timeout=300, tick=5.0, label=''):
         if ended[0] and p.poll() is not None:
             break
         if _job_cancelled():
-            # 用户点了「停一下」——别等管道，直接收掉
             killed = True
             _kill_tree(p)
             break
@@ -837,7 +640,7 @@ def run_progress(argv, cwd=None, timeout=300, tick=5.0, label=''):
             killed = True
             try:
                 p.kill()
-            except Exception:                                            # noqa: BLE001
+            except Exception:
                 pass
             break
         if time.time() - last > tick:
@@ -846,7 +649,7 @@ def run_progress(argv, cwd=None, timeout=300, tick=5.0, label=''):
             last = time.time()
     try:
         code = p.wait(timeout=10)
-    except Exception:                                                    # noqa: BLE001
+    except Exception:
         code = -1
     text_out = ''.join(out).strip('\n')
     if killed:
@@ -865,29 +668,14 @@ def run_progress(argv, cwd=None, timeout=300, tick=5.0, label=''):
     log_cmd(cmd, cwd, got, timeout)
     return got
 
-
 def _exec_once(argv, cwd=None, timeout=60, label=''):
-    """该看得见进度的走 run_progress（push / fetch / pull / clone），其余走 run。
-
-    `MOSS_GIT_PROGRESS=0` 可以关掉（脚本里想只要最后那段输出时用）。
-    """
     if _sub(list(argv)) in PROGRESS_SUBS and \
             str(os.environ.get('MOSS_GIT_PROGRESS', '1')).strip() != '0':
         return run_progress(argv, cwd=cwd, timeout=timeout, label=label)
     return run(argv, cwd=cwd, timeout=timeout)
 
-
-# ------------------------------------------------------- 联网命令：抖一下自己扛（重试 + 换后端）
-#: 只有这几种命令会联网，也只有它们能安全地重跑（推 / 拉 / 问远端）。
-#: `add` / `commit` / `reset` 这类改状态的**绝不重试** —— 重跑一次可能把活干两遍。
 NET_SUBS = frozenset(('push', 'fetch', 'pull', 'clone', 'ls-remote'))
 
-#: 这台机器的网络脾气（2026-11-11 实测，同一个仓库连 github.com，见 sync.log）：
-#:   · 默认后端（Windows 自带 schannel）走代理时**第一次基本必挂**：
-#:     `schannel: failed to receive handshake, SSL/TLS connection failed`，643ms 就退；
-#:     紧接着重试就成（3.0 秒）。
-#:   · 换成 `-c http.sslBackend=openssl` **第一次就成**（2.8 秒）。
-#: 所以重试不是"玄学多试几次"，而是第二枪直接换成量出来更快的那套后端。
 NET_FLAKY = re.compile(
     r'schannel|ssl/tls connection failed|unexpected eof|connection was reset'
     r'|connection reset by peer|recv failure|gnutls_handshake|ssl_error_syscall'
@@ -895,55 +683,30 @@ NET_FLAKY = re.compile(
     r'|could not resolve host|failed to connect|operation timed out|timed out'
     r'|http 50[234]|proxy', re.I)
 
-#: 这些是**硬错误**：重试纯属浪费，还会把"密码错了"糊成"网络问题"。
 NET_FINAL = re.compile(
     r'authentication failed|permission denied|permission to .* denied'
     r'|could not read username|repository not found|access denied|403 forbidden'
     r'|does not exist|non-fast-forward|\[rejected\]|merge conflict'
     r'|not a git repository|invalid username or password', re.I)
 
-#: 最多跑几次（1 次正常 + 2 次重试）。再多了就是"网络真断了"，别磨人。
 NET_ATTEMPTS = 3
 
-
-#: 上次是**哪套 TLS 后端**把 GitHub 连通的（`openssl` / 空=默认）。
 NET_PREF = os.path.join(DATA_DIR, 'net.json')
 
-
 def _net_score():
-    """两套 TLS 后端各自**首枪**挂了几次。
-
-    ★ 为什么是计分，不是"记上回谁通的"（2026-11-11 在这台机器上真跑出来的，不是猜）：
-      一开始只记"上回谁通的"，结果实测这台机器的网络**两套都会偶发失败** ——
-      13:51:55 默认后端挂、openssl 通；13:52:02 第一枪 openssl 反而挂（unexpected eof）、
-      默认后端通。偏好于是每跑一次就翻一次，"记住上次"等于没记住，
-      每次还是白陪第一枪失败一回（多花约 1 秒）。
-      改成计分：谁首枪挂得多就少用它；**首枪成功一次抵掉一次失败**，
-      所以换网络环境（不用代理了）也会自己慢慢纠回来，不会一辈子背着旧结论。
-    """
     try:
         with open(NET_PREF, encoding='utf-8') as f:
             d = json.load(f) or {}
-    except Exception:                                                    # noqa: BLE001
+    except Exception:
         d = {}
     lose = d.get('lose') if isinstance(d.get('lose'), dict) else {}
     return {k: max(0, int(lose.get(k) or 0)) for k in ('default', 'openssl')}
 
-
 def net_pref():
-    """第一枪该用哪套 TLS 后端：`'openssl'` 或 `''`（默认）。
-
-    只有 openssl **明显**更少挂（少 2 次以上）才改用它 —— 差一两次不算数，
-    免得两边都偶尔抖的时候第一枪来回跳。
-    ★ 它只是**单条命令的临时参数**（`git -c http.sslBackend=openssl …`），
-      绝不写进 git 配置：用户的环境不该被我们偷偷改。不合适就下一枪换回来。
-    """
     s = _net_score()
     return 'openssl' if s['openssl'] + 2 <= s['default'] else ''
 
-
 def net_pref_learn(backend, ok):
-    """记一笔首枪结果：挂了 +1，通了 -1（最低 0）。分数真变了才写盘。"""
     key = 'openssl' if backend == 'openssl' else 'default'
     s = _net_score()
     before = dict(s)
@@ -956,43 +719,21 @@ def net_pref_learn(backend, ok):
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump({'lose': s, 'at': now_text()}, f, ensure_ascii=False)
         os.replace(tmp, NET_PREF)
-    except Exception:                                                    # noqa: BLE001
+    except Exception:
         pass
 
-
 def _mask_proxy(v):
-    """代理地址里可能带账号密码，别原样打到界面上。"""
     return re.sub(r'//[^/@]+@', '//***@', str(v or ''))
 
-
 def git_proxy(url='https://github.com'):
-    """**问 git 自己**：对 github 生效的代理是什么（只读配置，不启动任何东西）。
-
-    ★ 为什么是"问 git"而不是写死：每台机器不一样 —— 有人配在 `~/.gitconfig` 的
-      `http.proxy` / `http.<url>.proxy`，有人靠环境变量 `HTTPS_PROXY`，有人根本不用代理。
-      `git config --get-urlmatch` 正好是按 git **真正生效**的优先级去查（含 URL 专属规则），
-      所以这里读出来的就是 git 等一下要用的那个，不会读错也不会覆盖用户的选择。
-      **代码里没有任何默认地址/端口** —— 没配就是空串，一切以这台机器为准。
-    ★ 为什么值得摆到界面上（开发时在这台机器上真踩过）：代理软件的端口会变，一变所有
-      联网动作全挂，而报错只有一句 `schannel: failed to receive handshake`，
-      用户根本不知道要去看哪儿。
-    """
     try:
         got = run([GIT, 'config', '--get-urlmatch', 'http.proxy', url], timeout=10)
-    except Exception:                                                    # noqa: BLE001
+    except Exception:
         return ''
     v = (got['out'].splitlines() or [''])[0].strip() if got['ok'] else ''
     return _mask_proxy(v)
 
-
 def system_proxy():
-    """操作系统里配的代理（仅 Windows 的 WinINET 设置 / 环境变量）。没有就回空串。
-
-    ★ 注意这一条**只是参考，git 不一定用它**：git 不读 WinINET 设置，只认自己的配置和
-      `HTTPS_PROXY` 一类环境变量。所以只有当 git 那边空着、系统这边有时，才值得提示
-      "系统有代理但 git 用不上" —— 这正是新手最容易被卡住的地方。
-    ★ 任何一台机器都可能是空的（家里直连、公司代理、手机热点…），所以这里是探测，不是默认值。
-    """
     for k in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'):
         v = str(os.environ.get(k) or '').strip()
         if v:
@@ -1000,7 +741,7 @@ def system_proxy():
     if os.name != 'nt':
         return '', ''
     try:
-        import winreg                                                 # noqa: PLC0415
+        import winreg
         path = r'Software\Microsoft\Windows\CurrentVersion\Internet Settings'
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
             try:
@@ -1013,12 +754,11 @@ def system_proxy():
                 srv, _ = winreg.QueryValueEx(key, 'ProxyServer')
             except OSError:
                 srv = ''
-    except Exception:                                                    # noqa: BLE001
+    except Exception:
         return '', ''
     srv = str(srv or '').strip()
     if not srv:
         return '', ''
-    # 可能是 `127.0.0.1:7890`，也可能是 `http=…;https=…` 这种按协议分开的写法
     if '=' in srv:
         pick = ''
         for part in srv.split(';'):
@@ -1030,28 +770,23 @@ def system_proxy():
         srv = pick or ''
     return _mask_proxy(srv), 'Windows 系统代理'
 
-
 def proxy_alive(proxy, timeout=0.6):
-    """代理端口通不通（0.6 秒就够）。回 True/False/None（认不出地址就不下结论）。"""
     m2 = re.match(r'^(?:[a-zA-Z0-9+]+://)?(?:[^@/]*@)?([^:/]+):(\d+)', str(proxy or ''))
     if not m2:
         return None
     host, port = m2.group(1), int(m2.group(2))
-    import socket                                                     # noqa: PLC0415
+    import socket
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
     except OSError:
         return False
 
-
 def _first_line(text, n=90):
     lines = [x.strip() for x in str(text or '').splitlines() if x.strip()]
     return lines[0][:n] if lines else ''
 
-
 def net_hint(out):
-    """网络类失败 → 一句"是什么 + 该怎么办"；认不出就回空串（不瞎解释）。"""
     low = str(out or '').lower()
     if not low:
         return ''
@@ -1070,24 +805,12 @@ def net_hint(out):
         return '这是账号 / 凭据的问题，不是网络 —— 去「检查环境」看一眼 GitHub 登录。'
     return ''
 
-
 def _exec(argv, cwd=None, timeout=60, label=''):
-    """跑一条命令。联网的那几种（NET_SUBS）抖一下自己重试，别的原样跑一次。
-
-    ★ 为什么要有（用户报的坑）：这台机器用默认 schannel 走代理连 GitHub，
-      **第一次握手几乎必失败**，得手工再点一次才行 —— 对用户就是"上传失败、
-      不知道要不要重试"。现在第一次挂了就自动再来，第二枪换 openssl 后端。
-    ★ 只对**只读/幂等**的联网命令这么干；`add`/`commit` 那种一次失败就原样回报，
-      绝不重跑（重跑可能把活干两遍）。
-    """
     base = list(argv)
     if _sub(base) not in NET_SUBS:
         return _exec_once(base, cwd=cwd, timeout=timeout, label=label)
     is_git = os.path.basename(str(base[0])).lower() in ('git', 'git.exe')
-    can_switch = is_git and os.name == 'nt'      # 只有 Windows 上有 schannel/openssl 这两种后端
-    # 打几枪、每枪用哪套后端：
-    #   正常情况下先照原样（默认后端）来一枪，抖了就换 openssl；
-    #   但这台机器上回是靠 openssl 通的话，第一枪就直接用它（少陪它失败一次）。
+    can_switch = is_git and os.name == 'nt'
     order = (['openssl', 'default', 'openssl'] if (can_switch and net_pref() == 'openssl')
              else ['default', 'openssl', 'default'])
     got, tries = None, 0
@@ -1097,7 +820,6 @@ def _exec(argv, cwd=None, timeout=60, label=''):
         backend = order[i] if can_switch else 'default'
         cur, why_try = list(base), ''
         if backend == 'openssl':
-            # 只对**这一次进程**生效，不写任何配置（用户的环境不该被我们偷偷改）
             cur = [cur[0], '-c', 'http.sslBackend=openssl'] + cur[1:]
         if i:
             why_try = '，换成 openssl 后端' if backend == 'openssl' else '，换回默认后端'
@@ -1108,9 +830,9 @@ def _exec(argv, cwd=None, timeout=60, label=''):
                          label=label if not i else '%s（重试 %d）' % (label, i + 1))
         tries = i + 1
         got['retried'] = i
-        got['cmd'] = display(cur)        # 显示**真跑的那条**（带 -c 也如实写出来）
-        got['backend'] = backend         # 这次用的是哪套 TLS 后端（环境体检看得见）
-        if i == 0:                       # 只拿**首枪**结果打分（重试通不通另外说）
+        got['cmd'] = display(cur)
+        got['backend'] = backend
+        if i == 0:
             first_ok, first_out = bool(got.get('ok')), got.get('out') or ''
         if got.get('ok'):
             if first_ok is not None:
@@ -1123,42 +845,35 @@ def _exec(argv, cwd=None, timeout=60, label=''):
                         note='自动重试第 %d 次才成功%s' % (i + 1, why_try))
             return got
         if got.get('code') in (124, 130):
-            break                        # 超时 / 用户点了「停一下」：再试只是让人多等
+            break
         blob = got.get('out') or ''
         if not NET_FLAKY.search(blob) or NET_FINAL.search(blob):
-            break                        # 硬错误（密码错、被拒、不是仓库）：重试没意义
+            break
     if first_ok is False and NET_FLAKY.search(first_out or '') \
             and not NET_FINAL.search(first_out or ''):
-        net_pref_learn(first_backend, False)   # 首枪是"网络抖"挂的 —— 记一笔
+        net_pref_learn(first_backend, False)
     if got is not None:
         hint = net_hint(got.get('out') or '')
         if hint:
-            # ★ 先给人话，再把人话后面挂上"试了几次"和**原始那行报错**。
-            #   反过来（英文打头）用户第一眼就是 `fatal: unable to access ...`，容易以为是自己弄坏了；
-            #   原始报错留着是为了能搜、能贴给别人。
             got['why'] = '%s%s' % (hint, ('（自动试了 %d 次）' % tries) if tries > 1 else '')
             first = _first_line(got.get('out'))
             if first:
                 got['why'] += '　原始报错：' + first
     return got
 
-
 def git(path, *args, **kw):
     return run([GIT, '-C', path] + list(args), **kw)
 
-
-# ------------------------------------------------------------------ 路径记忆
 def load_store():
     try:
         with open(STORE, encoding='utf-8') as f:
             d = json.load(f)
-    except Exception:                                                    # noqa: BLE001
+    except Exception:
         d = {}
     if not isinstance(d, dict):
         d = {}
     recent = [p for p in (d.get('recent') or []) if isinstance(p, str) and p.strip()]
     return {'last': str(d.get('last') or ''), 'recent': recent}
-
 
 def save_store(d):
     try:
@@ -1167,12 +882,10 @@ def save_store(d):
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
         os.replace(tmp, STORE)
-    except Exception:                                                    # noqa: BLE001
+    except Exception:
         pass
 
-
 def remember(path):
-    """把它记成「用过的路径」（最近的在最前，最多 12 条）。"""
     if not path:
         return
     d = load_store()
@@ -1183,24 +896,14 @@ def remember(path):
     d['last'] = os.path.abspath(path)
     save_store(d)
 
-
 def _cwd_seed():
-    """当前工作目录能不能当默认仓库？
-
-    ★ 这里专门照顾「**拖动目录**」这条用法：`drop` 声明里写了 `cwd: true`，
-      所以拖一个文件夹进来运行时，宿主会把**那个目录**设成工作目录
-      （`MOSS_PKG_PARAMS` 里一个参数都没有 —— 路径是靠 cwd 传来的）。
-      排除掉 moss 自己的安装目录，免得在里面跑 moss 时把 moss 当成"当前仓库"。
-    """
     cwd = os.getcwd()
     home = os.path.abspath(os.environ.get('MOSS_HOME') or '')
     if home and os.path.normcase(os.path.abspath(cwd)) == os.path.normcase(home):
         return ''
     return cwd if os.path.isdir(os.path.join(cwd, '.git')) else ''
 
-
 def resolve_path(p):
-    """挑一个「当前仓库目录」：显式给的 → 拖进来的（cwd）→ 上次用过的 → 记忆里的 → 家目录。"""
     p = str(p or '').strip().strip('"').strip("'")
     if p and os.path.isdir(p):
         return os.path.abspath(p)
@@ -1211,10 +914,7 @@ def resolve_path(p):
             return os.path.abspath(cand)
     return os.getcwd()
 
-
-# ------------------------------------------------------------------ 仓库信息
 def parse_status(text):
-    """git status --porcelain 的一行行 → 给界面用的结构。"""
     rows, counts = [], {'staged': 0, 'unstaged': 0, 'untracked': 0, 'conflict': 0}
     for line in (text or '').splitlines():
         if len(line) < 3:
@@ -1236,16 +936,7 @@ def parse_status(text):
                      'name': os.path.basename(path) or path, 'flag': flag})
     return rows, counts
 
-
 def repo_info(path, ttl=None):
-    """是这个仓库就回一份现成的信息；不是就回 None。
-
-    ★ 带短缓存（默认 15 秒）。**为什么要**：这台机器每条 git 命令 0.25~0.6 秒，
-      这个函数要跑 9 条 = 2.7 秒；而界面打开一次会连着问三遍同一个仓库
-      （snapshot / timeline / cloud_versions）⇒ 光重复劳动 5.4 秒。
-      真机上"打开页面十几秒"大半是它。任何**会改仓库状态**的动作跑完都会
-      `repo_cache_clear()`（见 `_step`），所以不会拿旧状态糊人。
-    """
     ttl = _REPO_TTL if ttl is None else ttl
     key = os.path.abspath(path).lower()
     if ttl > 0:
@@ -1257,16 +948,7 @@ def repo_info(path, ttl=None):
         return got
     return repo_info_raw(path)
 
-
 def gits_parallel(path, specs, timeout=25, workers=8):
-    """**同时**跑好几条 git，回 {名字: 结果}。
-
-    ★ 为什么要有（量出来的第一现场）：这台机器上**每条 git 命令光是启进程就要 0.26 秒**
-      （`git --version` 都 0.26，跟仓库多大无关），而 `repo_info` 要问 9 条
-      ⇒ 2.4 秒起步。这不是仓库大、也不是磁盘慢，是 Windows 上创建进程贵。
-      9 条命令彼此不依赖，串着跑=白等 8 次；并发跑，总耗时 ≈ 最慢那条。
-      单条耗时不变，但"打开页面"的体感从两秒多降到零点几秒 —— 就是用户要的"别慢"。
-    """
     out = {}
     if not specs:
         return out
@@ -1277,17 +959,14 @@ def gits_parallel(path, specs, timeout=25, workers=8):
         for f, name in list(futs.items()):
             try:
                 out[name] = f.result()
-            except Exception as e:                                       # noqa: BLE001
+            except Exception as e:
                 out[name] = {'ok': False, 'code': -1, 'out': '%s: %s' % (type(e).__name__, e),
                              'ms': 0, 'cmd': 'git ' + ' '.join(specs[name][0])}
     return out
 
-
 def repo_info_raw(path):
-    """真的去问 git（没缓存）。能并发的都并发跑，见 `gits_parallel` 的说明。"""
     if not os.path.isdir(path):
         return None
-    # 第一批：这 8 条互不依赖，一起发出去
     first = gits_parallel(path, [
         ('top', ['rev-parse', '--show-toplevel']),
         ('br', ['rev-parse', '--abbrev-ref', 'HEAD']),
@@ -1321,11 +1000,6 @@ def repo_info_raw(path):
             r2 = git(root, 'remote', 'get-url', names[0])
             rurl = r2['out'].strip() if r2['ok'] else ''
 
-    # 第二批：ahead/behind 得先知道"和哪条远端分支比"。
-    # ★ 没设跟踪分支（`git push` 不带 -u 就会这样）时，退一步拿 `<远端>/<当前分支>` 来比。
-    #   以前这种仓库的 ahead 永远是 **0** ⇒ 界面上本地列表里明明有一条「待上传」，
-    #   大按钮却灰成「云端已最新」、点下去还说"云端已经是最新的了" ——
-    #   用户报的就是这个："本地列表有一个待上传的版本，但是却没有上传按钮"。
     track = upstream
     if not upstream and branch and branch != 'HEAD':
         nm = gits_parallel(root, [('names', ['remote'])])['names']
@@ -1344,8 +1018,6 @@ def repo_info_raw(path):
             if len(parts) >= 2:
                 ahead, behind = int(parts[0]), int(parts[1])
     elif rurl and branch and branch != 'HEAD':
-        # 远端连上了，但云端**根本没有这条分支**（还没上传过一次）⇒ 本地所有提交都待上传。
-        # 不然这里 ahead 会是 0，界面上又变成"云端已最新"、没有上传按钮。
         cnt = git(root, 'rev-list', '--count', 'HEAD')
         got = re.findall(r'\d+', cnt['out']) if cnt['ok'] else []
         ahead = int(got[0]) if got else 0
@@ -1365,8 +1037,6 @@ def repo_info_raw(path):
     return {
         'root': root, 'name': os.path.basename(root.rstrip('\\/')) or root,
         'branch': branch or '(空仓库)', 'detached': branch == 'HEAD',
-        # track = 实际拿来比较的那条远端分支：有跟踪分支就是它，没有就是
-        # `<远端>/<当前分支>`（可能为空）。ahead/behind 就是跟它比出来的。
         'upstream': upstream, 'track': track,
         'remote': rurl, 'host': host_of(rurl),
         'ahead': ahead, 'behind': behind,
@@ -1377,18 +1047,10 @@ def repo_info_raw(path):
         'tagCount': len([x for x in (tags['out'].splitlines() if tags['ok'] else []) if x.strip()]),
     }
 
-
-#: repo_info 的短缓存。**为什么要有**：这台机器上每条 git 命令要 0.25~0.6 秒
-#: （`git status` 在 34 万文件的仓库里要 0.55 秒），而 repo_info 一次要跑 9 条 ——
-#: 也就是 2.7 秒。界面打开一次会连着问三个接口（snapshot / timeline / cloud_versions），
-#: 每个都算一遍 ⇒ **光重复劳动就 5.4 秒**。真机上量出来 "打开一次 12.7 秒" 就是这么来的。
-#: 现在 15 秒内同一个目录只算一次；任何会改仓库状态的动作之后必须 `repo_cache_clear()`。
 _REPO_CACHE = {}
 _REPO_TTL = 15.0
 
-
 def repo_cache_clear(path=None):
-    """改完仓库要立刻清掉，否则界面会拿旧状态糊人（"我明明保存了它还说没变"）。"""
     if not path:
         _REPO_CACHE.clear()
         return
@@ -1397,11 +1059,8 @@ def repo_cache_clear(path=None):
         if k == key or key.startswith(k + os.sep) or k.startswith(key + os.sep):
             _REPO_CACHE.pop(k, None)
 
-
 def repo_info_fast(path, ttl=None):
-    """老名字，留着给别处调（现在 `repo_info` 本身就带缓存了）。"""
     return repo_info(path, ttl=ttl)
-
 
 def host_of(url):
     if not url:
@@ -1413,7 +1072,6 @@ def host_of(url):
     if m:
         return m.group(1)
     return ''
-
 
 def net_info(path, info, probe=None):
     if not info:
@@ -1433,7 +1091,6 @@ def net_info(path, info, probe=None):
     elif info['upstream']:
         state = '和远端一致'
     elif info.get('track'):
-        # 没设跟踪分支，但能对上 `<远端>/<当前分支>`（ahead/behind 就是跟它比的）
         state = '和 %s 一致（这条分支还没和云端建立跟踪关系，下次上传会自动设上）' % info['track']
     else:
         state = '没有设置跟踪的远端分支（push -u origin %s 可以设上）' % (info['branch'] or 'main')
@@ -1446,19 +1103,10 @@ def net_info(path, info, probe=None):
         'probe': probe,
     }
 
-
-# ------------------------------------------------------------------ 磁盘（含"残存盘符"）
 DRIVE_TYPES = {0: '未知', 1: '没有根目录', 2: '可移动磁盘', 3: '本地磁盘',
                4: '网络盘', 5: '光驱', 6: '内存盘'}
 
-
 def list_disks():
-    """所有盘符 + 剩余空间。
-
-    ★ 「残存盘符」= 系统里还留着这个盘符（`GetLogicalDrives` 说它在），
-      但**读不出来**（`disk_usage` 失败）—— 拔掉的 U 盘、断掉的网络映射、
-      没放盘的读卡器都长这样。这种盘点一下会卡半天，所以这里就把它标出来。
-    """
     out = []
     if os.name != 'nt':
         try:
@@ -1474,7 +1122,7 @@ def list_disks():
                         'totalText': '-', 'freeText': '-', 'why': str(e)})
         return out
 
-    import ctypes                                                     # noqa: PLC0415
+    import ctypes
     k32 = ctypes.windll.kernel32
     mask = k32.GetLogicalDrives()
     for i in range(26):
@@ -1484,7 +1132,7 @@ def list_disks():
         root = letter + ':\\'
         try:
             code = k32.GetDriveTypeW(ctypes.c_wchar_p(root))
-        except Exception:                                                # noqa: BLE001
+        except Exception:
             code = 0
         item = {'letter': letter, 'root': root, 'type': DRIVE_TYPES.get(code, '未知')}
         try:
@@ -1500,19 +1148,13 @@ def list_disks():
         out.append(item)
     return out
 
-
-# ------------------------------------------------------------------ 动作表（**核心：每个动作都带等价命令**）
 def _p(ctx, plain):
-    """普通 git 动作：不依赖仓库状态时用这个。"""
     return lambda p, a: plain
-
 
 def _ctx(ctx):
     return ctx or {}
 
-
 ACTIONS = {
-    # ---- 看
     'status': dict(group='看', label='状态一览', danger=False, needArg=None, timeout=20,
                    cmd='git status --short --branch',
                    desc='改了哪些文件、在哪个分支 —— 一眼看清工作区',
@@ -1538,7 +1180,6 @@ ACTIONS = {
                  desc='标签（按时间新到旧）',
                  argv=lambda p, a: ['git', 'tag', '--sort=-creatordate']),
 
-    # ---- 同步
     'fetch': dict(group='同步', label='拉取远端信息', danger=False, needArg=None, timeout=120,
                   cmd='git fetch --all --prune',
                   desc='只更新远端的「账本」，不动你的代码（安全的联网动作）',
@@ -1553,7 +1194,6 @@ ACTIONS = {
                  argv=lambda p, a: (['git', 'push'] if (p or {}).get('upstream')
                                     else ['git', 'push', '-u', 'origin', (p or {}).get('branch') or 'HEAD'])),
 
-    # ---- 改
     'add_all': dict(group='改', label='把改动收进来', danger=False, needArg=None, timeout=30,
                     cmd='git add -A',
                     desc='告诉 git「这些改动我都要」（git 管这一步叫暂存；-A ＝ 新增/修改/删除都算）',
@@ -1598,7 +1238,6 @@ ACTIONS = {
                   desc='把远端仓库克隆到当前目录下面（地址形如 https://github.com/用户/仓库.git）',
                   argv=lambda p, a: ['git', 'clone', a]),
 
-    # ---- GitHub CLI（gh）
     'gh_auth': dict(group='gh', label='gh 登录状态', danger=False, needArg=None, timeout=30, gh=True,
                     cmd='gh auth status',
                     desc='看看 GitHub CLI 登没登、用的哪个账号',
@@ -1616,7 +1255,6 @@ ACTIONS = {
                     desc='在 GitHub 上这个仓库长什么样（描述 / star / 默认分支）',
                     argv=lambda p, a: [GH or 'gh', 'repo', 'view']),
 
-    # ---- 本机（不是 git 命令，但也算"看一下"）
     'disks': dict(group='本机', label='磁盘与残存盘符', danger=False, needArg=None, timeout=10,
                   cmd='（本机 API：GetLogicalDrives + disk_usage）', fake='disks',
                   desc='所有盘符的剩余空间；拔掉的 U 盘 / 断了的网络映射会标成「残存盘符」',
@@ -1658,9 +1296,7 @@ ACTIONS = {
                    argv=lambda p, a: []),
 }
 
-#: 这些动作不需要在 git 仓库里跑
 NO_REPO_NEEDED = ('disks', 'version', 'clone', 'gh_auth', 'init', 'gitlog')
-
 
 def actions_payload():
     out = []
@@ -1670,8 +1306,6 @@ def actions_payload():
                     'needArg': s.get('needArg') or '', 'gh': bool(s.get('gh'))})
     return out
 
-
-#: 数行数时**算作代码**的扩展名（→ 显示用的语言名）。配置 / 文本故意不在里面。
 LOC_LANG = {
     'py': 'Python', 'pyw': 'Python',
     'html': 'HTML', 'htm': 'HTML',
@@ -1685,24 +1319,16 @@ LOC_LANG = {
     'rb': 'Ruby', 'php': 'PHP', 'lua': 'Lua', 'sql': 'SQL',
     'sh': 'Shell', 'bash': 'Shell', 'ps1': 'PowerShell', 'bat': 'Batch',
 }
-#: 扫磁盘时跳过的目录（虚拟环境、依赖、缓存、构建产物 —— 那不是"你写的代码"）
 LOC_SKIP_DIRS = {
     '.git', '.hg', '.svn', '.venv', 'venv', 'env', '.env', 'node_modules',
     '__pycache__', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.tox',
     '.next', '.nuxt', 'dist', 'build', 'target', 'out', 'coverage',
     'site-packages', '.idea', '.vscode', '.cache', 'bower_components',
-    # 素材 / 数据目录：里面全是照片音频和上传件，不是代码（真机上 media 一个目录 34 万文件）
     'media', 'uploads', 'upload', 'apps_data', 'dataset', 'datasets', 'data',
     'staticfiles', 'logs', 'tmp', 'temp',
 }
 
-
 def count_lines(fp):
-    """一个文件有多少行（**空行、注释行也算** —— 用户要的就是这个口径）。
-
-    怎么算"一行"：数换行符；文件末尾如果没有换行符，最后那截也算一行。
-    按块读（不整篇进内存），几十兆的生成文件也不会把内存吃掉。
-    """
     n, last = 0, b'\n'
     try:
         with open(fp, 'rb') as f:
@@ -1713,27 +1339,13 @@ def count_lines(fp):
                 n += bit.count(b'\n')
                 last = bit[-1:]
         if last not in (b'\n',):
-            n += 1                       # 最后一行没换行，也要算上
+            n += 1
         return n
     except OSError:
         return -1
 
-
 def loc_scan(root, names=None, limit=12, budget=8.0, keep_libs=False,
              prune=4000, max_dirs=5000):
-    """数行数。`names` 给了就只数这些（git 跟踪的），给 None 就扫整个目录树。
-
-    ★ 为什么要 `budget` / `prune`（真机上量出来的）：这个项目里
-      `backend/media` 一个目录底下有 **34 万个文件**（29 万个 mp3）—— 全量 `os.walk`
-      光是走完就要 **200 秒**，界面看着就是"死了"。所以：
-        · 单个目录的条目数超过 `prune`（4000）⇒ 跳过，并记下"跳了谁、多少个"
-          （那种量级的目录一定是素材 / 数据，不是人写的代码）；
-        · 走过的目录数超过 `max_dirs`（5000）或时间超过 `budget`（8 秒）⇒ 收工，
-          **如实告诉用户"没数完"**，别装作数完了；
-        · 数据目录（media / uploads / data…）也在跳过名单里。
-      两条上限都留了余量：正常项目 1 秒内走完；真撞上了也会明说，不会假装数全了。
-      只数 git 跟踪的那份则完全不受影响（这个仓库 0.3 秒）。
-    """
     by_lang, top = {}, []
     files, total, skipped = 0, 0, 0
     root = os.path.abspath(root)
@@ -1748,7 +1360,7 @@ def loc_scan(root, names=None, limit=12, budget=8.0, keep_libs=False,
             skipped += 1
             return
         if not keep_libs and '.min.' in os.path.basename(fp).lower():
-            skipped += 1                    # 压缩产物：一个"行"顶几千字节，数它没意义
+            skipped += 1
             return
         n = count_lines(fp)
         if n < 0:
@@ -1774,10 +1386,6 @@ def loc_scan(root, names=None, limit=12, budget=8.0, keep_libs=False,
                 cut = True
                 break
             if dirs_done >= max_dirs:
-                # ★ 真机上量出来的：这个项目 `backend/app/AppSound/sound` 底下是
-                #   **11 万个按哈希分片的小目录**（每个才 1~3 个 mp3）。单目录条目数
-                #   只有 1 条，`prune` 根本挡不住 —— 全靠这一条"目录总数上限"兜住，
-                #   不然光走完就要 140 秒。
                 cut = True
                 jumped.append({'path': '（目录太多，走到 %d 个就先停了）' % max_dirs,
                                'entries': 0})
@@ -1808,14 +1416,7 @@ def loc_scan(root, names=None, limit=12, budget=8.0, keep_libs=False,
             'top': top[:limit], 'jumped': jumped[:8], 'cut': cut,
             'secs': round(time.time() - t0, 1), 'keepLibs': bool(keep_libs)}
 
-
 def repo_size_rows(root, limit=20):
-    """版本库里**最占体积**的文件（按大小排前 N 个）+ 总共多少、多大。
-
-    ★ 为什么要有：推送"三十秒没反应"最常见的原因就是**仓库里有不该提交的大文件**
-      （虚拟环境、数据集、视频、模型权重）—— 首次推送要把它整个传上去。
-      以前只能靠猜；这一眼就能看出是哪个文件、多大。
-    """
     got = git(root, 'ls-files', '-z', timeout=120)
     names = [x for x in (got.get('out') or '').split('\0') if x.strip()]
     if not got.get('ok') or not names:
@@ -1834,11 +1435,8 @@ def repo_size_rows(root, limit=20):
             'top': [{'path': n, 'bytes': sz, 'size': human_size(sz)}
                     for sz, n in rows[:limit]]}
 
-
 def _loc_text(r, which):
-    """把一份行数结果排成给人看的几行。"""
     d = (r or {}).get(which) or {}
-    # ★ 没走完的那一份加个 `≥`：数字是"数到哪儿算哪儿"，不标就像数全了（骗人）
     head = ('%-6s %s%8s 行   %5s 个文件' %
             ('git 跟踪的' if which == 'tracked' else '磁盘上全部',
              '≥' if d.get('cut') else ' ',
@@ -1848,7 +1446,6 @@ def _loc_text(r, which):
         out.append('        %-12s %8s 行  %5d 个文件'
                    % (x['lang'], '{:,}'.format(x['lines']), x['files']))
     return '\n'.join(out)
-
 
 def _fake_out(name, path):
     if name == 'loc':
@@ -1918,7 +1515,6 @@ def _fake_out(name, path):
             out.append('  虚拟环境 / 数据 / 视频这类东西该用「从版本库里去掉」剔出去。')
         return '\n'.join(out)
     if name == 'disks':
-        # 一行一个盘（不做表格式对齐 —— 中英混排按列对齐一定歪）
         rows = []
         for d in list_disks():
             if d['ready']:
@@ -1931,13 +1527,9 @@ def _fake_out(name, path):
         return '\n'.join(rows)
     return ''
 
-
-# ------------------------------------------------------------------ 时间线 / 分支 / 标签
 UNIT = '\x1f'
 
-
 def _rows(text, fields):
-    """把 `%x1f` 分隔的多行输出切成一条条记录（字段少的补空）。"""
     out = []
     for line in (text or '').splitlines():
         if not line.strip():
@@ -1948,22 +1540,14 @@ def _rows(text, fields):
         out.append(bits[:fields])
     return out
 
-
 def _rev_count(root, rev):
-    """某个引用上有多少个提交（界面上「V-384」里的那个 384）。读不到就当 0。"""
     got = git(root, 'rev-list', '--count', rev, timeout=25)
     try:
         return int((got['out'] or '0').strip().splitlines()[0])
     except (ValueError, IndexError):
         return 0
 
-
 def _upstream_hashes(root, upstream, cap=4000):
-    """远端能看到哪些提交 —— 时间线靠它标「已推送 / 只在本地」。
-
-    ★ 只在本地读 `git rev-list`，**不联网**；上限 `cap` 条，超了就宁可标不准
-      （回 capped=True，界面会说明），也不让大仓库把界面卡住。
-    """
     if not upstream:
         return set(), False
     got = run([GIT, '-C', root, 'rev-list', '--max-count=%d' % cap, upstream], timeout=30)
@@ -1972,9 +1556,7 @@ def _upstream_hashes(root, upstream, cap=4000):
     lines = [x.strip() for x in got['out'].splitlines() if x.strip()]
     return set(lines), len(lines) >= cap
 
-
 def git_log_rows(root, limit=40, rev='HEAD'):
-    """一条提交一行（用 UNIT 分隔，省得跟提交信息里的空格 / 竖线打架）。"""
     fmt = UNIT.join(['%H', '%h', '%an', '%ae', '%ad', '%ar', '%s', '%D', '%P'])
     got = git(root, 'log', '-n', str(limit), '--date=format:%Y-%m-%d %H:%M',
               '--pretty=format:' + fmt, rev, timeout=35)
@@ -1987,9 +1569,7 @@ def git_log_rows(root, limit=40, rev='HEAD'):
                      'merge': len(parents.split()) > 1})
     return rows, got
 
-
 def branch_rows(root):
-    """本地分支 + 远端分支，一次 for-each-ref 拿全（比一条条问快得多）。"""
     fmt = UNIT.join(['%(refname:short)', '%(refname)', '%(objectname:short)',
                      '%(upstream:short)', '%(upstream:track,nobracket)',
                      '%(committerdate:relative)', '%(contents:subject)'])
@@ -2015,7 +1595,6 @@ def branch_rows(root):
         (remote if item['isRemote'] else local).append(item)
     return local, remote
 
-
 def tag_rows(root, limit=40):
     fmt = UNIT.join(['%(refname:short)', '%(objectname:short)',
                      '%(creatordate:relative)', '%(contents:subject)'])
@@ -2024,20 +1603,14 @@ def tag_rows(root, limit=40):
     return [{'name': n, 'short': s, 'when': w, 'subject': (subj or '')[:80]}
             for n, s, w, subj in _rows(got['out'], 4)][:limit]
 
-
-# ------------------------------------------------------------------ 后端（两种跑法共用这一份）
 class Core:
-    """界面能调的方法都在这儿；每个方法收一份 dict、回一份 dict。"""
-
     def __init__(self, path=''):
         self.default_path = str(path or '')
         self._gh_cache = (0.0, None)
 
-    # ---- 参数
     def _path(self, params):
         return resolve_path((params or {}).get('path') or self.default_path)
 
-    # ---- 信息
     def boot(self, params=None):
         v = run([GIT, '--version'], timeout=15)
         return {
@@ -2053,7 +1626,6 @@ class Core:
 
     def snapshot(self, params=None):
         path = self._path(params)
-        # 用缓存版：打开界面时 snapshot / timeline / cloud_versions 会连着问同一个仓库
         info = repo_info_fast(path, ttl=0 if (params or {}).get('fresh') else None)
         return {'path': path, 'isRepo': bool(info), 'repo': info,
                 'net': net_info(path, info), 'recent': recent_payload(),
@@ -2063,14 +1635,6 @@ class Core:
         return {'disks': list_disks()}
 
     def untrack(self, params=None):
-        """把某个目录 / 文件从**版本库**里去掉：磁盘上的文件一个都不动。
-
-        ★ 为什么要有：`.venv`、数据目录、模型文件这类东西一旦被提交进去，每次
-          push 都要把它们整个再传一遍（真事：一个项目的初版提交里躺着一整个
-          虚拟环境，178MB —— 首次推送三十多秒没反应，看着像卡死）。
-          这里先数清楚"要剔除多少个文件、多大"，再只从索引里移除；文件留在原处，
-          删掉 `.gitignore` 里没写的话以后还会被 `git add` 收进来，所以顺手提醒一句。
-        """
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
@@ -2107,12 +1671,6 @@ class Core:
         return out
 
     def sync_log(self, params=None):
-        """把 sync.log 的尾巴读出来（命令行 `action=gitlog` 和界面都用它）。
-
-        ★ 为什么要有：推送卡住时，界面上只有一行"还在跑"，用户问"到底在干什么" ——
-          以前**没有任何记录**（push 的输出攒到最后才返回，进程被杀就全丢了）。
-          现在每条慢命令都落在这里，事后能看是谁慢、慢几秒、卡在哪一句。
-        """
         p = params or {}
         try:
             n = int(p.get('n') or 80)
@@ -2131,18 +1689,7 @@ class Core:
                 'out': '\n'.join(tail) or
                        '还没有日志 —— 先点一次「推送」或「同步」，之后这里就有了'}
 
-    # ---------------------------------------------------------------- 长任务：后台跑，界面看进度
     def job_start(self, params=None):
-        """把一次长操作（保存 / 备份 / 同步 / 获取最新版…）**放到后台跑**，立刻返回一个号。
-
-        ★ 为什么要有（这是真机上"30 秒没反应"的根因之一）：
-          以前界面是「发一条 RPC，然后等它回来」 —— 而 `moss-embed.js` 里那条 RPC 的
-          上限写死 **30 秒**。首次推送 178MB 时，三十秒一到界面就报"后端 30 秒没回话"，
-          可 git 其实还在传，用户以为失败了，就又点一次…… 现在改成：
-            ① 这里只负责开跑、立刻返回 `id`（这条 RPC 一秒内就回，永远不会超时）；
-            ② 界面拿 `id` 去 `job_state` 轮询：进度、耗时、最后几行输出都看得到；
-            ③ 想停就 `job_cancel`（真的 kill 掉那个子进程）。
-        """
         p = params or {}
         method = str(p.get('method') or '').strip()
         label = str(p.get('label') or method).strip() or method
@@ -2161,7 +1708,6 @@ class Core:
                 return {'ok': False, 'why': '已经有一个操作在跑了：%s' % cur['label'],
                         'id': cur['id'], 'running': True}
             job = {'id': '%d' % int(time.time() * 1000), 'label': label, 'state': 'running',
-                   # 把"开任务之前说过的几句"接在前面：刚打开界面点一下，也能看到前因
                    'lines': list(_IDLE) + ['▶ %s 开始' % label],
                    'started': time.time(), 'beat': time.time(),
                    'result': None, 'lock': threading.Lock(), 'proc': None, 'cancel': False}
@@ -2171,12 +1717,11 @@ class Core:
         return {'ok': True, 'id': job['id'], 'label': label, 'method': method}
 
     def _job_run(self, job, fn, args):
-        """在后台线程里跑真正的活；异常也收进 result，别让它无声无息地没了。"""
         try:
             res = fn(args)
             if not isinstance(res, dict):
                 res = {'ok': True, 'out': str(res)}
-        except Exception as e:                                          # noqa: BLE001
+        except Exception as e:
             res = {'ok': False, 'why': '%s: %s' % (type(e).__name__, e), 'steps': []}
             _live('✗ 出错了：%s: %s' % (type(e).__name__, e))
         with job['lock']:
@@ -2189,7 +1734,6 @@ class Core:
             job['proc'] = None
 
     def job_state(self, params=None):
-        """看一眼那个任务跑到哪了（界面每 0.4 秒问一次）。"""
         p = params or {}
         jid = str(p.get('id') or '')
         with _JOB_LOCK:
@@ -2207,12 +1751,10 @@ class Core:
             res = job['result']
         return {'ok': True, 'id': job['id'], 'label': job['label'], 'state': state,
                 'elapsed': round(time.time() - job['started'], 1),
-                # silent = 多少秒没有新动静 —— 界面靠它说"还在跑，只是慢"
                 'silent': round(time.time() - beat, 1),
                 'lines': lines, 'result': res}
 
     def job_cancel(self, params=None):
-        """停掉正在跑的任务（真的 kill 子进程；已经跑完的返回"没在跑"）。"""
         p = params or {}
         jid = str(p.get('id') or '')
         with _JOB_LOCK:
@@ -2229,15 +1771,7 @@ class Core:
         return {'ok': True, 'state': 'cancelling',
                 'why': '已经让它停下了' if proc is not None else '正在收尾'}
 
-    # ---------------------------------------------------------------- 推之前先看清楚
     def push_check(self, params=None):
-        """推送前体检：这一推大概多大、有没有 GitHub 装不下的文件。
-
-        ★ 为什么要有（真事）：一个项目的初版提交里躺着一个 **182MB** 的语音模型文件，
-          GitHub 单文件上限 100MB ⇒ 那一推**一定失败**，而且失败前先把 182MB 传一遍，
-          界面上三十秒没动静，人只会以为软件坏了。现在点「备份到云端」之前先扫一遍
-          版本库里的文件大小，先警告、先问，再决定屏蔽还是照推。
-        """
         path = self._path(params or {})
         info = repo_info(path)
         if not info:
@@ -2268,7 +1802,6 @@ class Core:
                         'why': ('%s —— GitHub 单个文件不能超过 100MB，这个一定推不上去'
                                 % human_size(sz)) if sz >= LIMIT_HARD else
                                ('%s —— 偏大，推起来会慢' % human_size(sz)),
-                        # 屏蔽的时候整条目录屏蔽更省事（不然一个模型目录里有几十个文件）
                         'pattern': (os.path.dirname(name).replace('\\', '/') + '/')
                                    if os.path.dirname(name) else name})
         ahead = 0
@@ -2291,12 +1824,7 @@ class Core:
                 'limitHard': human_size(LIMIT_HARD), 'limitWarn': human_size(LIMIT_WARN),
                 'gitignore': os.path.join(root, '.gitignore')}
 
-    # ---------------------------------------------------------------- 屏蔽某个目录 / 文件
     def shield(self, params=None):
-        """「屏蔽」一步做完：写进 `.gitignore` + 把已经被跟踪的从版本库去掉（磁盘不动）。
-
-        参数 `patterns`：一条或几条要屏蔽的路径（目录结尾带 `/` 更清楚）。
-        """
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
@@ -2331,7 +1859,6 @@ class Core:
                 with open(gi, 'a', encoding='utf-8') as f:
                     if old and old[-1].strip():
                         f.write('\n')
-                    f.write('\n# moss：这些不跟着提交\n')
                     f.write('\n'.join(add) + '\n')
             except OSError as e:
                 return {'ok': False, 'why': '写不进 .gitignore：%s' % e, 'steps': []}
@@ -2344,12 +1871,6 @@ class Core:
         return out
 
     def ignore(self, params=None):
-        """`.gitignore` 的「看一眼 / 加一条 / 删一条」—— 界面上那张「屏蔽清单」。
-
-        op = list（默认）/ add（要 pattern）/ remove（要 pattern 或 line）。
-        ★ 为什么要有：以前"哪些东西没跟着提交"只写在某个隐藏文件里，普通人根本不知道
-          有这回事、更不知道当初屏蔽了什么；出了问题只能找 AI 翻 `.gitignore`。
-        """
         p = params or {}
         op = str(p.get('op') or 'list').strip()
         path = self._path(p)
@@ -2393,7 +1914,6 @@ class Core:
         return {'ok': True, 'path': path, 'file': gi, 'entries': self._ignore_rows(root, lines)}
 
     def _ignore_rows(self, root, lines):
-        """每条规则现在还盖住哪些"已经被跟踪"的文件（这些才是隐患：屏蔽了但还在库里）。"""
         stats = {}
         tracked = []
         ign = git(root, 'ls-files', '-z', '-ci', '--exclude-standard', timeout=120)
@@ -2426,7 +1946,6 @@ class Core:
         return rows
 
     def bigfiles(self, params=None):
-        """版本库里最占体积的文件（界面上「体积排行」用）。"""
         path = self._path(params or {})
         info = repo_info(path)
         if not info:
@@ -2436,23 +1955,10 @@ class Core:
         return r
 
     def loc(self, params=None):
-        """数代码行数：**两种口径一起给**，互相对照。
-
-        * `tracked` —— 只用 git 跟踪的文件（跟着 `.gitignore` 走）。跟推到 GitHub 的内容一致。
-        * `all`     —— 磁盘上所有代码文件（含还没提交的），但跳过 `.venv` / `node_modules`
-          / `__pycache__` / `dist` 这类"根本不是人写的"目录。
-
-        ★ 口径按用户说的办：**一个文件有多少行就算多少行** —— 不去空行、不剔注释。
-          （剔注释要给每种语言各写一套规则，还容易错；他明确说不需要那么精细。）
-        ★ 只数程**代码**：`.py .html .js .css .vue` 这些；`.json .ini .txt .md .yml`
-          这类配置 / 文本不算（也是他明确排掉的）。
-        """
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
         repo_root = (info or {}).get('root') or path
-        # ★ 数的是**你选的这个目录**，不是整个仓库（探针抓到过：选插件的子目录，
-        #   结果报出整个 moss 仓库的 94 万行 —— 因为 git 的根在上面几层）。
         root = os.path.abspath(path)
         if not os.path.isdir(root):
             return {'ok': False, 'why': '这个目录不在了：%s' % root, 'tracked': None, 'all': None}
@@ -2471,8 +1977,6 @@ class Core:
         tracked = loc_scan(scan_root, names, keep_libs=keep_libs) if names else {
             'files': 0, 'lines': 0, 'byLang': [], 'top': [], 'skipped': 0,
             'jumped': [], 'cut': False, 'secs': 0}
-        # ★ `fast=1` 只算"跟着提交的"那一份（0.3 秒），界面先把它画出来，
-        #   再发一次完整的把"磁盘上全部"补上 —— 不让用户对着转圈干等 8 秒。
         everything = None if p.get('fast') else loc_scan(root, None, keep_libs=keep_libs)
         return {'ok': True, 'path': path, 'root': root, 'repoRoot': repo_root,
                 'isRepo': bool(info),
@@ -2487,9 +1991,6 @@ class Core:
         info = repo_info(path)
         if not info or not info['remote']:
             return {'ok': False, 'why': '这个目录没有可探测的远端地址', 'cmd': 'git ls-remote --heads origin'}
-        # ★ 走 `_exec` 而不是裸 `run`：这条本身是联网命令，也要享受"抖一下自动重试 +
-        #   换 openssl 后端"（`NET_SUBS` 里有 ls-remote）。不然「检查环境」会因为同一个
-        #   schannel 握手问题报"连不上"，而真去推的时候其实能通。
         got = _exec([GIT, '-C', info['root'], 'ls-remote', '--heads', 'origin'],
                     timeout=25, label='问一下远端有哪些分支')
         heads = len([x for x in got['out'].splitlines() if x.strip()])
@@ -2504,21 +2005,14 @@ class Core:
         ts, cached = self._gh_cache
         if cached and time.time() - ts < 60:
             return cached
-        # ★ 直接问磁盘（`local_tool` 认便携版 + PATH），**不信**模块级那个 `GH` ——
-        #   它是 import 那一刻定下来的，装完之后在新的进程里才准。
-        #   这就是"明明装好了、界面还一直劝你装"的另一半原因。
         found = local_tool('gh') or shutil.which('gh')
         if found:
             GH = found
         res = {'installed': bool(found), 'version': '', 'loggedIn': False, 'user': '',
                'why': '', 'path': found or ''}
         if found:
-            # ★ 超时收紧（15/20 → 8/10）：这俩以前是"界面卡一分钟"的帮凶。
-            #   本地命令正常都是几十毫秒，真要 8 秒还没回来，就是它想联网而网不通。
             v = run([GH, '--version'], timeout=8)
             res['version'] = (v['out'].splitlines() or [''])[0]
-            # ★ "装了但跑不起来"（杀软拦、权限、文件坏了）跟"没装"是两件事：
-            #   以前统一当没装 ⇒ 界面劝你再装一份，装了还是这样，永远好不了。
             res['broken'] = not v['ok']
             a = run([GH, 'auth', 'status'], timeout=10)
             txt, low = a['out'] or '', (a['out'] or '').lower()
@@ -2526,9 +2020,6 @@ class Core:
             m = re.search(r'account\s+(\S+)', txt)
             res['user'] = m.group(1).strip() if m else ''
             if not res['loggedIn']:
-                # ★ `gh auth status` 要联网（问 token 有没有过期）。网络抖的时候它会失败，
-                #   以前这里就当成"没登录"劝人重新登 —— 可其实推送走的是 git 自己的凭据
-                #   （凭据管理器里那份），跟 gh 一点关系都没有。所以网络类错误要说清是网络。
                 _why = (txt or 'gh 说没登录（gh auth login 登一下）').strip()[:300]
                 _hint = net_hint(txt)
                 if _hint:
@@ -2543,19 +2034,7 @@ class Core:
     def gh(self, params=None):
         return self._gh()
 
-    # ---------------------------------------------------------------- 界面报错（`ui/error-guard.js`）
     def ui_error(self, params=None):
-        """把界面里没被接住的异常记一条（`ui/error-guard.js` 调过来的）。
-
-        ★ 为什么要有：界面出错时只有 DevTools 控制台看得见 —— **用户看不见、AI 也读
-          不到**。安装按钮那次"永远 0 秒"就是 `S.modalActs` 未初始化抛的 `TypeError`，
-          三个人围着同一个死现象猜了三轮才找到。现在界面底部会弹一条红条，同时这里
-          落一份日志，谁都能回看。
-
-        ★ 两种跑法都到这儿（不用界面自己判断模式）：
-          · 内嵌：iframe → `moss.call` → 宿主 → **本进程的 stdin**（`Embedded.loop`）；
-          · 独立窗口：`window.pywebview.api.ui_error`（`build_api()` 按 Core 自动转发）。
-        """
         p = params or {}
         rec = {
             'at': now_text(),
@@ -2570,7 +2049,6 @@ class Core:
         path = os.path.join(DATA_DIR, 'ui-errors.log')
         try:
             os.makedirs(DATA_DIR, exist_ok=True)
-            # 只留最近 40 条 / 64 KB：界面错误可能一秒几十条，不能无限长
             old = []
             try:
                 with open(path, encoding='utf-8') as f:
@@ -2586,42 +2064,21 @@ class Core:
                 f.write(data)
             print('[github] 界面报错：%s' % rec['msg'][:120], flush=True)
             return {'ok': True, 'path': path, 'kept': len(old)}
-        except Exception as e:                                       # noqa: BLE001
+        except Exception as e:
             return {'ok': False, 'why': '记不下来：%s' % e}
 
-    # ---- 环境体检：缺什么、能不能我替你补上、补不了给网址 ----
     def env_check(self, params=None):
-        """把「这东西现在到底能不能用」一次说清。
-
-        ★ 定这个接口的原因（真机上最常见的三种"用不了"）：
-          ① 电脑没装 git —— 界面照样能开，但所有按钮点下去都失败，人不知道为啥；
-          ② 装了 git 但没配 user.name/user.email —— 第一次「保存版本」就报
-             "Author identity unknown"，这句话普通人看不懂；
-          ③ 没装 gh / 装了没登录 —— 「自动建仓库并上传」点不动。
-        所以这里把每一条都查出来，能自己补的直接补（见 install_tool / fix_identity /
-        gh_login），补不了的给一个**能点的网址**和「装完还要做什么」。
-        """
         path = self._path(params or {})
-        # ★ 4 秒内重复点「环境检查」直接用上次结果 —— 界面上很容易连点，
-        #   每次都把 git/gh 全套跑一遍就是白等。
         fresh = bool((params or {}).get('fresh'))
         c = _ENV_CACHE
-        # ★ 缓存从 4 秒放到 60 秒（用户的原话："每次都检查环境，导致每次打开这个页面
-        #   都特别慢"）。界面有三个入口会触发它（打开页面 / 窗口重新可见 / 窗口拿到焦点），
-        #   切来切去就会连查好几遍。60 秒足够挡住这些重复；真要立刻看最新状态，
-        #   界面上的「再检查一次」传 fresh=1 就绕过缓存。
         if not fresh and c.get('path') == path and c.get('data') \
                 and time.time() - float(c.get('at') or 0) < 60:
             return c['data']
         refresh_tools()
-        # 刚装完东西的那几分钟里，gh 的 60 秒缓存必须作废（否则"装好了还说没装"）
         _d = read_install()
         if fresh or (_d and _d.get('done')
                      and time.time() - float(_d.get('at') or 0) < 180):
             self._gh_cache = (0.0, None)
-        # ★ 判"有没有 git"要连**便携版**一起看（`local_tool`）。以前这里只查 PATH
-        #   （`shutil.which('git')`），于是"我们刚帮你把 git 装进 tools/ 了"这种情形
-        #   照样被判成"没装 git" —— 后面整块直接 skip，人看到的就是"装完还说没装"。
         if not (shutil.which('git') or local_tool('git')):
             items = [{
                 'key': 'git', 'state': 'bad', 'label': 'Git（记录版本的工具）',
@@ -2641,8 +2098,6 @@ class Core:
                     'nextText': '这台电脑上还没有 git，先把它装好，别的都免谈。',
                     'help': HELP_AI, 'at': now_text()}
 
-        # ★ 这 4 项互不依赖，一起发。这台机器每条命令光是启进程就要 0.26 秒，
-        #   串着跑 = 1 秒多；并发跑 ≈ 最慢那一个。环境检查是"打开页面"的关键路径。
         with ThreadPoolExecutor(max_workers=4) as pool:
             f_gitv = pool.submit(run, [GIT, '--version'], timeout=15)
             f_idn = pool.submit(git_identity, path)
@@ -2651,7 +2106,7 @@ class Core:
             gitv = f_gitv.result()
             idn = f_idn.result()
             gh = f_gh.result()
-            probe_info = f_probe.result()    # 下面推不推得动、这个文件夹两处都用它
+            probe_info = f_probe.result()
         items = [{
             'key': 'git', 'state': 'ok', 'label': 'Git（记录版本的工具）',
             'detail': (gitv['out'].splitlines() or ['已安装'])[0].strip(),
@@ -2671,7 +2126,6 @@ class Core:
             })
 
         if gh['installed']:
-            # 装了但 `--version` 跑不通 ⇒ 说清是"跑不起来"，不是"没装"（别再劝人重装）
             _detail = (gh['version'] or '').strip()
             if not _detail:
                 _detail = ('装了但跑不起来（%s）—— 多半被杀软/权限挡住了，'
@@ -2688,12 +2142,6 @@ class Core:
                         '跟着提示走完就行。',
             })
 
-        # ★★ 这里是最关键的一处纠正（真机踩过）：
-        #   以前把「gh 没登录」当成「不能推送」，于是用户明明一直能推，升级后突然被告知
-        #   "没登录 GitHub"，黑窗口一开还啥都没有。**推送走的是 git 自己的凭证**，
-        #   跟 gh 登录毫无关系。所以拆成两项：
-        #     · push  = 能不能推送（只看 git：远端地址 + 凭证助手 / SSH 密钥）
-        #     · login = 能不能"自动替你建仓库"（只看 gh，是**可选**的便利功能）
         ability = push_ability(path, probe_info)
         if ability['can']:
             items.append({'key': 'push', 'state': 'ok',
@@ -2717,8 +2165,6 @@ class Core:
                           'detail': 'gh 已登录：%s —— 「备份到云端」可以一键替你建仓库'
                                     % (gh['user'] or '（账号名没读出来）')})
         elif gh['installed']:
-            # ★ 这里是 skip（不是 bad / 不是 warn）：它**不影响推送**，只是少一个便利功能。
-            #   以前写成 bad + 红色，才会让人误以为"没登录就不能推了"。
             items.append({
                 'key': 'login', 'state': 'skip',
                 'label': 'GitHub 自动建仓库（可选，不影响推送）',
@@ -2735,11 +2181,6 @@ class Core:
                           'url': URL_SIGNUP, 'fix': '', 'help': ''})
 
         online = net_touch()
-        # ★ 代理这一块必须看得见：代理软件的端口一变就全挂，而报错只会说"握手失败"，
-        #   用户猜不到是代理（开发时在这台机器上真踩过，具体地址是它自己配的）。
-        # ★ 代理一律**现场探测**，代码里没有任何默认地址/端口（每台机器都不一样：
-        #   家里直连、公司代理、Clash、v2ray… 写死一个值等于把别人的机器搞坏）。
-        #   顺序：先问 git 自己（这是它真正会用的），再看系统/环境变量，最后什么都不配。
         _px = git_proxy()
         _px_alive = proxy_alive(_px) if _px else None
         _sys_alive = None
@@ -2747,27 +2188,21 @@ class Core:
         if _px:
             _px_txt = '｜走代理 %s（git 自己配的）' % _px
             if _px_alive is False:
-                # 纯文本（界面是 textContent 显示，别用 Markdown 星号）
                 _px_txt += '，但这个端口连不上 —— 多半是代理软件没开（或者换了端口）'
         else:
             _sys_px, _sys_src = system_proxy()
             if _sys_px:
-                # git **不读** Windows 的 Internet 选项，这是最容易卡住人的地方
                 _px_txt = ('｜%s设了 %s，但 git 不认它（git 只认自己的配置）'
                            '—— 要让 git 走代理得执行一次 git config --global http.proxy %s'
                            % (_sys_src, _sys_px, _sys_px))
                 _sys_alive = proxy_alive(_sys_px)
                 if _sys_alive is False:
                     _px_txt += '；而且这个端口现在也连不上'
-        # ★ 这台机器上回是靠 openssl 后端连通的就都说出来：不是玄学，是量出来的
-        #   （Windows 自带 schannel 走代理第一枪几乎必挂）。联网命令会自动用它。
         _pref = net_pref()
         items.append({
             'key': 'net',
             'state': 'warn' if (not online or _px_alive is False or _sys_alive is False) else 'ok',
             'label': '能不能连上 GitHub',
-            # ★ 措辞改了（`V-422`）：这只是一次**3 秒的探测**，探不到不等于推不上去
-            #   （有的网络只卡 DNS / 只卡 HTTPS 的握手，git 走代理照样通）。
             'detail': ('能连上' if online else
                        '这次没探到 github.com（443）—— 只是 3 秒的探测，不代表推不上去')
                       + _px_txt
@@ -2788,8 +2223,6 @@ class Core:
 
         todo = [i for i in items if i['state'] in ('bad', 'warn')]
         data = {'ok': True, 'path': path, 'items': items, 'ready': True,
-                # ★ 能不能上云 = 能推送（git）或能自动建仓库（gh）且网络通。
-                #   以前这里只认 gh 登录，导致"本来能推"的人被误判成不能 —— 已修。
                 'cloudReady': bool(online and (ability['can'] or
                                                (gh['installed'] and gh['loggedIn']))),
                 'pushCan': bool(ability['can']),
@@ -2804,43 +2237,24 @@ class Core:
         return data
 
     def install_tool(self, params=None):
-        """替用户装 git / gh（能装就装）。
-
-        ★ 故意**不等它装完**：winget 要下载几十兆、还可能弹一次 UAC，一条 RPC 卡几分钟
-          界面看着就像死了。所以这里只负责"踢一脚"，启动后台安装后立刻返回，
-          界面提示「装完点再检查一次」。装不了（没有 winget）就打开官网下载页。
-        """
         what = str((params or {}).get('what') or '').strip()
         if what not in ('git', 'gh'):
             return {'ok': False, 'why': '只支持装 git 或 gh：%s' % what}
         pkg = 'Git.Git' if what == 'git' else 'GitHub.cli'
         label = 'Git' if what == 'git' else 'GitHub CLI'
         url = URL_GIT if what == 'git' else URL_GH
-        # ★★ 已经装好了就**一份都别再下**（真机踩过：界面上的提示是陈旧的，人一点就重下，
-        #    于是"每次打开这个插件都装一次"）。这里以**磁盘上真有那个 exe** 为准，
-        #    而不是信界面上那份可能过期的状态；确实想重装就传 force=1。
         found = local_tool(what) or shutil.which(what)
         if found and not str((params or {}).get('force') or ''):
-            self._gh_cache = (0.0, None)                  # 让环境检查立刻改口
+            self._gh_cache = (0.0, None)
             return {'ok': True, 'started': False, 'already': True, 'installed': True,
                     'path': found, 'url': url,
                     'why': '%s 已经装好了（%s），不用再装。' % (label, found)}
-        # ★ 注意：winget 只有"用系统安装器"那条路才需要。
-        #   便携版是直接下 zip 解压，**不需要 winget** ——
-        #   以前在函数开头就查 winget、没有就整条失败，等于把最靠谱的那条路也堵死了。
         winget = shutil.which('winget')
-        # 已经在装了就别开第二份（人看没动静容易连点）
-        # ★ 只有「这次新版本留下、而且日志文件真的在」才算"正在装"。
-        #   上一版留下的记录没有 log 字段（那时输出全丢了）—— 它不该挡住新的安装，
-        #   否则会出现"点了没反应、也没有进度、也不开始装"的死局（真机就是这么卡的）。
         kind = 'winget' if str((params or {}).get('mode') or '') == 'winget' else 'portable'
         cur = read_install()
         if cur and not cur.get('done') and cur.get('what') == what and cur.get('log') \
                 and (cur.get('kind') or 'winget') == kind:
             age = time.time() - float(cur.get('at') or 0)
-            # ★ 判断"还在装"最可靠的依据是**日志文件还有没有在长**：
-            #   进程被杀 / 下载断了 / 卡死了，日志就不动了 —— 这时候必须允许人重新点，
-            #   否则按钮会一直回"已经在装了"，形成死局（真机踩过）。
             try:
                 quiet = time.time() - os.path.getmtime(cur['log'])
             except OSError:
@@ -2851,30 +2265,15 @@ class Core:
                         'why': '%s 已经在装了，不用重复点 —— 下面就是它的实时进度。' % label}
         js, log = install_paths(what)
         try:
-            open(log, 'w', encoding='utf-8').close()      # 清空，从头记
-        except Exception:                                            # noqa: BLE001
+            open(log, 'w', encoding='utf-8').close()
+        except Exception:
             pass
-        # ★ 关键改动：**把 winget 的输出写进日志文件**，界面每秒读一次尾巴。
-        #   第一版是 DEVNULL，人点了之后既没进度也没日志，只能干等 —— 就是这里改的。
-        #   用 cmd /c 里做重定向，就不用在 Python 侧接管道（接管道写满会卡死）。
-        # ★ 默认走「便携版」：不需要管理员、进度能到百分比、装完立刻能用。
-        #   真想用系统安装器就传 mode='winget'（下面那段还留着，万一 portable 通不了）。
         if str((params or {}).get('mode') or 'portable') != 'winget':
             mark_install(what, log=log, kind='portable')
-            # ★ 必须起**独立进程**，不能用线程：实测线程下载到第 1 行日志后，
-            #   一旦这个跑包的进程退出（关窗口、命令行跑完），daemon 线程当场被杀，
-            #   下载就断在半路 —— 人看到的就是"进度卡住不动"。
-            #   独立进程（DETACHED）跟界面活多久无关，关掉窗口它照样下完。
             try:
                 detach = 0
                 if os.name == 'nt':
-                    detach = 0x00000008 | 0x00000200      # DETACHED_PROCESS | NEW_PROCESS_GROUP
-                # ★★ 环境变量必须"摘干净"，否则子进程会跑错分支（真机上就卡在这）：
-                #    `main()` 里只要 MOSS_PKG_PARAMS 存在（哪怕是空串）就不会去读 argv，
-                #    空串 json 解析失败 → 参数为空 → 它会以为"没人给我 action" →
-                #    **跑去开界面窗口**，于是安装根本没开始，界面上就一直是"正在启动"。
-                #    MOSS_UI_EMBED 同理：留着它会进内嵌循环等 stdin（DEVNULL 立刻 EOF），
-                #    同样不会去装。所以这两个都从子进程环境里删掉，让它老老实实看 argv。
+                    detach = 0x00000008 | 0x00000200
                 child_env = dict(os.environ)
                 child_env.pop('MOSS_PKG_PARAMS', None)
                 child_env.pop('MOSS_UI_EMBED', None)
@@ -2886,7 +2285,7 @@ class Core:
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL, cwd=HERE, creationflags=detach,
                     env=child_env)
-            except Exception as e:                                   # noqa: BLE001
+            except Exception as e:
                 print('[github] 起安装进程失败：%s' % e, flush=True)
                 mark_install(what, log=log, done=True, code=1, kind='portable')
                 return {'ok': False, 'started': False, 'url': url,
@@ -2905,7 +2304,7 @@ class Core:
             subprocess.Popen(['cmd', '/c', line], stdin=subprocess.DEVNULL,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              creationflags=NO_WINDOW, cwd=DATA_DIR)
-        except Exception as e:                                          # noqa: BLE001
+        except Exception as e:
             opened = open_url(url)
             return {'ok': False, 'started': False, 'opened': bool(opened), 'url': url,
                     'why': '启动安装失败（%s）—— 已经帮你打开下载页，手动装一下。' % e}
@@ -2916,15 +2315,9 @@ class Core:
                        '下面会一直显示进度和日志，装完我会直接告诉你能点「登录 GitHub」了。'}
 
     def install_status(self, params=None):
-        """装到哪一步了 —— 界面每秒来读一次，用来画进度条和日志。
-
-        ★ 这个方法是"别再让人干等"的核心：返回 进度百分比（抠不到就是 None）、
-          一句人话（正在下载 / 正在安装 / 装好了 / 出错了）、日志尾巴、已经花了几秒。
-        """
         what = str((params or {}).get('what') or '').strip()
         d = read_install()
         if not d or (what and d.get('what') != what):
-            # ★ found 也要认包里那份便携版（以前只查 PATH，装好了却说"没装"）
             return {'ok': True, 'running': False, 'phase': 'none', 'text': '没有正在进行的安装',
                     'log': '', 'secs': 0,
                     'found': bool(shutil.which(what or '') or local_tool(what or ''))}
@@ -2937,19 +2330,13 @@ class Core:
         secs = int(time.time() - float(d.get('at') or 0))
         phase, say = install_phase(text, found)
         pct = install_percent(text)
-        # ★ 判"装完"只看**这次安装自己的证据**：日志里有 EXIT_OK 或状态文件说 done。
-        #   千万不能拿「机器上有这个程序」当成功依据 —— 那会把"本来就有"和
-        #   "正在装第 30%"混为一谈，进度条会提前跳到 100% 然后骗人说装好了（真机踩过）。
         if 'EXIT_FAIL' in text:
             phase, say = 'fail', '出错了'
         elif 'EXIT_OK' in text:
             phase, say, pct = 'done', '装好了', 100
         elif not finished:
-            # 没写 EXIT_OK 就**绝不**说"装好了"（以前会把"机器上本来就有"当成装完）
             if phase == 'done':
                 phase, say = 'run', say
-        # ★ 实测：winget 的输出重定向到文件时**很可能一个字都不写**（真机就是这样）。
-        #   那就自己写几行带时间戳的进度，保证"屏幕上一直在动"，人不用靠猜。
         if not (text or '').strip() and not finished:
             t0 = datetime.fromtimestamp(float(d.get('at') or time.time()))
             pkgname = 'Git' if what == 'git' else 'GitHub CLI'
@@ -2963,10 +2350,6 @@ class Core:
                                15 * n))
             text = '\n'.join(mine)
 
-        # ★ 一句话兜底：winget 在 Windows 上把输出重定向到文件时经常缓冲很久，
-        #   甚至一个字都不吐；还有一种情况是它弹了「是否允许」的系统窗口在等人点。
-        #   这两种都表现为"屏幕上什么都没发生" —— 所以过一会儿就明确提醒人去看一眼，
-        #   而不是让人对着进度条干等（真机反馈的原话："只能等"）。
         hint = ''
         if not finished and secs >= 25 and not text.strip():
             hint = ('还在连网下载，暂时没有输出。要是你屏幕上弹了「是否允许」的窗口，点「是」。'
@@ -2981,31 +2364,19 @@ class Core:
                 'label': 'Git' if what == 'git' else 'GitHub CLI'}
 
     def fix_identity(self, params=None):
-        """替用户填一个 git 署名（只写进这个仓库，或者写全局——见函数注释）。"""
         path = self._path(params or {})
         note = ensure_identity(path, force=True)
         return {'ok': bool(git_identity(path)['name']), 'identity': git_identity(path),
                 'note': note or '已经有署名了，没动'}
 
     def open_url(self, params=None):
-        """用系统默认浏览器打开一个网址（注册 / 登录 / 下载页都走它）。"""
         return open_url(str((params or {}).get('url') or ''))
 
     def gh_login(self, params=None):
-        """登录 GitHub —— 开一个**真的**命令行窗口让 `gh auth login` 在里面跑。
-
-        ★ 为什么不在这里直接跑：`gh auth login --web` 要人在终端里按回车、还要等浏览器
-          授权完成，藏起来跑（平时我们都是 DEVNULL）它会一直等，最后超时，
-          人看到的就是"点了没反应"。
-        """
         refresh_tools()
         gh = local_tool('gh') or shutil.which('gh')
         if not gh:
             return {'ok': False, 'why': '还没装 gh —— 先点「帮我装 gh」', 'url': URL_GH}
-        # ★ 参数按**这个 gh 支持什么**来给：`--clipboard` / `--skip-ssh-key` 是较新版本
-        #   才有的，老版本硬塞会报 "unknown flag"，窗口里就只剩一行红字。
-        #   `--clipboard` 把一次性代码直接放剪贴板（人不用在窗口里找那 8 位）；
-        #   `--skip-ssh-key` 关掉"要不要生成密钥"那一问（真机反馈说的就是这个"秘钥"）。
         _help = run([gh, 'auth', 'login', '--help'], timeout=10)['out'] or ''
         flags = ['--hostname', 'github.com', '--git-protocol', 'https', '--web']
         has_clip = '--clipboard' in _help
@@ -3015,17 +2386,11 @@ class Core:
         if has_skip:
             flags.append('--skip-ssh-key')
         flag_text = ' '.join(flags)
-        # dry=1：只把要执行的命令吐出来，不真开窗口（自检 / 排查用）
         if (params or {}).get('dry'):
             return {'ok': True, 'dry': True, 'ghPath': gh, 'flags': flags,
                     'clipboard': has_clip, 'skipSshKey': has_skip,
                     'cmd': '"%s" auth login %s' % (gh, flag_text)}
 
-        # ★ 真机踩的两个坑：
-        #   ① 便携版 gh 不在 PATH 里，窗口里敲 `gh` 会报「不是内部或外部命令」→ 一闪就没了。
-        #      所以这里**用绝对路径**，并且先 cd 到它所在目录。
-        #   ② 窗口里只有 gh 自己的英文提示，人不知道要干什么。所以先用 echo 把
-        #      "接下来会发生什么、你要做什么"写进窗口里，再执行命令。
         steps = [
             'echo ============================================',
             'echo  登录 GitHub（这一步只是让「自动建仓库」能用）',
@@ -3059,14 +2424,13 @@ class Core:
         line += ' && echo. && echo 登录完成（按任意键关掉这个窗口） && pause'
         try:
             if os.name == 'nt':
-                # /k 保留窗口，出错了也能看到红字，而不是一闪就没
                 subprocess.Popen('start "GitHub 登录（照窗口里的字做）" cmd /k %s' % line,
                                  shell=True)
             else:
                 subprocess.Popen(['sh', '-c', 'x-terminal-emulator -e "%s auth login %s" '
                                               '|| gnome-terminal -- "%s auth login %s"'
                                               % (gh, flag_text, gh, flag_text)])
-        except Exception as e:                                          # noqa: BLE001
+        except Exception as e:
             return {'ok': False, 'why': '打不开命令行窗口：%s' % e, 'url': URL_LOGIN}
         self._gh_cache = (0.0, None)
         return {'ok': True, 'window': True, 'ghPath': gh, 'clipboard': has_clip,
@@ -3076,18 +2440,9 @@ class Core:
                         '窗口不会一闪就没（出错了会停在窗口里给你看）。'
                         '实在不想弄也没关系：推送不受影响。'}
 
-    # ---- 清掉"我们自己造出来的临时垃圾"
-    #: 只认这几个名字（白名单），绝不按通配符删 —— 免得手一抖把仓库里的东西带走
     OWN_JUNK = ('_how.py', '_how.txt', '_probe.py', '_probe.txt', '_tmp_probe.py')
 
     def tidy(self, params=None):
-        """删掉写包时落在包目录里的临时探针文件（`_how.py` 这类）。
-
-        ★ 为什么要这么个东西：我（AI）写包时常常要"看一眼帮助的开头"，
-          因为 run_moss 只回末尾，于是生成一个 `_how.py` 去存全文 —— 用完该删，
-          但我没有删文件的工具（宿主也不许用脚本删目录）。所以留一个**受限的**
-          清理入口：只删白名单里的名字，只删包自己这一层，别的一概不碰。
-        """
         p = self._path(params or {})
         here = os.path.dirname(os.path.abspath(__file__))
         gone, kept = [], []
@@ -3105,7 +2460,6 @@ class Core:
         return {'ok': not kept, 'removed': gone, 'failed': kept,
                 'dir': here, 'path': p, 'at': now_text()}
 
-    # ---- 路径
     def browse(self, params=None):
         p = self._path(params)
         dirs = []
@@ -3147,10 +2501,6 @@ class Core:
         return got
 
     def forget_path(self, params=None):
-        """从「最近用过」里去掉一条；**path 给空 = 清空整个列表**（界面上的「清空」）。
-
-        ★ 只动我们自己记的那份列表（`store.json`），**不碰任何目录里的东西**。
-        """
         raw = str((params or {}).get('path') or '')
         if not raw.strip():
             d = load_store()
@@ -3165,7 +2515,6 @@ class Core:
         save_store(d)
         return {'ok': True, 'recent': recent_payload()}
 
-    # ---- 干活
     def run_action(self, params=None):
         p = params or {}
         name = str(p.get('name') or '').strip()
@@ -3184,7 +2533,6 @@ class Core:
             pats = [x.strip() for x in re.split(r'[,;]', str(arg or '')) if x.strip()]
             return self.shield({'path': path, 'patterns': pats})
         if name == 'gitlog':
-            # 只是读日志文件：跟"是不是仓库"无关，也不用跑任何命令
             got = self.sync_log({'n': 80})
             print('[github] %s（最近 %d 行）' % (SYNC_LOG, len(got['lines'])), flush=True)
             return {'ok': True, 'action': name, 'label': spec['label'], 'cmd': cmd_text,
@@ -3206,9 +2554,6 @@ class Core:
         got.update({'action': name, 'label': spec['label'], 'path': path,
                     'danger': bool(spec.get('danger'))})
         if not got['ok']:
-            # ★ 别把 `_exec` 已经写好的人话冲掉（它带"试了几次 + 该怎么办"）。
-            #   以前这里无条件用原始输出的第一行，界面就只剩
-            #   `fatal: unable to access ...` —— 等于没解释。
             if not got.get('why'):
                 got['why'] = (got['out'] or '').strip().splitlines()[:1]
                 got['why'] = got['why'][0] if got['why'] else '退出码 %s' % got['code']
@@ -3244,32 +2589,19 @@ class Core:
         print('[github] 文件操作 %s：%s' % (op, got['cmd']), flush=True)
         return got
 
-    # ---- 一串步骤的公共件（界面要看到「每一步的等价命令」）
     def _step(self, cwd, argv, label, timeout=180):
         got = _exec(argv, cwd=cwd, timeout=timeout, label=label)
         got['label'] = label
-        # ★ 抖过别装作没事：界面上那一步旁边留一句"自动重试了 N 次才通"，
-        #   用户才知道刚才网络确实卡了一下（也才知道不用再点一次）。
         if got.get('retried'):
             got['label'] = '%s（网络抖了一下，自动重试 %d 次才通，用的是%s后端）' % (
                 label, got['retried'],
                 'openssl' if got.get('backend') == 'openssl' else '默认')
-        # ★ 跑过任何一条 git 命令，仓库状态就可能变了 —— 立刻把 repo_info 的缓存清掉。
-        #   不清的后果是"我明明保存了，界面还说没改动"（比慢更难受）。
         repo_cache_clear(cwd)
         print('[github] %s → %s（%d ms，退出码 %s）'
               % (label, got['cmd'], got['ms'], got['code']), flush=True)
         return got
 
     def _upstream_verified(self, root, upstream=""):
-        """本地 HEAD 和上游**是不是同一个提交** —— 直接用 git 的事实回答。
-
-        ★ 2026-10-21 的假失败就是靠这个止住的：`git fetch` 超时 / 被断，
-          推送其实**已经成功**（reflog 里一条 `update by push`），可界面照着
-          "有一条步骤失败"报了"提交失败，可能是网络问题"。
-          现在成败以"两端是不是同一个提交"为准，步骤日志只当过程。
-        回 `{same, head, up, msg}`；说不清（没有上游 / 命令失败）时 `same=None`。
-        """
         ref = str(upstream or "").strip() or "@{u}"
         h = git(root, "rev-parse", "--short", "HEAD", timeout=10)
         u = git(root, "rev-parse", "--short", ref, timeout=10)
@@ -3285,28 +2617,19 @@ class Core:
                        else ("本地 %s，远端 %s —— 还没对齐" % (head, up))}
 
     def _finish(self, path, steps):
-        """把一串步骤汇总成一份给界面看的结果（ok / 失败原因 / 全部等价命令）。
-
-        ★ 标了 `soft: True` 的步骤（现在只有"拉取远端信息"）**不参与判定成功**：
-          它只是"问问远端现在什么样"，问不着不代表活没干成（`V-422`）。
-        """
         bad = [s for s in steps if not s.get("ok") and not s.get("soft")]
         why = ''
         if bad:
             first = bad[0]
             lines = (first.get('out') or '').splitlines() or ['没跑成']
             why = first.get('why') or lines[0]
-            # ★ 网络类失败要翻成"人话 + 下一步"（`_exec` 已经给过的就别重复加）。
-            #   用户看到 `schannel: failed to receive handshake` 只会以为是自己错了。
             if not first.get('why'):
                 hint = net_hint(first.get('out') or '')
                 if hint:
                     why = '%s　→ %s' % (why, hint)
-            # 推不上去 ≠ 白干：提交已经在本地了，这话必须说出来，否则人会以为要重做一遍。
             if 'push' in (first.get('cmd') or '') and why:
                 why = ('%s　（这次保存的版本已经在本地了，网络好了再点一次「备份到云端」就行，'
                        '不会重复上传）' % why)
-        # 整体成了、只是"问远端"那一步没问着 ⇒ 别让界面显示一个吓人的 ✗
         if not bad:
             for s in steps:
                 if s.get("soft") and not s.get("ok"):
@@ -3321,9 +2644,7 @@ class Core:
             'repo': repo_info(self._path({'path': path})), 'at': now_text(),
         }
 
-    # ---- 时间线 / 提交详情（界面主视图）
     def timeline(self, params=None):
-        """提交时间线 + 分支 + 标签，一次给全。"""
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
@@ -3337,19 +2658,11 @@ class Core:
             limit = 40
         limit = max(5, min(300, limit))
         rev = str(p.get('rev') or '').strip() or 'HEAD'
-        # ★ 以哪条远端分支为准：有跟踪分支就是它，没有就是 `origin/<当前分支>`
-        #   （repo_info 里算好的）。这里和 ahead/behind 必须用**同一条**，
-        #   否则会出现"某条已上传的提交被标成待上传、待上传数却是 0"这种自相矛盾的界面。
         track = info.get('track') or info['upstream']
-        # ★ 下面这 6 件事**互不依赖，一起发**（真机上量出来的：这台机器每条 git 光是
-        #   启进程就要 0.26 秒，原来一条接一条跑 = 1.4 秒；这是"打开页面特别慢"的一半）。
-        #   串行时：log → rev-list 上游 → for-each-ref → rev-parse → rev-list×2 → tag
         with ThreadPoolExecutor(max_workers=6) as pool:
             f_rows = pool.submit(git_log_rows, root, limit + 1, rev)
             f_pushed = pool.submit(_upstream_hashes, root, track)
             f_branch = pool.submit(branch_rows, root)
-            # ★ 「V-384」这种版本号：界面上要一个"每保存一次就 +1"的整数，用真实提交数来当。
-            #   本地总共多少个提交 / 云端追得上多少个 —— 两个数一减就是"待备份几个版本"。
             f_total = pool.submit(_rev_count, root, 'HEAD')
             f_uptotal = (pool.submit(_rev_count, root, track) if track else None)
             f_tags = pool.submit(tag_rows, root)
@@ -3378,11 +2691,6 @@ class Core:
                 'at': now_text()}
 
     def cloud_versions(self, params=None):
-        """GitHub 上（远端跟踪分支）有哪些版本 —— 界面上「云端版本列表」靠它。
-
-        ★ 只读本地那份远端跟踪分支的记录，**不联网**（想刷新就调 `sync` 里的 fetch）。
-          这样点开列表是瞬间出来的，也不会因为网络慢把界面卡住。
-        """
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
@@ -3393,7 +2701,6 @@ class Core:
         if not names:
             return {'ok': False, 'why': '这个仓库还没连任何远端（先去「备到 GitHub」）',
                     'commits': [], 'path': path}
-        # 目标：跟踪分支；没有就用 repo_info 算好的 `<远端>/<当前分支>`
         target = info.get('track') or info['upstream']
         if not target:
             target = '%s/%s' % (names[0], info['branch'])
@@ -3405,7 +2712,6 @@ class Core:
         except (TypeError, ValueError):
             limit = 30
         limit = max(5, min(200, limit))
-        # 这三条同样互不依赖，一起发（各自都要 0.3 秒左右的进程启动开销）
         with ThreadPoolExecutor(max_workers=3) as pool:
             f_rows = pool.submit(git_log_rows, root, limit + 1, target)
             f_total = pool.submit(_rev_count, root, target)
@@ -3417,8 +2723,7 @@ class Core:
         rows = rows[:limit]
         for i, r in enumerate(rows):
             r['ver'] = ('V-%d' % (total - i)) if total else ''
-            r['pushed'] = True          # 它本来就在云端
-        # 云端有、本地没有的（behind）：标出来，界面上一眼看出"这些还没拿下来"
+            r['pushed'] = True
         local_only = set()
         local_hashes = set(x.strip() for x in local_heads if x.strip())
         for r in rows:
@@ -3434,7 +2739,6 @@ class Core:
                 'at': now_text()}
 
     def show_commit(self, params=None):
-        """一条提交的详情：谁写的、改了哪些文件、补丁正文。"""
         p = params or {}
         ref = str(p.get('hash') or p.get('ref') or '').strip()
         if not ref:
@@ -3467,9 +2771,7 @@ class Core:
                 'fileCount': len(files), 'out': (patch['out'] or '')[:30000],
                 'cmd': 'git show %s' % short, 'path': path, 'root': root}
 
-    # ---- 切分支 / 同步 / 提交
     def switch_branch(self, params=None):
-        """切分支（可选：先自动把改动收进 stash）。"""
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
@@ -3496,17 +2798,6 @@ class Core:
         return self._finish(path, steps)
 
     def sync(self, params=None):
-        """一键同步：fetch →（落后就）pull --ff-only →（领先就）push。
-
-        ★ 2026-10-21 修的**假失败**：`fetch` 只是"问问远端现在什么样"，它超时 / 被断
-          **不代表推不上去**。以前 fetch 一红，整份结果就报失败（界面上就是
-          "提交失败，可能是网络问题"），可实际上紧接着的 `git push` 已经推上去了
-          —— 真事：15:13:58 的提交，`origin/main` 的 reflog 里 15:14:39 一条
-          `update by push`，界面却说失败。
-          现在：① `fetch` 标成 **soft**（失败只当提示，不判定整体失败）；
-                ② push / pull 之后**再问 git 一次**：`HEAD` 和上游是不是同一个提交；
-                ③ 只要事实对得上，就报成功，并把"没问着"的原话留在步骤里。
-        """
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
@@ -3530,7 +2821,6 @@ class Core:
             argv = ['git', 'push'] if info['upstream'] else \
                 ['git', 'push', '-u', 'origin', info['branch'] or 'HEAD']
             steps.append(self._step(root, argv, '③ 推送到 GitHub', 240))
-            # ★ 只信事实：推完之后 `HEAD` 和上游是不是同一个提交
             info = repo_info(path) or info
             ver = self._upstream_verified(root, info.get('upstream') or '')
             steps.append({'ok': bool(ver.get('same') is not False), 'ms': 0,
@@ -3539,10 +2829,6 @@ class Core:
                           'out': ver.get('msg') or '',
                           'why': '' if ver.get('same') else (ver.get('msg') or '')})
         if len(steps) == 1 and not fetch['ok']:
-            # ★ 探针真跑出来的一条：fetch 报 `Recv failure: Connection was reset`，
-            #   本地又没有要推的东西 ⇒ 以前这里照样报 **成功**，理由写"本地和远端已经一致"。
-            #   可我们**根本没问到云端**（ahead/behind 是拿旧记录算的），说"一致"是瞎猜。
-            #   没问到就说没问到 —— 这也是"黑盒"的一种：报了成功，人下次才发现云端是旧的。
             res = self._finish(path, steps)
             first = (fetch.get('out') or '').splitlines()[:1]
             res['ok'] = False
@@ -3557,11 +2843,6 @@ class Core:
         return self._finish(path, steps)
 
     def pull_overwrite(self, params=None):
-        """从 GitHub 覆盖本地：fetch →（有改动先 stash 备份）→ reset --hard 上游。
-
-        ★ 这就是界面上「从 GitHub 覆盖下载」那把大按钮。它**故意**会丢掉本地没提交的
-          改动，所以动手前先把改动 stash 备份一份（「取出收起的改动」能捞回来）。
-        """
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
@@ -3597,14 +2878,6 @@ class Core:
         return self._finish(path, steps)
 
     def commit_all(self, params=None):
-        """把改动打包提交，可选顺手推上去。
-
-        参数：
-          message   提交**标题**（必填）—— 就是 GitHub 上那一行标题
-          body      **详细说明**（可选，空就不写）—— 标题下面那段
-          staged    True = 只提交「已经暂存」的那部分，不动其余改动
-          push      True = 提交完顺手推上去
-        """
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
@@ -3614,12 +2887,8 @@ class Core:
         msg = str(p.get('message') or p.get('arg') or '').strip()
         if not msg:
             return {'ok': False, 'why': '提交标题不能空着（写一句你能看懂的话）', 'steps': []}
-        # ★ 标题 + 说明 = `git commit -m 标题 -m 说明`（git 会把第二段当正文，
-        #   GitHub 上就是标题下面那段说明）。
         body = str(p.get('body') or '').strip()
         commit_argv = ['git', 'commit', '-m', msg] + (['-m', body] if body else [])
-        # ★ 「这次要保存哪几个文件」：界面上的勾。不传 = 全部。
-        #   （这是给"我这次只想存这几个"用的，普通人一把全存就够。）
         only = p.get('files')
         if isinstance(only, str):
             only = [x for x in only.split('|') if x.strip()]
@@ -3633,8 +2902,6 @@ class Core:
                 picks.append(rel)
         staged_only = bool(p.get('staged'))
         steps = []
-        # ★ 先保证有署名：没有的话 `git commit` 会报 "Author identity unknown"，
-        #   人看到这句只会以为软件坏了。这里替它填好，并在步骤里说一声。
         idnote = ensure_identity(root)
         if idnote:
             steps.append({'ok': True, 'ms': 0, 'cmd': 'git config user.name / user.email',
@@ -3650,9 +2917,6 @@ class Core:
         elif picks:
             steps.append(self._step(root, ['git', 'add', '--'] + picks,
                                     '① 把选中的 %d 个文件收进来' % len(picks), 60))
-            # ★ 提交时带上这串路径：**只存这几个**。不然万一暂存区里还躺着别的文件
-            #   （比如上一次操作留下的），`git commit` 会把它一起存进去 ——
-            #   那就违背了"我只勾了这几个"。
             steps.append(self._step(root, commit_argv + ['--'] + picks,
                                     '② 在本地存一个版本（只存选中的）', 90))
         elif info['dirty']:
@@ -3668,13 +2932,7 @@ class Core:
             steps.append(self._step(root, argv, '③ 上传到 GitHub', 240))
         return self._finish(path, steps)
 
-    # ---- 从远端 / 历史恢复
     def restore(self, params=None):
-        """把某条提交恢复出来。
-
-        mode='branch'   → 检出成一条新分支（**默认，不动主线，安全**）
-        mode='worktree' → 直接把工作区拉回那条提交（reset --hard，有改动会先自动 stash 备份）
-        """
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
@@ -3690,9 +2948,6 @@ class Core:
             steps.append(self._step(root, ['git', 'fetch', '--all', '--prune'],
                                     '本地没有这条提交 —— 先去远端取一下', 180))
         if not git(root, 'rev-parse', '--verify', '--quiet', ref + '^{commit}')['ok']:
-            # ★ 取过之后还是没有 ⇒ 到此为止。别再往下走：`git rev-parse` 失败时
-            #   它的输出是 "fatal: Needed a single revision" 这种话，
-            #   拿它去拼分支名会把一句报错写进分支名里（探针真跑出来的）。
             steps.append({'ok': False, 'ms': 0, 'out': '',
                           'cmd': 'git rev-parse --verify %s^{commit}' % ref,
                           'label': '确认这条提交在不在',
@@ -3708,8 +2963,6 @@ class Core:
             steps.append(self._step(root, ['git', 'reset', '--hard', ref],
                                     '把工作区拉回 %s' % short, 90))
         else:
-            # ★ 分支名要保证唯一：同名分支已经存在时 `checkout -b` 会直接失败，
-            #   而人可能一分钟里连点几下「恢复」（`V-*` 里没写，这是探针真跑出来的）。
             have = set(git(root, 'branch', '--format=%(refname:short)')['out'].splitlines())
             stamp = datetime.now().strftime('%m%d-%H%M%S')
             name = 'restore-%s-%s' % (short, stamp)
@@ -3721,24 +2974,7 @@ class Core:
                                     '检出成新分支 %s（主线不受影响）' % name, 90))
         return self._finish(path, steps)
 
-    # ---- 让某个版本「消失」
     def delete_commit(self, params=None):
-        """让某一条提交消失。两种做法，后果完全不同：
-
-          mode='revert'（默认，安全）
-              在历史末尾**追加**一条「撤销某版本」的提交：坏代码立刻不生效，
-              两个版本在 GitHub 上仍然看得见（谁都能查到"哪一版被撤销了"）。
-          mode='purge'（危险，真·抹掉）
-              把这条从历史里**抠掉**，它后面的版本全部重写一遍 ⇒ 版本号全变，
-              已经推上云端的必须强推覆盖（`--force-with-lease`）。
-              动手前先打一个 `moss-undo-<短哈希>-<时间>` 标签，反悔时能精确回到原样。
-
-        ★ 说明白（界面也会照这句写）：GitHub 上被强推掉的提交不会立刻消失，
-          一串哈希还能直接访问，直到它被回收；**如果那一版里泄了密钥/密码，
-          真正有效的是「换掉那把密钥」**，删历史只能算补救。
-
-        参数：hash 必填；mode = revert / purge；push = 要不要顺手同步到云端（默认要）。
-        """
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
@@ -3758,8 +2994,6 @@ class Core:
             return {'ok': False, 'steps': [],
                     'why': '现在不在任何一条线上（游离状态）—— 先切回一条分支再来删'}
         branch = info['branch'] or ''
-        # ★ 只能删「你现在这条线上」的版本：别的分支上的提交在这儿删不掉，
-        #   硬删也只会让那条线看起来坏掉（所以直接拦住，让人先换过去）。
         if git(root, 'merge-base', '--is-ancestor', sha, 'HEAD')['code'] != 0:
             return {'ok': False, 'steps': [],
                     'why': '%s 不在当前这条线（%s）上 —— 先换到它所在的分支，或者去「分支」里处理那条线'
@@ -3774,8 +3008,7 @@ class Core:
         dirty = info['dirty'] and info['changeCount']
 
         if mode == 'revert':
-            ensure_identity(root)          # revert 也会产生一条提交，同样要先有署名
-            # 合并提交必须指定「按哪一条主线撤销」，否则 git 直接拒绝
+            ensure_identity(root)
             par = (git(root, 'rev-list', '--parents', '-n', '1', sha)['out'] or '').split()
             argv = ['git', 'revert', '--no-edit'] + (['-m', '1'] if len(par) > 2 else []) + [sha]
             if dirty:
@@ -3785,9 +3018,6 @@ class Core:
             rev = self._step(root, argv, '追加一条「撤销 %s」的版本' % short, 150)
             steps.append(rev)
             if not rev['ok']:
-                # ★ 测试跑出来的：`git revert` 会冲突（后面的版本动过同一段代码）。
-                #   冲突留着不处理，仓库就停在"有未合并文件"的半截状态 ——
-                #   界面上看起来到处都怪，人也不知道怎么退。所以这里立刻中止、退回原样。
                 steps.append(self._step(root, ['git', 'revert', '--abort'],
                                         '这次撤销撞上冲突，先退回去恢复原样', 120))
                 if dirty:
@@ -3813,13 +3043,11 @@ class Core:
         if mode != 'purge':
             return {'ok': False, 'steps': [], 'why': '不认识的删除方式（revert / purge）：%s' % mode}
 
-        # 最早那条没得"抠"：它没有上一版可接
         if not git(root, 'rev-parse', '--verify', '--quiet', sha + '^')['ok']:
             return {'ok': False, 'steps': [],
                     'why': '%s 是这个仓库最早的版本，删掉它等于把整段历史抹了 —— '
                            '这种情况另建一个仓库、把要留的文件搬过去更稳' % short}
 
-        # 别的分支上也含着它 ⇒ 删完那些线一样会变，先说明白
         others = []
         for b in branch_rows(root)[0]:
             nm = str(b.get('name') or '')
@@ -3831,7 +3059,6 @@ class Core:
             steps.append(self._step(root, ['git', 'stash', 'push', '-u', '-m',
                                            'moss 抹掉版本前备份 ' + now_text()],
                                     '先把当前 %d 个改动收起来备份' % info['changeCount'], 60))
-        # ① 留一条退路：标签指向**改写前**的样子（标签不占工作区，也不影响别人）
         have = set(git(root, 'tag', '--list')['out'].splitlines())
         stamp = datetime.now().strftime('%m%d-%H%M%S')
         tag = 'moss-undo-%s-%s' % (short, stamp)
@@ -3850,8 +3077,6 @@ class Core:
                               '把这条从历史里抠掉，后面的版本重新接上', 240)
         steps.append(drop)
         if not drop['ok']:
-            # ★ 改写中途撞上冲突时，**必须**中止：否则仓库停在 rebase 中间状态，
-            #   界面上看起来"所有版本都怪怪的"，人也不知道怎么退。
             steps.append(self._step(root, ['git', 'rebase', '--abort'],
                                     '这次改写没成，退回去恢复原样', 120))
             res = self._finish(path, steps)
@@ -3876,17 +3101,13 @@ class Core:
              '如果这一版里泄了密码/密钥，务必先把那把密钥换掉。' if push and was_pushed else '')
         return res
 
-    # ---- 暂存盘（stash）：列出来、删掉某一份
     def stashes(self, params=None):
-        """列出「收起来的改动」每一份（界面「找回收起的改动」靠它）。"""
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
         if not info:
             return {'ok': False, 'why': '这不是一个 git 仓库：%s' % path, 'items': []}
         root = info['root']
-        # ★ 别加 `--date=...`：那会让 %gd 从 stash@{0} 变成 stash@{2026-10-20 13:44}，
-        #   序号就丢了（真机上就是这个现象）。要时间就用 %cr（"5 分钟前"）。
         got = git(root, 'stash', 'list', '--pretty=format:%gd%x00%cr%x00%s')
         items = []
         for line in (got['out'] or '').splitlines():
@@ -3901,11 +3122,6 @@ class Core:
                 'count': len(items), 'cmd': 'git stash list', 'at': now_text()}
 
     def drop_stash(self, params=None):
-        """删掉某一份收起来的改动（`git stash drop stash@{N}`）。
-
-        ★ 这一步回不去（那串提交还在 .git 里，但找它要手工翻 fsck，普通人等于找不回），
-          所以界面上必须先给人看清「要删的是哪一份、里面是哪个版本」。
-        """
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
@@ -3928,9 +3144,7 @@ class Core:
                             '删掉这份收起的改动：%s' % (hit[0]['subject'] or '（没有说明）'), 60)]
         return self._finish(path, steps)
 
-    # ---- 镜像
     def mirror(self, params=None):
-        """镜像：① 在 GitHub 建仓库并推上去 ② 本地 --mirror 备份 ③ 加一个镜像远端。"""
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
@@ -3942,7 +3156,6 @@ class Core:
         if mode == 'gh_create':
             refresh_tools()
             if not shutil.which('gh'):
-                # ★ 别让人自己去找原因：告诉他们缺什么、点哪个按钮就能补上。
                 return {'ok': False, 'steps': [], 'need': 'install_gh', 'url': URL_GH,
                         'why': '这台电脑上没有 gh（GitHub CLI），我没法替你建仓库。'
                                '点上面「帮我装 gh」，装完再点「登录 GitHub」，'
@@ -3979,11 +3192,6 @@ class Core:
                                     '把全部分支推过去', 300))
             steps.append(self._step(root, ['git', 'push', remote, '--tags'],
                                     '把标签也推过去', 120))
-            # ★ `git push <remote> --all` **不会**建立跟踪关系（它没有 -u），
-            #   而"待上传几个"正是拿跟踪分支比的。真机日志 2026-11-04 00:44:15
-            #   `git push --progress origin --all` 就是这么把这个仓库推上去的 ——
-            #   之后再存新版，界面就说不清"传没传"。
-            #   这里把关系补上（只补 origin：镜像远端不该抢上游），一次弄干净。
             repo_cache_clear(root)
             after = repo_info(path, ttl=0) or {}
             br = after.get('branch') or ''
@@ -3998,8 +3206,6 @@ class Core:
             return {'ok': False, 'steps': [],
                     'why': '没给镜像方式（gh_create / local_clone / add_remote）'}
         res = self._finish(path, steps)
-        # ★ 建仓库最常见的两个失败，别把 gh 的英文原文甩给人：
-        #   「name already exists」= 名字被占了；「not logged in」= 忘了登录。
         if mode == 'gh_create' and not res.get('ok'):
             blob = ' '.join([(s.get('out') or '') for s in steps] +
                             [str(s.get('why') or '') for s in steps]).lower()
@@ -4015,7 +3221,6 @@ class Core:
         return res
 
     def remote_repo(self, params=None):
-        """GitHub 上这个仓库长什么样（gh 拿的，要联网 + 登录）。"""
         p = params or {}
         path = self._path(p)
         info = repo_info(path)
@@ -4049,7 +3254,6 @@ class Core:
                 'isFork': bool(data.get('isFork')),
                 'parentName': parent.get('nameWithOwner') or ''}
 
-
 def recent_payload():
     d = load_store()
     out = []
@@ -4059,11 +3263,6 @@ def recent_payload():
                     'repo': os.path.exists(os.path.join(p, '.git'))})
     return out
 
-
-# ------------------------------------------------------------------ 内嵌模式（stdio）
-#: 内嵌模式下**可以并发跑**的方法（全是只读的：读状态、数文件、看日志）。
-#: 会改仓库的动作不在里面 —— 那些仍然串行，免得两条写操作撞在一起。
-#: ★ 别往里塞 `run_action` / `commit_all` / `sync` / `shield` 这类会动仓库的。
 PARALLEL_METHODS = frozenset((
     'boot', 'actions', 'snapshot', 'timeline', 'cloud_versions', 'show_commit',
     'gh', 'disks', 'net_probe', 'remote_repo', 'stashes', 'env_check',
@@ -4071,17 +3270,7 @@ PARALLEL_METHODS = frozenset((
     'recent', 'settings', 'job_state',
 ))
 
-
 class _StdoutToProgress(object):
-    """内嵌模式下挡在 `sys.stdout` 前面：**print 出来的东西一律变成"进度"**。
-
-    ★ 为什么要有（探针真抓到的）：内嵌模式下 stdout 是**协议通道**（一行一个 JSON），
-      而这个文件里到处是 `print('…')`（每一步干了什么）。这些行一进通道，宿主只当
-      坏消息丢掉 —— 于是用户在界面上什么也看不见，只能问"它到底在干什么"。
-      以前是靠一条条改 print 解决，永远改不完；这里一次性全部改道：
-      走 `_live()` → 进当前任务的进度缓冲 → 界面的进度窗口能看见，协议也不会脏。
-    """
-
     def __init__(self, real):
         self._real = real
 
@@ -4091,7 +3280,7 @@ class _StdoutToProgress(object):
             if ln.strip():
                 try:
                     _live(ln)
-                except Exception:                                        # noqa: BLE001
+                except Exception:
                     pass
         return len(text)
 
@@ -4108,43 +3297,29 @@ class _StdoutToProgress(object):
     def fileno(self):
         raise OSError('内嵌模式下 stdout 已经改道（不再是协议通道）')
 
-
 class Embedded:
-    """被嵌进 moss 的时候：**不开窗**，在 stdin/stdout 上一行一个 JSON 说话。"""
-
     def __init__(self):
         self.core = Core()
         self._lock = threading.Lock()
-        self._send_lock = threading.Lock()      # 只护着"往协议里写一行"
-        # 协议通道单独留一份；剩下的 print 全部改道成进度（见 _StdoutToProgress）
+        self._send_lock = threading.Lock()
         self._out = sys.stdout
         sys.stdout = _StdoutToProgress(self._out)
 
     def send(self, obj):
-        # 并发跑请求之后要防两行 JSON 交错（写一半被另一条插进来 = 协议坏掉）
         with self._send_lock:
             self._out.write(json.dumps(obj, ensure_ascii=False) + '\n')
             self._out.flush()
 
     def _answer(self, mid, fn, params):
-        """跑一个请求并把结果发回去（可能在别的线程里跑）。"""
         try:
             result = fn(params)
             self.send({'id': mid, 'ok': True, 'result': result})
             return result
-        except Exception as e:                                           # noqa: BLE001
+        except Exception as e:
             self.send({'id': mid, 'ok': False, 'error': '%s: %s' % (type(e).__name__, e)})
             return None
 
     def loop(self):
-        # ★ 这里是"打开页面特别慢"的最后一块拼图（真机上量出来的）：
-        #   原来是 `for line in stdin:` + 一把大锁 —— **一条一条串着处理**。
-        #   而界面一打开会连着问 snapshot / timeline / cloud_versions / env_check，
-        #   每个后端都要跑十几条 git（这机器上每条启进程 0.26 秒）⇒ 排队累加，
-        #   十几秒就出来了。
-        #   现在：**只读**请求各自一个线程并发跑（互不影响，反正都是读），
-        #   会改仓库的（commit / push / add…）仍然串行，别让两条写操作撞一起。
-        #   线程数封顶 6：再多就没意义了（瓶颈是 git 启进程的 CPU）。
         pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix='moss-gh')
         try:
             for line in sys.stdin:
@@ -4172,33 +3347,18 @@ class Embedded:
         finally:
             pool.shutdown(wait=False)
 
-
-# ------------------------------------------------------------------ 独立窗口
 def run_window(path=''):
-    import webview                                                     # noqa: PLC0415
+    import webview
 
     core = Core(path)
 
-    # ★★ 别再一个一个手写转发（这个坑真机上炸过）：
-    #    独立窗口走 `window.pywebview.api.<方法>`，它只认 Api 类上**真实存在**的方法。
-    #    以前这里是手写白名单，新加的方法忘登记就报「后端没有这个方法」——
-    #    最惨的是打开窗口第一步就调 timeline，于是"一开就报错、什么都点不动"。
-    #    现在 build_api() 按 Core 自动转发：Core 有什么，窗口就能调什么，不会再漏。
-    #    （两个老坑仍要注意：每个方法都要收得下那一个 params；别把 window 挂成属性。）
     api = build_api(core)()
     webview.create_window(TITLE, url=UI, js_api=api,
                           width=1180, height=800, min_size=(900, 620))
     webview.start()
     return 0
 
-
-# ------------------------------------------------------------------ 命令行
 def build_api(core):
-    """造**独立窗口**那层桥的类（run_window 和自检共用同一份逻辑）。
-
-    ★ 这段必须只有一份：以前 Api 是手写白名单，新方法忘登记就报
-      「后端没有这个方法」—— 真机上整个窗口一开就废。现在按 Core 自动转发。
-    """
     class Api(object):
         def __init__(self):
             self._stop = False
@@ -4225,16 +3385,13 @@ def build_api(core):
         setattr(Api, name, _make(name))
     return Api
 
-
 def bridge_check(core, need):
-    """照 run_window 的做法把桥建起来，看界面要的方法是不是都挂上了。"""
     try:
         api = build_api(core)()
-    except Exception:                                                # noqa: BLE001
+    except Exception:
         return None
     gone = [m for m in need if not callable(getattr(api, m, None))]
     return (len([n for n in dir(api) if not n.startswith('_')]), gone)
-
 
 def write_result(payload):
     rf = os.environ.get('MOSS_RESULT_FILE')
@@ -4243,23 +3400,11 @@ def write_result(payload):
     try:
         with open(rf, 'w', encoding='utf-8') as f:
             json.dump(payload, f, ensure_ascii=False)
-    except Exception:                                                    # noqa: BLE001
+    except Exception:
         pass
-
 
 def cli(action, path, arg='', extra=None):
     core = Core()
-    # ★ 这三个是"分好几步"的动作（先打标签、再改写、再强推…），一条 git 命令表达不了，
-    #   所以不进 ACTIONS 表；命令行照样能用，方便脚本和排查：
-    #     moss :github action=stashes       path=D:/code/x
-    #     moss :github action=del_commit    path=D:/code/x arg=<版本哈希>     ← 追加一条撤销（安全）
-    #     moss :github action=purge_commit  path=D:/code/x arg=<版本哈希>     ← 从历史里抹掉（危险）
-    #     moss :github action=drop_stash    path=D:/code/x arg=<第几份>
-    # ★ 环境体检也做成命令行能查的：装完 git / gh 之后，人（和 AI）都能一条命令
-    #   看清"现在齐了没、下一步该点什么"。
-    # 装到哪了（界面靠它画进度条；命令行也能查，排查"点了没动静"时特别好用）
-    # 真正干活那一步：install_tool 起一个**独立进程**跑它（关窗口也不中断）
-    # 清掉写包时留下的临时探针文件（_how.py / _how.txt 这类，白名单）
     if action == 'tidy':
         got = core.tidy({'path': resolve_path(path)})
         print('[github] 删了：%s' % ('、'.join(got['removed']) or '（没有要删的）'))
@@ -4267,26 +3412,20 @@ def cli(action, path, arg='', extra=None):
             print('[github] 没删成：%s' % '、'.join(got['failed']))
         write_result(got)
         return 0 if got['ok'] else 1
-    # 界面能调到哪些方法（排查"后端没有这个方法"用）
     if action == 'list_methods':
         names = sorted([n for n in dir(core)
                         if not n.startswith('_') and callable(getattr(core, n, None))])
         print('[github] Core 上可调用的方法（%d 个）：' % len(names))
         print('  ' + ' '.join(names))
-        # 顺手核对界面会用到的那几个
         need = ['boot', 'actions', 'snapshot', 'timeline', 'cloud_versions', 'show_commit',
                 'run_action', 'file_op', 'gh', 'set_path', 'forget_path', 'browse', 'disks',
                 'net_probe', 'remote_repo', 'mirror', 'stashes', 'drop_stash',
                 'delete_commit', 'env_check', 'install_tool', 'install_status',
                 'fix_identity', 'open_url', 'gh_login',
-                # 长任务 + 把黑盒打开的那几个（界面全靠它们：进度、日志、体检、屏蔽）
                 'job_start', 'job_state', 'job_cancel',
                 'push_check', 'bigfiles', 'shield', 'ignore', 'sync_log']
         missing = [m for m in need if not callable(getattr(core, m, None))]
         print('[github] 界面用到但缺失的：%s' % (' '.join(missing) if missing else '（一个都不缺）'))
-        # ★ 真正要验的是**独立窗口那层桥**（真机报的"后端没有这个方法"就出在那儿）：
-        #   pywebview 只认 Api 类上真实存在的方法，手写白名单漏一个就报错。
-        #   这里把 run_window 里那段自动转发的逻辑照跑一遍，确认界面要的方法都挂上了。
         bridged = bridge_check(core, need)
         if bridged is None:
             print('[github] 桥检查跳过（这台机器没法建窗口）')
@@ -4299,7 +3438,6 @@ def cli(action, path, arg='', extra=None):
         write_result({'methods': names, 'missing': missing,
                       'bridge': bridged[0] if bridged else None})
         return 0 if not missing else 1
-    # 登录 gh：arg=dry 只打印命令不弹窗（验证用），否则真开窗口
     if action == 'gh_login':
         got = core.gh_login({'dry': bool((arg or '').strip() == 'dry')})
         print('[github] %s' % (got.get('cmd') or got.get('why') or got.get('help') or ''))
@@ -4310,7 +3448,6 @@ def cli(action, path, arg='', extra=None):
         ok, got = install_portable(what)
         print('[github] 便携版 %s：%s' % (what, got if ok else ('失败 ' + str(got))), flush=True)
         return 0 if ok else 1
-    # 命令行也能踢一脚安装（排查用；正常人是点界面上的按钮）
     if action == 'install_tool':
         got = core.install_tool({'what': arg or 'gh'})
         print('[github] %s' % (got.get('why') or ''))
@@ -4362,8 +3499,6 @@ def cli(action, path, arg='', extra=None):
         if not os.path.isdir(p):
             print('[github] 目录不存在：%s' % (path or p))
             return 3
-        # ★ 宿主只把 action / path / arg 三个字段传进来（界面上声明的参数），
-        #   所以「用哪种删法」走**动作名**，不走 k=v —— 命令行同样一条命令能表达。
         params = {'path': p}
         if asked in ('del_commit', 'purge_commit'):
             params['hash'] = arg
@@ -4465,13 +3600,7 @@ def cli(action, path, arg='', extra=None):
                   'code': got.get('code'), 'ms': got.get('ms')})
     return 0 if got.get('ok') else 1
 
-
 def argv_params():
-    """命令行上直接给的 k=v（`moss <包路径> action=status` 这种跑法也能用）。
-
-    ★ 正常跑包时参数由宿主放进 `MOSS_PKG_PARAMS`；这里顺手把 argv 里的 `k=v` 也吃进来，
-      于是"用文件路径直接跑"（调试、脚本、AI 验收）也走同一条路，不用另写一份。
-    """
     out = {}
     for i, a in enumerate(sys.argv[1:]):
         if '=' in a and not a.startswith('-'):
@@ -4481,11 +3610,9 @@ def argv_params():
             out.setdefault('action', a)
     return out
 
-
 def main():
     raw = os.environ.get('MOSS_PKG_PARAMS')
     if raw is None:
-        # 宿主没注入（直接用 python / 文件路径跑）→ 从 argv 里读 k=v
         params = argv_params()
     else:
         try:
@@ -4501,7 +3628,6 @@ def main():
     if action:
         return cli(action, path, arg, params)
     return run_window(path)
-
 
 if __name__ == '__main__':
     sys.exit(main())

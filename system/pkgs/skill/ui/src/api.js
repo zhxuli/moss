@@ -1,20 +1,8 @@
-/* api.js —— 后端桥的**唯一入口**（经典脚本，挂在 `window.SKILL_API` 上）
-   ============================================================================
-   ★ 界面层永远不直接碰 `window.pywebview` / `window.moss` —— 只有这一个文件碰。
-     以后加功能、改后端方法名、加错误兜底，都只改这里。
-   ★ 一份页面两种跑法（`V-222`）都从这儿出去（走 `moss-embed.js` 垫片）：
-       · 内嵌在 moss 的「界面」选项卡里 → `moss.call()` → postMessage → 宿主 → 后端进程 stdin；
-       · 独立窗口（pywebview）→ `moss.call()` → `window.pywebview.api.<方法>(params)`。
-     两条路的参数形状一样（**一个对象**）。
-   ★ 后端方法表就是 `system/pkgs/skill/core.py` 的 `Api`，一一对应，别自己加名字。
-   ========================================================================== */
 (function () {
   'use strict';
 
   var readyPromise = null;
 
-  /* 垫片是经典脚本、排在前面，正常都已经在了；真不在就等 pywebview（独立窗口那条路）。
-     谁都没来也别把界面卡死（3 秒后放行，让后面的调用自己去报错）。 */
   function bridgeReady() {
     if (!readyPromise) {
       readyPromise = new Promise(function (resolve) {
@@ -29,7 +17,7 @@
   function call(name, params) {
     return bridgeReady().then(function () {
       if (window.moss && typeof window.moss.call === 'function') {
-        return window.moss.call(name, params || {});        // 垫片自己分流两种环境
+        return window.moss.call(name, params || {});        
       }
       var fn = window.pywebview && window.pywebview.api && window.pywebview.api[name];
       if (typeof fn !== 'function') throw new Error('后端没有这个方法：' + name);
@@ -37,12 +25,6 @@
     });
   }
 
-  /* 复制到剪贴板：**三条路依次退**。
-     ① 宿主有没有给 `sys_copy`（`exec` 那个包就是这么用的）—— 有就交给它，
-        内嵌在 moss 里时这是最靠谱的一条；
-     ② 浏览器自己的 `navigator.clipboard`；
-     ③ 老办法（临时 textarea + `execCommand`）。
-     谁都没成就**抛出**，让调用方去说一句人话，别默默失败。 */
   function copyText(text) {
     text = String(text == null ? '' : text);
     return call('sys_copy', { text: text }).then(function (r) {
@@ -70,7 +52,7 @@
     isEmbedded: function () {
       return !!(window.moss && window.moss.env && window.moss.env.embedded);
     },
-    /* 后端是**一个对象参数**的规矩（`P-17`），所以这里每次都显式包一层 */
+
     list:     function () { return call('list', {}); },
     read:     function (id) { return call('read', { id: id }); },
     doc:      function (id) { return call('doc', { id: id }); },
@@ -81,19 +63,16 @@
       return call('promote', { id: id, confirm: true, new_id: newId || '' });
     },
     runOnce:  function (id) { return call('run_once', { id: id, args: {} }); },
-    /* `V-302`：**交互式**运行 —— 起进程 / 轮询输出 / 写 stdin / 停 */
+
     runStart: function (id) { return call('run_start', { id: id, args: {} }); },
     runPoll:  function (rid) { return call('run_poll', { rid: rid }); },
     runInput: function (rid, line) { return call('run_input', { rid: rid, line: line }); },
     runStop:  function (rid) { return call('run_stop', { rid: rid }); },
     reveal:   function (dir) { return call('reveal', { dir: dir || '' }); },
-    /* `V-301`：运行日志（新的在前）+ 清日志 + 在资源管理器里打开某个路径（详情里可点的路径用） */
+
     runs:     function (id) { return call('runs', { id: id || '' }); },
     clearRuns: function (id) { return call('clear_runs', { id: id || '' }); },
-    /* `V-346`：`how` = `open`（直接打开：文件用默认程序、目录就打开它）/
-       `reveal`（在资源管理器里打开它所在的文件夹并选中它）。不给就是 `open`。
-       `raw` = `paths.js` 抠出来**还没修剪**的原样候选 —— 后端先拿它试一次，
-       文件名里真带全角括号（`报告（旧）.txt`）时能把被前端剪掉的那截救回来。 */
+
     openPath: function (path, how, raw) {
       return call('open_path', { path: path || '', mode: how === 'reveal' ? 'reveal' : 'open',
                                  raw: raw || '' });

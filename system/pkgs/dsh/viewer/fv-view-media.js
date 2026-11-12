@@ -1,14 +1,8 @@
-/* ===========================================================================
-   视图插件 A：图片 / 视频 / 音频 / PDF / 字体
-   每个插件形如 { id, label, kind, order, needs, match(ctx), view, controls? }
-   —— 视图是 Vue 组件选项对象；controls 渲染到头部工具栏里。
-   =========================================================================== */
 (function () {
   var Vue = window.Vue, FV = window.FV, U = FV.util;
-  if (!Vue) return; // Vue 没加载成功时整段跳过，由页面末尾给出提示
+  if (!Vue) return; 
   var ref = Vue.ref, computed = Vue.computed, onMounted = Vue.onMounted, onBeforeUnmount = Vue.onBeforeUnmount, watch = Vue.watch, nextTick = Vue.nextTick;
 
-  /* ---------------------------------------------------------------- 图标 */
   FV.icon = function (name) {
     var paths = {
       image: '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="m4 17 4.5-4.5a2 2 0 0 1 2.8 0L20 21"/>',
@@ -62,7 +56,6 @@
     return FV.icon(map[ext] || (kind === "media" ? "video" : kind === "code" ? "code" : kind === "data" ? "data" : "doc"));
   };
 
-  /* ---------------------------------------------------------------- 图片 */
   var ImageView = {
     name: "ImageView",
     props: { ctx: Object },
@@ -73,7 +66,7 @@
       var failed = ref(false);
       var nat = ref({ w: 0, h: 0 });
       var scale = ref(1), tx = ref(0), ty = ref(0), minScale = ref(1), rotation = ref(0);
-      var fitted = false; // 画布真正有尺寸之后才算过"适应窗口"，否则算出来的比例是错的
+      var fitted = false; 
       var canvas = ref(null);
       var pointers = new Map(), dragging = false, lastX = 0, lastY = 0, pinchStart = 0, pinchScale = 1, pinchMid = null, observer = null;
       var showTransition = ref(false);
@@ -98,7 +91,7 @@
       }
       function fit(animate) {
         var el = canvas.value;
-        if (!el || !nat.value.w || el.clientWidth === 0 || el.clientHeight === 0) return; // 尺寸没就绪就不改状态
+        if (!el || !nat.value.w || el.clientWidth === 0 || el.clientHeight === 0) return; 
         var s = Math.min((el.clientWidth - 24) / nat.value.w, (el.clientHeight - 24) / nat.value.h, 1);
         minScale.value = s > 0 ? s : 1;
         scale.value = minScale.value; tx.value = 0; ty.value = 0; rotation.value = 0;
@@ -126,7 +119,7 @@
         api.dimText = nat.value.w + " × " + nat.value.h;
         api.extra = nat.value.w + " × " + nat.value.h;
         ready.value = true;
-        // 挂载当帧画布可能还没布局完（宽或高为 0），这时候算出来的"适应"是错的：一直重试到有尺寸。
+
         var attempt = function (tries) {
           fit(false);
           if (fitted || tries > 40) return;
@@ -192,7 +185,7 @@
         api.rotate = function () { rotation.value = (rotation.value + 90) % 360; clampPan(); showTransition.value = true; };
         api.zoomLabel = "100%"; api.zoomState = "zoom"; api.canZoomIn = true; api.canZoomOut = false;
         window.addEventListener("resize", onResize);
-        // 面板宽度变化（侧边栏拖拽、手机旋转）时，仍在"适应"状态就重新适应一次
+
         if (typeof ResizeObserver === "function" && canvas.value !== null) {
           observer = new ResizeObserver(function () {
             if (!nat.value.w) return;
@@ -226,7 +219,6 @@
     methods: { icon: FV.icon }
   };
 
-  /* ---------------------------------------------------------------- 视频 */
   var VideoView = {
     name: "VideoView",
     components: { LoadingPanel: FV.ui.LoadingPanel },
@@ -237,7 +229,6 @@
       var loading = ref(true), objectUrl = null;
       var loadInfo = ref({ progress: 0, loaded: 0, total: FV.boot.bytes || 0, speed: 0, eta: null });
       onMounted(function () {
-        // 短视频同样整包读（桥无 Range），大文件直接流式，免得先等一整包下载。
         var inlineLimit = 64 * 1024 * 1024;
         if (FV.boot.bytes > inlineLimit) {
           src.value = props.ctx.rawUrl; loading.value = false;
@@ -286,8 +277,6 @@
     }
   };
 
-  /* ---------------------------------------------------------------- 整包读取 */
-  /** 把整个文件读成一个 Blob（桥没有 Range，音视频只能整包读）。带进度回调。 */
   FV.loadBlob = function (url, onProgress) {
     var job = FV.loadStream(url, { kind: "bytes", total: FV.boot.bytes || 0, onProgress: onProgress });
     return {
@@ -299,7 +288,6 @@
     };
   };
 
-  /* ---------------------------------------------------------------- PDF */
   var PdfView = {
     name: "PdfView",
     components: { LoadingPanel: FV.ui.LoadingPanel },
@@ -321,7 +309,6 @@
     methods: { icon: FV.icon, dl: function () { U.download(FV.boot.rawUrl, FV.boot.name); } }
   };
 
-  /* ---------------------------------------------------------------- 字体 */
   var FontView = {
     name: "FontView",
     components: { LoadingPanel: FV.ui.LoadingPanel },
@@ -368,7 +355,6 @@
     methods: { icon: FV.icon }
   };
 
-  /* ---------------------------------------------------------------- 注册 */
   var IMG = ["png","jpg","jpeg","jfif","gif","webp","bmp","ico","avif","svg","tif","tiff"];
   var VID = ["mp4","webm","mov","m4v","ogv"];
   var VID_MAYBE = ["mkv","avi","wmv","flv","ts","m2ts","3gp"];
@@ -398,53 +384,30 @@
   });
 })();
 
-
-
-
-
-
-
-/* ===========================================================================
-   音频播放器视图 —— 与 ZeEn「音乐播放器」参考页 1:1
-   参考：D:\python\wwwroot\ZeEn\AppTools\templates\MultimediaTools\MediaPlay\index.html
-   （浅色 Mac 风格 · 纯色柱状频谱 · Canvas 逆时针音量环）
-
-   与参考页的差异只有两处，都是按需求刻意去掉的：
-     · 左侧目录 / 播放列表（单文件查看器没有列表）
-     · 拖拽文件夹的覆盖层（同上）
-   其余 DOM 结构、类名、尺寸、颜色、字体、图标、交互（空格/⌘←→/⌘↑↓、
-   单击静音、拖拽转角度调音量、滚轮调音量、中键全屏、频谱左键开关）全部照搬。
-   图标用内联 SVG 等价替换 Font Awesome（见 fv-icons.js），图形取自同一版本 6.4.0。
-   =========================================================================== */
 (function () {
   var Vue = window.Vue, FV = window.FV, U = FV.util;
   if (!Vue) return;
   var ref = Vue.ref, computed = Vue.computed, onMounted = Vue.onMounted, onBeforeUnmount = Vue.onBeforeUnmount;
 
-  /* ================================================================ 工具 */
-  /** 与参考页 formatTime 完全一致：mm:ss，两位补零。 */
   function formatTime(seconds) {
     if (!seconds || isNaN(seconds) || seconds === Infinity) return "00:00";
     var m = Math.floor(seconds / 60);
     var s = Math.floor(seconds % 60);
     return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
   }
-  /** 与参考页 cleanTitle 一致：去掉文件名里的方括号内容。 */
+
   function cleanTitle(title) {
     if (!title) return "";
     return title.replace(/\[[^\]]*\]/g, "").trim();
   }
 
-  /* ================================================================ 元数据 */
-  /* 参考页用 music-metadata-browser 解析 ID3 拿封面/标题；这里不引外网库，
-     直接读本地 Blob 的 ID3v2 / ID3v1 / FLAC 块，够用且零依赖。 */
   var TD = window.TextDecoder;
   function decodeText(bytes, enc) {
     try {
-      if (enc === 1) return new TD("utf-16").decode(bytes);   // 带 BOM
+      if (enc === 1) return new TD("utf-16").decode(bytes);   
       if (enc === 2) return new TD("utf-16be").decode(bytes);
       if (enc === 3) return new TD("utf-8").decode(bytes);
-      return new TD("windows-1252").decode(bytes);           // 0 = ISO-8859-1
+      return new TD("windows-1252").decode(bytes);           
     } catch (error) {
       var out = "";
       for (var i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i]);
@@ -461,13 +424,12 @@
   }
   function empty() { return { title: "", artist: "", album: "", cover: null }; }
 
-  /** APIC 帧：编码字节 + MIME + 图片类型 + 描述(按编码终止) + 图片数据 */
   function parseApic(d) {
     if (!d || d.length < 4) return null;
     var enc = d[0], p = 1;
     while (p < d.length && d[p] !== 0) p++;
     var mime = latin1(d.subarray(1, p)) || "image/jpeg";
-    p += 2; // 跳过 MIME 的 \0 与图片类型字节
+    p += 2; 
     if (enc === 1 || enc === 2) {
       while (p + 1 < d.length && !(d[p] === 0 && d[p + 1] === 0)) p += 2;
       p += 2;
@@ -483,7 +445,7 @@
     var out = empty();
     var ver = tag[3];
     var pos = 10;
-    if (tag[5] & 0x40) pos += ver === 4 ? syncsafe(tag, pos) : be32(tag, pos); // 扩展头
+    if (tag[5] & 0x40) pos += ver === 4 ? syncsafe(tag, pos) : be32(tag, pos); 
     while (pos + 10 <= tag.length) {
       var id = latin1(tag.subarray(pos, pos + 4));
       if (!/^[A-Z0-9]{4}$/.test(id)) break;
@@ -508,7 +470,6 @@
     };
   }
 
-  /** FLAC VORBIS_COMMENT：小端长度 + "KEY=value" */
   function parseVorbisComment(d) {
     var out = empty();
     var dv = new DataView(d.buffer, d.byteOffset, d.byteLength);
@@ -533,27 +494,20 @@
     return out;
   }
 
-  /** FLAC PICTURE：大端，MIME + 描述 + 宽高深色 + 数据长度 + 数据 */
   function parseFlacPicture(d) {
     if (d.length < 32) return null;
     var dv = new DataView(d.buffer, d.byteOffset, d.byteLength);
     var mimeLen = dv.getUint32(4, false);
     var mime = latin1(d.subarray(8, 8 + mimeLen)) || "image/jpeg";
     var p = 8 + mimeLen;
-    p += 4 + dv.getUint32(p, false); // 描述
-    p += 16;                          // 宽 高 色深 索引色
+    p += 4 + dv.getUint32(p, false); 
+    p += 16;                          
     var dataLen = dv.getUint32(p, false);
     p += 4;
     var img = d.subarray(p, Math.min(d.length, p + dataLen));
     return img.length ? { mime: mime, bytes: img } : null;
   }
 
-  /**
-   * 从本地 Blob 解析音频元数据（标题/艺术家/专辑/封面）。
-   * 认不出的容器不算错，返回 null，界面回落文件名。
-   * @param {Blob} blob
-   * @returns {Promise<{title:string,artist:string,album:string,cover:?{mime:string,bytes:Uint8Array}}|null>}
-   */
   FV.parseAudioMeta = function (blob) {
     var size = blob.size;
     function read(off, len) {
@@ -606,13 +560,11 @@
     }).catch(function () { return null; });
   };
 
-  /* ================================================================ 视图 */
   var AudioView = {
     name: "AudioView",
     props: { ctx: Object },
     components: { LoadingPanel: FV.ui.LoadingPanel },
     setup: function () {
-      /* ---------- 状态（默认值与参考页一致） ---------- */
       var isPlaying = ref(false);
       var volume = ref(0.7);
       var isMuted = ref(false);
@@ -627,15 +579,13 @@
       var loading = ref(true);
       var loadState = ref({ loaded: 0, total: 0, speed: 0, eta: null, progress: 0 });
 
-      /* ---------- DOM ---------- */
       var audioEl = ref(null);
       var specCanvas = ref(null);
       var volCtl = ref(null), volCanvas = ref(null);
       var progressTrack = ref(null);
 
-      /* ---------- 非响应式内部状态 ---------- */
-      var sctx = null;                 // 频谱 2d context
-      var vctx = null;                 // 音量环 2d context
+      var sctx = null;                 
+      var vctx = null;                 
       var audioContext = null, analyser = null, dataArray = null, sourceNode = null;
       var blockPositions = [];
       var animId = null;
@@ -645,7 +595,6 @@
       var isDraggingVolume = false, isClick = false, lastDeg;
       var disposed = false, canceled = false;
 
-      /* ---------- 提示 / HUD ---------- */
       function showToast(msg, duration) {
         toastMsg.value = msg;
         toastShow.value = true;
@@ -659,7 +608,6 @@
         hudTimer = setTimeout(function () { hudShow.value = false; }, 1200);
       }
 
-      /* ---------- 音量环（Canvas 逆时针，从顶部开始） ---------- */
       function drawVolumeRing() {
         var canvas = volCanvas.value;
         if (!canvas) return;
@@ -687,7 +635,6 @@
         if (a) a.volume = isMuted.value ? 0 : volume.value;
       }
 
-      /* ---------- 频谱（纯色柱状 + 缓降，占满宽度） ---------- */
       function drawSpectrum() {
         var canvas = specCanvas.value;
         if (!canvas || !canvas.parentElement) return;
@@ -776,7 +723,6 @@
         if (animId) { cancelAnimationFrame(animId); animId = null; }
       }
 
-      /* ---------- Web Audio：把 <audio> 接进分析器（参考页 initAudioContext） ---------- */
       function initAudioContext() {
         var a = audioEl.value;
         if (!a) return Promise.resolve(false);
@@ -802,7 +748,6 @@
         }
       }
 
-      /* ---------- 播放控制 ---------- */
       function play() {
         var a = audioEl.value;
         if (!a || !a.src) return;
@@ -823,12 +768,12 @@
       function prevSong() {
         var a = audioEl.value;
         if (!a) return;
-        if (a.currentTime > 2) { a.currentTime = 0; return; }   // 参考页：>2 秒先回到开头
-        showToast("已经是第一首");                                // 单文件：没有上一首可切
+        if (a.currentTime > 2) { a.currentTime = 0; return; }   
+        showToast("已经是第一首");                                
       }
       function nextSong() {
         if (!audioEl.value) return;
-        showToast("已经是最后一首");                              // 单文件：没有下一首可切
+        showToast("已经是最后一首");                              
       }
       function toggleFullscreen() {
         if (!document.fullscreenElement) {
@@ -837,12 +782,11 @@
           document.exitFullscreen().catch(function () {});
         }
       }
-      /** 放完就停（去掉了循环设置，不再自动重放）。 */
+
       function handleTrackEnd() {
         isPlaying.value = false;
       }
 
-      /* ---------- 频谱交互 ---------- */
       function onSpectrumClick(e) {
         if (loading.value || (e && e.button !== 0)) return;
         spectrumEnabled.value = !spectrumEnabled.value;
@@ -855,7 +799,6 @@
         toggleFullscreen();
       }
 
-      /* ---------- 进度条 ---------- */
       function pctOf(time) {
         var a = audioEl.value;
         if (!a || !a.duration) return 0;
@@ -886,7 +829,6 @@
         document.addEventListener("mouseup", onUp);
       }
 
-      /* ---------- 音量交互（角度） ---------- */
       function getAngleFromMouse(e) {
         var box = volCtl.value;
         if (!box) return 0;
@@ -949,7 +891,6 @@
         showHud(Math.round(volume.value * 100));
       }
 
-      /* ---------- 键盘（与参考页同一套） ---------- */
       function onKey(e) {
         var t = e.target, tag = t && t.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || (t && t.isContentEditable)) return;
@@ -974,8 +915,6 @@
         }
       }
 
-      /* ---------- 读取文件 + 元数据 ---------- */
-      /** 取消整包读取：直接切到流式播放（桥是"整包读再回"，超大文件读不动时也用这条路）。 */
       function cancelLoad() {
         canceled = true;
         if (job && job.abort) { try { job.abort(); } catch (error) {} }
@@ -1024,7 +963,7 @@
           return FV.parseAudioMeta(blob).then(function (m) { if (!disposed) applyMeta(m); });
         }, function () {
           if (disposed) return;
-          // 桥是"整包读取再回"的，超大文件会失败：退回直接流式，界面布局不动
+
           a.src = FV.boot.rawUrl;
           a.load();
           loading.value = false;
@@ -1051,22 +990,21 @@
       });
 
       return {
-        // 状态
         isPlaying: isPlaying, volume: volume, isMuted: isMuted,
         spectrumEnabled: spectrumEnabled,
         title: title, artist: artist, album: album, coverUrl: coverUrl,
         toastMsg: toastMsg, toastShow: toastShow, hudPct: hudPct, hudShow: hudShow,
         curText: curText, durText: durText, progressPct: progressPct,
         loading: loading, loadState: loadState,
-        // DOM
+
         audioEl: audioEl, specCanvas: specCanvas, volCtl: volCtl, volCanvas: volCanvas, progressTrack: progressTrack,
-        // 动作
+
         togglePlay: togglePlay, prevSong: prevSong, nextSong: nextSong,
         toggleFullscreen: toggleFullscreen,
         onSpectrumClick: onSpectrumClick, onSpectrumAux: onSpectrumAux,
         onProgressDown: onProgressDown, onVolDown: onVolDown, onVolWheel: onVolWheel,
         cancelLoad: cancelLoad, showToast: showToast,
-        // 计算
+
         mutedIcon: computed(function () { return (isMuted.value || volume.value === 0) ? "volume-mute" : "volume-up"; }),
         playIcon: computed(function () { return isPlaying.value ? "pause" : "play"; })
       };
@@ -1074,20 +1012,20 @@
     methods: { fa: function (name) { return FV.faIcon(name); } },
     template: [
       '<div class="mp-wrap"><div class="mp">',
-      /* 标题栏：只留红绿灯 */
+
       '<div class="titlebar"><div class="dots">',
       '<span class="dot-red"></span><span class="dot-yellow"></span><span class="dot-green"></span>',
       "</div></div>",
       '<div class="body"><div class="main">',
       '<div class="main-title"><i v-html="fa(\'music\')"></i> 音乐播放器</div>',
-      /* Toast + 音量 HUD */
+
       '<div class="modal-container">',
       '<div class="toast-right" :class="{ show: toastShow }">{{ toastMsg }}</div>',
       '<div class="vol-hud-right" :class="{ show: hudShow }">',
       '<span class="hud-icon"><i v-html="fa(mutedIcon)"></i></span>',
       '<span class="hud-percent">{{ hudPct }}%</span>',
       "</div></div>",
-      /* 顶部元数据 */
+
       '<div class="top-row">',
       '<div class="album-art">',
       '<img v-if="coverUrl" :src="coverUrl" alt="封面">',
@@ -1098,7 +1036,7 @@
       '<div class="artist">{{ artist }}</div>',
       '<div class="album">{{ album }}</div>',
       "</div></div>",
-      /* 频谱 */
+
       '<div class="spectrum-wrap" @click="onSpectrumClick" @auxclick="onSpectrumAux">',
       '<canvas ref="specCanvas"></canvas>',
       '<div class="spectrum-label"><i v-html="fa(\'chart-bar\')"></i> 频谱</div>',
@@ -1106,7 +1044,7 @@
       '<div class="load-overlay" v-if="loading">',
       '<loading-panel variant="card" icon="audio" title="正在读取音频…" :state="loadState" :cancel="cancelLoad" cancel-label="先流式播放"></loading-panel>',
       "</div></div>",
-      /* 控制栏 */
+
       '<div class="controls">',
       '<div class="progress-row">',
       '<span class="time current">{{ curText }}</span>',
@@ -1116,7 +1054,7 @@
       '<span class="time duration">{{ durText }}</span>',
       "</div>",
       '<div class="btn-row">',
-      /* 左组与右组镜像对称：[全屏][上一首] ▶ [下一首][音量环] */
+
       '<div class="btn-group left">',
       '<button title="全屏" @click="toggleFullscreen" v-html="fa(\'expand\')"></button>',
       '<button title="上一首" @click="prevSong" v-html="fa(\'backward\')"></button>',
@@ -1134,7 +1072,6 @@
     ].join("")
   };
 
-  /* ---------------------------------------------------------------- 注册 */
   var AUD = ["mp3", "wav", "ogg", "oga", "m4a", "aac", "flac", "opus", "weba"];
   FV.registry.register({
     id: "audio", label: "音频", kind: "media", order: 100,

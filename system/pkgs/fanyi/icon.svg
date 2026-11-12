@@ -1,8 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
      fill="none" stroke="currentColor" stroke-width="1.5"
      stroke-linecap="round" stroke-linejoin="round">
-  <!-- moss 包图标 · 选中翻译（对话气泡（译文））· 24×24 / 1.5 描边 / currentColor：
-       界面可以跟随主题色，深浅模式都不用重画。改形状直接改下面的 path。 -->
+
   <path d="M20 4H4a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3v4l4.5-4H20a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1z"/>
   <path d="M8 8.5h8"/>
   <path d="M8 12h5"/>

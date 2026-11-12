@@ -1,9 +1,3 @@
-/* 左侧：分类 + 命令合成的一棵可折叠树（等价于 macOS 的大纲视图）。
- *
- * 纯粹"读 props + 抛 events"，自己**不持有任何状态**：
- * 展开态 expanded 也留在父级，这里只按它算 isOpen。
- * 这样树怎么折、怎么选，父级说了算，组件本身可以独立测。
- */
 import { iconFor } from "../icons.js";
 
 export default {
@@ -14,7 +8,7 @@ export default {
     selectedKey: { type: String, default: null },
     filteredCount: { type: Number, default: 0 },
     commandsCount: { type: Number, default: 0 },
-    /* 正在搜索时强制全展开，否则命中的结果看不见 */
+
     searching: { type: Boolean, default: false },
   },
   emits: ["select", "toggle", "expand-all", "reveal", "hover"],
@@ -24,7 +18,7 @@ export default {
       if (this.searching) return true;
       return this.expanded[g.id] !== false;
     },
-    /* 悬停时顺手把行位置算好抛给父级 —— 定位要读 DOM，留在组件里更合适 */
+
     onEnter(e, c) {
       if (!c.description) { this.$emit("hover", null); return; }
       const r = e.currentTarget.getBoundingClientRect();

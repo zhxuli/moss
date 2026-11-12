@@ -9,7 +9,7 @@
  * ★ 文件里那段 `<g>` **自带画笔**（描边族的 fill/stroke、自绘那几颗的缩放与实心填充
  *   都已经烤进 .svg），所以这里不需要知道"实心还是描边"，只管套个 `<svg class=…>`。
  *
- * 补图标：`python tools\取图标.py <名字> [<名字> ...]`（它现在写的是 .svg 文件）。
+ * 补图标：从 lucide-static 取 SVG，放到 system/icon/svg/<名字>.svg。
  * 许可：Lucide（ISC）见 `vendor/lucide-LICENSE.txt`。
  */
 function ico(name, cls) {

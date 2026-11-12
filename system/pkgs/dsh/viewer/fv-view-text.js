@@ -1,13 +1,9 @@
-/* ===========================================================================
-   视图插件 B：文本 / 代码 / Markdown / 表格 / JSON / 配置 / HTML / 十六进制 / 下载
-   =========================================================================== */
 (function () {
   var Vue = window.Vue, FV = window.FV, U = FV.util, P = FV.parse;
-  if (!Vue) return; // Vue 没加载成功时整段跳过，由页面末尾给出提示
+  if (!Vue) return; 
   var ref = Vue.ref, computed = Vue.computed, onMounted = Vue.onMounted, watch = Vue.watch, nextTick = Vue.nextTick;
   var icon = FV.icon;
 
-  /* ---------------------------------------------------------------- 通用卡片 */
   var CardView = {
     name: "CardView",
     props: { title: String, text: String, warn: Boolean, iconName: { type: String, default: "unknown" } },
@@ -23,7 +19,6 @@
     methods: { icon: icon, dl: function () { U.download(FV.boot.rawUrl, FV.boot.name); } }
   };
 
-  /* ---------------------------------------------------------------- 文本 / 代码 */
   var TextView = {
     name: "TextView",
     props: { ctx: Object },
@@ -77,13 +72,12 @@
           if (el && el.scrollIntoView) el.scrollIntoView({ block: "center", inline: "nearest" });
         });
       }
-      // 这三个要同时能被模板（@keydown.enter 之类）和工具栏调用；
-      // 只挂在 api 上的话模板里是 undefined，Vue 的 withKeys 会直接抛错。
+
       function closeFind() { findOpen.value = false; query.value = ""; }
       function findNext() { goto(current.value + 1); }
       function findPrev() { goto(current.value - 1); }
       var api = Vue.inject("fv-api");
-      /** 大文件退回「单个 pre 纯文本」渲染：几万行 × 每行 span 会把浏览器拖死。 */
+
       var bigMode = computed(function () { return text.value.length > 400000 || lines.value.length > 4000; });
       onMounted(function () {
         api.wrapOn = computed(function () { return wrapOn.value; });
@@ -166,7 +160,6 @@
     methods: { icon: icon }
   };
 
-  /* ---------------------------------------------------------------- Markdown */
   var MarkdownView = {
     name: "MarkdownView",
     props: { ctx: Object },
@@ -179,7 +172,6 @@
     template: '<div class="pane scroll"><article class="md" v-html="html"></article></div>'
   };
 
-  /* ---------------------------------------------------------------- 表格 */
   var TableView = {
     name: "TableView",
     props: { ctx: Object },
@@ -249,7 +241,6 @@
       "</div></div>"
   };
 
-  /* ---------------------------------------------------------------- JSON 树 */
   var JsonNode = {
     name: "JsonNode",
     props: { label: String, value: null, depth: { type: Number, default: 0 }, openAll: Boolean },
@@ -331,7 +322,6 @@
     methods: { icon: icon, dl: function () { U.download(FV.boot.rawUrl, FV.boot.name); } }
   };
 
-  /* ---------------------------------------------------------------- 配置 (ini/toml/env/yaml) */
   var ConfigView = {
     name: "ConfigView",
     props: { ctx: Object },
@@ -363,7 +353,6 @@
       "</div></div>"
   };
 
-  /* ---------------------------------------------------------------- HTML 预览 */
   var HtmlView = {
     name: "HtmlView",
     props: { ctx: Object },
@@ -381,7 +370,6 @@
       "</div>"
   };
 
-  /* ---------------------------------------------------------------- 十六进制 */
   var HexView = {
     name: "HexView",
     components: { LoadingPanel: FV.ui.LoadingPanel },
@@ -431,7 +419,6 @@
     methods: { icon: icon }
   };
 
-  /* ---------------------------------------------------------------- 下载兜底 */
   var DownloadView = {
     name: "DownloadView",
     props: { ctx: Object },
@@ -449,7 +436,6 @@
     methods: { icon: icon, dl: function () { U.download(this.ctx.rawUrl, this.ctx.name); } }
   };
 
-  /* ---------------------------------------------------------------- 语言 / 注册 */
   FV.langs = (function () {
     var CODE = {
       js: ["js","mjs","cjs","ts","tsx","jsx","vue","svelte"], py: ["py","pyw"], sh: ["sh","bash","zsh","fish"],
@@ -479,7 +465,6 @@
     };
   })();
 
-  /** 把同一种文本视图按语言/类型注册成若干插件，标签各有各的说法。 */
   function registerText(config) {
     FV.registry.register({
       id: config.id, label: config.label, kind: config.kind || "code", order: config.order, needs: "text",
@@ -513,5 +498,3 @@
 
   FV.CardView = CardView;
 })();
-
-

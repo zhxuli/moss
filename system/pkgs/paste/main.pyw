@@ -1,23 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-EdgePaste 贴边快输 —— 分组版 v2 (main.pyw)
-================================================
-v2 新增:
-  1. 分组: 条目按分组管理, 每个分组可设置「切换热键」
-  2. 分组之间热键可以冲突/重复: 只有「已启用」的分组才会注册它的条目热键
-  3. 多分组同时生效: 分组纵向堆叠(像 QQ), 生效中的分组蓝色高亮
-  4. 生效与展开解耦: 复选框控制"哪些分组生效", 点标题只展开折叠, 互不影响
-     中键点标题 = 只勾选这一个分组; 条目可写可选备注(悬停才弹气泡)
-  5. 切换方便: 分组切换热键 / 上一组·下一组热键 / 标题拖拽排序 / 条目拖拽归组
-  6. 响应快: 勾选/折叠/打字都是增量更新(不重建列表, 不重注册热键, 延迟合并写盘)
-沿用:
-  · 智能防拦截: 录制时自动挂起全局快捷键, 100% 捕获所有按键
-  · 边缘自由拉伸 / 原生吸附 / 自动隐藏 / 单实例
-数据: data.json
-      (旧版单层 entries 会自动迁移到「默认」分组, 原文件备份为 data.json.v1.bak)
-"""
-
 import sys
 import os
 import json
@@ -31,9 +11,6 @@ from pathlib import Path
 import tkinter as tk
 import tkinter.messagebox as messagebox
 
-# ---------------------------------------------------------------------------
-# DPI 感知
-# ---------------------------------------------------------------------------
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
 except Exception:
@@ -45,36 +22,27 @@ except Exception:
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 
-# ---------------------------------------------------------------------------
-# Windows API
-# ---------------------------------------------------------------------------
 LRESULT = ctypes.c_ssize_t
 WPARAM = ctypes.c_size_t
 LPARAM = ctypes.c_ssize_t
 
-
 class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-
 
 class RECT(ctypes.Structure):
     _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
                 ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
 
-
 class MONITORINFO(ctypes.Structure):
     _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", RECT),
                 ("rcWork", RECT), ("dwFlags", ctypes.c_ulong)]
-
 
 class MSG(ctypes.Structure):
     _fields_ = [("hwnd", ctypes.c_void_p), ("message", ctypes.c_uint),
                 ("wParam", WPARAM), ("lParam", LPARAM),
                 ("time", ctypes.c_ulong), ("pt", POINT)]
 
-
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_void_p, ctypes.c_uint, WPARAM, LPARAM)
-
 
 class WNDCLASSEXW(ctypes.Structure):
     _fields_ = [("cbSize", ctypes.c_uint), ("style", ctypes.c_uint),
@@ -83,7 +51,6 @@ class WNDCLASSEXW(ctypes.Structure):
                 ("hIcon", ctypes.c_void_p), ("hCursor", ctypes.c_void_p),
                 ("hbrBackground", ctypes.c_void_p), ("lpszMenuName", ctypes.c_wchar_p),
                 ("lpszClassName", ctypes.c_wchar_p), ("hIconSm", ctypes.c_void_p)]
-
 
 def _setup_api():
     u = user32
@@ -114,9 +81,6 @@ def _setup_api():
     u.SendMessageW.restype = LRESULT
     u.GetCursorPos.argtypes = [ctypes.POINTER(POINT)]
     u.GetCursorPos.restype = ctypes.c_int
-    # ★ POINT 是【按值传结构体】(HMONITOR MonitorFromPoint(POINT pt, DWORD dwFlags))，
-    #   写成 POINTER(POINT) 会把指针当两个 int 塞进寄存器 -> 点变成垃圾值 ->
-    #   永远返回同一块显示器（多屏贴边就全错了；单屏因为兜底到主屏所以看不出来）。
     u.MonitorFromPoint.argtypes = [POINT, ctypes.c_ulong]
     u.MonitorFromPoint.restype = ctypes.c_void_p
     u.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(MONITORINFO)]
@@ -158,12 +122,8 @@ def _setup_api():
     k.GlobalFree.argtypes = [ctypes.c_void_p]
     k.GlobalFree.restype = ctypes.c_void_p
 
-
 _setup_api()
 
-# ---------------------------------------------------------------------------
-# 常量与配色
-# ---------------------------------------------------------------------------
 HOTKEY_WND_CLASS = "EdgePasteHotkeyWnd_v15"
 MUTEX_NAME = "Global\\EdgePaste_Mutex_v15"
 DATA_VERSION = 2
@@ -186,22 +146,20 @@ KEYEVENTF_KEYUP = 0x0002
 
 INITIAL_H = 150
 
-# 热键 ID 分区
 HID_TOGGLE = 1
 HID_CYCLE_PREV = 2
 HID_CYCLE_NEXT = 3
 HID_GROUP_BASE = 10
 HID_ENTRY_BASE = 1000
 
-# 分组标题条
-BAR_ON = "#93c5fd"          # 已启用但非当前分组
-BAR_OFF = "#cbd5e1"         # 未启用
-BAND_ON = "#dbeafe"         # 生效中的分组底色(醒目)
-BAND_ON_CUR = "#bfdbfe"     # 生效中 + 最近操作的分组 (更深一档)
-BAND_OFF = "#f1f5f9"        # 未生效
-BAND_OFF_CUR = "#e8eef6"    # 未生效 + 最近操作
-BORDER_OFF_CUR = "#cbd5e1"  # 未生效但最近操作 -> 灰描边
-CARD_BORDER_ON = "#93c5fd"  # 生效分组里的条目卡片描边
+BAR_ON = "#93c5fd"
+BAR_OFF = "#cbd5e1"
+BAND_ON = "#dbeafe"
+BAND_ON_CUR = "#bfdbfe"
+BAND_OFF = "#f1f5f9"
+BAND_OFF_CUR = "#e8eef6"
+BORDER_OFF_CUR = "#cbd5e1"
+CARD_BORDER_ON = "#93c5fd"
 
 APP_BG = "#f8fafc"
 HEADER_BG = "#ffffff"
@@ -255,7 +213,6 @@ HOTKEY_HWND = [None]
 _hotkey_wnd_proc = [None]
 event_queue = queue.Queue()
 
-
 def get_base():
     try:
         f = Path(__file__).resolve()
@@ -270,13 +227,10 @@ def get_base():
         if (c / "main.pyw").is_file(): return c
     return candidates[0]
 
-
 BASE = get_base()
-# 宿主 moss 注入的插件专属数据目录 (= user_data/state/paste)；老 pa 的 PA_* 与插件目录作兜底
 DATA_DIR = Path(os.environ.get("MOSS_PLUGIN_DATA_DIR") or os.environ.get("PA_PLUGIN_DATA_DIR") or (Path(os.environ.get("MOSS_HOME") or os.path.expanduser("~"))
              / "user_data" / "state" / "paste"))
 DATA_FILE = DATA_DIR / "data.json"
-
 
 def clipboard_get_text():
     if not user32.OpenClipboard(None): return None
@@ -291,7 +245,6 @@ def clipboard_get_text():
             kernel32.GlobalUnlock(h)
     finally:
         user32.CloseClipboard()
-
 
 def clipboard_set_text(text):
     data = (text + "\x00").encode("utf-16-le")
@@ -318,7 +271,6 @@ def clipboard_set_text(text):
     finally:
         user32.CloseClipboard()
 
-
 def send_ctrl_v():
     user32.keybd_event(VK_CONTROL, 0, 0, 0)
     time.sleep(0.03)
@@ -328,7 +280,6 @@ def send_ctrl_v():
     time.sleep(0.03)
     user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
 
-
 def key_to_vk(token):
     t = token.strip().upper()
     if t in KEY_VK: return KEY_VK[t]
@@ -337,7 +288,6 @@ def key_to_vk(token):
         n = int(t[1:])
         if 1 <= n <= 24: return 0x70 + n - 1
     return None
-
 
 def parse_hotkey(s):
     parts = [p.strip() for p in s.replace("＋", "+").split("+") if p.strip()]
@@ -360,7 +310,6 @@ def parse_hotkey(s):
     if vk is None: return None
     return mods, vk
 
-
 def _normalize_keysym(ks):
     if ks in SHIFT_MAP: return SHIFT_MAP[ks]
     if len(ks) == 1: return ks.upper()
@@ -370,9 +319,7 @@ def _normalize_keysym(ks):
     if ks in m: return m[ks]
     return ks
 
-
 def compose_hotkey(event):
-    """把一次 Tkinter 按键事件转成热键字符串, 无效返回 None"""
     mods = []
     if event.state & 0x4: mods.append("Ctrl")
     if (event.state & 0x20000) or event.keysym.startswith("Alt"):
@@ -383,7 +330,6 @@ def compose_hotkey(event):
     key = _normalize_keysym(event.keysym)
     if not key: return None
     return "+".join(mods + [key]) if mods else key
-
 
 def hotkey_thread_main():
     global HOTKEY_HWND
@@ -438,7 +384,6 @@ def hotkey_thread_main():
         user32.TranslateMessage(ctypes.byref(msg))
         user32.DispatchMessageW(ctypes.byref(msg))
 
-
 def check_single_instance():
     handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
     if kernel32.GetLastError() == 183:
@@ -448,13 +393,7 @@ def check_single_instance():
         return False
     return True
 
-
-# ---------------------------------------------------------------------------
-# 对话框内的热键录制器
-# ---------------------------------------------------------------------------
 class HotkeyRecorder:
-    """点「录制」→ 挂起全部全局热键 → 捕获下一个按键 → 自动写入"""
-
     def __init__(self, app, dlg, parent, var, width=16, base_hint="点「录制」按键", button_text="录制"):
         self.app = app
         self.dlg = dlg
@@ -504,7 +443,7 @@ class HotkeyRecorder:
         self.hint.config(text="请按键…(Esc 取消)", fg=ACCENT)
         self.btn.config(text="取消", bg=BADGE_ORANGE, fg=BADGE_ORANGE_FG)
         self.entry.focus_set()
-        self.app.clear_hotkeys()   # 关键: 挂起全局热键, 保证按键流进 Tk
+        self.app.clear_hotkeys()
 
     def stop(self, note=None):
         self.on = False
@@ -526,13 +465,7 @@ class HotkeyRecorder:
         self.stop("录制完成")
         return "break"
 
-
-# ---------------------------------------------------------------------------
-# 自绘小控件: 展开三角 / 复选框 (字体符号太小又不清晰, 自绘的更大更规整)
-# ---------------------------------------------------------------------------
 class Disclosure(tk.Canvas):
-    """展开/折叠三角: 展开向下, 折叠向右"""
-
     def __init__(self, parent, bg, fg, size=12, box=20, command=None):
         super().__init__(parent, width=box, height=box, bg=bg,
                          highlightthickness=0, bd=0, cursor="hand2")
@@ -577,10 +510,7 @@ class Disclosure(tk.Canvas):
             pts = (cx - r * 0.55, cy - r, cx - r * 0.55, cy + r, cx + r * 0.72, cy)
         self.create_polygon(pts, fill=self._fg, outline="")
 
-
 class CheckBox(tk.Canvas):
-    """分组"生效"复选框: 勾上 = 该分组的条目热键生效"""
-
     def __init__(self, parent, bg, size=14, box=20, command=None, checked=False):
         super().__init__(parent, width=box, height=box, bg=bg,
                          highlightthickness=0, bd=0, cursor="hand2")
@@ -625,10 +555,6 @@ class CheckBox(tk.Canvas):
             self.create_rectangle(x0, y0, x1, y1, fill="#ffffff",
                                   outline=(ACCENT if self._hover else BADGE_BG), width=1)
 
-
-# ---------------------------------------------------------------------------
-# 主程序
-# ---------------------------------------------------------------------------
 class EdgePasteApp:
     def __init__(self):
         self.data = self._load_data()
@@ -652,7 +578,7 @@ class EdgePasteApp:
                 e.setdefault("id", uuid.uuid4().hex[:8])
                 e.setdefault("content", "")
                 e.setdefault("hotkey", "")
-                e.setdefault("note", "")     # 备注: 可留空, 只在鼠标悬停时显示
+                e.setdefault("note", "")
 
         if not self.groups:
             self.groups.append(self._new_group_dict("默认"))
@@ -679,7 +605,6 @@ class EdgePasteApp:
         if self.settings.get("strip", 3) > 10:
             self.settings["strip"] = 3
 
-        # 不再强制按列倍数锁定宽度，而是直接读取存储的自定义宽度
         self.win_w = max(250, int(self.settings.get("win_w", 340)))
 
         self.win = self.data.setdefault("window", {
@@ -687,17 +612,17 @@ class EdgePasteApp:
             "rx": None, "ry": None, "rw": None, "rh": None,
         })
 
-        self.hk_map = {}          # hid -> (kind, key)
-        self.hotkey_status = {}   # eid -> none/ok/conflict/invalid/off
-        self.group_status = {}    # gid -> none/ok/conflict/invalid
+        self.hk_map = {}
+        self.hotkey_status = {}
+        self.group_status = {}
         self.cycle_status = {"prev": "none", "next": "none"}
         self.toggle_status = "none"
-        self._hid_map = {}        # target -> hid (稳定分配, 避免顺序变化就重注册)
+        self._hid_map = {}
         self._hid_next = HID_GROUP_BASE
-        self._hk_sig = None       # 上次注册的热键指纹
-        self._save_job = None     # 延迟保存句柄
-        self._h_job = None        # 延迟重算高度句柄
-        self._tip = None          # 悬停备注气泡
+        self._hk_sig = None
+        self._save_job = None
+        self._h_job = None
+        self._tip = None
         self._tip_job = None
         self._tip_hide_job = None
         self.row_widgets = {}
@@ -708,10 +633,10 @@ class EdgePasteApp:
         self._last_win_x = None
         self._last_win_y = None
         self._drag = None
-        self._press = None          # 按下待定的拖拽
-        self._item_drag = None      # 正在进行的列表拖拽
-        self._marker = None         # 拖拽插入位置指示线
-        self._ghost = None          # 拖拽跟随的小窗
+        self._press = None
+        self._item_drag = None
+        self._marker = None
+        self._ghost = None
 
         self.vis = "full"
         self.grace_until = 0.0
@@ -724,9 +649,6 @@ class EdgePasteApp:
             if HOTKEY_HWND[0] is not None: break
             time.sleep(0.05)
 
-    # ------------------------------------------------------------------
-    # 数据
-    # ------------------------------------------------------------------
     def _load_data(self):
         raw = {}
         try:
@@ -739,7 +661,6 @@ class EdgePasteApp:
             raw = {}
 
         if "groups" not in raw:
-            # ---- v1 -> v2 迁移: 单层 entries 全部放进「默认」分组 ----
             old = raw.pop("entries", []) or []
             g = {"id": uuid.uuid4().hex[:8], "name": "默认", "hotkey": "",
                  "collapsed": False, "entries": []}
@@ -764,7 +685,6 @@ class EdgePasteApp:
         self.data["current"] = self.current_gid
         self.data.pop("entries", None)
         try:
-            # 懒加载：只有真正写盘时才创建数据目录
             DATA_DIR.mkdir(parents=True, exist_ok=True)
             with open(DATA_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2)
@@ -772,7 +692,6 @@ class EdgePasteApp:
             pass
 
     def schedule_save(self):
-        """延迟合并写盘: 打字/连点时不至于每次都写文件"""
         if self.root is None:
             self.save_data()
             return
@@ -843,9 +762,6 @@ class EdgePasteApp:
     def status(self, text):
         self.status_var.set(text)
 
-    # ------------------------------------------------------------------
-    # 分组启用 / 切换
-    # ------------------------------------------------------------------
     def after_group_change(self):
         gids = [g["id"] for g in self.groups]
         self.active = [x for x in self.active if x in gids]
@@ -856,7 +772,6 @@ class EdgePasteApp:
         self._rebuild_rows()
 
     def toggle_active(self, gid, checked=None):
-        """复选框: 单纯切换该分组是否生效, 完全不动别的分组, 也不重建界面"""
         g = self.find_group(gid)
         if not g: return
         want = (gid not in self.active) if checked is None else bool(checked)
@@ -870,14 +785,13 @@ class EdgePasteApp:
             return
         self.current_gid = gid
         self.schedule_save()
-        self.rebind_all()          # 只重算热键, 不重建界面
+        self.rebind_all()
         self._refresh_section_states()
         self._refresh_card_borders()
         self.refresh_badges()
         self.status(msg)
 
     def activate_group(self, gid, exclusive=True, scroll=True):
-        """热键用的"切到某分组": 独占/多选启用 + 展开 + 滚动定位 (增量更新, 不重建)"""
         g = self.find_group(gid)
         if not g: return
         changed = False
@@ -906,7 +820,6 @@ class EdgePasteApp:
             self.root.after(30, lambda: self._scroll_to_group(gid))
 
     def _expand_section(self, gid, expand=True):
-        """只显示/隐藏某个分组的内容区(控件都在, 不重建), 秒开"""
         w = self.section_widgets.get(gid)
         if not w or w.get("body") is None: return
         try:
@@ -918,12 +831,9 @@ class EdgePasteApp:
             w["chev"].set_expanded(bool(expand))
         except Exception:
             pass
-        # 立即重算高度: 和这次重排合并成一次窗口更新, 避免"先重画再改尺寸"画两遍
         self.update_window_height()
 
     def _fill_section(self, gid):
-        """按需生成分组内的条目卡片 (折叠的分组不生成, 加快首次构建)
-        内容条数变了会自动重填, 保证不会残留旧卡片"""
         w = self.section_widgets.get(gid)
         g = self.find_group(gid)
         if not w or not g or w.get("body") is None: return
@@ -956,7 +866,6 @@ class EdgePasteApp:
         self.refresh_badges()
 
     def _refresh_card_borders(self):
-        """生效分组里的条目卡片画蓝边(纯配色更新, 不重建控件)"""
         on = set()
         for gid in self.active:
             g = self.find_group(gid)
@@ -1083,7 +992,6 @@ class EdgePasteApp:
         self.status("➡ 已移动到「{}」".format(tgt["name"]))
 
     def add_entry(self, gid):
-        """分组标题栏的 ＋ : 直接在该分组里新建一个条目并聚焦输入框"""
         g = self.find_group(gid)
         if not g: return
         was_off = gid not in self.active
@@ -1110,7 +1018,6 @@ class EdgePasteApp:
             pass
 
     def _drop_if_empty(self, eid):
-        """新建后没输入任何内容就离开 -> 自动取消, 不留空条目"""
         g, e, _i = self.find_entry_ctx(eid)
         if g is None or e is None: return
         if (e.get("content") or "").strip(): return
@@ -1118,11 +1025,7 @@ class EdgePasteApp:
         self.delete_entry_by_id(eid)
         self.status("已取消空条目")
 
-    # ------------------------------------------------------------------
-    # 窗口
-    # ------------------------------------------------------------------
     def _set_geometry(self, x, y, w, h):
-        """完全避开 Tkinter 处理负坐标时的 Bug，使用原生 API 定位"""
         try:
             h_id = self.root.winfo_id()
             hwnd = user32.GetParent(h_id)
@@ -1154,7 +1057,6 @@ class EdgePasteApp:
         root.mainloop()
 
     def _build_ui(self):
-        # ---------------------------------------------------------- 顶栏
         self.header = tk.Frame(self.main_container, bg=HEADER_BG, height=38)
         self.header.pack(fill="x")
         self.header.pack_propagate(False)
@@ -1206,7 +1108,6 @@ class EdgePasteApp:
 
         tk.Frame(self.main_container, bg=HEADER_BORDER, height=1).pack(fill="x")
 
-        # ---------------------------------------------------------- 边缘调整宽度感应区
         self.left_grip = tk.Frame(self.root, bg=CARD_BORDER, cursor="sb_h_double_arrow")
         self.left_grip.place(x=0, y=0, width=4, relheight=1.0)
         self.left_grip.bind("<Button-1>", self._resize_left_start)
@@ -1219,7 +1120,6 @@ class EdgePasteApp:
         self.right_grip.bind("<B1-Motion>", self._resize_right_move)
         self.right_grip.bind("<ButtonRelease-1>", self._resize_release)
 
-        # ---------------------------------------------------------- 列表
         body = tk.Frame(self.main_container, bg=APP_BG)
         body.pack(fill="both", expand=True, padx=6, pady=6)
 
@@ -1256,14 +1156,10 @@ class EdgePasteApp:
         menu.add_command(label="退出", command=self.quit_app)
         self.header.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
 
-    # ------------------------------------------------------------------
-    # 分组列表 (QQ 风格: 纵向堆叠的分组标题; 生效中的分组高亮)
-    # ------------------------------------------------------------------
     def _is_collapsed(self, g):
         return bool(g.get("collapsed"))
 
     def _refresh_section_states(self):
-        """只更新已存在的分组标题行(不重建控件), 用于热键状态变化后刷新"""
         for gid, w in self.section_widgets.items():
             g = self.find_group(gid)
             if not g: continue
@@ -1298,7 +1194,6 @@ class EdgePasteApp:
                 pass
 
     def _band_colors(self, enabled, cur):
-        """生效中的分组 -> 醒目的高亮底色 + 同色描边"""
         if enabled:
             return (BAND_ON_CUR if cur else BAND_ON), ACCENT
         return (BAND_OFF_CUR if cur else BAND_OFF), (BORDER_OFF_CUR if cur else BAND_OFF)
@@ -1363,9 +1258,6 @@ class EdgePasteApp:
         finally:
             m.grab_release()
 
-    # ------------------------------------------------------------------
-    # 拖拽: 分组排序 / 条目跨分组移动 (QQ 风格)
-    # ------------------------------------------------------------------
     def _bind_dnd(self):
         self.root.bind("<B1-Motion>", self._dnd_motion)
         self.root.bind("<ButtonRelease-1>", self._dnd_release)
@@ -1410,7 +1302,6 @@ class EdgePasteApp:
         self.grace_until = time.time() + 0.3
 
         if d is None:
-            # 没移动 = 普通点击
             if p and p.get("click"):
                 p["click"]()
             return
@@ -1518,7 +1409,6 @@ class EdgePasteApp:
         return None
 
     def _cards_of(self, gid):
-        """该分组当前可见的条目卡片(按显示顺序), 折叠时不返回"""
         g = self.find_group(gid)
         if not g: return []
         w = self.section_widgets.get(gid)
@@ -1623,9 +1513,6 @@ class EdgePasteApp:
         except Exception:
             pass
 
-    # ------------------------------------------------------------------
-    # 边缘缩放
-    # ------------------------------------------------------------------
     def _resize_right_start(self, event):
         self.interacting = True
         self._resize_start_x = event.x_root
@@ -1659,11 +1546,7 @@ class EdgePasteApp:
         self.settings["win_w"] = self.win_w
         self.save_data()
 
-    # ------------------------------------------------------------------
-    # 窗口高度
-    # ------------------------------------------------------------------
     def _queue_height(self, delay=10):
-        """合并多次高度重算, 避免连续操作时反复做几何计算"""
         try:
             if self._h_job is not None:
                 self.root.after_cancel(self._h_job)
@@ -1716,9 +1599,6 @@ class EdgePasteApp:
         if self.vis == "strip":
             self.set_vis("full")
 
-    # ------------------------------------------------------------------
-    # 列表: 分组区块 + 条目卡片
-    # ------------------------------------------------------------------
     def _rebuild_rows(self):
         if not hasattr(self, "list_frame"): return
         self._tip_hide()
@@ -1726,9 +1606,8 @@ class EdgePasteApp:
             w.destroy()
         self.row_widgets = {}
         self.section_widgets = {}
-        self._marker = None          # 列表重建, 插入线控件已随之销毁
+        self._marker = None
 
-        # 彻底清空残余的列配置，确保从多列切回少列时宽度能立刻占满
         for c in range(10):
             self.list_frame.grid_columnconfigure(c, weight=0, uniform="")
         self.list_frame.grid_columnconfigure(0, weight=1)
@@ -1745,7 +1624,6 @@ class EdgePasteApp:
         self.refresh_badges()
         self._queue_height(30)
 
-        # 条目卡片分批填充: 面板先出现(标题全在), 卡片随后立刻补上 -> 开局不卡
         self._fill_gen = getattr(self, "_fill_gen", 0) + 1
         self._pending_fill = [g["id"] for g in self.groups
                               if g["id"] in self.section_widgets and not self._is_collapsed(g)]
@@ -1793,12 +1671,10 @@ class EdgePasteApp:
         collapsed = bool(g.get("collapsed"))
         band, border = self._band_colors(enabled, cur)
 
-        # --- 分组标题条外框(生效中的分组 -> 蓝色描边, 一眼看出哪组在生效) ---
         wrap = tk.Frame(self.list_frame, bg=border, padx=1, pady=1)
         wrap.grid(row=row, column=0, sticky="we", padx=1, pady=(4, 1))
         row += 1
 
-        # --- 分组标题条: [┃][▾][☑] 名称 ...... [F1] [3 条] [＋] ---
         head = tk.Frame(wrap, bg=band, cursor="hand2")
         head.pack(fill="x")
 
@@ -1818,7 +1694,6 @@ class EdgePasteApp:
                         font=("Microsoft YaHei UI", 9, "bold"))
         name.pack(side="left", padx=(6, 0))
 
-        # 右侧: ＋新增条目 | 条数 | 切换热键
         add_btn = tk.Label(head, text="＋", bg=band, fg=TEXT_MUTED,
                            font=("Microsoft YaHei UI", 11, "bold"), cursor="hand2", padx=5)
         add_btn.pack(side="right", padx=(0, 3), pady=1)
@@ -1842,7 +1717,6 @@ class EdgePasteApp:
                                      "chev": chev, "chk": chk, "name": name, "cnt": cnt,
                                      "hkl": hkl, "add": add_btn}
 
-        # ---- 交互 ----
         def on_enter(_e, _g=g, _en=enabled):
             hot = "  切换热键 {}".format(_g["hotkey"]) if _g.get("hotkey") else ""
             self.status("「{}」{} · {} 条{} · 点标题=展开折叠 勾选框=生效 中键=只勾这一个 拖动=排序 ＋=新增".format(
@@ -1866,7 +1740,6 @@ class EdgePasteApp:
         chev.bind("<Button-3>", lambda e, x=gid: self._group_menu(e, x))
         chk.bind("<Button-3>", lambda e, x=gid: self._group_menu(e, x))
 
-        # 点标题/名称 = 展开折叠(不动别的分组); 按住拖动 = 调整分组顺序
         for w in (head, name, cnt, hkl, bar, wrap):
             w.bind("<Button-1>", lambda e, x=gid: self._dnd_press(
                 e, "group", x, lambda y=x: self.toggle_collapse(y)))
@@ -1876,7 +1749,6 @@ class EdgePasteApp:
             w.bind("<Enter>", on_enter)
             w.bind("<Leave>", on_leave)
 
-        # --- 组内条目 (内容区先占位, 卡片按需生成; 折叠只是隐藏 -> 展开/折叠秒开) ---
         cols = max(1, int(self.settings.get("columns", 1)))
         body = tk.Frame(self.list_frame, bg=APP_BG)
         body.grid(row=row, column=0, sticky="we")
@@ -1887,7 +1759,6 @@ class EdgePasteApp:
 
         if collapsed:
             body.grid_remove()
-        # 非折叠的分组不在这里立刻生成卡片, 由 _fill_chunk 分批填充(开局不卡)
         else:
             self.section_widgets[gid]["filled"] = False
             self.section_widgets[gid]["filled_n"] = -1
@@ -1899,7 +1770,6 @@ class EdgePasteApp:
         eid = entry["id"]
         active = gid in self.active
 
-        # 一层 Frame + highlightthickness 当描边: 生效分组蓝色, 其余灰色 (省一层控件)
         bcol = CARD_BORDER_ON if active else CARD_BORDER
         card_border = tk.Frame(parent, bg=CARD_BG, highlightthickness=1,
                                highlightbackground=bcol, highlightcolor=bcol)
@@ -1907,7 +1777,6 @@ class EdgePasteApp:
 
         card_bg = card_border
 
-        # 拖拽握把 (把条目拖到别的分组, 或组内排序)
         grip = tk.Label(card_bg, text="≡", bg=CARD_BG, fg=CARD_BORDER,
                         font=("Microsoft YaHei UI", 11, "bold"), cursor="fleur", padx=2)
         grip.pack(side="left", padx=(5, 0), pady=8)
@@ -1928,7 +1797,6 @@ class EdgePasteApp:
         del_btn = tk.Label(card_bg, text="✕", bg=CARD_BG, fg=TEXT_MUTED, font=("Microsoft YaHei UI", 10),
                            cursor="hand2")
 
-        # 有备注才显示的小标记(备注本身只在悬停时弹气泡)
         note_lbl = tk.Label(card_bg, text="注", bg=CARD_BG, fg=TEXT_MUTED, font=("Microsoft YaHei UI", 7),
                             cursor="hand2")
         if (entry.get("note") or "").strip():
@@ -1970,19 +1838,18 @@ class EdgePasteApp:
             w.bind("<Button-1>", lambda e, x=eid: self._dnd_press(e, "entry", x))
             w.bind("<Button-3>", lambda e, x=eid: self._entry_menu(e, x, gid))
 
-        # 新建后没输入就离开 -> 自动取消这条空条目
         entry_widget.bind("<FocusOut>",
                           lambda e: self.root.after(10, lambda: self._drop_if_empty(eid)))
 
         def on_badge_enter(e):
             badge.focus_set()
             badge.config(text="录制中", bg=ACCENT, fg=ACCENT_FG)
-            self.clear_hotkeys()   # 极度核心: 挂起全局拦截系统, 百分百捕捉用户按键
+            self.clear_hotkeys()
 
         def on_badge_leave(e):
             self.root.focus_set()
             self.refresh_badges()
-            self.rebind_all()      # 鼠标移开, 无缝恢复系统全局快捷键拦截
+            self.rebind_all()
 
         def on_badge_keypress(e):
             if e.keysym in MOD_KEYSYMS: return
@@ -1999,7 +1866,6 @@ class EdgePasteApp:
             hk = compose_hotkey(e)
             if not hk: return "break"
 
-            # 只在本分组内去重; 其它分组允许使用相同的热键(这就是分组的意义)
             for other in group.get("entries", []):
                 if other["id"] != eid and (other.get("hotkey") or "").strip().lower() == hk.lower():
                     other["hotkey"] = ""
@@ -2039,7 +1905,7 @@ class EdgePasteApp:
 
         def on_content_change(*args):
             entry["content"] = content_var.get()
-            self.schedule_save()      # 打字时不再每条按键都写盘
+            self.schedule_save()
 
         content_var.trace_add("write", on_content_change)
 
@@ -2047,9 +1913,6 @@ class EdgePasteApp:
                                  "content_var": content_var, "grip": grip, "entry": entry_widget,
                                  "note_lbl": note_lbl}
 
-    # ------------------------------------------------------------------
-    # 备注: 默认不显示, 鼠标悬停在条目上才弹出气泡
-    # ------------------------------------------------------------------
     def _tip_schedule(self, eid):
         e = self.find_entry(eid)
         note = ((e or {}).get("note") or "").strip()
@@ -2076,7 +1939,6 @@ class EdgePasteApp:
             self._tip_job = None
 
     def _tip_leave(self):
-        """从条目上移开: 延迟一点再关, 免得在卡片内部各控件之间移动时闪烁"""
         self._tip_cancel_show()
         if self._tip is None:
             return
@@ -2131,7 +1993,6 @@ class EdgePasteApp:
             self._tip = None
 
     def open_note_dialog(self, eid):
-        """编辑备注: 可留空(留空=不显示气泡)"""
         e = self.find_entry(eid)
         if not e: return
         self._tip_hide()
@@ -2264,9 +2125,6 @@ class EdgePasteApp:
         self._refresh_note_marker(eid)
         self.status("已清除备注" if not (note or "").strip() else "备注已保存")
 
-    # ------------------------------------------------------------------
-    # 徽标 / 复制 / 删除
-    # ------------------------------------------------------------------
     def refresh_badges(self):
         entries = {}
         for _g, e in self.all_entries():
@@ -2303,7 +2161,6 @@ class EdgePasteApp:
             return
 
         def revert():
-            # 卡片可能已经被重建/销毁, 必须容错
             try:
                 if not card_bg.winfo_exists():
                     return
@@ -2375,11 +2232,7 @@ class EdgePasteApp:
         self._rebuild_rows()
         self.rebind_all()
 
-    # ------------------------------------------------------------------
-    # 全局热键注册
-    # ------------------------------------------------------------------
     def clear_hotkeys(self):
-        """强制注销所有注册热键，解除系统监控，使得所有按键都流入 Tkinter 事件"""
         hwnd = HOTKEY_HWND[0]
         if hwnd:
             for hid in list(self.hk_map.keys()):
@@ -2392,7 +2245,6 @@ class EdgePasteApp:
         self._hk_sig = None
 
     def _hid_for(self, target):
-        """给每个目标分配固定不变的 hid, 这样排序/折叠都不会引起重新注册"""
         hid = self._hid_map.get(target)
         if hid is None:
             if self._hid_next > 60000:
@@ -2404,7 +2256,6 @@ class EdgePasteApp:
         return hid
 
     def _hotkey_plan(self):
-        """本次应该注册哪些热键 -> [(hid, target, 原字符串, (mods,vk) 或 None)]"""
         plan = []
 
         def add(target, hk):
@@ -2425,10 +2276,6 @@ class EdgePasteApp:
         return plan
 
     def rebind_all(self, force=False):
-        """重新计算并注册系统热键
-        规则: 面板热键 / 循环切换热键 / 所有分组切换热键 -> 始终注册
-              条目热键 -> 只注册「已启用」分组里的条目 (所以不同分组之间可以重键)
-        优化: 先算指纹, 热键集合没变就直接跳过(不再注销/重注册), 切换生效/折叠都是秒响应"""
         plan = self._hotkey_plan()
         sig = tuple(sorted((hid, parsed) for hid, _t, _hk, parsed in plan))
 
@@ -2463,7 +2310,6 @@ class EdgePasteApp:
             self.refresh_badges()
 
     def _mark_inactive_off(self):
-        """未启用分组的条目: 标记为「暂停」"""
         for g in self.groups:
             if g["id"] in self.active: continue
             for e in g.get("entries", []):
@@ -2481,9 +2327,6 @@ class EdgePasteApp:
         else:
             self.toggle_status = st
 
-    # ------------------------------------------------------------------
-    # 事件轮询
-    # ------------------------------------------------------------------
     def _poll_events(self):
         try:
             while True:
@@ -2556,9 +2399,6 @@ class EdgePasteApp:
             return pt.x, pt.y
         return None
 
-    # ------------------------------------------------------------------
-    # 显示 / 隐藏 / 吸附
-    # ------------------------------------------------------------------
     def toggle_vis(self):
         if self.vis == "gone":
             self.set_vis("full")
@@ -2743,7 +2583,6 @@ class EdgePasteApp:
         return (0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1))
 
     def _monitor_rect_at(self, x, y):
-        # ★ 按值传 POINT（见 _setup_api 里的说明）；不要再写 byref。
         hmon = user32.MonitorFromPoint(POINT(int(x), int(y)), 2)
         if not hmon: return None
         mi = MONITORINFO()
@@ -2767,9 +2606,6 @@ class EdgePasteApp:
         if dock == "bottom": return my >= r[3] - 5 and (x <= mx <= x + w)
         return False
 
-    # ------------------------------------------------------------------
-    # 通用小组件
-    # ------------------------------------------------------------------
     def _create_modern_entry(self, parent, width_val, text_var=None):
         outer = tk.Frame(parent, bg=CARD_BORDER, padx=1, pady=1)
         inner = tk.Entry(outer, textvariable=text_var, width=width_val, bg=CARD_BG, fg=TEXT_TITLE,
@@ -2788,9 +2624,6 @@ class EdgePasteApp:
         y = self.root.winfo_y() + 40
         dlg.geometry("{}x{}+{}+{}".format(dw, dh, max(0, x), max(0, y)))
 
-    # ------------------------------------------------------------------
-    # 设置对话框
-    # ------------------------------------------------------------------
     def open_settings(self):
         self.dialog_open = True
         dlg = tk.Toplevel(self.root)
@@ -2872,7 +2705,6 @@ class EdgePasteApp:
                 if v and parse_hotkey(v) is None:
                     err.config(text="热键格式不对, 示例: F4 / Ctrl+Alt+1")
                     return
-            # 循环热键不能和面板热键重复
             used = {}
             labels = {"toggle_hotkey": "面板显示/隐藏", "prev_group_hotkey": "上一个分组",
                       "next_group_hotkey": "下一个分组"}
@@ -2916,9 +2748,6 @@ class EdgePasteApp:
         dlg.protocol("WM_DELETE_WINDOW", close)
         self._place_dialog(dlg)
 
-    # ------------------------------------------------------------------
-    # 分组管理对话框
-    # ------------------------------------------------------------------
     def open_group_manager(self):
         self.dialog_open = True
         dlg = tk.Toplevel(self.root)
@@ -2950,7 +2779,6 @@ class EdgePasteApp:
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(wid, width=e.width))
         canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(-int(e.delta / 120), "units"))
 
-        # 草稿: 保存时才写回
         draft = [{"id": g["id"], "name": g["name"], "hotkey": g.get("hotkey", ""),
                   "entries": g.get("entries", []), "active": g["id"] in self.active}
                  for g in self.groups]
@@ -3095,7 +2923,6 @@ class EdgePasteApp:
                 self.dialog_open = False
 
         def do_save():
-            # 1) 名称 / 热键 校验
             seen = {}
             for it in row_widgets:
                 it["name"] = (it["_name_var"].get() or "").strip() or it["name"]
@@ -3121,7 +2948,6 @@ class EdgePasteApp:
                         err.config(text="「{}」与{}重复".format(it["name"], label))
                         return
 
-            # 2) 写回
             new_groups = []
             for it in row_widgets:
                 g = self.find_group(it["id"])
@@ -3134,7 +2960,6 @@ class EdgePasteApp:
                 new_groups.append(g)
             self.groups = new_groups
 
-            # 生效状态跟着一起保存
             on_ids = [it["id"] for it in row_widgets if it.get("active")]
             self.active = [g["id"] for g in self.groups if g["id"] in on_ids]
 
@@ -3158,9 +2983,6 @@ class EdgePasteApp:
         dlg.protocol("WM_DELETE_WINDOW", close)
         self._place_dialog(dlg)
 
-    # ------------------------------------------------------------------
-    # 帮助 / 退出
-    # ------------------------------------------------------------------
     def show_help(self):
         self.dialog_open = True
         dlg = tk.Toplevel(self.root)
@@ -3222,7 +3044,6 @@ class EdgePasteApp:
         finally:
             self.root.destroy()
 
-
 def main():
     try:
         if not check_single_instance(): return
@@ -3240,7 +3061,6 @@ def main():
             messagebox.showerror("EdgePaste 错误", str(e))
         except Exception:
             pass
-
 
 if __name__ == "__main__":
     main()

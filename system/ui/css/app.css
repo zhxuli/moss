@@ -1,13 +1,9 @@
 :root{
-  /* 配色按参考稿（苹果官网那套灰阶）：正文 #1d1d1f / 次级 #515154 / 说明 #86868b /
-     更淡 #a1a1a6。强调色 #0071e3。 */
   --bg:#f5f5f7; --panel:#fff; --panel2:#fbfbfd; --line:#f0f0f0; --line2:#e8e8ed;
-  /* ★ 控件描边分两档：按钮用 --ctl（细一点够看），**输入框用 --ctl-in（更深）**。
-     参考稿那支 #d2d2d7 在好屏上是"精致"，在差屏上就是"看不出这儿能打字" ——
-     输入框的描边是它唯一的可交互暗示，必须够深（对着白底约 3:1）。 */
+
   --ctl:#c6c6cc; --ctl-in:#9a9aa2;
   --fg:#1d1d1f; --fg2:#515154; --dim:#86868b; --dim2:#a1a1a6;
-  --ph:#8e8e96;                       /* 输入框占位文字，比 --dim2 再实一点 */
+  --ph:#8e8e96;                       
   --tile:#f5f5f7; --tag:#e8e8ed;
   --accent:#0071e3; --accent-fg:#fff; --accent-h:#0063c8;
   --hover:#f5f5f7; --sel:#e8f1ff; --out-bg:#14161a; --out-fg:#d7dae0;
@@ -15,19 +11,15 @@
   --mono: ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,monospace;
   --fill:rgba(120,120,128,.10); --fill2:rgba(120,120,128,.18);
   --group:#fff; --hair:rgba(60,60,67,.10);
-  /* 差异视图（`V-94` / `V-250`）的状态色。你 2026-10-04 重新定的规矩：
-       · 内容变了（变大/变小）= **同一个琥珀色**，谁大谁**更深**；
-       · 增删（添加/缺少）  = **同一个蓝**，也是深浅两档分方向；
-       · **没变化 = 灰**（"表示没变化"）；空文件也是灰（但没有箭头）。
-     深浅两档要**肉眼分得开**，不然"哪边更大"就白标了。方向另有 +/-/上下箭头（`df-mark`）。 */
+
   --df-chg:#a35b00; --df-chg-soft:#c98a3c; --df-empty:#a1a1a6;
   --df-add:#1c6dd0; --df-add-soft:#6b9fd4; --df-same:#9a9aa0;
-  /* 语法配色照抄 exec（GitHub 那套浅/深色） */
+
   --syn-comment:#6e7781; --syn-keyword:#cf222e; --syn-string:#0a3069;
   --syn-number:#0550ae;  --syn-title:#8250df;   --syn-builtin:#953800;
   --syn-attr:#0550ae;    --syn-meta:#6e7781;
 }
-/* 深色：**跟随系统**（界面上的深浅切换不做 —— 见 `U-26` ❌） */
+
 @media (prefers-color-scheme: dark){
   :root{ --bg:#151517; --panel:#1c1c1e; --panel2:#232326; --line:#2c2c30; --line2:#2c2c30;
          --ctl:#4a4a52; --ctl-in:#6e6e78;
@@ -47,25 +39,18 @@
          --syn-attr:#79c0ff;    --syn-meta:#8b949e; }
 }
 @media (prefers-reduced-motion: reduce){
-  /* 系统里关了动效就别缩放/位移，但**保留颜色类反馈**（那不影响前庭）。
-     ★ 这条在第 82 版换配色令牌时被脚本连着删掉过一次（替换范围切多了），第 85 版补回来 ——
-     **整块替换 CSS 时，结束锚点要用后面那个真实存在的规则**。 */
   *{animation-duration:.01ms !important;transition-duration:.01ms !important}
   .iconbtn:active,.tab:active,.btn:active,.chip:active{transform:none !important}
 }
 *{box-sizing:border-box}
-/* ★ 必须有这条兜底：`display:flex` 之类会压过浏览器默认的 `[hidden]{display:none}`，
-   于是 `el.hidden = true` 看起来毫无反应（实测坑）。 */
+
 [hidden]{display:none !important}
 html,body{height:100%}
 body{margin:0;height:100vh;display:flex;flex-direction:column;overflow:hidden;
   font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
   color:var(--fg);background:var(--bg)}
 svg.i{width:16px;height:16px;flex:none;display:block}
-/* 按钮：**无底色、无描边**（`V-92` 你指出的："所有按钮全都带一个外边框……边框以内还设置了
-   背景色"）。指上去浮一层极淡的灰、按下缩一点、图标画大一点（原来 32px 的框里塞 16px 图标 +
-   6px 内边距，看着就"小气"）。
-   ★ 这一条是**全局**的：工具栏、详情、快照边栏、列表里的图标按钮全走这里。 */
+
 .iconbtn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
   padding:4px;min-width:30px;min-height:30px;border:0;border-radius:8px;
   background:transparent;color:var(--fg2);
@@ -75,9 +60,7 @@ svg.i{width:16px;height:16px;flex:none;display:block}
 .iconbtn:active{transform:scale(.97)}
 .iconbtn:disabled{opacity:.4;cursor:default;transform:none}
 .iconbtn svg.i{width:17px;height:17px}
-/* ★ `V-384`：`.warn` 在这套界面里**只表示"运行中"**（`console.js::paintActions` 那三处
-   `classList.toggle("warn", running)`），所以它是**绿色**的，不是红 —— 你说过
-   「运行中的时候…不用红色 这不和谐」。真正的错误另有 `.bad` / `.danger` 那两套（还是红）。 */
+
 .iconbtn.warn{color:#1f9d55}
 .iconbtn.warn:hover{background:color-mix(in srgb, #1f9d55 13%, transparent)}
 .iconbtn.danger{color:#ef4444}
@@ -86,7 +69,7 @@ header{display:flex;align-items:center;gap:10px;padding:9px 14px;
   border-bottom:1px solid var(--hair);background:var(--panel);flex:none}
 .brand{font-weight:600;display:flex;align-items:center;gap:7px}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--accent)}
-/* 搜索框也走"填充式"：无描边，一层灰底（`V-92` 统一），聚焦给一圈柔和 accent */
+
 #q{width:230px;padding:6px 11px;border-radius:8px;
   border:0;background:var(--fill);color:var(--fg);outline:none;
   transition:background .2s ease,box-shadow .2s ease}
@@ -94,12 +77,9 @@ header{display:flex;align-items:center;gap:10px;padding:9px 14px;
 #q::placeholder{color:var(--ph)}
 .meta{flex:1;color:var(--dim2);font-size:11.5px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;text-align:right;letter-spacing:.01em}
-/* `position:relative` 是给"收起态那条浮动侧栏"当定位父级用的（`V-171` 起） */
+
 main{flex:1;display:flex;min-height:0;position:relative}
-/* `V-92`：能拖着调宽的那条细线（左侧列表 / 版本快照边栏各一条，见 `core.js` 的 `bindColResize`）。
-   故意做得"看不见"：只有一个光标 + hover 时极淡的一层底色，不占视觉。 */
-/* ★ V-171：拖动条从 7px 加宽到 10px，并在**常态**就画一条极淡的竖线 ——
-   以前完全透明（只有 hover 才有一层底色），所以"能拖"这件事根本没人发现。 */
+
 .grip{position:absolute;top:0;bottom:0;width:10px;z-index:60;cursor:col-resize;
   background:transparent;transition:background .12s ease-out}
 .grip::before{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
@@ -113,30 +93,19 @@ body.colres{cursor:col-resize;user-select:none}
 aside{position:relative}
 aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--panel);
   display:flex;flex-direction:column;min-height:0}
-/* 收起 = **自动隐藏**（`V-171` / `V-172`）：不悬停时缩成一条 56px 图标条（文字全藏、图标留着）；
-   鼠标一放上去就"弹出来"，宽度用你拖出来的那个，而且是**浮在内容上面**（不把右边挤走）。
-   ★ 所有"缩起来"的规则都挂在 `main.mini:not(.hover-aside)` 上 —— 一悬停就整套让开，回到正常长相。 */
-/* ★ 常态就让它**浮着**（`position:absolute` + 56px），右边用 `margin-left` 固定留出那一条 ——
-   这样"悬停弹出来"只是把它自己变宽盖上去，**右边的内容一点都不动**（不然每次 hover 都晃一下）。 */
+
 main.mini > aside{position:absolute;left:0;top:0;bottom:0;z-index:40;
   width:56px !important;transition:width .16s ease;overflow:hidden}
-/* ★ `V-176`：右侧**跟着让位**（不是被浮层盖住）—— 之前只给固定 56px 的左边距，
-   侧栏一展开就把「详情 / 命令行 / 文件管理」那三个标签盖住了。
-   现在留白跟着侧栏宽度一起动（同一条 `transition`，0.16s ease），所以是"推开"而不是"盖住"，
-   而且两边同步动，不会有错位感。 */
+
 main.mini > #right{margin-left:56px;transition:margin-left .16s ease}
 main.mini.hover-aside > #right{margin-left:var(--aside-w,300px)}
 main.mini:not(.hover-aside) .grip{display:none}
-/* ★ `V-175`：收起时**内容只"看不见"，盒子留在原地** ——
-   ① 顶排（插件/历史/新建/刷新）不再 display:none，否则它一出现/消失，下面整个列表会上下跳；
-   ② 行里的文字不换行、也不改行高，宽度动画期间**不参与重排**（不然会挤在 56px 里换行再摊开；
-   行首的图标也不再从"居中"跳到"靠左"）。
-   悬停时等宽度快到位了再淡入（延迟 .1s）。 */
+
 main.mini > aside #sideswitch,
 main.mini > aside .item > div,
 main.mini > aside .hitem .hmain{white-space:nowrap;overflow:hidden;
   transition:opacity .12s ease}
-/* 折叠时：顶排**只留那颗「展开」按钮**（插件/历史/新建/刷新都藏），工具条也一起藏 */
+
 main.mini:not(.hover-aside) #sideswitch > *:not(#btn-aside-mini){opacity:0;pointer-events:none}
 main.mini:not(.hover-aside) .listbar{opacity:0;pointer-events:none}
 main.mini:not(.hover-aside) > aside #sideswitch,
@@ -147,12 +116,7 @@ main.mini.hover-aside > aside #sideswitch,
 main.mini.hover-aside > aside .item > div,
 main.mini.hover-aside > aside .hitem .hmain,
 main.mini.hover-aside > aside .rowstat{opacity:1;transition:opacity .12s ease .1s}
-/* ★ `V-306`：折叠成 56px 图标栏时有两个毛病（你截的图）——
-   ① 每行行首那个"拖动把手"（`.drag-grip`，平时 `opacity:0`）**盒子还占着 16px + gap**，
-      文字那格又是 `flex:1`、行尾状态也占宽 ⇒ 24px 的包图标被往右挤出 56px 之外、**被裁掉半个**。
-   ② 顶上那排工具条 `.listbar` 是 `flex-wrap:wrap`，在 56px 里会**折成好几行** ——
-      `opacity:0` 把它藏起来了、盒子还杵在那儿 ⇒ 左上角一大片空白，把整个列表往下推。
-   修：折叠态下**把手 / 文字 / 行尾状态都不占横向地方**、图标居中；顶上两排**不换行**（各占一行）。 */
+
 main.mini:not(.hover-aside) > aside #sideswitch,
 main.mini:not(.hover-aside) > aside .listbar{flex-wrap:nowrap;overflow:hidden}
 main.mini:not(.hover-aside) > aside .hitem,
@@ -160,19 +124,19 @@ main.mini:not(.hover-aside) > aside .item{padding-left:0;padding-right:0;gap:0;j
 main.mini:not(.hover-aside) > aside .item .drag-grip{display:none}
 main.mini:not(.hover-aside) > aside .item .rowstat,
 main.mini:not(.hover-aside) > aside .hitem .hstat{display:none}
-/* 文字那格在包行是**行内** `flex:1`（`rowHTML` 里写的）⇒ 得用 `!important` 才压得住 */
+
 main.mini:not(.hover-aside) > aside .item > div{flex:0 0 0 !important;overflow:hidden}
 main.mini:not(.hover-aside) > aside .hitem .hmain{flex:0 0 0;overflow:hidden}
-/* 悬停：展开到你拖出来的宽度，盖在内容上面 */
+
 main.mini.hover-aside > aside{width:var(--aside-w,300px) !important;
   box-shadow:0 12px 34px rgba(0,0,0,.18)}
 #btn-aside-mini svg{transition:transform .18s ease}
 main.mini #btn-aside-mini svg{transform:rotate(180deg)}
-/* 工具条（`V-178`）：一排两个下拉，跟列表同一宽度 */
+
 .listbar{display:flex;gap:3px;align-items:center;flex-wrap:wrap;padding:6px 8px;flex:none;
   border-bottom:1px solid var(--line2)}
 .listbar[hidden]{display:none}
-/* 图标按钮（`V-179`）：一下点到位；选中的那一颗有底色，鼠标停上去出名字（title） */
+
 .listbar .lb{width:23px;height:22px;flex:none;display:inline-flex;align-items:center;
   justify-content:center;border:0;border-radius:6px;background:transparent;color:var(--dim);
   cursor:pointer;padding:0;transition:background .12s,color .12s}
@@ -180,10 +144,7 @@ main.mini #btn-aside-mini svg{transform:rotate(180deg)}
 .listbar .lb:active{transform:scale(.94)}
 .listbar .lb.on{background:var(--fill);color:var(--accent)}
 .listbar .lb svg{width:14px;height:14px}
-/* ★ 2026-11-02：工具条右端那颗「新建包」= **蓝色实心的主按钮**（加号 + 「新建插件」）。
-   以前它是 23px 的小图标，跟刷新 / 筛选一个样 —— 用户"找不到新建在哪"。
-   ★ 高度跟同一排的图标按钮齐平（23px），只是宽度撑到文字；
-   ★ hover 抬 1px + 阴影加深，按下去回弹 —— 一点点"这是主按钮"的手感，不花哨。 */
+
 .listbar .lb.lb-primary{width:auto;height:23px;gap:4px;padding:0 9px 0 7px;
   background:var(--accent);color:var(--accent-fg);font-size:11.5px;font-weight:500;
   letter-spacing:.2px;border-radius:7px;box-shadow:0 1px 2px rgba(0,113,227,.28);
@@ -195,11 +156,9 @@ main.mini #btn-aside-mini svg{transform:rotate(180deg)}
   box-shadow:0 1px 2px rgba(0,113,227,.28)}
 .listbar .lb.lb-primary svg{width:13px;height:13px;flex:none}
 .listbar .lb.lb-primary span{white-space:nowrap;line-height:1}
-/* 分类 | 排序 之间那条分隔 */
+
 .listbar .lb-sep{width:1px;height:14px;flex:none;background:var(--line2);margin:0 3px}
-/* ★ `V-305`：筛选 / 排序改成 **hover 下拉** —— 触发器平时只占一小块（图标 + 当前值 + 小箭头），
-   鼠标停上去自动展开、移开就收起。菜单贴着触发器下沿（中间没有缝），所以从触发器移到菜单上
-   **不会"路过就收"**，操作依旧连贯（不用多点几下）。 */
+
 .listbar .dd{position:relative;flex:none}
 .listbar .dd-t{height:22px;display:inline-flex;align-items:center;gap:4px;padding:0 7px;
   border:0;border-radius:6px;background:transparent;color:var(--dim);cursor:pointer;
@@ -221,12 +180,12 @@ main.mini #btn-aside-mini svg{transform:rotate(180deg)}
 .listbar .dd-i svg{width:15px;height:15px;flex:none}
 .listbar .dd-i .dd-chk{margin-left:auto;opacity:0;width:13px;height:13px}
 .listbar .dd-i.on .dd-chk{opacity:1}
-/* ★ 折叠态（`V-178`）：列表能上下滚，但**不许出现滚动条**（横的竖的都不要） */
+
 main.mini #list,main.mini #hist{overflow-x:hidden;scrollbar-width:none}
 main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;height:0;display:none}
 #list{flex:1;overflow:auto;min-height:0}
 #hist{flex:1;overflow:auto;min-height:0}
-/* 左侧顶部那排：插件/历史 切换 + 新建 */
+
 #sideswitch{display:flex;gap:4px;align-items:center;padding:7px 10px;flex:none;
   border-bottom:1px solid var(--line2)}
 #sideswitch button{display:inline-flex;align-items:center;justify-content:center;gap:6px;
@@ -234,17 +193,14 @@ main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;he
   color:var(--dim);cursor:pointer;font:inherit;font-size:13px}
 #sideswitch button:hover{background:var(--hover)}
 #sideswitch button.on{background:var(--fill);border-color:transparent;color:var(--fg);font-weight:500}
-/* 插件 / 历史 名字后面那个数字（`V-199`）：等宽数字，宽度别跳来跳去 */
+
 #sideswitch .sw-n{font-size:11px;font-weight:600;color:var(--dim);
   font-variant-numeric:tabular-nums;min-width:12px;text-align:right}
 #sideswitch button.on .sw-n{color:var(--accent)}
-/* 右边那个「新建包」：靠 margin-left:auto 顶到最右。**不再自己改底色和描边** ——
-   它就是个普通按钮，和别处同一套长相（原来这里写死了 --panel2/--line，
-   是"填充块"时代的残留，和现在的白底细描边不一致）。 */
+
 #sideswitch #btn-newpkg{margin-left:auto;padding:4px 7px;min-width:28px}
 #sideswitch #btn-refresh{padding:4px 7px;min-width:28px}
-/* 历史行：**和包列表长得一样** —— 同一套内边距 / 图标尺寸 / hover / 选中态。
-   只有第二行不同：包显示"说明"，历史显示"目录 · 时间"。 */
+
 .hitem,.item{display:flex;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line2);
   cursor:pointer;align-items:center}
 .hitem:hover,.item:hover{background:var(--hover)}
@@ -253,23 +209,17 @@ main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;he
   justify-content:center;color:var(--dim)}
 .hitem .hico svg,.hitem .hico img,.ico svg,.ico img{width:24px;height:24px}
 .hitem .hico img,.ico img{object-fit:contain}
-/* ★ 2026-10-22：**没有图标的包**画"首字兜底"（见 list.js 的 `iconHTML`）。
-   以前这里是一个空壳 `<span>`：24px 一片空白，看着像"这包坏了 / 图标忘了做"。
-   颜色由包 id 算出来（`--fb-h`），同一个包每次都一样，一眼认得出是同一个。 */
+
 .ico-fb{border-radius:7px;font-size:13px;font-weight:600;line-height:1;
   color:hsl(var(--fb-h,215) 40% 32%);background:hsl(var(--fb-h,215) 55% 91%);
   border:1px solid hsl(var(--fb-h,215) 40% 82%)}
 .hitem .hmain{min-width:0;flex:1}
 .hitem .hname,.nm{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* `.ds` = 列表第二行（普通字号、不是等宽）；`.sub` = 夹在句子里的等宽小字（`:md5` 这种）。
-   ★ 原来 `.sub` 写了两遍（第二遍把 font-size 从 12 改成 11，还加了 mono）——
-     同一层里重复声明等于自己压自己。合成一条。 */
+
 .hitem .hsub,.ds{color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis}
 .sub{color:var(--dim);font-family:var(--mono);font-size:11.5px}
-/* ★ `V-300`：插件列表行首的"拖动把手"。
-   ⚠️ 类名**必须**叫 `.drag-grip` 而不是 `.grip` —— 后者是"拖我调宽"那条竖条的全局类
-      （`.grip{position:absolute;top:0;bottom:0;…}`），撞名会让这个把手变成一条贯穿上下的竖条。 */
+
 .item .drag-grip{width:16px;flex:none;display:flex;align-items:center;justify-content:center;
   color:var(--dim2);opacity:0;cursor:grab;transition:opacity .12s;
   user-select:none;-webkit-user-select:none}
@@ -277,8 +227,7 @@ main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;he
 .item .drag-grip:hover{opacity:1}
 .item .drag-grip:active{cursor:grabbing}
 .item .drag-grip svg{width:15px;height:15px}
-/* 拖动中那一行：**主题强调色底 + 白字**（用主题色，比纯黑专业、对比也够）+ 阴影 + 放大
-   （放大由 JS 的 transform 一起给）；`transition:none` 让它**严格贴着手指**，不参与重排动画。 */
+
 .item.dragging{background:var(--accent);color:var(--accent-fg);
   box-shadow:0 12px 28px rgba(0,113,227,.35);border-radius:10px;position:relative;
   z-index:6;cursor:grabbing;transition:none}
@@ -286,21 +235,20 @@ main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;he
 .item.dragging .ds{color:var(--accent-fg);opacity:.86}
 .item.dragging .sub{color:var(--accent-fg);opacity:.8}
 .item.dragging .ico,.item.dragging .drag-grip{color:var(--accent-fg);opacity:.95}
-/* ★ 给"整段的提示文字"用：**要能折行**。上面那个 `.sub` 带 nowrap + 省略号，
-   拿来包一整句提示会把后半句悄悄吃掉（实测：命令行预览那句一窄就被截断）。 */
+
 .hint{color:var(--dim);font-size:12px;line-height:1.6;margin-top:8px;word-break:break-all}
 .hint .mono{font-size:11.5px}
 #right{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
 #tabs{display:flex;gap:2px;align-items:center;padding:7px 12px;flex:none;
   border-bottom:1px solid var(--hair);background:var(--panel)}
-/* 选项卡 = 苹果的"分段控件"：选中的那一段是一块**填充**，不是画个框 */
+
 .tab{padding:5px 12px;border-radius:8px;border:0;background:transparent;
   color:var(--dim);cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:6px;
   transition:background .12s ease-out,color .12s ease-out,transform .10s ease-out}
 .tab:hover{background:var(--fill);color:var(--fg)}
 .tab:active{transform:scale(.98)}
 .tab.active{background:var(--fill);color:var(--fg);font-weight:500}
-/* 「界面」那颗：图标是包自己的（svg 或图片），名字是包自己界面的名字（可能很长，超了省略） */
+
 .tab > .tab-ico{display:flex;align-items:center;justify-content:center;width:16px;height:16px;flex:none}
 .tab > .tab-ico svg{width:16px;height:16px;display:block}
 .tab > .tab-ico img{width:16px;height:16px;display:block;object-fit:contain}
@@ -309,12 +257,7 @@ main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;he
 #tabactions .iconbtn{padding:4px 11px}
 .pane{flex:1;min-height:0;display:none}
 .pane.on{display:flex;flex-direction:column}
-/* ---- 拖进来的接收区（`V-35` / `V-39`）----
-   拖着东西进窗口时：左边只列"收得下它"的包（`#dragbar` 那条就是提示），划过哪个包就
-   选中哪个；右边详情页浮出**投放框**，在框上松手才跑。
-   ★ 浮层 `pointer-events:none`：它盖着整块，要是能接事件，dragenter/dragleave 会被它
-     自己反复触发，高亮就会闪；框上那个 `.dz-box` 再单独 `pointer-events:auto`，
-     这样"鼠标在哪个框上"才问得出来（以后一个包有多条命令时要靠它分）。 */
+
 #dragbar{padding:7px 10px;font-size:12px;color:var(--fg2);background:var(--panel2);
   border-bottom:1px solid var(--line2);display:flex;gap:7px;align-items:flex-start;
   line-height:1.5}
@@ -334,33 +277,25 @@ main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;he
 .dz-box .dz-icon svg{width:40px;height:40px}
 #pane-detail.hot,#pane-detail.dover{box-shadow:inset 0 0 0 2px var(--accent)}
 body.dragging{cursor:copy}
-body.dragging .item{border-style:dashed}          /* 拖动时可选的那些包，边框变虚线 */
+body.dragging .item{border-style:dashed}          
 #btn-run.hot{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);
   box-shadow:0 0 0 3px var(--field-focus)}
-/* ★ 别写 `#pane-x{display:none}`：ID 选择器优先级高于 `.pane.on`，面板会永远 0×0 */
+
 #pane-detail.on{display:block}
 #pane-console.on{display:flex;flex-direction:column}
-/* `V-91`：文件管理那一页现在是"**左文件 + 右版本快照**"横排（快照边栏见下） */
+
 #pane-file.on{display:flex;flex-direction:row}
 .fm-main{display:flex;flex-direction:column;flex:1;min-width:0}
-/* 第四个选项卡（包的界面，`V-48`）：整页就是那一帧，顶上的标题栏已去掉
-   （名字和两颗按钮挪到顶栏了）。iframe **不随切换卸载** —— 切走只是藏起来。 */
+
 #pane-embed.on{display:flex;flex-direction:column}
 #embed-wrap{flex:1;min-height:0;background:var(--panel);position:relative}
 #embed-wrap iframe{width:100%;height:100%;border:0;display:block;background:#fff}
-/* 这一帧被弹成窗口了（`V-192`）：主窗口这边留个占位，点一下收回 */
+
 #embed-floated{position:absolute;inset:0;display:flex;flex-direction:column;gap:8px;
   align-items:center;justify-content:center;cursor:pointer;color:var(--dim);font-size:13px}
 #embed-floated:hover{color:var(--fg);background:var(--hover)}
 #embed-floated svg{width:22px;height:22px}
-/* ---------------------------------------------------------------- 浮动窗口（`V-192`）
-   宿主开的第二个窗口加载的是**同一份页面**，只多一个 `#float=<包id>`（`body.float`）：
-   那一页只画这个包的一帧，别的全藏起来 —— 于是它看起来就是一扇"这个包自己的窗口"，
-   最小化＝收回主窗口、关闭＝结束（`V-194`），后端进程一步都没动。 */
-/* 内嵌那一帧上的拖放接住了（`V-204`）：**完全透明**的罩子，平时不吃鼠标事件，
-   只在那一帧报"有人拖着东西在我头上"时打开（`frameDrag`）。
-   ★ 它**不画任何提示**（`V-206`）：大提示归那一帧自己（它才知道这一松手会发生什么），
-     我们只保证事件能落到这侧、路径拿得到。 */
+
 #dropcatcher{position:fixed;inset:0;z-index:120;pointer-events:none;display:none}
 #dropcatcher.on{display:block;pointer-events:auto}
 body.float header,
@@ -380,8 +315,7 @@ body.float #pane-embed{padding:0}
   color:var(--out-fg);font-family:var(--mono);font-size:13px;line-height:1.55;
   white-space:pre-wrap;word-break:break-word;user-select:text;cursor:text}
 #out::selection{background:#3a5a8c;color:#fff}
-/* 命令行下面那行输入（`V-43`）：包在 `input()` 等你回答时，敲这里。
-   底色跟输出区一致，看着像"终端的最下面一行"；没在跑时整条压暗 + 禁用。 */
+
 #inbar{display:flex;gap:8px;align-items:center;padding:7px 12px;flex:none;
   background:var(--out-bg);border-top:1px solid rgba(255,255,255,.10)}
 #inbar .ps1{color:#7fb3ff;font-family:var(--mono);font-size:14px;flex:none;line-height:1}
@@ -391,71 +325,43 @@ body.float #pane-embed{padding:0}
 #inbar input:disabled{cursor:not-allowed}
 #inbar.off{opacity:.62}
 #inbar .btn{padding:4px 12px;font-size:12.5px}
-/* 还没跑过时那块输出区是**一大片纯黑**，看着像个洞。给一句暗色提示。 */
+
 #out:empty::before{content:"（还没有输出）在「详情」里点「运行」，输出会出现在这里。";
   color:#5d6773}
-/* ---------------------------------------------------------------- 常驻 DOS 终端（`V-348`）
-   ★ 它是**加法**：`#out` / `#inbar` 一个字都没动，只是"切到终端"的时候把它们让开。
-     切不切由 `#pane-console` 上那个 `.term` 类说了算（`termToggle()` 加 / 去）。
-   ★ xterm 自己那份 `vendor/xterm.css` 只管它的内部结构（`.xterm` / `.xterm-viewport` …），
-     外框和配色在这里定 —— 一律用 `--out-bg` / `--out-fg` / `--mono` 这几个**同款变量**，
-     所以浅色 / 深色主题都跟着走，不会冒出第二套配色。 */
+
 #termhost{flex:1 1 auto;min-height:140px;display:none;background:var(--out-bg);
   padding:8px 6px 8px 12px;overflow:hidden}
 #pane-console.term #termhost{display:block}
 #pane-console.term #out,
 #pane-console.term #inbar{display:none}
 #termhost .xterm{height:100%}
-/* xterm 默认给视口刷一块纯黑 —— 我们要的是和输出区一样的那层底色 */
+
 #termhost .xterm-viewport{background:transparent !important}
-/* ★★ 顶上那行字**只许占一行**（多出来用省略号）。这是被用户报出来的一个真 bug：
-   它会随状态变长变短（"运行中" / "在等你回答" / 降级说明…），**一换行就把终端压矮**，
-   而 xterm 往下缩的时候会**把超出的行真的丢掉** —— 表现就是"输出的内容总是被清掉"，
-   而且终端被压成一条之后可点区域很小，点在外面焦点进不去 ⇒"敲不进去"。 */
+
 #pane-console .outbar{flex-wrap:nowrap}
 #outinfo{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
-/* 顶上那颗「终端」开关：开着的时候要看得出来（和别的图标按钮一个调子） */
+
 #btn-term.on{background:var(--fill);color:var(--accent)}
-/* ---- 状态灯 ---- */
-/* ---- 状态：**只有两种** —— 运行中（绿色停止图标）/ 没运行（灰色播放图标）----
-   ★ 不再显示"故障红 / 警告黄"：退出码误报太多 —— 很多正常的退出没有报错，
-     也经常被判成错误，那种颜色只会制造噪音（`U-18`）。
-     退出码本身还是照记（在「命令行」那行文字里），只是**不拿出来当状态报警**了。 */
+
 .ic-run{color:#1f9d55}
-/* 左侧列表行尾那颗"没在跑"的播放图标：平时很淡，鼠标移上去才亮 —— 不抢视线 */
-/* ★ `V-303`：**插件列表和历史列表**里那颗「运行」图标**平时不显示**，鼠标划过那一行才浮出来
-   （运行中的"停止"一直显示；这里只藏"没在跑"时那颗播放图标 —— `opacity` 不影响布局）。 */
+
 .hstat .idle,.rowstat .idle{color:var(--dim);opacity:0;transition:opacity .12s ease-out}
 .hitem:hover .hstat .idle,.item:hover .rowstat .idle{opacity:.45}
 .hstat .idle:hover,.rowstat .idle:hover{opacity:1;color:var(--fg)}
-/* 左侧列表行尾的状态图标。★ 历史行（`.hstat`）和包行（`.rowstat`）**共用同一套**：
-   以前只写了 `.rowstat button`，历史那边就退化成浏览器默认按钮（灰框），
-   看着跟包列表不是一家 —— 就是这条漏了。 */
+
 .hstat,.rowstat{flex:none;display:flex;align-items:center;margin-left:6px}
 .hstat button,.rowstat button{display:flex;align-items:center;justify-content:center;padding:3px;
   border:none;border-radius:6px;background:transparent;cursor:pointer}
 .hstat button:hover,.rowstat button:hover{background:var(--hover)}
 .item[data-state=running],.hitem[data-state=running]{box-shadow:inset 3px 0 0 #1f9d55}
-/* ★ `V-366`（用户 2026-10-09 给的那份稿子「方案C」）：**这一行在自动运行列表里** ⇒
-   左边缘一条 **3px 短竖线**（上下各留 25%，只右侧带圆角，显得精致、又不占地方）。
-   稿子里的类名是 `.status-left-line`，这儿叫 `.item.pkg-autorun`（一眼知道是什么）。
-   ★ 跟上面"在跑"那条**分得开**：在跑 = 绿色 `inset 3px` **整行高**；这一条 = 强调色、
-   **只占中间一半** —— 两个同时成立时（在跑 + 也会自动运行）看得出来是两件事。
-   `pointer-events:none`：它只是个记号，别把行首那 3px 的点击吃掉（整行是可点的）。 */
+
 .item.pkg-autorun{position:relative}
 .item.pkg-autorun::before{content:"";position:absolute;left:0;top:25%;height:50%;width:3px;
   background:var(--accent);border-radius:0 3px 3px 0;pointer-events:none}
-/* ★ 这里原来挂着一句 `.status{…}` 后面跟着**两行没有选择器的裸声明**
-   （`border:1.6px …` / `animation:spin …}`）—— 是删小圆点时没清干净的残留：
-   裸声明在顶层是非法 CSS，整段被浏览器丢掉，`animation` 引用的 `@keyframes spin`
-   也早就不存在了。删掉。 */
-/* ★ 目标文件已经没了的历史条目：**整行灰掉**。
-   为什么不干脆删掉：这条记录仍然有用（当初在哪个目录跑的、跑过什么），
-   只是再也跑不了了 —— 所以是"灰"，而且行尾那颗播放图标也不给。
-   不做删除线、不去色：它不是"已删除"，它是"失效"。 */
+
 .hitem.dead{opacity:.45}
 .hitem.dead .hname{color:var(--dim)}
-/* 文件页标题栏里那截"猜到的编码" */
+
 .encnote{font-family:var(--mono);font-size:11px;color:var(--dim);
   border:1px solid var(--line);border-radius:5px;padding:0 5px;margin-left:6px;flex:none}
 .dim{color:var(--dim)}

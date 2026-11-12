@@ -1,64 +1,24 @@
-/* moss 界面 · js/backup.js —— 「**版本快照**」边栏（`V-87` 备份 / `V-91` 并进文件管理）。
-   ============================================================================
-   一句话：**给当前这个对象（包 / 目录）留版本**，像 Time Machine 那样挂在文件管理右边。
-   底下是"简易版 git"：快照里只记**指纹**（路径 → 指纹），文件内容按指纹存一份，
-   所以同一个内容（换了名字、换了目录、跨好几次快照）只占一份。
-   落盘按**包 id 分组**：`user_data/backups/<包id>/{objects/,<快照id>/manifest.json}`
-   —— 改个 id 就改一个文件夹名、删个包就删一个文件夹。
-
-   ★ 为什么是**边栏**而不是另一个选项卡（`V-91`，你的稿子）：快照天生是"这个目录的这些
-     版本"，贴着文件列表放，语义不用解释；而且边栏只显示**当前选中对象**的快照，
-     原来那个"分组下拉框"就不需要了（换对象 = 换一组快照）。
-   ★ 逻辑全在宿主侧：`system/ui/backup.py`（内容寻址 + 标记-清除回收）。
-   ★ 界面规矩（`V-90`）：**按钮两三个字，说明进 hover**，页面上不留大段文字。
-   ============================================================================ */
-
-/* 这一页的状态（自己一份，和文件管理那份 `FM` 无关）。
-   为什么不挂进 `FM.st[ctx]`：快照是**跨上下文**的东西（一次可以覆盖好几个目录），
-   不像"当前目录 / 选中 / 打开的文件"那样跟着上下文走。 */
 const BK = Vue.reactive({
   items: [], stat: {}, loading: false,
   sel: null, man: null,
-  view: null,                          // {rel, fp, binary, text, size, truncated} 或 null
+  view: null,                          
   filter: "", busy: "", checkRows: null,
   formOpen: false, title: "", note: "",
-  /* `V-236`：快照列表按"谁存的"筛 —— `""` 全部 / `"me"` 我存的 / `"ai"` AI 存的 */
+
   byFilter: "",
-  collapsed: false,                    // 边栏收起（窄窗口时默认收）
-  exportTo: "", exportBak: false, dropOver: false,   // 导出（`V-88`）
-  fps: {}, fresh: {},                   // 现读磁盘：指纹 + 现大小 + 目录子树（`V-94`，不信界面缓存）
+  collapsed: false,                    
+  exportTo: "", exportBak: false, dropOver: false,   
+  fps: {}, fresh: {},                   
   leftOnly: 0,
-  ig: null,                            // 过滤规则（`V-105`）
-  igGroup: null,                       // 这个对象自己那份规则（`V-120`）
-  folded: {},                          // 哪些快照的文件列表被收起了（`V-122`）
-  presets: null,                       // 预设过滤规则 + 命中数（`V-121`）                            // 过滤规则（`V-105`）：文件在哪、现在生效哪些
+  ig: null,                            
+  igGroup: null,                       
+  folded: {},                          
+  presets: null,                       
 });
 
-/* ★ `V-250`：**外面**（AI 工作台 / 盘上文件变了）要能喊一声"快照那边刷新一下"。
-   为什么用"举牌"（和 `CONSOLER` / `DRAGR` / `AIR` 一个套路）：刷新是组件的方法，
-   而调用的人在别的脚本里（`js/ai.js` / `js/files.js`）—— 它们拿不到组件实例。
-   `bkRefresh()` 只 +1 一个响应式版本号，组件 watch 它。 */
 const BKR = Vue.reactive({rev: 0});
 function bkRefresh(){ BKR.rev++; }
 
-/* ================================================================ 差异视图（`V-94`）
-   你的要求（2026-09-30）：「下面的路径这里 请按照原本的文件 文件夹来展示 并且 时刻保持和左侧同步
-   也就是说 左侧目录切换的时候 当前镜像如果也有这个目录 那么也显示对应的目录」「黑色表示内容一致
-   有变化则高亮 如果是空文件 没内容 则灰色显示」「同样有内容的情况下 高亮 但是左边文件更大和更少
-   使用同样一种高亮色 但是深浅不同 左侧的多 就左侧文字更深 右侧更浅 否则就反过来」「某一边缺失
-   文件 0kb文件等 都需要不同的颜色」。
-
-   ⇒ 这一块就是"**当前目录的左右对照**"：
-       左边 = 文件管理里现在这个目录（真文件）
-       右边 = 这个快照里**同一个目录**（时间轴选中的那一次）
-     一条文件一个状态，两种颜色维度拼出来：
-       · 一致            → 正常色（黑/白），不打扰
-       · 两边都有、不一样 → **同一个琥珀色**，谁**大**谁的**文字更深**（左边大 = 左深右浅）
-       · 只有快照里有     → 红（该警惕：可能是你删了/改名了）
-       · 只有现在有       → 绿（后加进去的，一般无害）
-       · 空文件（0 字节） → 灰（有这一格，但里面什么都没有）
-   判定顺序也照你说的："更大/更少"先看**大小**（便宜、也就是你要的语义）；大小一样才去比指纹
-   （`backup_fp` 现算，见 `system/ui/main.py`）。 */
 function bkCurDir(){
   const s = FM.st[FM.ctx || "__all__"];
   return (s && s.rel) || "";
@@ -67,7 +27,7 @@ function bkNowEntries(){
   const s = FM.st[FM.ctx || "__all__"];
   return (s && s.entries) || [];
 }
-/* 快照里 rel 这一层有什么：文件直接用，目录按"子树字节数"合成一个（好跟现在这一层比大小）。 */
+
 function bkSnapSlice(rel){
   const man = BK.man;
   if (!man) return null;
@@ -98,7 +58,7 @@ function bkStateWhy(st, name, deep){
   if (st === "empty") return "空文件（0 字节）";
   return "和快照里一样";
 }
-/* 算出这一层每一条的状态（左边=现在，右边=快照） */
+
 function bkDiffModel(){
   const rel = bkCurDir();
   const now = bkNowEntries();
@@ -120,7 +80,7 @@ function bkDiffModel(){
     const sDirSize = snap ? snap.dirs[n] : undefined;
     const inSnap = !!(sFile || sDirSize !== undefined);
     const nowDir = !!(nw && nw.dir);
-    // ★ 现读磁盘优先（你在外面改了文件、界面那份缓存还是旧的 —— 拿缓存比就"该亮的不亮"）
+
     const nowSize = nw ? (nowDir ? freshDir(nw.rel) : (freshSize(nw.rel) !== null
                                                         ? freshSize(nw.rel) : (nw.size || 0)))
                        : null;
@@ -131,12 +91,10 @@ function bkDiffModel(){
         const sfp = sFile.fp || "";
         const nfp = fps[nw.rel] || "";
         if (nowSize !== snapSize) { st = "diff"; deep = (nowSize > snapSize) ? "now" : "snap"; }
-        else if (nfp && sfp && nfp !== sfp) { st = "diff"; }      // 大小一样、指纹不同
+        else if (nfp && sfp && nfp !== sfp) { st = "diff"; }      
         else st = "same";
         fp = sfp;
       }else{
-        // 目录：两边都有就是"一致"，只有**子树字节数两边都拿得到**时才比大小
-        //（拿不到就当一致 —— 不能因为"算不出来"就把每个目录都标成变了）
         if (nowSize === null || snapSize === null) st = "same";
         else {
           st = (nowSize === snapSize) ? "same" : "diff";
@@ -149,12 +107,11 @@ function bkDiffModel(){
     if (st === "same" && !nowDir && nowSize === 0) st = "empty";
     return {
       name: n, dir: nowDir || (sDirSize !== undefined), rel: nw ? nw.rel : ((rel ? rel + "/" : "") + n),
-      // ★ `V-250`：带上扩展名 —— 边栏那一行要和**文件管理同一套图标**（`fileIconHTML(e)` 就是
-      //   按 `entry.ext` 查 `core.js` 的 `EXT` 表的）。不带的话每个文件都是那张灰的默认图标。
+
       ext: extFromName(n),
       now: nw ? {size: nowSize, dir: nowDir} : null,
       snap: inSnap ? {size: snapSize, fp: fp} : null,
-      size: sFile ? (sFile.size || 0) : 0, fp: fp,          // 给"看内容 / 只恢复这一个"用
+      size: sFile ? (sFile.size || 0) : 0, fp: fp,          
       state: st, deep: deep, why: bkStateWhy(st, n, deep),
     };
   });
@@ -164,23 +121,14 @@ function bkDiffModel(){
   return {rel: rel, entries: entries, byRel: byRel, snapOk: !!snap};
 }
 
-/* 边栏看的是**当前这个对象**那一组快照：
-     选了包  ⇒ 包 id 那一组（快照就存在 `user_data/backups/<包id>/`）
-     没选包  ⇒ 整个 user_data（`@user`）——"全部文件"那个上下文
-   后端按来源猜组是同一套规则（`backup.py` 的 `group_for_sources`）。 */
 function bkGroupForCtx(){
   const key = FM.ctx || "__all__";
   const p = (key !== "__all__" && !isHistKey(key)) ? DATA.packages.find(x => x.id === key) : null;
-  // ★ `V-113`：**分组以宿主为准** —— 界面自己算的那套（包 id / @dir-… / @abs-…）只能当兜底，
-  //   两边一旦算得不一样，就会出现你遇到的"提示存了 54 项、右边列表却是空的"。
-  //   宿主那边是唯一真相（`backup_group_hint` → 存储的 `group_for_sources`），每次刷新前问一次。
+
   if (BK.group) return BK.group;
   return p ? p.id : bkHistGroup();
 }
-/* `V-112`：**历史那边原来是坏的** —— 界面只会算"包 id，否则 @user"，而存储的 `group_for_sources()`
-   是按来源命名的（包 → id；整个 user/system → @user/@system；别的目录 → **@dir-<尾段> / @abs-<尾段>**）。
-   于是历史里选一条：列表读 `@user`（空的），点 ＋ 存的时候 group 传空、存储自己算成 `@dir-xxx`
-   ⇒ **存成功了但列表里看不见**，diff/restore 也摸不到。这里把存储那三条规则**照着实现一遍**（就三行）。 */
+
 function bkHistGroup(){
   const rels = bkScopeRels().map(x => String(x || "").replace(/\\/g, "/"));
   for (const r of rels){
@@ -204,7 +152,7 @@ function bkCtxLabel(){
   if (isHistKey(key)) return "这条调用所在的目录";
   return "整个 user_data";
 }
-/* 快照的来源：当前对象是什么就备份什么 */
+
 function bkScopeRels(){
   const key = FM.ctx || "__all__";
   const p = (key !== "__all__" && !isHistKey(key)) ? DATA.packages.find(x => x.id === key) : null;
@@ -212,12 +160,7 @@ function bkScopeRels(){
     const roots = [];
     const rel = pkgRel(p);
     if (rel) roots.push(rel);
-    /* ★ 只存**包的代码目录**，不再顺手带上 `user/state/<包id>`。
-       以前这两行是 `roots.push("user/state/" + p.id)` —— 于是给 boxsize 存一次快照
-       实际扫的是 6400+ 个文件 / 190 MB（AI 跑出来的 Edge 配置 `ai/tmp/**`、
-       每次运行的 `data/runs/*.png`），实测 6~8 秒；包本身只有 11 个文件、0.03 秒。
-       数据目录是**运行时状态**（缓存 / 中间产物 / 日志），不进版本快照 ——
-       `backup.py` 的 `PATH_EXCLUDES` 里也把 `user/state` 整棵排掉了（双保险）。 */
+
     return roots;
   }
   if (isHistKey(key)){
@@ -229,8 +172,7 @@ function bkScopeRels(){
   return (s && s.rel) ? [s.rel] : ["user"];
 }
 function bkShortFp(fp){ return String(fp || "").slice(0, 10); }
-/* 看内容时的高亮：直接把 hljs 的结果塞进那个 <pre>（只读，不需要文件管理里那套
-   "透明 textarea + 覆盖层"）；认不出语言或者太大就原样转义。 */
+
 function bkHighlightHTML(text, lang){
   const t = String(text == null ? "" : text);
   if (window.hljs && lang && hljs.getLanguage(lang)){
@@ -241,11 +183,9 @@ function bkHighlightHTML(text, lang){
 
 const MossFileSnap = {
   name: "moss-file-snap",
-  // ★ 模板里够不着模块级的 BK（Vue 模板只认实例上的东西）—— 显式交出去。
-  data(){ return { BK: BK, BKD: BKD }; },   // ★ BKD（差异容器）是 core.js 里的 const，模板看不见它，得这样递进去
+
+  data(){ return { BK: BK, BKD: BKD }; },   
   computed: {
-    /* ★ `V-236`：列表按"谁存的"筛（全部 / 我存的 / AI 存的）。
-       判据是清单真字段 `it.by`（AI = "ai"），**不是**标题里有没有"AI"两个字。 */
     shownItems(){
       const f = BK.byFilter;
       if (!f) return BK.items;
@@ -254,22 +194,19 @@ const MossFileSnap = {
     aiCount(){ return (BK.items || []).filter(it => it.by === "ai").length; },
     ctxKey(){ void FM.rev; void FM.st; return (FM.ctx || "__all__") + "|" + bkScopeRels().join(","); },
     ctxLabel(){ void FM.rev; void FM.st; return bkCtxLabel(); },
-    /* 盘上那个文件夹叫什么（= 分组名 = 包 id；没选包就是 `@user`）—— 和 `ctxLabel` 分开：
-       一个是给你看的名字，一个是磁盘上的名字（`V-89`：改 id 就改文件夹名）。 */
+
     ctxGroup(){ void FM.rev; void FM.st; return bkGroupForCtx(); },
-    /* 目录 / 选中的快照 / 这一层有几个东西 —— 任意一个变了就重算对照（`V-94`） */
+
     mirrorKey(){
       void FM.rev;
       const s = FM.st[FM.ctx || "__all__"];
       const es = (s && s.entries) || [];
-      // ★ 键里必须带**每一条的名字 + 大小**（不能只数个数）：你在外面把文件改大了、回来按一下
-      //   刷新，文件数没变、目录没变 —— 只数个数的话这个 watcher 根本不动，差异视图就一直是旧的
-      //   （真机探针当场抓到：刷新完还是 same）。
+
       return bkCurDir() + "|" + (BK.sel || "") + "|" + es.length + "|" +
              es.map(e => e.name + ":" + (e.size || 0) + (e.dir ? "d" : "")).join(",") +
              "|" + ((s && s.stale) ? 1 : 0);
     },
-    /* 过滤提示（`V-105`）：创建快照那一小块里那一行淡字 —— 你说的"不那么明显的位置提示" */
+
     igShort(){
       const g = BK.ig || {};
       if (!g.ok) return "snapshot.ignore";
@@ -284,10 +221,7 @@ const MossFileSnap = {
              "\n内置（永远生效）：" + builtin +
              "\n写法：*.log 按名字 / build/ 只排目录 / user/pkgs/old/ 按路径 / !keep.log 反向保留";
     },
-    /* 差异视图（`V-94`）：行 = 当前目录这一层的"左边（现在）+ 右边（快照）"。
-       ★ `V-250` 推翻了 `V-94` 里那条"快照那一列只列快照里真有的东西"：你要的是
-         "**这次备份对比当前有什么变化**"，把"只有现在有"的藏起来，就永远看不到"多了什么"。
-         现在全列出来，用记号分：`+` 添加 / `−` 缺少 / `↑↓` 变大变小 / 无记号 = 一样。 */
+
     foldedNow(){ void BK.folded; return !!BK.folded[BK.sel || ""]; },
     mirrorRows(){
       void BKD.diff;
@@ -337,41 +271,30 @@ const MossFileSnap = {
     },
     statTip(){
       const s = BK.stat || {};
-      // `V-367`："这个对象"是我们这边的数据模型说法 ⇒ 说"本组"
+
       return "本组快照：" + (s.backups || 0) + " 次 · 文件 " + (s.files || 0) +
              " 个 · 内容块 " + (s.objects || 0) + " 个（占 " + humanSize(s.store_bytes) + "）" +
              (s.saved ? ("；去重省了 " + humanSize(s.saved)) : "");
     },
     scopeTip(){
-      // `V-367`：以前这里还回显一句"按这组来源算出来的分组就是 @user"—— 那是**算法**，删掉
       return "快照的来源：\n" + bkScopeRels().join("\n");
     },
-    /* ★ `V-250`：外面（AI / 盘上变了）喊刷新用的那面旗。读它 = 登记依赖，
-       `watch: bkrRev` 才会被叫醒。 */
+
     bkrRev(){ return BKR.rev; },
   },
   watch: {
-    ctxKey(){ this.switchCtx(); },        // 换了对象 ⇒ 换一组快照
-    mirrorKey(){ this.reloadMirror(); },  // 换了目录 / 换了选中的快照 ⇒ 重算对照
-    /* ★ `V-250`：外面喊了一声（AI 干完活 / 存了快照 / 盘上文件变了）⇒ 重列一遍。
-       为什么要它：AI 存快照是**宿主后台线程**干的，界面这边**没有任何事件**，
-       不刷新就"存是存了、你看不见"（你报的原话）。
-       读法说明：`BKR` 是模块级的响应式对象，模板/计算属性得先把它读进 `bkrRev`，
-       依赖才登记得上（直接写 `"BKR.rev"` 那种路径式 watch 找不到它，不会触发）。 */
+    ctxKey(){ this.switchCtx(); },        
+    mirrorKey(){ this.reloadMirror(); },  
+
     bkrRev(){ this.refresh(); },
   },
   mounted(){
     this.refresh();
     this.loadIgnore();
-    /* 边栏宽度能拖（`V-92`）：细线贴在根元素左边缘上，往右拖变窄、往左拖变宽。
-       上限按窗口宽度算（最多占 60%），双击回到 320。 */
+
     bindColResize(this.$el.querySelector(".b-bkgrip"), this.$el, -1, 200,
                   () => Math.round((window.innerWidth || 1200) * 0.6), 320);
-    /* 拖一个文件夹**到边栏上** = 把它设成"导出到"（`V-88` ✅）。
-       ★ 为什么必须走钩子：拖进来的**真实路径**只有宿主知道（Chromium 不给页面 `File.path`），
-         落地口在 `js/drop.js` 的 `window.__mossDrop` 里，这里只是插一脚。
-       ★ 为什么先看 `BK.dropOver`：那个钩子是**全局**的（任何拖入都先问它），
-         要是不加这道判断，"拖文件进来跑包"（`V-35`）就被边栏整个抢走了。 */
+
     window.__mossDropHook = (items) => {
       if (!BK.dropOver) return false;
       const it = (items || []).find(x => x && x.path && x.isDir !== false);
@@ -388,9 +311,7 @@ const MossFileSnap = {
   },
   methods: {
     humanSize: n => humanSize(n),
-    /* 差异视图（`V-94`）的渲染小工具 —— 侧栏这一列是"右边（快照）"，深浅和左边**反过来**：
-       快照那份更大 ⇒ 这里更深。
-       ★ `V-250`：增删也归到**同一族色**（蓝的深/浅两档），**没变化给灰**（你说的"表示没变化"）。 */
+
     mirrorCls(e){
       if (e.state === "snap-only") return {"df-gone": true};
       if (e.state === "now-only") return {"df-new": true};
@@ -400,13 +321,11 @@ const MossFileSnap = {
       if (e.state === "same") return {"df-same": true};
       return null;
     },
-    /* 方向记号（`V-250`）：和左边那张表**同一个**函数，两边不会各说各话 */
+
     mirrorMark(e){ return bkDiffMark(e.rel); },
-    /* 图标（`V-250`）：和文件管理那张表**同一个** `fileIconHTML()` —— 你说"和文件管理
-       这里的图标一样就可以了"。按扩展名给图标 + 颜色，目录给文件夹图标。 */
+
     mirrorIcon(e){ return fileIconHTML(e, false); },
     mirrorSize(e){
-      // 只有现在有的（添加）：右边那一份根本不存在，给现在的大小 + 一个 +
       if (e.snap === null) return e.now ? humanSize(e.now.size) : "—";
       return humanSize(e.snap.size);
     },
@@ -414,20 +333,19 @@ const MossFileSnap = {
       if (e.snap === null) return {dim: true};
       return {dim: e.state === "empty"};
     },
-    /* 读过滤规则（`V-105`）：进边栏时读一次，用户点那一行时再读一次（他可能刚编辑过文件） */
+
     async loadIgnore(){
       try{
         const r = await pywebview.api.backup_ignore();
         BK.ig = r || {ok: false};
       }catch(e){ BK.ig = {ok: false}; }
     },
-    /* 点那行淡字：弹一个**说明**（不是编辑器 —— 在界面里改过滤规则是 `V-104 E` 那一条，还没做） */
-    /* 收起/展开这个快照的文件列表（`V-122`）：卡片还在、只把行藏起来，方便一屏扫多次快照 */
+
     toggleFoldFiles(){
       const k = BK.sel || "";
       BK.folded = Object.assign({}, BK.folded, {[k]: !BK.folded[k]});
     },
-    /* 创建快照 = 一个模态框（`V-122`）：标题/注释 + **常驻**规则框 + 预设点选 + 记住（只对这个对象） */
+
     async snapModalOpen(){
       const rels = bkScopeRels();
       const group = bkGroupForCtx();
@@ -441,8 +359,7 @@ const MossFileSnap = {
           '<div class="snap-body">' +
             '<div class="snap-row"><span>标题</span><input id="snap-title" placeholder="可留空（留空就用时间）"></div>' +
             '<div class="snap-row"><span>注释</span><input id="snap-note" placeholder="这次改了什么"></div>' +
-            // ★ `V-367`：这段是**直接 innerHTML**，不走 `askConfirm2` 那道 `**`→`<b>`
-            //   转换 ⇒ 写 `**xx**` 的话用户看到的就是两个星号。这里用真标签 + 人话。
+
             '<div class="snap-sub">过滤规则 —— 这次要排掉的东西（下面是按当前目录推荐的，点一下加/去；也能自己改）</div>' +
             '<div class="snap-pres" id="snap-pres">读预设…</div>' +
             '<div class="snap-rules-top"><span class="snap-hint" id="snap-rt">规则（一行一条）</span>' +
@@ -493,8 +410,6 @@ const MossFileSnap = {
         if (h && h.ok) w.querySelector("#snap-hint").textContent = "会存到分组：" + h.group;
       }catch(e){}
       try{
-        // ★ `V-126`：**先用前端算**（当前这一层已经在内存里，即时出结果、不用问宿主）；
-        //   这一层还没加载（比如范围不是正看着的目录）才回退问宿主。
         let list = snapPresetLocal();
         const gi = await pywebview.api.backup_group_ignore(group);
         if (!list){
@@ -504,7 +419,7 @@ const MossFileSnap = {
           }catch(e){ list = []; }
         }
         const ta = w.querySelector("#snap-rules");
-        // ★ `V-127`：**默认规则取上次的**（本对象记住的 + 上一次快照实际用的），不是每次从空开始。
+
         const base = [];
         [].concat((gi && gi.rules) || [], (gi && gi.last) || [], ta.value.split("\n")).forEach(x => {
           const v = String(x || "").trim();
@@ -514,7 +429,7 @@ const MossFileSnap = {
         w.querySelector("#snap-hint").textContent +=
           (gi && gi.ok && gi.rules && gi.rules.length) ? ("　·　本组已记住 " + gi.rules.length + " 条") : "";
         const box = w.querySelector("#snap-pres");
-        /* 新加进去的规则**插在最上面**（你说点了以后掉到下面很难受） */
+
         const addRules = (pats) => {
           const cur = ta.value.split("\n").map(x => x.trim()).filter(Boolean);
           const add = (pats || []).filter(x => cur.indexOf(x) < 0);
@@ -524,8 +439,7 @@ const MossFileSnap = {
           const cur = ta.value.split("\n").map(x => x.trim()).filter(Boolean);
           ta.value = cur.filter(x => (pats || []).indexOf(x) < 0).join("\n");
         };
-        /* 命中的组里、**还没进规则框**的那些模式 —— 「一键填入」要写的就是这些；
-           一个都没有 ⇒ 这颗按钮就没必要显示（`V-136`）。 */
+
         const pendingPats = () => {
           const cur = rulesOf();
           let out = [];
@@ -535,16 +449,14 @@ const MossFileSnap = {
           return out;
         };
         const fill = w.querySelector("#snap-fill"), clr = w.querySelector("#snap-clear");
-        // ★ `V-136`：两颗按钮**按情况显示**（没东西可填就不显示「一键填入」；规则框空着就不显示「清空」）。
-        //   做法：`syncBtns()` 先给个空实现，等预设加载完（下面）再赋真正的实现 + 立刻算一次；
-        //   规则框打字、点 chip、点更多都会再算一次。
+
         let syncBtns = () => {};
         if (fill){
           fill.querySelector(".snap-ico").innerHTML = ico("check", "i");
           fill.onclick = (ev) => {
             ev.stopPropagation();
             const pats = pendingPats();
-            if (!pats.length) return;                    // 没得填就什么都不做（按钮本来也该是藏着的）
+            if (!pats.length) return;                    
             addRules(pats);
             syncBtns();
             toast("已填入 " + pats.length + " 条规则");
@@ -554,8 +466,7 @@ const MossFileSnap = {
           clr.querySelector(".snap-ico").innerHTML = ico("eraser", "i");
           clr.onclick = (ev) => { ev.stopPropagation(); ta.value = ""; ta.focus(); syncBtns(); };
         }
-        /* `V-128`：一条预设该写哪些模式 —— 命中的组只写**命中的那些**；
-           没命中的组（在「更多」里、用户主动点的）才写整组（那时无从"只写命中的"）。 */
+
         const patsOf = (p) => (p.hit > 0 && p.matched && p.matched.length) ? p.matched : (p.pat || []);
         const chip = (p) =>
           '<span class="snap-chip' + (p.hit ? " hot" : "") + '" data-id="' + esc(p.id) + '"' +
@@ -563,9 +474,7 @@ const MossFileSnap = {
           esc(p.label) + (p.hit ? (' <b>' + p.hit + '</b>') : '') +
           ((p.sample && p.sample.length) ? ('<i>' + esc(String(p.sample[0]).split('/').pop()) + '</i>') : '') +
           '</span>';
-        // ★ `V-123`（你点明的）：**默认只显示"匹配上的"** —— 这个目录里没有压缩包/数据库，
-        //   那两条就不该出现（否则一排 0 看着莫名其妙）；没匹配到的折在「更多（N）」后面。
-        // ★ `V-127`：已有规则（本对象记住的 + 上次实际用的）里出现过的模式，就不再当"新建议"推给你
+
         const cur0 = ta.value.split("\n").map(x => x.trim()).filter(Boolean);
         const covered = (p) => p.pat.every(x => cur0.indexOf(x) >= 0);
         const hotL = list.filter(p => p.hit > 0 && !covered(p));
@@ -635,9 +544,7 @@ const MossFileSnap = {
         esc((g.builtin || []).join(" / ")) + "</span><br><br>" +
         "<b>兼容</b>（和 .gitignore 一个意思）：<br>" +
         "<code>*.log</code> 按名字 · <code>build/</code> 只排目录 · <code>?ache</code> 一个字符 · " +
-        // ★ `V-367`：**通配符得躲开 `askConfirm2` 的 `**`→`<b>`**（它认 `**粗体**`）——
-        //   直接写 `**/deep.txt</code> … <code>logs/**` 会被它当成一对"粗体"吃掉，
-        //   用户看到的 glob 就少了那几个星号。`&#42;` 渲染出来还是 `*`，且不带 `*` 字符。
+
         "<code>&#42;&#42;/deep.txt</code> 任意层级 · <code>logs/&#42;&#42;</code> 目录下全部 · " +
         "<code>/user/state/tmp</code> 从根锚定 · <code>user/pkgs/old/</code> 按路径 · " +
         "<code>!keep.log</code> 反向保留 · <code>[0-9]*.tmp</code> 字符集 · <code>#</code> 注释<br><br>" +
@@ -646,8 +553,7 @@ const MossFileSnap = {
         "完整的清单也写在那个文件里（打开就是模板）。用记事本改完就生效 —— 下次存快照按新规则。",
         {tip: "想改就打开这个文件用记事本改（在界面里直接改还没做）"});
     },
-    /* 重算"当前目录"的对照：先问一下现在这一层每个文件的指纹（大小不一样就不必问），
-       再拼出模型。选中快照变化、目录切换、盘上变了都会走到这里。 */
+
     async reloadMirror(){
       const now = bkNowEntries();
       const files = now.filter(e => !e.dir);
@@ -664,9 +570,7 @@ const MossFileSnap = {
       BKD.title = (BK.man && BK.man.title) || "";
       BKD.diff = bkDiffModel();
     },
-    /* 收起 / 展开边栏（`V-91`，`V-92` 补一个坑）。
-       ★ 收起时要**清掉拖出来的行内宽度**：`.mini{width:auto}` 是**类**，压不过行内样式
-         （行内 > 类）—— 不清的话收起后它还是原来那么宽，旁边白留一条；展开时再还给你。 */
+
     toggleFold(){
       const el = this.$el;
       BK.collapsed = !BK.collapsed;
@@ -677,7 +581,6 @@ const MossFileSnap = {
     fmtWhen(t){ return t ? fmtTime(t) : ""; },
     shortFp: bkShortFp,
     shortTime(t){
-      // 时间轴上一格就那么宽：今天只给时分秒，别的给 月/日
       const s = String(t || "");
       const today = new Date().toISOString().slice(0, 10);
       return s.slice(0, 10) === today ? s.slice(11, 19) : s.slice(5, 16);
@@ -689,14 +592,13 @@ const MossFileSnap = {
         try{
           const h = await pywebview.api.backup_group_hint(bkScopeRels());
           if (h && h.ok && h.group) BK.group = h.group;
-        }catch(e){ /* 宿主不给就退回本地那套规则 */ }
+        }catch(e){  }
         const r = await pywebview.api.backup_list(bkGroupForCtx());
         if (!r || !r.ok){ toast("✗ " + ((r && r.msg) || "拿不到快照列表"), true); return; }
         BK.items = r.items || [];
         BK.stat = r.stat || {};
         if (BK.sel && !BK.items.some(x => x.id === BK.sel)){ BK.sel = null; BK.man = null; }
-        // ★ `V-94`：边栏现在是"**和左边当前目录对照**"的一块，没有选中的快照就没得对照 ⇒
-        //   进来就自动选中**最新那一次**（时间轴第一条）。点别的格子照旧换人。
+
         if (!BK.sel && BK.items.length){
           await this.open(BK.items[0].id, BK.items[0].group, false);
         }else{
@@ -712,13 +614,13 @@ const MossFileSnap = {
       await this.refresh();
     },
     async open(id, group, toggle){
-      if (toggle !== false && BK.sel === id){ BK.sel = null; BK.man = null; BK.view = null; BKD.diff = null; return; }  // 再点一下收起
+      if (toggle !== false && BK.sel === id){ BK.sel = null; BK.man = null; BK.view = null; BKD.diff = null; return; }  
       BK.sel = id; BK.view = null; BK.checkRows = null;
       try{
         const m = await pywebview.api.backup_manifest(id, group || "");
         if (!m || !m.ok){ toast("✗ " + ((m && m.msg) || "清单读不出来"), true); BK.man = null; return; }
         BK.man = m;
-        await this.reloadMirror();          // 选中变了 ⇒ 重算对照（`V-94`）
+        await this.reloadMirror();          
       }catch(e){ reportError("快照清单读不出来", String((e && e.message) || e)); }
     },
     toggleForm(){
@@ -740,17 +642,7 @@ const MossFileSnap = {
       }catch(e){ reportError("存快照失败", String((e && e.message) || e)); }
       finally{ BK.busy = ""; }
     },
-    /* 恢复（`V-87`；`V-92` 按"向 git 看齐"重做）。
-       ★ 原来这里是**一个常驻的「合并 / 镜像」两段滑块**（`V-90`），你的原话是
-         「似乎没什么效果 …… 还是说这个根本就是画蛇添足呢」。你想对了：它只在
-         "现在比快照**多出来的**文件"存在时才有区别，而它又是个常驻模式 —— 点了它屏幕上
-         什么都不变（状态只写在弹框文字里），新存的快照一点它当然没反应。
-       ★ git 的做法：**两个动作，不是一个模式** ——
-           `git restore`（只把快照里的写回工作区；多出来的**不动**）
-           `git reset --hard` / `git clean`（连多出来的也一起清掉，让工作区**一模一样**）
-         所以现在：滑块去掉，「恢复」点下去先算一份计划（**连多出来的也数出来**，纯读），
-         弹框里把两个动词摆出来给你挑，还会把"多出来几个"写在脸上 —— 数字有了，区别就看得见。
-         没有"多出来的"时候只给一个动词（git 那边也没东西可 clean）。 */
+
     async restore(it){
       const id = (it && it.id) || BK.sel;
       const group = (it && it.group) || (BK.man && BK.man.group) || "";
@@ -758,8 +650,6 @@ const MossFileSnap = {
       BK.busy = "算计划…";
       let plan = null;
       try{
-        // `sync=true` 在这里**没有副作用**（只是让计划里多列几个 `extra` 行）——
-        // 就是为了把"多出来的"数出来，好让两个动词各自的代价写在弹框上。
         plan = await pywebview.api.backup_plan(id, null, "changed", true, group);
         if (!plan || !plan.ok){ toast("✗ " + ((plan && plan.msg) || "计划算不出来"), true); return; }
       }finally{ BK.busy = ""; }
@@ -800,7 +690,7 @@ const MossFileSnap = {
            cb: run(true)});
       }
     },
-    /* 盘上文件变了 ⇒ 文件管理那份缓存得作废（不然双击进去还是旧的清单） */
+
     afterDiskChange(rels){
       try{
         Object.keys(FM.st).forEach(k => { FM.st[k].stale = true; });
@@ -810,7 +700,7 @@ const MossFileSnap = {
         fmRefresh();
       }catch(e){}
     },
-    /* 看某个文件在快照里的内容（只读；文本顺手高亮） */
+
     async viewFile(e){
       BK.busy = "读内容…";
       const group = (BK.man && BK.man.group) || "";
@@ -822,7 +712,7 @@ const MossFileSnap = {
       finally{ BK.busy = ""; }
     },
     closeView(){ BK.view = null; },
-    /* 恢复单个文件（快照展开后每行那颗「恢复」） */
+
     restoreOne(rel){
       const group = (BK.man && BK.man.group) || "";
       if (!BK.sel) return;
@@ -832,9 +722,7 @@ const MossFileSnap = {
         this.afterDiskChange([rel]);
       });
     },
-    /* ---- 导出（`V-88`）----------------------------------------------------
-       目标用**一个弹窗**问（边栏太窄，塞不下输入框）；也可以把文件夹**拖到边栏上**，
-       拖进来就直接当目标（真路径只有宿主知道，见 `js/drop.js` 那个钩子）。 */
+
     onExportDragOver(){ BK.dropOver = true; },
     onExportDragLeave(){ BK.dropOver = false; },
     exportDialog(it){
@@ -867,9 +755,7 @@ const MossFileSnap = {
           });
       });
     },
-    /* ★ `V-236`：清掉 **AI 存的**那几条（`by == "ai"`）。
-       ★ 为什么敢给一颗按钮：后端走的是 `delete_ai()` —— 它在清单里逐条看 `by`，
-         **不是 "ai" 的直接跳过**。所以这条路**结构上**就删不到你自己存的快照。 */
+
     async cleanAi(){
       const n = (BK.items || []).filter(x => x.by === "ai").length;
       if (!n){ toast("这一组里没有 AI 存的快照"); return; }
@@ -906,7 +792,7 @@ const MossFileSnap = {
           finally{ BK.busy = ""; }
         });
     },
-    /* 把**这一组**（当前对象）的快照全删掉 */
+
     async dropGroup(){
       const g = bkGroupForCtx();
       const info = await pywebview.api.backup_group_info(g);
@@ -953,8 +839,8 @@ const MossFileSnap = {
   template: `
 <div class="bk-snap" :class="{dover: BK.dropOver, mini: BK.collapsed}"
      @dragover.prevent.stop="onExportDragOver()" @dragleave="onExportDragLeave()">
-  <!-- 左边那条"拖我调宽"的细线（V-92）：拖它改边栏宽度，双击回到 320。
-       注意：这里是**模板字符串里面**，注释里不能出现反引号（会把模板提前截断）。 -->
+  
+
   <div class="grip b-bkgrip" title="拖我调宽（双击复原）"></div>
   <div class="bk-snap-head">
     <span class="bk-snap-title" :title="'「' + ctxLabel + '」的版本快照'">
@@ -999,9 +885,9 @@ const MossFileSnap = {
       <div v-if="BK.loading" class="bk-empty">读快照…</div>
       <div v-else-if="!BK.items.length" class="bk-empty">还没有快照 —— 点上面的 ＋</div>
 
-      <!-- ★ V-236：**谁存的**要能一眼分辨 + 只清 AI 的。
-           判据是清单里的真字段 by（AI = "ai"），标题只是给人看的。
-           （★ 这条注释里不许出现反引号 —— 模板字符串会被它提前截断，契约 §8 第 9 条。） -->
+      
+
+
       <div class="bk-bybar" v-if="!BK.loading && BK.items.length">
         <span class="bk-byf" :class="{on: BK.byFilter === ''}" @click="BK.byFilter = ''">全部</span>
         <span class="bk-byf" :class="{on: BK.byFilter === 'me'}" @click="BK.byFilter = 'me'">我存的</span>
@@ -1014,8 +900,8 @@ const MossFileSnap = {
            :data-bk="it.id">
         <div class="bk-tl-dot"></div>
         <div class="bk-card" @click="open(it.id, it.group)">
-          <!-- ★ V-177：一条快照 = 一行。常态「名字 靠左 + N项/大小/时间 靠右（完整显示）」；
-               hover 才展开成两行（标题+按钮 / 项目数+大小 靠左、时间靠右）。布局靠 grid 换 areas，见 CSS。 -->
+          
+
           <b class="bk-t">{{ it.title }}<span v-if="it.by === 'ai'" class="bk-ai"
              :title="'AI 存的 · 那次的任务：' + (it.by_task || '（没记）')">AI</span></b>
           <span class="bk-cnt">{{ it.files }} 项</span>
@@ -1051,7 +937,7 @@ const MossFileSnap = {
           </div>
           <div v-for="e in mirrorRows" :key="e.name" class="bk-file" :class="mirrorCls(e)"
                :data-rel="e.rel" :data-dir="e.dir ? 1 : 0" :data-state="e.state" :title="e.why">
-            <!-- ★ V-250：记号（+ / − / ↑ / ↓）和图标（和文件管理那张表同一个 fileIconHTML） -->
+            
             <span class="bk-fmark">{{ mirrorMark(e) }}</span>
             <span class="bk-fico" v-html="mirrorIcon(e)"></span>
             <span class="bk-fname" :class="{isdf: e.dir}">{{ e.name }}{{ e.dir ? "/" : "" }}</span>
@@ -1100,9 +986,8 @@ const MossFileSnap = {
     </div>
   </template>
 </div>`,
-  // 边栏收起时那一列只剩标题栏，高度占满
+
   beforeMount(){ BK.collapsed = (window.innerWidth || 1200) < 1080; },
 };
 
-/* 把边栏塞进文件管理那个组件里（`js/files.js` 的模板里写着 `<moss-file-snap>`） */
 MossFileManager.components.MossFileSnap = MossFileSnap;

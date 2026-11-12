@@ -1,21 +1,3 @@
-# -*- coding: utf-8 -*-
-"""图片工具 —— 命令行模式。
-
-宿主把包名后面的东西**整串**放进 `MOSS_PKG_PARAMS.args`（一个字段），
-本文件自己解析 —— 写法尽量短，顺序随便：
-
-    moss :img webp                     当前目录所有图 → webp 80%
-    moss :img webp 60% 1200            质量 60、宽 1200
-    moss :img webp 1200 60             顺序随便
-    moss :img png *.jpg                通配符：只挑当前目录的 jpg
-    moss :img webp D:\\图 "*.png"       给了目录，通配符就相对它解析
-    moss :img webp /                   原地覆盖（会问一次）
-    moss :img ico *.png                生成多分辨率 ico
-
-不带任何参数 = 打开界面（见 main.py）。
-
-处理逻辑全在 `core.py`，这里只做「解析命令行 + 打印」。
-"""
 import os
 import re
 import sys
@@ -59,14 +41,10 @@ _RE_QUALITY_PCT = re.compile(r'^(\d{1,3})%$')
 _RE_WIDTH_PX = re.compile(r'^(\d{1,5})px$')
 _RE_NUMBER = re.compile(r'^(\d{1,5})$')
 
-
 def _tokens(text):
-    """宿主给的是一个整串，这里自己切词（就是按空白切，没有别的花样）。"""
     return text.split()
 
-
 def parse(tokens, cwd):
-    """把词解析成一份选项。返回 (opts, error)。"""
     opts = {
         'format': None, 'quality': DEFAULT_QUALITY, 'width': None,
         'source_dir': None, 'patterns': [], 'ext_filter': None,
@@ -115,7 +93,6 @@ def parse(tokens, cwd):
             continue
         m = _RE_NUMBER.match(low)
         if m:
-            # 裸数字：小的是质量、大的是宽度（100 及以下当质量）
             value = int(m.group(1))
             if value <= 100:
                 opts['quality'] = max(1, value)
@@ -144,9 +121,7 @@ def parse(tokens, cwd):
 
     return opts, None
 
-
 def _pick_files(opts, base_dir, note):
-    """定出要处理哪些文件：给了通配符就展开，否则扫目录。"""
     if opts['patterns']:
         files, missed = core.expand_patterns(opts['patterns'], base_dir)
         for pat in missed:
@@ -162,51 +137,33 @@ def _pick_files(opts, base_dir, note):
              and os.path.splitext(f)[1].lower() in picked]
     return files, None
 
-
 _OUT_MODES = [
     ('source',        '覆盖原图', '直接写回源目录，同名文件会被覆盖'),
     ('source_delete', '删除原图', '转换成功后删除源文件，无法撤销'),
     ('separate',      '新文件夹', '输出到 compressed_output\\，原图不动'),
 ]
 
-
 def _enable_vt():
-    """让 Windows 控制台认得 ANSI 转义（重画菜单要用）。失败返回 False。"""
     if os.name != 'nt':
         return True
     try:
         import ctypes
         k = ctypes.windll.kernel32
-        h = k.GetStdHandle(-11)          # STD_OUTPUT_HANDLE
+        h = k.GetStdHandle(-11)
         mode = ctypes.c_ulong()
         if not k.GetConsoleMode(h, ctypes.byref(mode)):
             return False
-        return bool(k.SetConsoleMode(h, mode.value | 0x0004))   # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        return bool(k.SetConsoleMode(h, mode.value | 0x0004))
     except Exception:
         return False
 
-
 def _choose_output_mode():
-    """让用户上下选输出模式。返回 'source'/'source_delete'/'separate'；取消返回 None。
-
-    ★ 现在**没人调它了**（`V-44` ✅ 你定的：命令行不写输出位置就按"覆盖原图"来、
-      不再问 —— 界面里跑起来没有终端，问了只会卡死或报错）。留着这段是因为它本身
-      是对的"要问就问"的实现（真终端用 ↑↓ 选、管子退化成输序号），
-      以后哪个包要问用户，照这个写法抄就行。
-
-    ★ **不预选**：光标一开始不在任何一项上，必须先按 ↑↓ 再回车；
-      直接回车 = 取消整个操作。这样"随手一个回车就把原图覆盖/删掉"不会发生。
-      （用户定的规则。）
-
-    自己用 msvcrt 画，不引 questionary —— 少一个依赖就少一个装不上的理由。
-    控制台不支持 ANSI 时退化成"输入序号"。
-    """
     print('输出到哪？（没有默认值，请自己选）')
 
     if os.name == 'nt' and _enable_vt():
         import msvcrt
 
-        cur = -1                     # -1 = 一项都没选
+        cur = -1
 
         def draw(first=False):
             if not first:
@@ -220,23 +177,22 @@ def _choose_output_mode():
         draw(first=True)
         while True:
             ch = msvcrt.getch()
-            if ch in (b'\x00', b'\xe0'):          # 方向键的前导字节
+            if ch in (b'\x00', b'\xe0'):
                 k = msvcrt.getch()
-                if k == b'H':                      # ↑
+                if k == b'H':
                     cur = len(_OUT_MODES) - 1 if cur <= 0 else cur - 1
-                elif k == b'P':                    # ↓
+                elif k == b'P':
                     cur = 0 if cur >= len(_OUT_MODES) - 1 else cur + 1
                 draw()
             elif ch == b'\x03':
                 raise KeyboardInterrupt
-            elif ch == b'\x1b':                    # Esc
+            elif ch == b'\x1b':
                 sys.stdout.write('\n')
                 return None
             elif ch in (b'\r', b'\n'):
                 sys.stdout.write('\n')
                 return _OUT_MODES[cur][0] if cur >= 0 else None
 
-    # 退化：纯文本序号。**同样不预选**，回车即取消。
     for i, (_, name, tip) in enumerate(_OUT_MODES, 1):
         print('   %d) %s —— %s' % (i, name, tip))
     try:
@@ -252,16 +208,7 @@ def _choose_output_mode():
         return None
     return _OUT_MODES[n - 1][0] if 1 <= n <= len(_OUT_MODES) else None
 
-
 def _resolve_output(opts, source_dir, cwd):
-    """定输出。返回 (output_dir, save_mode, error)。
-
-    `-o <目录>` / `/` 写了就按写的来；**两个都没写 = 写回源目录（覆盖原图）**。
-    ★ 为什么不问（`V-44` ✅，你定的）：命令行 —— 尤其是 moss 界面里跑起来的时候 ——
-      没有终端可以交互，问了要么卡死、要么直接报错退出（以前就是后者）；而界面那边
-      **默认选的就是"覆盖原图"**（你自己的 `config.json` 里 `save_mode` = `source`），
-      命令行跟它保持一致就行，不替你猜别的。
-    """
     if opts['output_dir']:
         od = opts['output_dir']
         return (od if os.path.isabs(od) else os.path.abspath(os.path.join(cwd, od))), 'separate', None
@@ -271,9 +218,7 @@ def _resolve_output(opts, source_dir, cwd):
 
     return source_dir, 'source', None
 
-
 def run(tokens, cwd=None):
-    """命令行模式的入口。返回退出码。"""
     cwd = cwd or os.getcwd()
     if isinstance(tokens, str):
         tokens = _tokens(tokens)
@@ -306,7 +251,6 @@ def run(tokens, cwd=None):
         print('\n提示: 未找到符合条件的图片。')
         return 1
 
-    # 不写格式 = 保持原格式（由 core.resolve_format 逐张判定）
     fmt = opts['format'] or ''
     width = None if fmt == 'ico' else opts['width']
     in_place = opts['in_place']
@@ -318,9 +262,6 @@ def run(tokens, cwd=None):
     if err:
         print('[错误] %s' % err)
         return 2
-    # 输出位置是**已经明确表达过**的（写了 / 或 -o，或者从菜单里选过），
-    # 不再多问一遍"确定要覆盖吗" —— 那三种表达本身就是确认，再问是啰嗦。
-    # 后果都写在 help / 菜单文字里了。
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
@@ -333,7 +274,6 @@ def run(tokens, cwd=None):
     if fmt == 'ico':
         print('  - ICO 尺寸: %s' % ', '.join(
             str(s) for s in core.checked_ico_sizes(opts['ico_sizes'])))
-    # 待处理文件这句话要说准：指定了文件/通配符时就不能再说"所有图片格式"
     picked_note = ('按你指定的文件 / 通配符挑的' if opts['patterns']
                    else '当前目录下所有支持的图片格式')
     print('  - 待处理文件: %d 个（%s）' % (len(files), picked_note))
@@ -347,14 +287,7 @@ def run(tokens, cwd=None):
         return 1
     return 0
 
-
 def _arguments():
-    """参数来源：宿主放进来的那一个字段。
-
-    ★ 迁移说明：旧版直接读 sys.argv（宿主 pa 把参数拼成字符串传进来）。
-      新版走 moss 的参数通道：`MOSS_PKG_PARAMS` 里是 JSON，`args` 就是
-      「包名后面那一整串」。没有它（脚本被单独跑）时退回 sys.argv。
-    """
     import json
     raw = os.environ.get('MOSS_PKG_PARAMS')
     if raw:
@@ -366,14 +299,12 @@ def _arguments():
             pass
     return ' '.join(sys.argv[1:]).strip()
 
-
 def main():
     text = _arguments()
     if not text:
         print('[错误] 命令行模式没有收到参数。想开界面就直接 `moss :img`。')
         return 1
     return run(_tokens(text))
-
 
 if __name__ == '__main__':
     sys.exit(main())

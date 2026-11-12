@@ -1,35 +1,8 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""文档完整性审计：检查源文件的内容有没有在合并 / 改写中丢失。
-
-背景
-----
-把文档从多个来源合并、或反复改写时，最容易出的事就是**悄悄丢内容**
-（本项目就真实发生过一次：合并到单一文档时整篇漏掉了 v1 设计稿 411 行）。
-
-这个脚本把源文件逐行拿到目标文档里找，把找不到的列出来，并且**分成两类**：
-  · 已声明排除 —— 我们**明知并有意**不要的（归档横幅、被改写的旧状态行、被否决的旧章节）
-  · 意外缺失   —— **这一类必须为 0**，不为 0 就说明真丢东西了
-
-用法
-----
-    python 文档完整性审计.py <目标文档> <源文件1> [源文件2 ...]
-
-退出码：意外缺失为 0 → 0；否则 → 1。
-
-维护
-----
-合并方式变了、或有意排除了新东西，就往 `EXCLUDE` 里加一条**前缀**。
-前缀既可以是 `## ` 开头（排除整节），也可以是任意行首（排除若干行）。
-"""
 import io
 import os
 import re
 import sys
 
-# ★ 控制台编码：本文件要打 ✅ ❌ ⬜ ⭐ ⚠ 这些符号，而 Windows 中文控制台
-#   默认 cp936(GBK)，print 上去直接 UnicodeEncodeError 崩掉。
-#   独立工具不 import core（那会连带读 user_data），所以就地兜一下。
 if os.name == "nt":
     try:
         import ctypes
@@ -42,10 +15,7 @@ for _s in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError, OSError):
         pass
 
-# ---------------------------------------------------------------- 已声明的排除
-# 这些是"我们明确知道不要的"，不是丢失。
 EXCLUDE = [
-    # —— v1 中有意未搬回的章节（理由见文档「第三部分」表头） ——
     "## 0. 一句话结论",
     "## 2. 目标与不变量",
     "## 3. 统一模型",
@@ -53,11 +23,9 @@ EXCLUDE = [
     "## 6. 分发：Web 下载源",
     "## 8. 迁移路径",
     "## 9. 开放问题",
-    # —— 各源文件头部的"别读这份"归档横幅 ——
     "> ⛔ **别读这份。**",
     "> 保留此文件仅为历史留档",
     "> ---",
-    # —— 合并时有意替换掉的旧表头 / 旧状态行 ——
     "> 📌 **决策的权威状态",
     '> 本文讲"为什么这么设计"',
     "> 两者冲突时，以台账为准。",
@@ -69,7 +37,6 @@ EXCLUDE = [
     "> **这是咱俩所有商量的唯一真相来源。**",
     "> 讨论过程可以散在对话里",
     "> 最后更新：2026-09-24（第 1 版）",
-    # —— v1 旧文档头注（描述的是那份旧稿自己的状态，不是正文内容） ——
     "> ⚠️ **本文已被",
     "> v2 是从头重定格式",
     "> 本文的价值在于：",
@@ -87,33 +54,26 @@ EXCLUDE = [
     "| G-01 | 新项目放在哪个路径 |",
     "| G-02 | 新项目叫什么名字 |",
     "| F-01 | 清单文件名",
-    # —— 状态被确认后更新过的旧行（源文件里还是 ⬜，文档里已 ✅） ——
     "| G-03 | 是否沿用 Python + nuitka 打包 | ⬜",
     "| G-04 | 宿主是单文件 exe，还是 exe + 文件夹 | ⬜",
 ]
 
-
 def norm(s):
     return re.sub(r"\s+", " ", s).strip()
-
 
 def is_heading(s):
     return s.lstrip().startswith("#")
 
-
 def is_noise(s):
     return s in ("", "---", "|") or set(s) <= set("-| ")
 
-
 def excluded(line, heading):
-    """当前行是否命中排除前缀（含"所在章节被排除"）。"""
     for p in EXCLUDE:
         if line.startswith(p):
             return True
         if heading and heading.startswith(p):
             return True
     return False
-
 
 def audit(target_path, source_paths):
     target = io.open(target_path, encoding="utf-8").read()
@@ -168,19 +128,9 @@ def audit(target_path, source_paths):
     print("⚠️  结论：意外缺失 %d 行 —— 请人工核对上面标 ✗ 的行。" % total_expected_missing)
     return 1
 
-
 DECL_RE = re.compile(r"当前状态：(\d+) 条议题 —— ✅ (\d+) / ❌ (\d+) / ⬜ (\d+)")
 
-
 def check_declared(path):
-    """核对文档自己声明的议题数量与实际是否一致。
-
-    ★ `V-100`：编号到三位数了，这条正则原来只认 `\d{2}` —— `V-100` 那一行**数不进去**，
-      于是"实际 352 / 声明 353"报了个假的不一致（先怀疑工具）。改成 `\d{2,3}`。
-
-    文档第一部分表头写着"当前状态：N 条议题 —— ✅ a / ❌ b / ⬜ c"。
-    任何一次编辑如果把议题弄丢了，这个数就对不上 —— 这是最省事的一道防线。
-    """
     text = io.open(path, encoding="utf-8").read()
     m = DECL_RE.search(text)
     print()
@@ -219,16 +169,14 @@ def check_declared(path):
         return 0
     return 1
 
-
 def main():
     args = [a for a in sys.argv[1:]]
     if len(args) < 2:
-        print(__doc__)
+        print("用法: python tools/文档完整性审计.py <基准文档> <待审计文档...>")
         return 2
     rc1 = audit(args[0], args[1:])
     rc2 = check_declared(args[0])
     return max(rc1, rc2)
-
 
 if __name__ == "__main__":
     sys.exit(main())

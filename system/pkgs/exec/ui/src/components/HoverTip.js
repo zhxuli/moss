@@ -1,5 +1,3 @@
-/* 列表项悬停时补全被截断的描述。
- * 位置由父级算好（fixed 定位），这里只负责画。 */
 export default {
   name: "HoverTip",
   props: {

@@ -4,19 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>快捷执行</title>
-<!-- 主题：先用系统偏好顶上，避免首帧闪一下；boot 时再用后端读到的值覆盖 -->
+
 <script>
   document.documentElement.dataset.theme =
     (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
 </script>
-<!-- 都是本地 vendor 引用（已用 CDN 验证过同一份文件）：
-     Vue 走 ESM（src/main.js 里 import），highlight 仍是经典脚本挂在 window.hljs 上。
-     不引 CDN 的原因：冷启动拉外网会赶不上首帧，离线就整块失效。 -->
+
 <script src="vendor/highlight.min.js"></script>
 <script src="vendor/powershell.min.js"></script>
-<!-- ★ 内嵌垫片（`V-222`）：内嵌进 moss 时把 `moss.call` 接到宿主那条路上，
-     独立窗口时直接走 `window.pywebview.api`。**必须在 ESM 之前**（src/api.js 要用 window.moss）。
-     ★ 这一行原样保留（`tools/包界面检查.py` 就是按它换桩的）。 -->
+
 <script src="moss-embed.js"></script>
 <link rel="stylesheet" href="./css/tokens.css">
 <link rel="stylesheet" href="./css/base.css">
@@ -45,7 +41,7 @@
     </header>
 
     <div class="body">
-      <!-- 分类 + 命令合成一棵可折叠的树 -->
+
       <side-tree :groups="groups" :expanded="expanded" :selected-key="selectedKey"
                  :filtered-count="filtered.length" :commands-count="commands.length"
                  :searching="!!query.trim()"
@@ -71,10 +67,8 @@
 
   <toasts :toasts="toasts"></toasts>
 
-  <!-- 列表项悬停时补全被截断的描述 -->
   <hover-tip :hover="hover"></hover-tip>
 
-  <!-- 新建：先定类型（建好后不再允许切换） -->
   <new-sheet :open="sheetOpen" :new-types="newTypes"
              @pick="newCommand" @close="sheetOpen = false"></new-sheet>
 </div>

@@ -12,7 +12,6 @@
 <body>
 <div id="app" :class="{dragging: dragOn}">
 
-  <!-- ── 顶栏：产品名 + 两级条数 + 两个动作。只有一条线，不叠卡片 ─────────── -->
   <header class="bar">
     <h1>PATH</h1>
     <p class="sub">
@@ -33,14 +32,13 @@
     </div>
   </header>
 
-  <!-- ── 输入行：一个输入框 + 一颗主按钮；只在有用的时候才出现的两个动作 ───── -->
   <div class="cmd">
     <div class="field" :class="{bad: !!inputWarn}">
       <i class="lead" v-html="ic('folder-input')"></i>
       <input id="path-input" v-model="input" spellcheck="false" autocomplete="off"
              placeholder="粘贴一个目录；留空点「添加」= 选文件夹"
              @keyup.enter="add">
-      <!-- id 给探针用：它按 id 找"这颗警告三角在不在、title 说了什么" -->
+
       <span class="fieldwarn" id="input-warning" v-if="inputWarn" :title="inputWarn"
             v-html="ic('alert-triangle')"></span>
       <button class="fieldx" id="btn-clear" v-if="input" @click="clearInput" title="清空"
@@ -57,7 +55,6 @@
       <i v-html="ic('eraser')"></i>清理失效</button>
   </div>
 
-  <!-- ── 清单：两级在一张表里，各自一个分组头（各自保存） ────────────────── -->
   <div class="table">
     <div class="thead">
       <span></span>
@@ -68,7 +65,7 @@
     </div>
 
     <div class="tbody">
-      <!-- ============ 用户级 ============ -->
+
       <section class="grp">
         <header class="grphd">
           <span class="gname">用户级</span>
@@ -121,7 +118,6 @@
         </ul>
       </section>
 
-      <!-- ============ 系统级 ============ -->
       <section class="grp sys" v-if="sysSaved.length || sysDraft.length">
         <header class="grphd">
           <span class="gname">系统级</span>
@@ -181,7 +177,6 @@
     </div>
   </div>
 
-  <!-- ── 底栏：一句话状态 + 一条提示 ─────────────────────────────────────── -->
   <footer class="status">
     <span class="st-dot" :class="{on: dirty || sysDirty}"></span>
     <span id="status-text">{{ dirty || sysDirty ? '有没保存的改动' : '和注册表一致' }}</span>
@@ -192,7 +187,6 @@
     <span class="st-meta mono" :title="dataDir">{{ shortData }}</span>
   </footer>
 
-  <!-- ── 备份：抽屉（原来那栏一直空着占宽度，现在按需拉出来） ─────────────── -->
   <div class="scrim" v-if="drawer" @click="closeDrawer"></div>
   <aside class="drawer" :class="{open: drawer}">
     <header class="drhd">

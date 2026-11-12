@@ -1,22 +1,3 @@
-# -*- coding: utf-8 -*-
-"""pkglib —— 把第三方库装进「某个插件包」自己的 `packages/` 目录。
-
-为什么要有这只手：宿主自带的运行时是隔离的，里面装不了库（`pip install` 没地方落），
-所以用到 fastapi / flask / requests 之外的库时，插件就卡住了。
-这只手的做法是「把库装进插件自己」：`<插件目录>/packages/`，再生成一个 `deps.py`
-垫片，插件入口里 `import deps` 一下，sys.path 就带上了那个目录 —— 插件仍是自包含的，
-不污染宿主环境，重装插件时跟着包目录走（注意：包目录里的东西升级包会冲掉，
-真想长期留着，装在 `MOSS_PLUGIN_DATA_DIR` 那侧，见 AGENT.md）。
-
-参数（stdin 一行 JSON，也在 MOSS_PKG_PARAMS / MOSS_TOOL_ARGS）：
-  pkg    要装的库，"fastapi uvicorn" 这样空格或逗号分隔
-  into   装到哪个插件目录（绝对路径，或 user_data/pkgs/<id> 里的包 id）
-  mode   install（默认）/ probe（看环境）/ list（看已装）
-  index  pip 源，默认清华镜像
-  python 指定解释器
-
-只往 stdout 打**要给模型看的结论**；过程信息一律走 stderr。
-"""
 import glob
 import json
 import os
@@ -29,35 +10,25 @@ DEFAULT_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"
 PKG_SUBDIR = "packages"
 SHIM_NAME = "deps.py"
 
-SHIM_SOURCE = '''# -*- coding: utf-8 -*-
-"""由 pkglib 生成：把同目录下的 packages/ 加进 sys.path。
-
-用法（插件入口最前面，必须在 import 第三方库之前）：
-    import deps          # noqa: F401
-    import fastapi       # 现在能导进来了
-"""
-import os
+SHIM_SOURCE = '''import os
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _DEPS = os.path.join(_HERE, "packages")
 if os.path.isdir(_DEPS) and _DEPS not in sys.path:
     sys.path.insert(0, _DEPS)
-try:  # Windows 上带 .pyd/.dll 的包（cryptography 之类）要靠这个找到自己的 dll
+try:
     if os.path.isdir(_DEPS) and hasattr(os, "add_dll_directory"):
         os.add_dll_directory(_DEPS)
 except Exception:
     pass
 '''
 
-
-# ---------- 小工具 ----------
-
 def read_args():
     raw = ""
     try:
         raw = sys.stdin.read()
-    except Exception:                                                  # noqa: BLE001
+    except Exception:
         raw = ""
     if not raw.strip():
         raw = (os.environ.get("MOSS_PKG_PARAMS")
@@ -68,15 +39,11 @@ def read_args():
         got = {}
     return got if isinstance(got, dict) else {}
 
-
 def dbg(msg):
     sys.stderr.write(str(msg) + "\n")
 
-
 def clean_env():
-    """把自己跑出来的子进程（pip）身上的 MOSS_* 清掉 —— 免得污染别人的进程识别。"""
     return {k: v for k, v in os.environ.items() if not k.startswith("MOSS_")}
-
 
 def run(cmd, timeout=240):
     try:
@@ -85,9 +52,8 @@ def run(cmd, timeout=240):
         return r.returncode, (r.stdout or ""), (r.stderr or "")
     except subprocess.TimeoutExpired:
         return 124, "", "超时（%ds）：%s" % (timeout, " ".join(cmd))
-    except Exception as e:                                             # noqa: BLE001
+    except Exception as e:
         return 125, "", "%s: %s" % (type(e).__name__, e)
-
 
 def split_pkgs(s):
     items = []
@@ -97,11 +63,7 @@ def split_pkgs(s):
             items.append(chunk)
     return items
 
-
-# ---------- 找到「目标插件目录」 ----------
-
 def resolve_target(into):
-    """into → 绝对路径。支持：绝对/相对已存在目录，或 user_data/pkgs/<id>、state/skill/<id>。"""
     raw = str(into or "").strip().strip('"').strip("'")
     if not raw:
         return None, "没给 into：要装的插件目录（绝对路径，或包 id）"
@@ -118,9 +80,6 @@ def resolve_target(into):
             return os.path.abspath(c), None
     return None, ("目录不存在：%s\n试过：\n  %s\n（给绝对路径，或 user_data/pkgs 下的包 id）"
                   % (raw, "\n  ".join(cands)))
-
-
-# ---------- 找到「一个带 pip 的解释器」 ----------
 
 def py_candidates(user_py):
     seen, out = set(), []
@@ -177,16 +136,13 @@ def py_candidates(user_py):
             add([p])
     return out
 
-
 def pip_version(base):
     code, out, err = run(base + ["-m", "pip", "--version"], timeout=60)
     if code == 0:
         return (out or err).strip().splitlines()[0].strip(), None
     return None, ((err or out).strip().splitlines() or [""])[-1][:200]
 
-
 def pick_python(user_py, verbose=False):
-    """回 (base, pipver, 报告行)。base 是能跑 `-m pip` 的命令前缀。"""
     report = []
     for base in py_candidates(user_py):
         ver, why = pip_version(base)
@@ -199,16 +155,12 @@ def pick_python(user_py, verbose=False):
         report.append("  [无 pip] %s  →  %s" % (shown, why or "说不清"))
     return None, None, report
 
-
-# ---------- 三个动作 ----------
-
 def net_check(host, port=443, timeout=4):
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True, "通"
-    except Exception as e:                                             # noqa: BLE001
+    except Exception as e:
         return False, "%s" % e
-
 
 def do_probe():
     print("== 解释器 ==")
@@ -229,7 +181,6 @@ def do_probe():
         print("  兜底：装个 Python（勾 pip）或让 moss 用带 pip 的环境；也可以把库的 wheel 手动解压进 <插件>/packages/")
     return 0
 
-
 def do_list(target):
     pkgs_dir = os.path.join(target, PKG_SUBDIR)
     if not os.path.isdir(pkgs_dir):
@@ -249,7 +200,6 @@ def do_list(target):
     print("垫片：%s" % ("有（%s）" % shim if os.path.isfile(shim) else "没有"))
     return 0
 
-
 def do_install(target, pkgs, index, user_py):
     if not pkgs:
         print("没给要装的库。例子：pkg=fastapi uvicorn into=%s" % os.path.basename(target))
@@ -257,7 +207,7 @@ def do_install(target, pkgs, index, user_py):
     pkgs_dir = os.path.join(target, PKG_SUBDIR)
     try:
         os.makedirs(pkgs_dir, exist_ok=True)
-    except Exception as e:                                             # noqa: BLE001
+    except Exception as e:
         print("建不了目录 %s：%s" % (pkgs_dir, e))
         return 3
 
@@ -291,7 +241,6 @@ def do_install(target, pkgs, index, user_py):
         print("\n没装成。常见原因：① 没网 / 源不通（换个 index）② 库名写错 ③ 需要编译工具（找 wheel 版）")
         return code
 
-    # 写垫片
     shim = os.path.join(target, SHIM_NAME)
     wrote = False
     try:
@@ -303,7 +252,7 @@ def do_install(target, pkgs, index, user_py):
             with open(shim, "w", encoding="utf-8") as f:
                 f.write(SHIM_SOURCE)
             wrote = True
-    except Exception as e:                                             # noqa: BLE001
+    except Exception as e:
         print("垫片写不了（%s）：%s —— 请手工在入口里把 packages/ 插进 sys.path" % (shim, e))
 
     installed = sorted({n for n in os.listdir(pkgs_dir)
@@ -314,7 +263,6 @@ def do_install(target, pkgs, index, user_py):
     print("    import deps   # noqa: F401")
     print("    " + " / ".join("import " + p.split("[")[0].replace("-", "_") for p in pkgs))
     return 0
-
 
 def main():
     a = read_args()
@@ -336,7 +284,6 @@ def main():
 
     pkgs = split_pkgs(a.get("pkg") or a.get("packages") or a.get("name") or "")
     return do_install(target, pkgs, index, user_py)
-
 
 if __name__ == "__main__":
     sys.exit(main())

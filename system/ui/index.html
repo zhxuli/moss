@@ -4,26 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>moss</title>
-<!-- 窗口图标（`V-181`）：**根路径、绝对地址**，别写成 `favicon.ico`。
-     页面自己的地址是 `/<token>/__ui_live.html`（`V-277`：自包含那一份在内存里，
-     虚拟地址由宿主直接答），相对写法会被拼成 `/<token>/favicon.ico` —— 那条路径也在
-     `user_data/state/` 那种被挡的地方之外，但仍然会被当成"要相对找文件"，
-     写绝对路径才落到服务专门开的那条 `/favicon.ico` 上
-     （图标文件和构建时嵌进 exe 的是同一份：`system/icon/moss.ico`）。 -->
+
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
-<!-- 样式全在两份外部表里：`css/app.css`（外壳）+ `css/settings.css`（设置面板）。
-     原来这里还内联着一份 650 行的**旧副本**，同名选择器和 app.css 互相压（后加载的赢），
-     "改了一处样式却不生效"就是这么来的 —— `V-92` 查出来删掉了。 -->
+
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/files.css">
 <link rel="stylesheet" href="css/ai.css">
 <link rel="stylesheet" href="css/settings.css">
-<!-- ★ `V-359`：**详情页**那一套（照你 2026-10-09 给的那份 HTML 稿子换装）。
-     单独一个文件、类名 `dp-` 前缀 —— 稿子里的 `.card/.badge/.divider/.toast` 在
-     这个界面里都是被占用的全局名，混在一起必然打架。 -->
+
 <link rel="stylesheet" href="css/detail.css">
-<!-- `V-348`：命令行里那个常驻终端（xterm.js）的样式。**必须排在 css/app.css 之后**
-     （它自己那点默认样式要给我们的主题变量让位）。 -->
+
 <link rel="stylesheet" href="vendor/xterm.css">
 </head>
 <body>
@@ -36,22 +26,17 @@
 
 <main>
   <aside>
-    <!-- 左侧顶部：插件 / 历史 切换，右边是"新建包" -->
+
     <div id="sideswitch">
-      <!-- 收起 / 展开左侧栏（`V-171`）：收起后只剩图标，宽度记住 -->
+
       <button id="btn-aside-mini" class="iconbtn" title="收起 / 展开左侧栏（收起后只留图标）"></button>
       <button id="sw-pkg" class="on" title="已安装的包"></button>
       <button id="sw-hist" title="最近跑过的路径调用（点一下重跑）"></button>
 
-      <!-- ⟳ 刷新（`V-99`）：挪到「插件 / 历史」这一行的右侧、新建的右边 —— 它刷的就是这两份列表，
-           放在顶栏（那条只管搜索和状态）离得太远。 -->
-
     </div>
-    <!-- 拖动中的一条提示（`V-39`）：只列收得下它的包 -->
+
     <div id="dragbar" hidden></div>
-    <!-- 列表工具条（`V-178` / `V-305`）：筛选 + 排序都做成 **hover 下拉** —— 平时只占
-         一个触发器的地方（更简约、不占地方），鼠标停上去自动展开、移开收起；
-         菜单就是贴着触发器下方（中间没有缝），从触发器移到菜单上不会"路过就收起"。 -->
+
     <div class="listbar" id="bar-list">
       <div class="dd">
         <button class="dd-t" data-dd="filt" title="筛选：全部 / 系统 / 用户"></button>
@@ -98,8 +83,7 @@
     </div>
     <div id="list"></div>
     <div id="hist" hidden></div>
-    <!-- 右侧那条"拖我调宽"的细线（`V-92`）：拖动改这一个列的宽度，双击复原。
-         挂在 `aside` 里（不是 `main` 里）：跟着它一起定位，`position:relative` 见 CSS。 -->
+
     <div class="grip" id="grip-aside" title="拖我调宽（双击复原）"></div>
   </aside>
   <div id="right">
@@ -109,14 +93,10 @@
       <button class="tab" data-tab="file">文件管理</button>
       <button class="tab" data-tab="ai">AI</button>
       <button class="tab" data-tab="embed" hidden>界面</button>
-      <!-- ★ 运行/停止 + 显示/隐藏，钉在选项卡这一行的最右边：不用先点开「详情」。
-           状态**只有两种**：运行中 = 绿色停止图标，没在跑 = 普通播放图标（不再有红/黄）。 -->
-      <!-- ★ `V-303`：「显示」放「运行」**左边**、运行在最右；而且**不需要时不显示**
-            （没有开着的窗口就藏起来 —— 由 `paintActions` 置 `hidden`）。 -->
+
       <div id="tabactions">
         <button class="iconbtn" id="btn-vis" disabled hidden></button>
-        <!-- 包自己界面的两颗（原来在「界面」那一页顶上那条里，现在挪到停止旁边：
-             这样那一页就不用再摆一条标题栏，整块地方都是界面本身）。 -->
+
         <button class="iconbtn" id="btn-embed-reload" hidden
                 title="重新加载这个包的界面"></button>
         <button class="iconbtn" id="btn-embed-window" hidden
@@ -127,9 +107,6 @@
 
     <section class="pane on" id="pane-detail"><div class="empty">左边选一个包</div></section>
 
-    <!-- 命令行那一页（`V-83` 起是 **Vue 组件**：`js/console.js` 的 `MossConsole`）。
-         输出区 / 输入行 / 顶上那三颗按钮（复制·重跑·清空）的标记都在组件的模板里，
-         这里只留挂载点 —— 和 `#list` / `#hist` / `#pane-detail` / `#pane-file` 一样。 -->
     <section class="pane" id="pane-console"></section>
 
     <section class="pane" id="pane-file">
@@ -137,25 +114,14 @@
       <div class="fmwrap" id="fm-body"></div>
     </section>
 
-    <!-- 第五个选项卡：**AI 工作台**（`V-233`）—— 让它自己写/改包。
-         这一页是宿主界面的一部分（不是包），要贴着"当前选中的包"，
-         所以状态全在 `system/ui/ai/`（loop + 工具 + 提示词）。挂载点在这儿。 -->
     <section class="pane" id="pane-ai"></section>
 
-    <!-- 第四个选项卡：包自己的界面（`V-48` ✅；`V-84` 起这一页也是 **Vue 组件**：
-         `js/embed.js` 的 `MossEmbed`）—— 顶上那一小条 + 下面那块 `#embed-wrap` 的标记
-         都在组件模板里，这里只留挂载点。
-         ★ iframe 不进模板：一帧 = 一个包自己的后端进程，**切走不卸载**（你要的那条），
-           所以帧仍然是"谁需要谁 append 进 `#embed-wrap`"。 -->
     <section class="pane" id="pane-embed"></section>
 
-    <!-- 拖进来的"接收区"（`V-35` / `V-39`）：只在拖动中、而且当前这个包收得下的时候出现。
-         里面按 `pkg.json` 的 `drop` 声明画投放框（今天一个包最多一个"运行"框）。 -->
     <div id="dropzone"></div>
   </div>
 </main>
 
-<!-- 底部状态栏（`V-61` ✅）：左边"最近一条状态提示"，右边那颗齿轮开「设置」。 -->
 <footer id="statusbar">
   <span id="status-text">就绪</span>
   <span class="sp"></span>
@@ -168,31 +134,21 @@
     <button class="set-x" id="m-x" title="关闭（Esc）" aria-label="关闭"></button></div>
   <p id="m-text"></p>
   <input id="m-input" autocomplete="off" spellcheck="false">
-  <!-- 多行输入（`V-113`）：过滤规则那种"每行一条"的东西，单行 input 写不了 -->
+
   <textarea id="m-textarea" rows="8" spellcheck="false" hidden></textarea>
-  <!-- 表单插槽（`V-387`）：`askForm()` 把"好几格 + 自定义按钮"塞这儿（新建包那一路用它）。
-       平时 hidden；`askForm()` 填完再显示，`closeModal()` 会清空。 -->
+
   <div id="m-extra" hidden></div>
   <div class="btns">
     <button id="m-cancel">取消</button>
-    <!-- 第二个动词（`V-92`）：像 git 那样"写回"和"强制对齐"分成两个动作。
-         平时 `hidden`；`askConfirm2()` 给了第二个动词才浮出来（配色是"当心"的琥珀，
-         不是"危险"的红 —— 它是会动文件，但动的东西进回收站、能捞回来）。 -->
+
     <button id="m-ok2" class="warn" hidden></button>
     <button id="m-ok" class="primary">确定</button>
   </div>
 </div></div>
 <div id="toasts"></div>
-<!-- 设置面板的挂载点（`V-67`）：面板本身是 `js/settings.js` 里那个 Vue 组件 -->
+
 <div id="settings-host"></div>
 
-
-
-
-<!-- 出了问题要**看得见**（`V-76`）：这段是**内联**的，排在所有外部脚本之前。
-     ★ 为什么非要内联：`js/*.js` 自己没加载上时，写在 js 里的错误处理根本跑不到（鸡生蛋）。
-     它管两件事：资源加载失败（哪个 URL 没下来）、以及页内报错 —— 都写到右下角状态栏（红字）
-     和 user_data/state/_ui_drop.log。 -->
 <script>
 (function(){
   window.__errors = window.__errors || [];
@@ -226,7 +182,7 @@
     var r = e && e.reason;
     window.__mossTell("[未处理的 Promise] " + ((r && (r.message || r)) || e));
   });
-  // 自测开关：Ctrl+Alt+E 故意扔一个错 —— 用来确认"红字 + 日志"这条路是通的
+
   window.addEventListener("keydown", function(e){
     if (e.ctrlKey && e.altKey && (e.key === "e" || e.key === "E")){
       window.__mossTell("[自测] 这是你按 Ctrl+Alt+E 触发的假错误（能看到它就说明报错这条路是通的）");
@@ -239,52 +195,20 @@
 <script src="vendor/dos.min.js"></script>
 <script src="vendor/lucide.js"></script>
 <script src="vendor/vue.global.prod.js"></script>
-<!-- `V-348`：命令行里那个常驻 DOS 终端用的终端模拟器（xterm.js，MIT，见 vendor/README.md）。
-     两个都是 **UMD 构建**，所以 `<script src>` 直接引就行（不用打包器）。
-     ★ 全局名有讲究：xterm 把每个导出摊到 `window` 上（`new Terminal(...)`），
-       而 addon 是**命名空间**（`new FitAddon.FitAddon()`）—— 后者写错不报错，只是不生效。 -->
+
 <script src="vendor/xterm.js"></script>
 <script src="vendor/addon-fit.js"></script>
 
-<!-- ★ 预览工具（tools/界面预览.py）把"假后端"插在下面这个 <script> 之前 ——
-     锚点是 `<script>` 换行 + `/* =====`。它必须排在所有 js/ 脚本前面：
-     假 pywebview 得先就位，页面初始化时才叫得动。 -->
 <script>
-/* ============================================================================
-   moss 界面（宿主界面）—— `V-67` 起拆成了模块，顺序就是下面这些 <script src>：
 
-     js/core.js      状态与工具（$ / ico / 数据类型 / 全局状态）
-     js/sound.js     音效提醒（`sndNotify`：AI 跑完 / 要你确认时响一下，真播放在界面进程里）
-     js/panels.js    状态栏 + 选项卡切换
-     js/console.js   命令行 + 运行 + 包状态
-     js/drop.js      拖文件进来
-     js/embed.js     包自己的界面（内嵌那一帧）
-     js/list.js      包列表 + 历史 + 详情
-     js/files.js     文件管理（资源管理器 + 编辑器）
-     js/backup.js    ★ 备份那一页（`V-87`，**Vue 3 组件**；塞进文件管理那个组件的
-                      `components` 里，所以必须排在 files.js **之后**）
-     js/modal.js     模态框 / toast / 状态栏
-     js/settings.js  ★ 设置面板（**Vue 3 组件**，自己带模板和状态）
-     js/app.js       启动 + 新建/卸载包
-
-   ★ 为什么是"经典脚本 + 顺序加载"而不是 ES module：这个页面是 pywebview 从
-     `file://` 打开的，Chromium 对 `file://` 下的 module 直接按 CORS 拦掉
-     （`origin: null`）—— 想用 `import` 就得把整个界面改走本地 http（那是另一件事）。
-     经典脚本没有这个限制，而且 `const/let` 在顶层仍然是**跨文件共享**的脚本作用域，
-     和原来"一个大 <script>"的语义一样。
-   ============================================================================ */
 </script>
 <script src="vendor/difflib.js"></script>
 <script src="js/core.js"></script>
-<!-- ★ 音效提醒：只提供 `sndNotify(kind, force)` 这一个入口，被 `js/ai.js`（跑完 /
-     要你确认）和 `js/settings.js`（试听 / 换完文件）调用。排在它俩前面就行。 -->
+
 <script src="js/sound.js"></script>
-<!-- ★ `V-358`：自动启动（详情页那一块 + 开机跑一次）—— 排在 `list.js` 前面：
-     详情页重画时会调它的 `autoSectionHTML`，虽然那时只是"函数声明"，但早加载少一类意外。 -->
+
 <script src="js/autostart.js"></script>
-<!-- ★ `V-379`：**寄生模式**（点它就运行、切走就停）—— 和 `autostart.js` 一个路子
-     （每个插件一个开关，存在 `user_data/state/_ui_parasite.json`），同样排在 `list.js` 前面：
-     详情页重画要调它的 `parasiteSectionHTML`、你点左边列表要调它的 `parasiteOnPick`。 -->
+
 <script src="js/parasite.js"></script>
 <script src="js/panels.js"></script>
 <script src="js/console.js"></script>

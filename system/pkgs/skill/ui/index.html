@@ -4,24 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>技能 · Skills</title>
-<!-- 主题先用系统偏好顶一下（免得首帧闪一下）；宿主推 `theme` 事件时再按它的来 -->
+
 <script>
   document.documentElement.dataset.theme =
     (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
 </script>
-<!-- 全部是本地 vendor（不引 CDN：冷启动拉外网赶不上首帧，离线就整块失效）：
-     Vue 用**全局版**（自带模板编译器 ⇒ 页面里能直接写 `template`），跟 `path` 一致。
-     图标也**不用图标字体**（参考稿引的是 FontAwesome 的 CDN）——
-     形状统一手画成内联 svg，见 `src/icons.js`。 -->
+
 <script src="vendor/vue.global.prod.js"></script>
-<!-- 代码高亮：**跟主界面同一份** highlight.js（本地 vendor，不引 CDN）——
-     详情里看文件正文时用它上色，见 `src/comp-drawer.js`。powershell / dos 是它默认包里没有的两门。 -->
+
 <script src="vendor/highlight.min.js"></script>
 <script src="vendor/powershell.min.js"></script>
 <script src="vendor/dos.min.js"></script>
-<!-- ★ 内嵌垫片（`V-222`）：内嵌进 moss 时把 `moss.call` 接到宿主那条路上，
-     独立窗口时直接走 `window.pywebview.api`。**必须在 src/* 之前**。
-     ★ 这一行原样保留（`tools/包界面检查.py` 就是按它换桩的）。 -->
+
 <script src="moss-embed.js"></script>
 
 <link rel="stylesheet" href="style/tokens.css">
@@ -31,46 +25,25 @@
 </head>
 <body>
 
-<!-- ★ 模板就写在挂载点 `#app` **里面**（照 moss 主界面和 `path` 那几个包的写法：
-     `vue.global.prod.js` 自带编译器，Vue 挂载时把 `#app` 的 innerHTML 当模板编译，
-     编译结果再替换掉它自己）。`v-cloak` 挡住编译前那一瞬。
-     ★★ 为什么不用 `script[type=text/x-template]`（`V-289` 试过，两个坑）：
-        ① 那个 script 块里**一条 HTML 注释都不能有** —— HTML 的词法器在"脚本数据"里见到
-           注释的开头就会切进"转义"状态，一路吃到它自己的结尾，模板的结束标签被当成正文，
-           取出来是一坨转义文本，Vue 编译出空树：页面白板、控制台一句错都不报；
-        ② 页面 dump 出来的字符串里，模板原文**会再出现一遍**（就是那个 script 的正文），
-           而探针是靠正则读状态字那一段的 —— 原文一掺进来，判据就飘了。
-     ★★ 编译前 `#status` 里不许有会变成文字的原文（探针的正则会拿它当判据）——
-        所以这一块**默认是空的**，文案全由 `v-if` 控制、不写死在模板里。
-     ★★ 下面这些类名 / id 是**探针的契约**，重画时特意留住的：
-        `.tile` / `.nm`（数墙上有几个）、`#status`（判"起没起来"，文案也不许改）、
-        `.drawer` + `role="dialog"` + `aria-modal="true"` / `.scrim` / `.kv` /
-        `#d-doc` / `#d-x`（详情那几条断言）、`#btn-retry`。 -->
 <div id="app" v-cloak>
   <div class="page" :class="{ behind: drawer }">
 
-    <!-- ============================================================ 头部 -->
     <header class="site-head">
       <div class="head-left">
         <h1 class="page-title">技能中心</h1>
-        <!-- 状态字（`#status`）：**没读到数据之前一个字都不写**（你说"别闪一下读不出来"），
-             **真失败过（`tries > 0`）**才写这句。读出来了也留空。
-             ★ 探针按这一段判生死，文案别改；它必须是个 <p>（探针正则按 </p> 收尾）。 -->
+
         <p class="status" id="status" :class="{ err: !loaded && tries > 0 }">
           <span v-if="!loaded && tries > 0">读不出来 —— 后端没上来。</span>
         </p>
       </div>
 
       <div class="tools-bar">
-        <!-- 「只看要处理的」：**只在真有待处理时才出现**（`V-292` 撤掉了原来那个
-             永远摆着「全部技能」一段、又没有别的可点的分段控件）。
-             亮着 = 只看待批准 / 要修的。 -->
+
         <button v-if="nTodo" type="button" class="filter-pill" :class="{ on: filt === 'todo' }"
                 @click="toggleTodo" :aria-pressed="filt === 'todo'">
           <span v-html="ico('warn')"></span>待处理<span class="n">{{ nTodo }}</span>
         </button>
 
-        <!-- 搜索：平时只有一颗放大镜，聚焦 / 有内容时向右展开 -->
         <div class="search-wrapper" :class="{ 'is-open': query }">
           <input ref="search" class="search-input" v-model="query" type="text"
                  spellcheck="false" autocomplete="off" placeholder="搜索技能名称或标签…">
@@ -82,19 +55,14 @@
       </div>
     </header>
 
-    <!-- ============================================================ 技能流 -->
     <div class="grid-wrap scroll">
-      <!-- 卡片墙：进场**从下往上浮**，并按 `--d` 错峰（越靠后越晚一点）—— 你说的"灵动的感觉" -->
+
       <transition-group name="grid" tag="div" class="grid" appear>
         <skill-tile v-for="(it, i) in filtered" :key="it.id" :it="it"
                     :style="{ '--d': Math.min(i, 12) * 34 + 'ms' }"
                     :open="store.openId === it.id" @open="openDetail(it)"></skill-tile>
       </transition-group>
 
-      <!-- 空状态：三条**各自独立**的 v-if，**不用 v-else-if 链**（`V-290` 踩过）——
-           在"就地写着"的 DOM 模板里，`<transition-group>` 后面接一串 v-else-if 时，
-           条件明明为 false 的那一条也会留下来（墙上出着卡片、底下同时显示"还没有技能"）。
-           拆成独立的布尔量之后，谁该出现谁出现，一眼能对上。 -->
       <div class="empty" v-if="noMatch">
         <span class="orb" v-html="ico('search')"></span>
         <h2>没有找到匹配的技能</h2>
@@ -124,9 +92,6 @@
     </div>
   </div>
 
-  <!-- 详情：居中大弹窗（左身份与操作 + 右数据与内容），点遮罩 / Esc / ✕ 关。
-       ★ 这几个跟上面一样，都是**根模板的一部分** —— 少了它们不会报错，
-         只是"点了没反应"，查起来很费劲（`V-289` 真踩过：改模板时把这一段删掉了）。 -->
   <skill-drawer v-if="current" :it="current" :closing="drawerClosing" :store="store"
                 @close="closeDrawer()" @act="act" @toggle-doc="toggleDoc"
                 @open-file="openFile" @copy="copyPath" @copy-file="copyFile"
@@ -134,11 +99,9 @@
                 @send-input="sendInput" @stop-run="stopRun"
                 @gone="closeDrawer(true)"></skill-drawer>
 
-  <!-- 确认框：删技能 / 转插件之前那一问 -->
   <confirm-sheet v-if="sheet" :sheet="sheet" :closing="sheetClosing"
                  @ok="okSheet" @cancel="hideSheet()"></confirm-sheet>
 
-  <!-- 提示条 -->
   <skill-toasts :toasts="toasts"></skill-toasts>
 </div>
 

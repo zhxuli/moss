@@ -1,12 +1,8 @@
-/* ===========================================================================
-   应用外壳：偏好、插件解析、头部工具栏、快捷键、挂载
-   =========================================================================== */
 (function () {
   var Vue = window.Vue, FV = window.FV, U = FV.util, icon = FV.icon;
-  if (!Vue) return; // Vue 没加载成功时整段跳过，由页面末尾给出提示
+  if (!Vue) return; 
   var ref = Vue.ref, computed = Vue.computed, watch = Vue.watch, onMounted = Vue.onMounted, nextTick = Vue.nextTick;
 
-  /* ---------------------------------------------------------------- 偏好 */
   FV.prefs = (function () {
     var ls = window.localStorage;
     function get(key, fallback) { try { var value = ls.getItem(key); return value === null ? fallback : value; } catch (e) { return fallback; } }
@@ -31,7 +27,6 @@
     };
   })();
 
-  /* ---------------------------------------------------------------- 应用 */
   var App = {
     components: { LoadingPanel: FV.ui.LoadingPanel, StateCard: FV.ui.StateCard },
     setup: function () {
@@ -56,18 +51,12 @@
         toastTimer = setTimeout(function () { toastText.value = ""; }, 1600);
       }
 
-
-      /**
-       * 插件记录刻意留在**普通数组**里：放进 reactive 会把组件定义也包成 Proxy，
-       * Vue 拿到被代理的组件对象就渲染不出东西（只剩一个注释占位）。
-       * 模板只需要 id/label，所以另存一份轻量副本。
-       */
       var registryList = FV.registry.resolve(ctx);
       var plugins = ref(registryList.map(function (p) { return { id: p.id, label: p.label, kind: p.kind, needs: p.needs }; }));
       var activeId = ref(null);
       var loading = ref(false);
       var loadError = ref("");
-      var loadState = ref(null);   // { loaded, total, progress, speed, eta } —— 大文件读取进度
+      var loadState = ref(null);   
       var loadJob = null;
       var loadPct = computed(function () {
         var state = loadState.value;
@@ -84,7 +73,7 @@
         if (state.eta !== null && state.eta !== undefined) parts.push("剩余 " + U.humanEta(state.eta));
         return parts.join(" · ");
       });
-      var stageRev = ref(0); // 挂载后再渲染一次：首帧的 v-if 链只读了 loading，active 要等下一帧才被读到
+      var stageRev = ref(0); 
 
       function pickDefault() {
         var remembered = FV.prefs.view(ctx.ext);
@@ -111,7 +100,6 @@
         return plugins.value.filter(function (p) { return p.id !== activeId.value && p.id !== "download"; });
       });
 
-      /** 换视图时先把上一个视图注册进 api 的东西清掉，避免工具栏调到已经卸载的组件。 */
       function clearApi() {
         ["zoomIn","zoomOut","toggleFit","rotate","toggleWrap","toggleFind","copyText","fontUp","fontDown",
          "findNext","findPrev","closeFind","expandAll","collapseAll"].forEach(function (key) { api[key] = null; });
@@ -137,7 +125,7 @@
           loadError.value = error && error.message ? error.message : String(error);
         });
       }
-      /** 大文件读失败时给一句能照做的解释：这条通道对单次响应有大小上限。 */
+
       var loadErrorHint = computed(function () {
         if (!loadError.value) return "";
         if ((ctx.bytes || 0) > 12 * 1024 * 1024 && /fetch|network|Failed|HTTP 5/i.test(loadError.value)) {
@@ -150,7 +138,7 @@
         loadJob = null;
         loading.value = false;
         loadState.value = null;
-        // 取消后落到"读不出内容"那张卡片：下载 / 新标签页两个出口还在。
+
         loadError.value = "已取消读取（大文件建议直接下载后在本机看）";
       }
       watch(active, function (plugin) {
@@ -158,11 +146,10 @@
         if (!plugin) return;
         FV.prefs.setView(ctx.ext, plugin.id);
         if (plugin.needs === "text" && ctx.text === null) loadText();
-      }, { flush: "sync" }); // 同步跑：先把上一个视图注册的能力清掉，再让新视图挂载时重新注册
-      // 文本类默认视图需要正文；没内联时先取回来。
+      }, { flush: "sync" }); 
+
       if (ctx.text === null && registryList.some(function (p) { return p.needs === "text"; })) loadText();
 
-      /* 路径直达：贴一个本机绝对路径，按 URL 编码跳 file.view —— 方便随时测任意文件 */
       var pathOpen = ref(false);
       var pathInput = ref("");
       var recent = ref(readRecent());
@@ -175,7 +162,7 @@
       function saveRecent(list) {
         try { window.localStorage.setItem("fv-recent", JSON.stringify(list.slice(0, 8))); } catch (error) {}
       }
-      /** 粘进来的可能是带引号的、file:/// 开头的、或正斜杠写法：统一成干净的 Windows 绝对路径。 */
+
       function normalizePath(raw) {
         var text = String(raw === undefined || raw === null ? "" : raw).trim().replace(/^["']+|["']+$/g, "");
         if (/^file:\/\//i.test(text)) {
@@ -217,7 +204,6 @@
         U.copy(absolute).then(function () { toast("链接已复制"); }, function () { toast("复制失败"); });
       }
 
-      /* 主题 */
       var theme = ref(FV.prefs.theme());
       function applyTheme() {
         if (theme.value === "auto") document.documentElement.removeAttribute("data-theme");
@@ -261,7 +247,6 @@
         if (el.requestFullscreen) el.requestFullscreen().catch(function () { toast("这个环境不允许全屏"); });
       }
 
-      /* 快捷键 */
       function onKey(event) {
         var tag = event.target && event.target.tagName;
         var typing = tag === "INPUT" || tag === "TEXTAREA" || (event.target && event.target.isContentEditable);
@@ -331,7 +316,6 @@
       '<button class="btn primary" type="button" title="下载（Ctrl+S）" @click="download" v-html="icon(\'download\') + \'<span class=label>下载</span>\'"></button>' +
       "</div></div></header>" +
 
-      // 路径直达条：输入 → 实时显示编码后的链接 → 回车跳转
       '<div class="pathbar" v-if="pathOpen">' +
       '<div class="row">' +
       '<input v-model="pathInput" spellcheck="false" autocomplete="off" placeholder="例：E:\\zhxuli\\muisc\\demo.mp3（也可用正斜杠）" @keydown.enter.prevent="goPath" @keydown.esc.prevent="pathOpen = false">' +
@@ -355,16 +339,14 @@
       '<div class="cta"><button class="btn primary" @click="download" v-html="icon(\'download\') + \'<span class=label>下载文件</span>\'"></button>' +
       '<a class="btn ghost" :href="ctx.rawUrl" target="_blank" rel="noopener">在新标签页打开</a></div>' +
       "</state-card></div>" +
-      // 视图一直挂在固定的位置上（不参与 v-if 分支切换，也不用 key 重建），
-      // 只由插件解析结果决定是不是渲染 —— 分支切换 + 动态组件很容易把子树 patch 成空注释。
+
       "<component v-if=\"activeView\" :is=\"activeView\" :ctx=\"ctx\" :key=\"activeId\"></component>" +
       "</main>" +
       '<div class="toast" :class="{ \'is-on\': toastText }" role="status" aria-live="polite">{{ toastText }}</div>'
   };
 
   FV.app = Vue.createApp(App);
-  // 渲染期错误一定要留痕：生产版 Vue 遇到组件渲染报错只会把子树换成注释占位，
-  // 表面上就是"页面空了一块"。window.__fvErrors 里能看到真实原因。
+
   FV.app.config.errorHandler = function (error, instance, info) {
     var line = String((error && error.message) || error) + " @" + info;
     (window.__fvErrors = window.__fvErrors || []).push(line);
@@ -372,14 +354,9 @@
   };
   FV.mount = function () {
     var instance = FV.app.mount("#app");
-    // 调试口：控制台里 FV.debug.api / FV.debug.ctx 可以看当前视图注册进来的能力与上下文。
+
     FV.debug = instance;
     var boot = document.getElementById("boot");
     if (boot) boot.remove();
   };
 })();
-
-
-
-
-

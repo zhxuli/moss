@@ -1,15 +1,3 @@
-# -*- coding: utf-8 -*-
-"""界面静态检查（`V-83` 起收进 `tools/`）。
-
-为什么要有它：界面拆成 `js/*.js` + Vue 组件之后，有一批毛病**看不见**运行时异常、
-截图也照不出来 —— 少绑一个处理器、`ico()` 写了个表里没有的图标名、模板里引用了
-`pywebview.api` 里不存在的方法、`#id` 在 HTML 里被删了而 js 还在找它。
-这些都能在这儿一眼拦下。跑法：
-
-    .\\venv\\Scripts\\python.exe tools\\界面检查.py
-
-（原来这份脚本是临时写在 `%TEMP%` 里的，`V-83` 这轮收进仓库，免得每次都要重写。）
-"""
 import json
 import re
 import subprocess
@@ -28,33 +16,21 @@ js_by_file = {f.name: f.read_text(encoding="utf-8") for f in js_files}
 
 fails = []
 
-
 def _safe(s):
-    """按控制台编码兜一下再打印。★ 实测（`V-367`）：要在 GBK 控制台上打印 `✗`（U+2717）会
-    **直接抛 UnicodeEncodeError** —— 于是"检查发现了问题"反倒把检查自己搞崩（exit 1 + 一段
-    Traceback，看着像脚本坏了，真正那条问题反而看不见）。换成 `?` 也比崩强。"""
     enc = getattr(sys.stdout, "encoding", None) or "utf-8"
     try:
         return str(s).encode(enc, "replace").decode(enc, "replace")
-    except Exception:                                                     # noqa: BLE001
+    except Exception:
         return str(s).encode("ascii", "replace").decode("ascii")
-
 
 def chk(name, ok, detail=""):
     print(_safe(("  OK  " if ok else " FAIL ") + name + (("  " + str(detail)) if detail else "")))
     if not ok:
         fails.append(name)
 
-
-# ---------------- 1. 抽出 <script> 里的 JS ----------------
-# ★ 抽之前**先把 HTML 注释剥掉**：注释里写着的 `<script>`（说明文字）会被当成脚本开头，
-#   非贪婪匹配于是从那儿一路吞到后面的 </script>，把说明文字当代码。
-#   再只认**裸** `<script>`（带属性的 `<script src=...>` 排除掉）。
 _html_nc = re.sub(r"<!--.*?-->", "", html, flags=re.S)
 blocks = re.findall(r"<script>(.*?)</script>", _html_nc, re.S)
 js = "\n".join(blocks)
-# ★ `V-67`：界面拆成了 `js/*.js`（经典脚本、顺序加载）—— 检查得把那些文件也算进来，
-#   否则 `$("#set-save")` 这类引用会被当成"找不到"（其实在 js/settings.js 里）。
 for _name, _src in js_by_file.items():
     js += "\n" + _src
 tmp_js = Path(tempfile.gettempdir()) / "moss_ui_extract.js"
@@ -63,11 +39,6 @@ r = subprocess.run(["node", "--check", str(tmp_js)], capture_output=True, text=T
                    encoding="utf-8", errors="replace")
 chk("node --check  JS 语法", r.returncode == 0, (r.stderr or "").strip()[:500])
 
-# ---------------- 1b. 模板里的 HTML 注释不许有反引号（`V-195` 加的一道闸）----------------
-# ★ 为什么值得单列一条：Vue 组件的 `template:` 是**模板字符串**，里面每一对反引号都会
-#   提前结束这个字符串 —— 而"在 HTML 注释里引用一下 `V-194`"这种写法我**踩了三次**
-#   （`node --check` 报的是一句莫名其妙的 `Unexpected identifier`，得往回找才知道是注释）。
-#   这条闸把话说在前面：`<!-- ... `xxx` ... -->` 一律拦下。
 _tpl_backtick = []
 for _name, _src in js_by_file.items():
     for _m in re.finditer(r"<!--(?:(?!-->).)*-->", _src, re.S):
@@ -78,22 +49,11 @@ chk("模板里的 HTML 注释没有反引号", not _tpl_backtick,
     ("反引号会提前结束 template 字符串 —— 改掉：%s" % _tpl_backtick) if _tpl_backtick
     else "（反引号会提前结束模板字符串）")
 
-# ---------------- 1c. 模板里"不带括号"用到的名字，不许只定义在 methods 里（`V-330` 加）------
-# ★ `V-329` 的坑（用户截图里那句 `function () { [native code] }`）：`addPathBad` / `canAddPath`
-#   / `addPathHint` 一时顺手写进了 `methods`，而模板里是**不带括号**用的（`v-if="addPathBad"`、
-#   `{{ addPathHint }}`）⇒ 取到的是**函数本身**：永远真值 ⇒ 那行提示**永远显示**，
-#   内容就是函数的源码。规矩一句话：**computed 在模板里裸用，methods 必须带括号**。
-#   这条闸扫的就是这个：模板里裸出现的名字，如果只在 methods 里有定义 ⇒ 拦下。
 _bare_meth = []
 
-
 def _def_in(block, name):
-    # ★ 必须长得像**对象字面量里的方法定义**：`name(...) {`。
-    #   只写 `name(` 会把方法体里的**调用语句**也算进来（`V-334` 踩到：局部变量 `ask(...)`
-    #   被当成"有个叫 ask 的方法"⇒ 假红）。
     return re.search(r"^\s+(?:async\s+)?" + re.escape(name) + r"\s*\([^)]*\)\s*\{", block,
                      re.M) is not None
-
 
 for _name, _src in js_by_file.items():
     _i_tpl = _src.find("template:")
@@ -101,11 +61,6 @@ for _name, _src in js_by_file.items():
     _i_meth = _src.find("methods: {")
     if min(_i_tpl, _i_comp, _i_meth) < 0:
         continue
-    # ★ 2026-11-02：段落**边界**以前只认 `watch:` / 文件尾 —— 而没有 watch 的组件
-    #   （设置面板就是）等于"computed 一直算到文件最后"，于是写在 methods 里的名字也被
-    #   当成 computed：这条闸形同虚设（实测 `aiPingTip` 就这么漏过去，模板里渲染成
-    #   「function () { [native code] }」，按钮还一直是灰的）。现在把 methods / mounted /
-    #   created 这些也当边界。
     _marks = sorted({_i_tpl, _i_comp, _i_meth} |
                     {m.start() for m in re.finditer(
                         r"^  (?:watch|mounted|created|beforeMount|unmounted)\b", _src, re.M)})
@@ -121,16 +76,13 @@ for _name, _src in js_by_file.items():
     _exprs = re.findall(r"\{\{([^}]*)\}\}", _tpl_src)
     _exprs += re.findall(
         r'(?:v-if|v-else-if|v-show|:class|:disabled|:title|:style)="([^"]*)"', _tpl_src)
-    # ★ 2026-11-02：取"裸名字"之前先把**字符串字面量**和**点访问**去掉 ——
-    #   不然 `ai.open` / `r.state === 'done'` 里的 `open` / `done` 会被当成"模板里裸用的名字"
-    #   （以前因为 computed 那段一刀切到文件尾，这个假红一直没露出来）。
     _bare = set()
     for _e in _exprs:
-        _e = re.sub(r"'[^']*'|\"[^\"]*\"", " ", _e)            # 去掉字符串
-        _e = re.sub(r"\.[A-Za-z_$][A-Za-z0-9_$]*", " ", _e)    # 去掉 `.foo` 这种点访问
+        _e = re.sub(r"'[^']*'|\"[^\"]*\"", " ", _e)
+        _e = re.sub(r"\.[A-Za-z_$][A-Za-z0-9_$]*", " ", _e)
         _bare |= set(re.findall(r"[A-Za-z_$][A-Za-z0-9_$]*", _e))
     for _n in sorted(_bare):
-        if _n in _called:                       # 模板里是 `f(...)` ⇒ 方法调用，正常
+        if _n in _called:
             continue
         if _def_in(_meth_src, _n) and not _def_in(_comp_src, _n):
             _bare_meth.append("%s: %s" % (_name, _n))
@@ -138,23 +90,17 @@ chk("模板里不带括号用的名字都是 computed（不是 methods）", not 
     ("这些只写在 methods 里 —— 模板裸用会渲染成函数本体：%s" % _bare_meth) if _bare_meth
     else "（computed 裸用 / methods 带括号）")
 
-# ---------------- 2. id 唯一 ----------------
 ids = re.findall(r'\bid="([^"]+)"', html)
 dup = [k for k, v in Counter(ids).items() if v > 1]
 chk("HTML 里的 id 唯一", not dup, ("重复：%s" % dup) if dup else "%d 个 id" % len(ids))
 
-# ---------------- 3. JS 里用到的 #id 都存在 ----------------
 used = set(re.findall(r'\$\("#([A-Za-z0-9_\-]+)"\)', js))
 used |= set(re.findall(r'querySelector\(\s*[\'"]#([A-Za-z0-9_\-]+)', js))
-js_ids = set(re.findall(r'id="([A-Za-z0-9_\-]+)"', js))       # JS 里动态拼出来的 / 模板里的
-# ★ 还有 `el.id = "xxx"` 这种写法（`V-63` 的 `#set-live` 就是这么造出来的）
+js_ids = set(re.findall(r'id="([A-Za-z0-9_\-]+)"', js))
 js_ids |= set(re.findall(r'\.id\s*=\s*["\']([A-Za-z0-9_\-]+)["\']', js))
 missing = sorted(used - set(ids) - js_ids)
 chk('$("#id") 都能找到', not missing, ("找不到：%s" % missing) if missing else "%d 个引用" % len(used))
 
-# ---------------- 3.5 技能：每个 SKILL.md 都要有 name + description（`V-278`） ----------------
-# ★ 为什么要这道闸：技能**没有 description 就进不了清单**（模型看不到它），而这是
-#   **静默**的 —— 你会以为"AI 今天不会写包了"。所以这里静态点名。
 _skill_dir = ROOT / "system" / "skills"
 _skills = sorted(_skill_dir.glob("*/SKILL.md")) if _skill_dir.is_dir() else []
 _skill_bad = []
@@ -174,86 +120,57 @@ for _f in _skills:
 chk("技能都有 frontmatter（name 与目录同名 + description）", not _skill_bad,
     ("有问题：%s" % _skill_bad) if _skill_bad else "%d 个技能" % len(_skills))
 
-# ---------------- 4. 图标名都在 system/icon/svg/*.svg 里（`V-267`） ----------------# ★ 以前是去 `vendor/lucide.js` 里数那两张 JS 表（`V-96` 的实心族是第二张）。
-#   `V-267` 把 260 条 path 数据搬进了 `system/icon/svg/<名字>.svg`、`lucide.js` 只剩
-#   二十行 `ico()` ⇒ **那个文件里再没有名字可数**，检查必须跟着改（不改就是空集、
-#   永远绿 —— 假绿比失败更坏）。
 svg_dir = ROOT / "system" / "icon" / "svg"
 have = set(p.stem for p in svg_dir.glob("*.svg"))
 want = set(re.findall(r'\bico\(\s*"([a-z0-9\-]+)"', js))
 bad = sorted(want - have)
 chk("ico() 的图标名都有对应 .svg", not bad,
     ("缺：%s" % bad) if bad else "%d 个名 / 文件里 %d 个" % (len(want), len(have)))
-# ★ 反向也要查一遍：`window.__MOSS_ICONS` 是**宿主注入**的，没人用到的图标留着不碍事，
-#   但**表整体空掉**（路径写错、根算错）会让整个界面变成一片空白图 —— 而上面那条
-#   "名字都有"照样绿。所以这里硬性要求表非空、且能读出 `<g>`/`<path>` 内容。
 _empty_svg = sorted(p.name for p in svg_dir.glob("*.svg")
                     if "<svg" not in p.read_text(encoding="utf-8", errors="replace"))
 chk("图标文件都读得出内容", have and not _empty_svg,
     ("空/坏的：%s" % _empty_svg) if _empty_svg
     else ("目录都不见了：%s" % svg_dir) if not have else "%d 个 .svg" % len(have))
 
-# ---------------- 5. 界面调的 api 方法，main.py 里都有 ----------------
 api_calls = set(re.findall(r'pywebview\.api\.([A-Za-z0-9_]+)\(', js))
 api_defs = set(re.findall(r'^\s{4}def\s+([A-Za-z0-9_]+)\s*\(', main, re.M))
 missing_api = sorted(api_calls - api_defs)
 chk("pywebview.api.* 在 main.py 里有定义", not missing_api,
     ("缺：%s" % missing_api) if missing_api else "%d 个方法" % len(api_calls))
 
-# ---------------- 6. 宿主/后端该有的东西 ----------------
 chk("core/ui.py 带 icon_exts", "icon_exts" in core_ui)
 chk("界面后端读 icon_exts", "icon_exts" in main)
 chk("界面后端有 abs 第三根", 'ABS_KEY = "abs"' in main and "_rel_page" in main)
 
-# ---------------- 7. 关键函数/绑定别丢 ----------------
 for fn in ["setSide", "loadHist", "renderHist", "rerunHist", "rerunHistByKey",
            "rerunLast", "cmdNewPkg", "cmdRemovePkg", "paintHistStats", "histKey",
            "selectHist", "renderDetailHist", "histIconHTML", "histDir", "dirRel",
            "isHist", "selObj", "fmCtxKey", "isHistKey", "histByKey", "fmAtTop"]:
     chk("函数 %s" % fn, ("function %s(" % fn) in js or ("%s =" % fn) in js
         or ("const %s =" % fn) in js or ("let %s =" % fn) in js)
-# ★ `V-83`：页面搬进 Vue 组件之后，"按钮有没有绑上"不再只有 `$("#x").onclick` 一种写法 ——
-#   模板里写 `@click=…` 也算绑上了。所以两种都认（不然组件化一下这检查就假报失败，
-#   而我第一版就是拿它当"跑一次就放心"的护栏）。
 for bid in ["sw-pkg", "sw-hist", "btn-newpkg", "btn-remove", "btn-rerun"]:
     direct = ('$("#%s").onclick' % bid) in js
     in_tpl = re.search(r'<[^>]*\bid="%s"[^>]*@click=' % re.escape(bid), js) is not None
     chk("绑定 #%s" % bid, direct or in_tpl,
         "点法：%s" % ("$().onclick" if direct else ("模板 @click" if in_tpl else "无")))
 
-# ---------------- 8. 只能有一个 #btn-run / #btn-vis 定义（老坑） ----------------
 for one in ["btn-run", "btn-vis"]:
     n = len(re.findall(r'id="%s"' % one, html))
     chk("id=%s 只定义一次" % one, n == 1, "出现 %d 次" % n)
 
-# ---------------- 9. 旧写法不该留 ----------------
 chk("没有 pkgId 残留", "pkgId" not in js)
 chk("没有 .hitem 专用的旧图标 corner-up-left 当历史兜底",
     'ico("corner-up-left", "i")))' not in js)
 chk('历史切换用 history 图标', '"#sw-hist").innerHTML = ico("history"' in js)
-# ★ `V-79` 起历史列表是 Vue 组件：点击绑在模板上（@click=pick(it)）+ 方法里 selectHist(it)，
-#   不再是 `d.onclick = …` 那种写法。断言改成看"有没有 selectHist(it)、有没有直接 rerun"。
 chk("历史行不再直接 rerun（点=选中）",
     "onclick = () => rerunHist(it)" not in js and "selectHist(it)" in js)
 
-# ---------------- 10. 组件里的异常必须报得出来（`V-81` 的血） ----------------
-# 裸 `Vue.createApp(...).mount(...)` 建的 app **不会**报错到界面上（Vue 默认只写控制台，
-# 而这个界面没有控制台；`vue.global.prod.js` 里连 `Vue.config` 都没有）。
-# 所以：除了 `core.js` 里 `mountVue` 自己那一处，别处一律不准出现裸的 `Vue.createApp(`。
 bare = [n for n, s in js_by_file.items() if n != "core.js" and "Vue.createApp(" in s]
 chk("Vue app 一律走 mountVue()（裸 createApp 只允许在 core.js）", not bare,
     ("这些文件里有裸的：%s" % bare) if bare else "OK")
 chk("core.js 里有 mountVue + onVueError", "function mountVue(" in js_by_file.get("core.js", "")
     and "function onVueError(" in js_by_file.get("core.js", ""))
 
-# ---------------- 11. 全局不许重名（`V-249` 的血） ----------------
-# ★ 为什么值得单列：`js/*.js` 是**经典脚本**、共享同一个全局作用域，后加载的文件里
-#   一个同名 `function` 会把前面那个**整个盖掉**，而且**一句错都不报**。
-#   实测（`V-249`）：`drop.js` 里判扩展名的 `extOf(name)` 盖掉了 `core.js` 里返回
-#   `{i,c,l}` 的 `extOf(entry)` —— 于是 `String({...})` 得到 "[object Object]"，
-#   所有文件都"没有扩展名"，代码高亮永远 `plaintext`、图标配色一起丢，界面上却
-#   只是"看着不对"，控制台干干净净。所以：顶层 `function` / `const|let|var` 一律查重。
-#   ★ 认的是**行首无缩进**的声明 —— 组件方法、内部闭包里的同名不算（那些是各自作用域的）。
 _top = {}
 _dup_top = []
 for _name, _src in js_by_file.items():
@@ -267,15 +184,6 @@ for _name, _src in js_by_file.items():
 chk("js/*.js 顶层名字不重名", not _dup_top,
     ("被后加载的盖掉：%s" % _dup_top) if _dup_top else "%d 个顶层名" % len(_top))
 
-# ---------------- 12. 界面上不许有"注释味"（`V-367` / `V-368`） ----------------
-# ★ 你点名的那个毛病：`toast("这次是宿主的纯文本输出 —— 先切回「包输出」那一版给你看（终端还在，
-#   随时切回来）")` —— 那是**写给同事看的**，被做成了界面提示。整句话机器判不了"像不像注释"，
-#   但**两个硬特征一定能钉住**（也正好是实测踩过的）：
-#     ① 用户会看见的字符串里出现 `**`：toast / `title=` / 结论卡都**不走 markdown** ⇒
-#        用户真会看见两个星号（`askConfirm2` 反而会把它变粗体，所以通配符得写 `&#42;`）；
-#     ② 出现账本里的工单号（`V-104 E` 那种）—— 编号不进界面。
-#   只扫**第一个字符串实参**（`notice(title, body)` 的正文故意不扫：那段是给 `askConfirm2`
-#   做粗体用的，`**` 在那里是对的）。
 _visible_bad = []
 for _name, _src in js_by_file.items():
     for _m in re.finditer(r'\b(?:toast|setStatus|notice)\(\s*"((?:[^"\\]|\\.)*)"', _src):

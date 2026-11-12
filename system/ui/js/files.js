@@ -1,65 +1,18 @@
-/* moss 界面 · files.js —— 文件管理（资源管理器 + 编辑器）
-   ============================================================================
-   `V-69`：这一块原来是一大段"拼字符串 + 手工绑事件"的命令式 DOM 代码
-   （899 行，`V-67` 拆模块时原样搬进来的）。现在**画界面那部分**换成了 Vue 3 组件，
-   逻辑（fs API 调用 / 排序 / 脏标记 / 保存 / 改名与对齐那笔事务）照旧留在这儿。
-
-   怎么切的（照 `js/settings.js` 那个样板的规矩，经典脚本 + 全局组件 + 文件末尾房门面）：
-     · `MossFileManager`  父：子选项卡条（`#fm-bar`）+ 页面容器（`#fm-body`）
-     · `MossFileBrowse`   子：目录浏览那一页（导航 / 工具栏 / 表格 / 状态行）
-     · `MossFilePage`     子：打开一个文件 = 一页（编辑器 + 保存 / 放弃 / 关闭）
-   状态只有一份：全局的 `FM`（现在是 `Vue.reactive`），组件读它、逻辑改它。
-   原来靠 `fmRender()` 手工重画，现在状态一变 Vue 自己重画；`fmRender()` 还在
-   （外面那些调用点一行都没动），职责变成"保证挂载 + 兜底强制重画"。
-
-   ★ 三条必须记住的（都是这里踩过的）：
-     1. `FM` **必须在 Vue 之后建**（要用 `Vue.reactive`）—— `index.html` 里
-        `vendor/vue.global.prod.js` 的 `<script>` 排在所有 `js/*.js` **前面**。
-     2. `fmState(key)` 返回的**就是**那个响应式对象（Vue 会缓存代理），逻辑里
-        缓存了再用、照样能触发重画；但别复制一份裸对象出来改了再塞回去 ——
-        那份界面不认（和假后端 `fs_list` 必须回深拷贝是同一个道理）。
-     3. 高亮是"覆盖层"：`hlInto()` 直接写 `<pre><code>` 的 innerHTML，**不归 Vue 管**
-        （`.editor` 的 DOM 结构一个字都不能动）。所以它只在组件 mounted、
-        输入防抖、以及 `$nextTick` 里被调用。
-
-   ★ 类名 / DOM 结构（`.fbtools` / `table.fb` / `.editor` / `.b-save` …）**照旧**，
-     预览场景靠这些选择器断言。
-   三把钥匙（包目录名 / 清单里的 id / 数据目录）那套对账逻辑没动，
-   见下面 `afterManifestSaved`。 */
-
-/* ================================================================ 上下文与状态
-   上下文按"当前对象"分，三种 key：
-     · `<包 id>`   —— 这个包自己的一套
-     · `hist:…`    —— **一条历史**（历史条目同样有文件管理），根是它当初的目录
-     · `__all__`   —— 没选任何东西时的"全部文件"
-   每个上下文记自己的当前目录、历史、选中、剪贴板、排序，以及**打开的文件子选项卡**。
-   切到别的对象 = 换一套上下文，互不干扰；切回来还在原处。 */
 const FM = Vue.reactive({
   ctx: null, st: {},
-  /* ★ 包表（`DATA`）和历史（`HIST`）都是别的模块里的普通 `let`，**不是响应式的**。
-     换包表之后，那些"从包表里算出来"的界面（子选项卡上那个包名、两层切换按钮
-     要跳的目录）不会自己重算 —— 所以在这儿放一个响应式版本号：`refreshPkgs()`
-     换掉 `DATA` 时 +1，组件里 `void FM.rev` 读它一下，依赖就登记上了。
-     （不改这一下：改名之后子选项卡上还写着旧名字，切换按钮还指着已经不存在的目录。） */
+
   rev: 0,
 });
 const HIST_PREFIX = "hist:";
 
 function isHistKey(key){ return String(key || "").startsWith(HIST_PREFIX); }
 function histByKey(key){ return HIST.find(x => histKey(x) === key) || null; }
-/* 现在该用哪一套文件管理上下文（顶部「文件管理」选项卡点进来时用） */
+
 function fmCtxKey(){ return cur ? cur.id : (curH ? histKey(curH) : "__all__"); }
 
 function fmState(key){
   if (!key) key = "__all__";
   if (!FM.st[key]){
-    // ★ 这里有两个"hist"，**必须分开叫**：
-    //     `hist`    = 这个上下文的**前进后退历史**（一个数组，`fmGoto` 要 push）
-    //     `histCtx` = 这个上下文是不是"一条历史"（存那条历史的 key）
-    //   曾经把第二个也起名 `hist`，同一个对象字面量里写了两遍 ⇒ 后面的把数组
-    //   覆盖成 null/字符串 ⇒ `fmGoto` 里 `s.hist.slice` 直接抛异常，
-    //   **整个文件管理都打不开**（实测：上下文永远停在上一次渲染的 `__all__` 上，
-    //   地址栏写着 user_data，右边却显示"历史调用所在的目录"）。
     FM.st[key] = {rel:null, hist:[], hpos:-1, entries:[], sel:new Set(), clip:null,
                   sort:{key:"name", dir:1}, tabs:[], active:"__browse__",
                   pkg: (!isHistKey(key) && key !== "__all__") ? key : null,
@@ -69,7 +22,7 @@ function fmState(key){
   }
   return FM.st[key];
 }
-/* 检索状态，按上下文各一份（`on` 条子开着、`ran` 搜过、`files` 分组结果、`seq` 第几次搜） */
+
 function fmSearchFresh(){
   return {on:false, q:"", cs:false, re:false, word:false,
           busy:false, ran:false, err:"", note:"",
@@ -77,21 +30,17 @@ function fmSearchFresh(){
           truncated:false, cut:[], seq:0};
 }
 function fmSearch(){ return fmState(FM.ctx).search; }
-/* 这个包在两层里的候选目录（`user/pkgs/<目录名>` / `system/pkgs/<目录名>`）。
-   ★ 切换按钮要跳的是**同一个包在另一层的目录**，不是总目录 ——
-     哪一层没有这个目录，那个按钮就不显示。
-   ★ 用**真实的包目录名**拼，不能用 id 拼（`D-27` 方案 C：目录名和 id 允许不一样）——
-     拿 id 拼出来的目录根本不存在，表现就是"按钮永远不显示"。 */
+
 function fmLayerRels(key){
   const p = DATA.packages.find(x => x.id === key);
   const rel = p ? pkgRel(p) : null;
   if (!rel) return {user: "user/pkgs/" + key, system: "system/pkgs/" + key};
-  const tail = rel.replace(/^(user|system)/, "");      // "/pkgs/<真实目录名>"
+  const tail = rel.replace(/^(user|system)/, "");      
   return {user: "user" + tail, system: "system" + tail};
 }
 async function fmProbeLayers(key){
   if (!key || key === "__all__") return {user:true, system:true};
-  if (isHistKey(key)) return {user:false, system:false};   // 历史没有"包的两层"
+  if (isHistKey(key)) return {user:false, system:false};   
   const cand = fmLayerRels(key);
   const r = await pywebview.api.fs_exists([cand.user, cand.system]);
   const has = (r && r.has) || {};
@@ -117,14 +66,6 @@ function fmLabel(key){
 }
 function isDirty(t){ return t && !t.binary && t.text !== t.original; }
 
-/* 包改名 / 对齐目录名之后：文件管理里缓存下来的路径**全都过期了** ——
-   当前所在目录 `s.rel`、前进后退历史 `s.hist`、打开着的文件子选项卡 `t.rel`，
-   记的都是**旧目录**。不处理的话（你实测到的）：改名后回到文件管理，列的还是旧
-   目录那份清单，**双击一个文件去编辑，宿主会说「不是文件」**（`fs_read` 拿着一
-   条已经不存在的路径去查，`is_file()` 为假）。
-   为什么用"换前缀"而不是"把这个上下文整个清掉"：清掉会把用户正开着的文件**凭空
-   关掉**（可能还有没保存的改动）；换前缀则让那些文件跟着一起搬到新目录。
-   换完给上下文打一个 `stale`，下次切过去时真的重新列一遍目录。 */
 function fmReRoot(oldRel, newRel){
   if (!oldRel || !newRel || oldRel === newRel) return false;
   let any = false;
@@ -153,40 +94,32 @@ function fmActiveTab(){
 async function fmSelect(key, keepTab){
   FM.ctx = key;
   const s = fmState(key);
-  s.layers = await fmProbeLayers(key);          // 哪一层有"这个包的目录"
-  // ★ 这个函数是**异步**的，而 `fmGoto` 认的是全局的 `FM.ctx`。连着点两个包时，
-  //   前一个还卡在 `await` 上、后一个已经把 `FM.ctx` 换掉了 —— 前一个接着调
-  //   `fmGoto`，就会把**它那个包的目录**写进**后一个包**的上下文里（实测：
-  //   点 md5 再点别的包，那个包的"文件管理"历史里第一条是 `system/pkgs/md5`，
-  //   接着打开的文件也全指向错的目录）。所以每次 `await` 回来先对一下暗号：
-  //   用户已经换人了，这次结果就作废。
+  s.layers = await fmProbeLayers(key);          
+
   if (FM.ctx !== key) return;
   if (!s.rel){
     const def = fmDefaultRel(key);
-    const ok = await fmGoto(def, true, true);   // quiet: 不切顶层选项卡
+    const ok = await fmGoto(def, true, true);   
     if (FM.ctx !== key) return;
-    // ★ 历史那条记的目录可能早就删了/挪了 —— 退到**目标文件自己所在的目录**
-    //   （和宿主 `path_start` 里那条退路同一个道理）。
+
     if (!ok && isHistKey(key)){
       const it = histByKey(key);
       const alt = it && it.target ? dirRel(it.target.replace(/[\\/][^\\/]*$/, "")) : null;
       if (alt && alt !== def) await fmGoto(alt, true, true);
     }
   } else if (s.stale){
-    // 路径前缀被 `fmReRoot` 换过（包改名 / 对齐目录名）—— 得真的**重新列一遍**，
-    // 否则界面上摆的还是旧目录那份清单，双击进去宿主会说「不是文件」。
     s.stale = false;
     await fmGoto(s.rel, false, true);
   } else fmRender();
   if (!keepTab) setTab("file");
 }
-/* 返回 true/false（调用方多半不看，但"历史目录没了要退一条"那里要靠它判断） */
+
 async function fmGoto(rel, push, quiet){
   const s = fmState(FM.ctx);
   const r = await pywebview.api.fs_list(rel);
   if (!r.ok){ toast("✗ " + r.msg, true); return false; }
   s.rel = r.rel || rel;
-  s.path = r.path || "";            // 真正的绝对路径（状态条上给用户看的，比 rel 好读）
+  s.path = r.path || "";            
   s.entries = r.entries || [];
   s.sel.clear();
   if (push !== false){
@@ -202,40 +135,25 @@ async function fmGoto(rel, push, quiet){
 function fmHome(){
   const def = fmDefaultRel(FM.ctx);
   const s = fmState(FM.ctx);
-  // 已经在默认目录就说一声 —— 不然点下去"什么都没发生"，看着像按钮坏了
+
   if (s.rel === def){ toast("已经在默认目录了：" + (s.path || def)); return; }
   fmGoto(def);
 }
-/* `quiet`：别抢顶层选项卡（谁在刷新就用谁的位置），而且**别把正开着的那一页关掉** ——
-   AI 干完活自动刷的时候要它（`V-249`：`fmGoto` 会把 `s.active` 打回 `__browse__`，
-   于是"刷一下"顺手就把你看的那个文件页收起来了）。 */
+
 function fmRefresh(quiet){
   const s = fmState(FM.ctx);
   if (!s.rel) return;
-  // 手动刷新时顺便重问一遍"另一层有没有这个包的目录"（比如刚复制过去）
+
   fmProbeLayers(FM.ctx).then(layers => { s.layers = layers; });
   const was = s.active;
   fmGoto(s.rel, false, !!quiet).then(ok => {
-    // 那一页还在（没被删掉）就把它放回来 —— 内容由 `fmReloadPages()` 负责刷新
     if (ok && quiet && was !== "__browse__" && s.tabs.some(t => t.rel === was)){
       s.active = was;
       fmRender();
     }
   });
 }
-/* 盘上的文件被**别人**改了 —— AI 工作台干完活、恢复快照、或者你在外面拿别的编辑器改的。
-   ============================================================================
-   ★ 为什么非要有这个（`V-249`，你报的"AI 改完文件后「文件管理」页不自动刷新"）：
-     文件管理是"列一遍、把清单和文件内容记在 `FM.st` 里"的 —— 盘上变了它不知道。
-     你切过去看到的还是**改之前**那份清单、**改之前**的内容，得自己按一下 ⟳；
-     更糟的是接着一存，就把新内容又盖回旧的。
-   做三件事：① 每个包的目录缓存一律作废（AI 到底动了哪个包不一定知道）；
-            ② 动到 `pkg.json` ⇒ 左边那份包表也重问一遍（名字/版本会变）；
-            ③ 开着的那几页：**没改过**的重新读盘上的内容；改过的只提醒、不硬盖。
-   `rels`：这一次盘上变了哪些文件 —— 收**绝对路径**（AI 给的是绝对路径），
-   也收页面 rel（恢复快照那边给的是 `user/...`）；两边都先过一遍 `dirRel` 归一。
-   ★★ 刷新**不许把顶层选项卡抢走**（`fmRefresh(true)`）：AI 那一页正跑着，
-      你盯着步骤流，它干完活把你甩到「文件管理」上是不能接受的。 */
+
 function diskChanged(rels){
   const list = (rels || []).map(r => dirRel(r) || String(r || ""));
   try{
@@ -245,13 +163,12 @@ function diskChanged(rels){
       refreshPkgs((cur && cur.id) || undefined, true);
     fmReloadPages(list);
     fmRefresh(true);
-    // ★ `V-250`：快照那一列也重列/重算一遍（盘上变了 ⇒ "这次快照对比当前"整个变了）
+
     if (typeof bkRefresh === "function") bkRefresh();
   }catch(e){}
   return list;
 }
-/* 开着的那几页里，凡是**盘上被改过**的：没改过的重读一遍，改过的只提醒（不硬盖）。
-   返回"被提醒"的那些 rel（有未保存改动的那些）—— 探针要看这个数。 */
+
 function fmReloadPages(rels){
   const dirty = [];
   const want = (rels || []).filter(Boolean);
@@ -259,34 +176,30 @@ function fmReloadPages(rels){
   Object.keys(FM.st).forEach(k => {
     ((FM.st[k] || {}).tabs || []).forEach(t => {
       if (want.indexOf(t.rel) < 0) return;
-      if (isDirty(t)){ dirty.push(t.rel); return; }   // 手里有没保存的改动 ⇒ 不硬盖
+      if (isDirty(t)){ dirty.push(t.rel); return; }   
       pywebview.api.fs_read(t.rel).then(r => {
         if (!r || !r.ok) return;
         t.text = r.text || ""; t.original = r.text || "";
         t.binary = !!(r.binary || r.too_big);
         t.note = r.binary ? "binary" : (r.too_big ? r.msg : "");
-        // 编码/BOM 照读进来的原样带上（不然存回去就把 GBK 写成 UTF-8 了）
+
         t.encoding = r.encoding || "utf-8"; t.bom = r.bom || "";
         fmRender();
       }).catch(() => {});
     });
   });
   if (dirty.length)
-    // `V-367`："盘上"是我们这边的说法，破折号后面才是重点 ⇒ 说明白话
+
     toast("这些文件在别处被改过了，你手上这份还没保存 —— 先看一眼再存：" +
           dirty.join("、"), true);
   return dirty;
 }
-/* 能不能再往上：两个根走到顶就没了；`abs/` 那边走到**盘根**（`abs/D:/`）就到顶 ——
-   再往上会得到 `abs` 那个光秃秃的前缀，宿主会拒（它不是绝对路径）。
-   ★ 注意：工具栏那颗 ⬆ 的 disabled 用的是**另一条**判据（`segs.length <= 1`），
-     见 `MossFileBrowse` 的 `atTop` —— 那是原来 `bindBrowse` 里后写的一行覆盖了
-     这一条的结果，`V-69` 只搬结构、不顺手改行为，所以照旧。 */
+
 function fmAtTop(rel){
   const r = String(rel || "");
-  if (!r.includes("/")) return true;                    // user / system
+  if (!r.includes("/")) return true;                    
   if (r === "abs") return true;
-  if (/^abs\/[A-Za-z]:\/?$/.test(r)) return true;       // 盘根
+  if (/^abs\/[A-Za-z]:\/?$/.test(r)) return true;       
   return false;
 }
 function fmUp(){
@@ -297,7 +210,6 @@ function fmUp(){
 function fmBack(){ const s = fmState(FM.ctx); if (s.hpos > 0){ s.hpos--; fmGoto(s.hist[s.hpos], false); } }
 function fmFwd(){ const s = fmState(FM.ctx); if (s.hpos < s.hist.length - 1){ s.hpos++; fmGoto(s.hist[s.hpos], false); } }
 
-/* ---- 打开 / 关闭文件子选项卡 ---- */
 async function fmOpenPage(rel){
   const s = fmState(FM.ctx);
   let t = s.tabs.find(x => x.rel === rel);
@@ -312,11 +224,10 @@ async function fmOpenPage(rel){
          text: r.text || "", original: r.text || "",
          binary: !!(r.binary || r.too_big),
          note: r.binary ? "binary" : (r.too_big ? r.msg : ""),
-         // ★ 记下"读进来时是什么编码 / 有没有 BOM"，保存时原样带回去 ——
-         //   不然打开一个 GBK / UTF-16 的 txt 改一个字，整个文件就被转成 UTF-8 了。
+
          encoding: r.encoding || "utf-8", bom: r.bom || "",
          encodingNote: r.encoding_note || "",
-         // ★ HTML / Markdown 默认就是**浏览模式**；点工具栏那颗眼睛 / 代码按钮来回切。
+
          previewKind: kind, preview: !!kind && !r.binary && !r.too_big, previewBase: "",
          factory: rel.split("/")[0] === "system"};
     s.tabs.push(t);
@@ -324,13 +235,10 @@ async function fmOpenPage(rel){
   s.active = rel;
   setTab("file");
   fmRender();
-  // ★ 打开就把光标放进编辑器，直接能打字。原来是在 `pageOf(rel)` 那个 DOM 上
-  //   同步 focus；现在界面由 Vue 画，得等这一帧渲染完（`$nextTick` 之后 textarea 才在）。
-  //   注意：**每次** fmOpenPage 都 focus（原来也是 —— 那个 focus 在 `if (!t)` 外面，
-  //   再双击一个已经开着的文件也会把光标放回去）。
+
   fmFocusActiveSoon();
 }
-/* 打开文件并跳到某一行（检索结果用）；行号交给该页的 `t.jump` 处理 */
+
 let _fmJumpSeq = 0;
 async function fmOpenPageAt(rel, line){
   const s = fmState(FM.ctx);
@@ -355,29 +263,24 @@ function fmClosePage(rel){
 function fmSave(t){
   if (!t || t.binary) return;
   pywebview.api.fs_write(t.rel, t.text, t.encoding || "utf-8", t.bom || "").then(r => {
-    // ★ `V-367`：**存的是包清单**（pkg.json）时由"对账"那一支说一句收尾 ——
-    //   以前这里先说「已保存」、紧接着 `afterManifestSaved` 又报「这个包没收下：…」，
-    //   一个动作两条互相打脸的话。现在：成功 / 被拒 / 要不要统一目录名，都只由那边说。
     if (!r.ok){ toast("✗ " + r.msg, true); return; }
-    // `t.original` 一改，两处黄点（子选项卡上那颗 / 编辑器标题栏那颗）和保存按钮的
-    // 灰不灰，Vue 自己就跟着重算了 —— 原来这里要手工 `fmPaintBar()` / `fmPaintDirty()`。
+
     t.original = t.text; fmPaintBar();
-    // 存的是**包清单** ⇒ 界面手里那份包数据已经过期了，重新解析一遍
+
     if (isPkgManifest(t.rel)) refreshPkgs(null, true).then(() => afterManifestSaved(t.rel, t.text, r));
     else toast("已保存 " + t.rel + (r.factory ? "（出厂件）" : ""));
   });
 }
 
-/* 按内容搜当前目录（含子目录）。搜索在宿主那边跑，这里只负责状态和结果分组。 */
 function fmSearchOpen(on){
   const st = fmSearch();
   const to = (on === undefined) ? !st.on : !!on;
   st.on = to;
   if (!to) st.busy = false;
   fmRender();
-  if (to) fmFocusSearchSoon();          // 打开就把光标放进搜索框，直接能打字
+  if (to) fmFocusSearchSoon();          
 }
-/* 界面由 Vue 画，得等这一帧 */
+
 function fmFocusSearchSoon(){
   const go = () => {
     const el = document.querySelector("#fm-body .fbsearch input");
@@ -387,7 +290,7 @@ function fmFocusSearchSoon(){
   if (a) a.$nextTick(go); else go();
 }
 function fmSearchClose(){ fmSearchOpen(false); }
-/* 改选项后，如果已经搜过就重搜一次 */
+
 function fmSearchOpt(key){
   const st = fmSearch();
   st[key] = !st[key];
@@ -402,7 +305,7 @@ async function fmSearchRun(){
   const q = String(st.q || "");
   if (!q.trim()){ toast("先输入要搜的内容"); return; }
   const seq = ++st.seq;
-  const roots = [(s.rel || "user")];       // 只搜当前路径
+  const roots = [(s.rel || "user")];       
   st.busy = true; st.err = ""; st.note = ""; st.ran = true;
   st.files = []; st.open = {};
   st.nFiles = 0; st.nHits = 0; st.scanned = 0; st.skipped = 0; st.ms = 0;
@@ -415,7 +318,7 @@ async function fmSearchRun(){
   }catch(e){
     r = {ok: false, msg: "搜索失败：" + ((e && e.message) || e)};
   }
-  if (seq !== st.seq) return;             // 又搜了一次，这份结果作废
+  if (seq !== st.seq) return;             
   st.busy = false;
   if (!r || !r.ok){
     st.err = (r && r.msg) || "搜索失败";
@@ -431,22 +334,14 @@ async function fmSearchRun(){
   st.truncated = !!r.truncated;
   st.cut = r.cut || [];
   st.note = r.note || "";
-  // 第一个文件默认展开：词很特别的时候一眼就能看到是哪一行
+
   st.open = {};
   if (st.files.length) st.open[st.files[0].rel] = true;
   fmRender();
 }
-/* 点一条命中 = 打开那个文件 + 跳到那一行 */
+
 function fmSearchJump(rel, line){ fmOpenPageAt(rel, line); }
 
-/* ---------------------------------------------------------------- 包数据刷新
-   `pkg.json` 是宿主唯一的清单来源；它一变，界面手里那份（名字 / 说明 / 参数表 /
-   图标 / 入口）就全是旧的。界面的 `DATA` 是**问宿主要来的**（不自己解析包格式，
-   见 `U-16`），所以这里就是"再问一遍 + 重画受影响的地方"。
-   ★ 刻意**不调用 `init()`**：那会把文件管理切回"全部文件"、丢掉当前目录和打开的
-     文件 —— 用户正开着 pkg.json 在编辑，保存一下就被弹走是不能接受的。
-     这里只刷新包列表、状态与详情；文件管理的目录 / 子选项卡（含编辑器里的内容）
-     原样不动，只把子选项卡的**名字**重画一下。 */
 function isPkgManifest(rel){
   return /(^|\/)pkg\.json$/i.test(String(rel || ""));
 }
@@ -455,32 +350,24 @@ async function refreshPkgs(preferId, quiet){
   try{ fresh = await pywebview.api.state(); }catch(e){ return; }
   if (!fresh || !fresh.packages) return;
   DATA = fresh;
-  FM.rev++;                      // ★ 包表换了一份：让那些"从包表算出来"的界面重算（见 FM.rev）
+  FM.rev++;                      
   renderList(); paintStates();
-  // `DATA` 换了新对象，`cur` 得指向新的那一份，否则详情里读到的还是旧字段。
-  // `preferId` 是"刚改完名"给的提示：旧 id 当然找不到了，但那不是"包没了"，
-  // 别拿它去吓人（改名那条路会把 `cur` 直接指到新 id 上）。
+
   if (cur){
     const id = cur.id;
     cur = DATA.packages.find(p => p.id === (preferId || id)) ||
           DATA.packages.find(p => p.id === id) || null;
     if (cur) renderDetail();
-    else {                       // 清单被删/改到认不出来了：这个包已经不在了
+    else {                       
       cur = null; renderDetail();
-      // `quiet`：存清单那条路自己会说得更准（是 JSON 坏了还是 id 不合法），
-      // 别在这儿再抢一句含糊的（`V-33`）。
+
       if (!quiet) toast("这个包已经不在列表里了（说明文件被删掉或改坏了）", true);
     }
   }
-  fmPaintBar();                  // 子选项卡上那个包名可能变了
-  // ★ `V-387`：包表换了 ⇒ 顶上那颗「界面」也得按**新的一份**重画。以前这里只重画
-  //   列表 / 详情，于是"AI 给包加了内嵌界面（`pkg.json` 的 `ui.embed`）"之后，
-  //   那个选项卡**不出现**，非要把包切走再切回来（`select()` 里才重画）才看得见
-  //   —— 用户报的就是这个。
+  fmPaintBar();                  
+
   if (typeof paintEmbedTab === "function") paintEmbedTab();
-  // 撤回快照这件事**不能静默**（`V-31` ✅）：宿主那边有话说（多半是某个包的
-  // `pkg.json` 写坏了 / id 不合法），把它原话弹出来 —— 否则你看到的现象只是
-  // "我新建的包怎么不出现"，真正的原因谁也看不见。
+
   const sr = fresh.stale_reason;
   if (sr && sr !== lastStaleReason){
     lastStaleReason = sr;
@@ -490,38 +377,19 @@ async function refreshPkgs(preferId, quiet){
   }
 }
 
-/* ---------------------------------------------------------------- 存完清单对一遍账
-   （`V-33` ✅，你定的）你说的是：「我修改了 pkg.json 以后 我点保存按钮 你应该重新解析
-   并且发现不配套的情况 然后这个时候 你应该询问用户 这种情况应该怎么处理 就类似于现在
-   的更名功能 如果更改了文件夹名字 进行了统一 那么 文件管理这里 你也需要把路径从原来
-   的变更新的」。
-
-   所以这里就是"重新解析"之后的**对账**。一个包有**三把钥匙**（`D-27`）：
-       包目录名 ／ 清单里的 id ／ 数据目录 state/<id>
-   手工改清单最容易把它们改散，散了的后果又特别难查（数据"凭空没了"、
-   文件管理指着不存在的路径）。对账分三种结果：
-     · 宿主压根没收下它（JSON 坏 / id 非法 / id 被占）→ 说清楚为什么，别让它
-       "从列表里消失得不明不白"；
-     · 收下了，但目录名和 id 不一样 → **问一句**，你说统一就走更名那笔事务
-       （目录名一起改；旧数据目录还在的话一起搬），然后把文件管理里的路径
-       从旧的换成新的；
-     · 都对得上 → 什么都不做。 */
 async function afterManifestSaved(fileRel, text, saved){
-  // ★ `V-367`：`saved` = `fs_write` 的返回。存清单这条路**只在这儿报一次**
-  //   （见 `fmSave` 的注释）：收下了且三把钥匙对得上 ⇒ 说"已保存"。
   const okMsg = () => toast("已保存 " + fileRel + ((saved && saved.factory) ? "（出厂件）" : ""));
-  if (DATA.stale_reason) return;                 // 包表本身没读回来，别乱下结论（上面弹过了）
-  const dirRel = String(fileRel).replace(/\/[^/]+$/, "");   // `…/pkg.json` → 它所在的包目录
+  if (DATA.stale_reason) return;                 
+  const dirRel = String(fileRel).replace(/\/[^/]+$/, "");   
   const base = dirRel.split("/").pop() || "";
-  const layer = dirRel.split("/")[0];            // user / system —— 目录得改回**同一层**里
+  const layer = dirRel.split("/")[0];            
   const p = DATA.packages.find(x => pkgRel(x) === dirRel);
   let why = "", newId = "";
   if (!p){
     try{ newId = String((JSON.parse(text) || {}).id || "").trim().toLowerCase(); }
     catch(e){ why = "这不是合法的 JSON（" + e.message + "）"; }
     if (!why && !ID_RE.test(newId))
-      // `V-367`：别把正则源码 `^[a-z][a-z0-9_-]{0,31}$` 摆给用户看（"不合法"三个字留着 ——
-      //   预览场景 `pkg-edit-bad-id` 钉的就是它）
+
       why = "id '" + newId + "' 不合法：只能用小写字母、数字、- 和 _，最长 32 个字，"
             + "而且要用字母开头";
     if (!why && DATA.packages.some(x => x.id === newId))
@@ -530,7 +398,7 @@ async function afterManifestSaved(fileRel, text, saved){
     toast("✗ 这个包没被接受：" + why, true);
     return;
   }
-  if (p.id === base){ okMsg(); return; }         // 三把钥匙对得上，收工
+  if (p.id === base){ okMsg(); return; }         
   const oldData = "user/state/" + base, newData = "user/state/" + p.id;
   let moveData = false;
   try{
@@ -547,9 +415,6 @@ async function afterManifestSaved(fileRel, text, saved){
     () => unifyPkgDir(p, dirRel, moveData, layer));
 }
 
-/* 统一：目录名 → id。走宿主那笔改名事务（新旧 id 都写成它现在的 id ⇒ 只改目录名），
-   旧数据目录另搬一下（宿主不预建数据目录，`state/` 又在 user_data 里，用文件接口搬即可），
-   最后**把文件管理里那些缓存路径从旧的换成新的**（不然双击编辑会说「不是文件」，`V-30`）。 */
 async function unifyPkgDir(p, dirRel, moveData, layer){
   consoleKey = "__host__";
   const cmd = "moss --rename " + p.id + " " + p.id;
@@ -562,7 +427,7 @@ async function unifyPkgDir(p, dirRel, moveData, layer){
     setTab("console");
     return;
   }
-  // ★ `V-367`：搬运结果和"统一完成"**并成一条**（以前两颗胶囊，后一颗把前一颗盖掉）
+
   let note = "";
   if (moveData){
     const base = String(dirRel).split("/").pop();
@@ -573,13 +438,11 @@ async function unifyPkgDir(p, dirRel, moveData, layer){
   toast("已统一：包目录名 → " + p.id + note, note.indexOf("没搬成") >= 0);
   const newRel = (layer || "user") + "/pkgs/" + p.id;
   await refreshPkgs(p.id);
-  fmReRoot(dirRel, newRel);                       // ★ 文件管理里的路径跟着搬
+  fmReRoot(dirRel, newRel);                       
   if (DATA.packages.some(x => x.id === p.id)) select(p.id);
   else renderDetail();
 }
 
-/* ================================================================ 排序 + 高亮（逻辑）
-   这两件事留在组件外面：排序是纯函数（谁要用谁调），高亮是"覆盖层"（见文件头第 3 条）。 */
 function fmSorted(s){
   const {key, dir} = s.sort;
   return s.entries.slice().sort((a, b) => {
@@ -592,33 +455,13 @@ function fmSorted(s){
     return x < y ? -1 * dir : (x > y ? 1 * dir : 0);
   });
 }
-/* ---------------------------------------------------------------- 代码高亮层
-   ★ `V-272`（照你说的：别拿防抖糊住"整篇重算"）：**只高亮看得见的那一屏**。
-     原做法是"每次输入 → 整篇 `hljs.highlight()` → 整块 `innerHTML`"。无头 Edge 实测
-     （同一份 `highlight.min.js`、同一个调用方式）：
-       · 整篇：`list.js` 832 行 **25.0 ms**、`ai.js` 1132 行 **26.3 ms**、`cli.py` 1616 行 **12.8 ms**
-         （再加上写 DOM 那几毫秒；194 KB 的文件是 124 ms + 42 ms）
-     打字时每敲一下都付这份钱 ⇒ 上一版拿 120ms 防抖把它压成"停下来才画一次"（权宜）。
-     现在只算一屏 + 上下各留 `HL_PAD` 行 ⇒ 实测 **2~5 ms**（同样三个文件：5.8 / 4.9 / 2.1 ms）
-     —— **防抖删掉**，改成按帧合并（`requestAnimationFrame`），打字时零延迟。
-   ★ 三条不许破的规矩：
-     ① 高亮层里的**文字必须和输入层一模一样**（差一个字就整篇错位 = 光标偏移）。所以窗口
-        之外的行用 `Text` 节点**原样**放（不转义、不丢字），只有窗口那一段是 HTML；
-     ② 跨行的 span（块注释 / 模板字符串）按行切开时要把标签**接着开**（`splitHlLines`），
-        否则那些行的颜色会"漏出去"；
-     ③ 窗口上下留 `HL_PAD` 行上下文：滚动时不至于马上露出没上色的行；而且万一窗口正好切在
-        块注释中间，重新开始 token 化的那几行也落在**离视口 20 行**的地方 —— 你看不见。
-   ★ 每次画完把这次的开销写进 `window.__hl`（探针的把手，跟 `ai.js` 的 `__followN` 一个路子）。 */
-//: 视口上下各多算几行。**20 是量出来的**：`HL_PAD=60`（画 160 行）要 5~6 ms，`20`（画 80 行）
-//: 只要 2~4 ms；而 20 行已经够那两件保险（滚动不露白、窗口起点不在视口里）。
-const HL_PAD = 20;
-const HL_MAX = 300000;          // 超过这么多字符就不上色（原来那道闸，照旧）
 
-/* 把 highlight.js 出来的一整段 HTML 按行切开，**跨行的 span 在下一行接着开**。
-   用法只在 `paintHl` 里；单独拎出来是为了能被探针直接钉住。 */
+const HL_PAD = 20;
+const HL_MAX = 300000;          
+
 function splitHlLines(html){
   const out = [];
-  const stack = [];                       // 还没闭合的 `<span …>`
+  const stack = [];                       
   let cur = "";
   const re = /<span\b[^>]*>|<\/span>|\n|[^<\n]+|</g;
   let m;
@@ -626,14 +469,11 @@ function splitHlLines(html){
     const tk = m[0];
     if (tk === "\n"){
       out.push(cur + "</span>".repeat(stack.length));
-      cur = stack.join("");               // 下一行开头把还开着的标签补回来
+      cur = stack.join("");               
     } else if (tk === "</span>"){
       stack.pop();
       cur += tk;
     } else if (tk.charAt(0) === "<" && tk.charAt(1) === "s"){
-      // ★ 这一行**必须**先判 `<`：`V-272` 第一版只写了 `tk.charAt(1) === "s"`，
-      //   于是正文 `(s).` 被当成"开头标签"压进了栈，下一行开头又"接着开"一次
-      //   ⇒ 屏幕上凭空多出 `(s).`（是那个"文字必须一模一样"的断言当场抓住的）。
       stack.push(tk);
       cur += tk;
     } else {
@@ -644,7 +484,6 @@ function splitHlLines(html){
   return out;
 }
 
-/* 画高亮层。`win = {first, last}` 是**看得见的行号区间**（0 基）；传 null = 整篇（兜底）。 */
 function paintHl(t, code, win){
   const text = t.text || "";
   const can = text.length <= HL_MAX && window.hljs && t.lang && hljs.getLanguage(t.lang);
@@ -664,10 +503,10 @@ function paintHl(t, code, win){
                                       {language: t.lang, ignoreIllegals: true}).value).join("\n");
   }catch(e){ mid = ""; }
   const ms = performance.now() - t0;
-  // 三段：前段纯文本 / 中间高亮 / 后段纯文本（末尾那个换行贴在最后一段上）
+
   const before = a > 0 ? lines.slice(0, a).join("\n") + "\n" : "";
   const after = (b < n - 1 ? "\n" + lines.slice(b + 1).join("\n") : "") + "\n";
-  if (!code.__parts){                       // 只在第一次建这三个节点，之后只换内容
+  if (!code.__parts){                       
     code.textContent = "";
     const pm = document.createElement("span");
     pm.className = "hlwin";
@@ -675,7 +514,7 @@ function paintHl(t, code, win){
     code.__parts = true;
   }
   const p1 = code.childNodes[0], pm = code.childNodes[1], p2 = code.childNodes[2];
-  if (p1.nodeValue !== before) p1.nodeValue = before;       // 纯文本，不用转义、不丢字
+  if (p1.nodeValue !== before) p1.nodeValue = before;       
   if (pm.__html !== mid){ pm.innerHTML = mid; pm.__html = mid; }
   if (p2.nodeValue !== after) p2.nodeValue = after;
   window.__hl = {mode: "window", ms: ms, chars: text.length, lines: n,
@@ -683,15 +522,8 @@ function paintHl(t, code, win){
   return window.__hl;
 }
 
-/* 老名字（外面/老注释里还叫 `hlInto`）：整篇画一遍 —— 只在量不到视口时兜底 */
 function hlInto(t, code){ return paintHl(t, code, null); }
 
-/* ---------------------------------------------------------------- HTML / Markdown 浏览模式
-   ★ 用户要的不是"把 md / html 当代码看"，而是能在**浏览（渲染）**和**代码**之间来回切。
-   · Markdown：前端自己渲染（转义优先，不执行原文里的 HTML / JS）；
-   · HTML：放进 sandbox iframe，保留它自己的 CSS / JS；
-   · 相对路径靠宿主的 `fs_preview_url` 给一个本地 HTTP base，WebView2 才能加载。
-   文件本身仍是打开的那个 tab，保存按钮、编码、BOM 全按原逻辑走 —— 预览只是多一个视图。 */
 function previewKindOf(name){
   const ext = String(name || "").split(".").pop().toLowerCase();
   if (ext === "md" || ext === "markdown") return "md";
@@ -704,7 +536,6 @@ function mdSafeUrl(u){
   return /^(javascript|vbscript|data:text\/html)/i.test(s) ? "#" : s;
 }
 
-/* 行内 Markdown。输入先整体转义，再只生成我们认识的标签 ⇒ 原文里的 HTML 不执行。 */
 function mdInline(text){
   let s = esc(String(text || ""));
   const codes = [];
@@ -725,7 +556,6 @@ function mdInline(text){
   return s;
 }
 
-/* 轻量 Markdown 块解析：标题 / 段落 / 列表 / 引用 / 代码块 / 分割线 / 表格。够看文档，不追求规范全实现。 */
 function renderMarkdown(src){
   const lines = String(src || "").replace(/\r\n?/g, "\n").split("\n");
   const out = [];
@@ -765,7 +595,7 @@ function renderMarkdown(src){
       if (list !== "ol"){ closeList(); out.push("<ol>"); list = "ol"; }
       out.push("<li>" + mdInline(line.replace(/^\s*\d+\.\s+/, "")) + "</li>"); i++; continue;
     }
-    // 表格：本行有 |，下一行是 |---|:---:| 这种。
+
     if (line.indexOf("|") >= 0 && i + 1 < lines.length &&
         /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(lines[i + 1]) && lines[i + 1].indexOf("-") >= 0){
       closeList();
@@ -833,17 +663,6 @@ function previewDocument(t, base){
   return tag + raw;
 }
 
-/* ================================================================ 界面（Vue 3 组件）
-   三个组件，一个状态：父组件管子选项卡条和页面容器，两个子组件各画一页。
-   `active` 而不是 `on` 当 prop 名 —— `on` 在 Vue 里是事件前缀那一族，别去蹭。
-
-   ★ 模板里那些 `v-html='ico("save", "i")'` 为什么用单引号包属性：里面的 JS 用双引号，
-     正好让 `tools/界面检查`（静态检查脚本）那条"ico() 的图标名都在 lucide 表里"
-     继续能扫到（它按 `ico("名字"` 匹配）。
-   ★ 图标用 `v-html` 直接写在按钮上（和原来 `b.innerHTML = ico(...)` 生成的 DOM 一模一样）；
-     子选项卡条那颗图标外面多包了一层 `<span>`（一个按钮里既有图标又有文字，
-     `v-html` 只能在元素上），`.fmtab` / `svg.i` 那两条 CSS 不受影响。 */
-
 const MossFilePage = {
   name: "moss-file-page",
   props: {
@@ -855,7 +674,7 @@ const MossFilePage = {
   <div class="outbar">
     <span :style="'color:' + meta.c + ';display:flex'" v-html='ico(meta.i, "i")'></span>
     <span class="mono">{{ t.rel }}</span>
-    <!-- 猜到的编码写出来：不然遇到乱码不知道是"文件本来就这样"还是"猜错了" -->
+    
     <span v-if="t.encodingNote" class="encnote">{{ t.encodingNote }}</span>
     <span class="dirtydot" :hidden="!dirty" title="有未保存的改动"></span>
     <span style="flex:1"></span>
@@ -888,25 +707,17 @@ const MossFilePage = {
   </div>
 </div>`,
   data(){
-    return {_raf: 0};              // `V-272`：按帧合并（不再用 120ms 定时器）
+    return {_raf: 0};              
   },
   watch: {
-    /* ★ `V-249`：`t.text` 不一定是**在这儿**改的 —— AI 干完活、恢复快照、
-       或者外面动了盘上的文件之后，`fmReloadPages()` 会把内容重新读进来。
-       以前只有 `onInput` 会重画高亮层，于是"字换了、颜色还是旧的"（或者干脆全白）。
-       所以改成盯住 `t.text`：不管谁改的，都会重画。 */
     "t.text"(){ this.scheduleHl(); },
-    /* ★ `V-272`：这一页从"藏着"变成"显示"时补画一次 —— 藏着的时候量不到视口高度
-       （`clientHeight = 0`），窗口会算成"从第一行开始的一小段"。
-       ★ `V-376`：补画那一下顺带 `syncScroll()`（见 `paintHl`）—— 藏着的时候三层都不能写
-       scrollTop（会被夹成 0），所以"切回来"这一刻必须重新对一次。 */
+
     active(v){ if (v){ this.scheduleHl(); if (this.previewOn) this.ensurePreview(); } },
     "t.preview"(v){ if (v) this.ensurePreview(); },
-    /* 检索结果点进来时跳到那一行（等 textarea 有内容再跳） */
+
     "t.jump"(v){ if (v) this.$nextTick(() => this.jumpTo(v.line)); },
   },
   computed: {
-    // 后缀 → 图标 / 颜色 / 语言（`core.js` 的 `EXT` / `NO_EXT`，只有一份）
     meta(){ return extOf({name: this.t.name, ext: (this.t.name.split(".").pop() || "").toLowerCase()}); },
     dirty(){ return isDirty(this.t); },
     canPreview(){ return !!this.t.previewKind && !this.t.binary; },
@@ -921,29 +732,16 @@ const MossFilePage = {
     },
   },
   mounted(){
-    // ★ `V-376`：打开一个文件时**先把光标放回开头**，再画高亮 —— 不然光标会"漂"。
-    //   两层是叠在一起的两个视图：`:value="t.text"` 是按属性写进 textarea 的，而 HTML
-    //   规定"**没聚焦**时设 value ⇒ 选区折叠到文本**末尾**"；紧接着 `fmOpenPage` 的
-    //   `fmFocusActiveSoon()` 一 `focus()`，浏览器为了"让光标可见"又把 textarea
-    //   **滚到最底**，可高亮层那个 `pre` 还停在顶上（第一次画高亮还会把 `code` 清空一次、
-    //   顺手把 `pre.scrollTop` 夹回 0）⇒ **你看到的字**和**光标逻辑上所在的位置**差着好几屏：
-    //   点一下光标不上不下（两种情况的行线刚好错开半行），一按删除删掉的是别处的内容。
-    //   实测（`bench/big.js`，2774 行）：打开后 `ta.scrollTop=55370 / pre.scrollTop=0`；
-    //   随便滚一下 `onScroll` 又把它对齐了 —— 所以这个 bug 只在"刚打开"那一会儿看得见。
     this.homeScroll();
     this.scheduleHl();
     if (this.previewOn) this.ensurePreview();
-    // 双击一个**已经开着**的文件也会走到这儿吗？不会 —— 那种情况组件早就挂着了，
-    // 光标由 `fmFocusActiveSoon()` 负责（和原来的行为一致）。
+
   },
   beforeUnmount(){
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = 0;
   },
   methods: {
-    /* ---- 编辑器：输入 / 滚动 / 快捷键 ---- */
-    /* 现在看得见哪几行（0 基，含端点）—— 行高从计算样式拿（`.editor > pre` 是
-       `font:13px/1.55` ⇒ 20.15px；拿不到就退回 20）。 */
     hlWindow(){
       const ta = this.$refs.ta, pre = this.$refs.pre;
       if (!ta) return null;
@@ -953,8 +751,7 @@ const MossFilePage = {
       const last = first + Math.ceil((ta.clientHeight || 0) / lh) + 1;
       return {first: first, last: last};
     },
-    /* 高亮层重画的**唯一**入口（输入、滚动、Tab 补空格、外面换了内容都走它）。
-       ★ `V-272`：按**帧**合并 —— 一帧里改几次都只画一次；不再用 120ms 那个时间常数。 */
+
     scheduleHl(){
       if (this._raf) return;
       this._raf = requestAnimationFrame(() => {
@@ -965,16 +762,13 @@ const MossFilePage = {
     paintHl(){
       const code = this.$refs.code;
       if (!code) return;
-      window.__hlWin = this.hlWindow();          // 探针的把手：这次用的是哪个窗口
+      window.__hlWin = this.hlWindow();          
       paintHl(this.t, code, window.__hlWin);
-      this.paintGutter();                        // 行号跟高亮层一起重画
-      // ★ `V-376`：画完再对一次滚动。第一次画会把 `code` 清空一次（`paintHl` 里建那三个
-      //   节点那段），内容一空 `pre.scrollTop` 就被夹成 0；外面换了内容（AI 改盘上的文件、
-      //   恢复快照 ⇒ `fmReloadPages`）也是这条。少了这一下，两层就永远差着那一段。
+      this.paintGutter();                        
+
       this.syncScroll();
     },
-    /* 左侧行号：行数 = 文本的行数（`wrap="off"` ⇒ 逻辑行 = 视觉行，1:1 对齐）。
-       只在行数变了才重铺；铺完立刻跟 textarea 对一次滚动位置。 */
+
     paintGutter(){
       const g = this.$refs.gutter;
       if (!g) return;
@@ -988,22 +782,19 @@ const MossFilePage = {
       }
       this.syncGutter();
     },
-    /* 行号和输入层是两层，纵向滚动得手动同步（横向不动 —— 行号永远贴在左边） */
+
     syncGutter(){
       const g = this.$refs.gutter, ta = this.$refs.ta;
       if (g && ta) g.scrollTop = ta.scrollTop || 0;
     },
-    /* ★ `V-376`：高亮层跟输入层对齐 —— 输入层 / 高亮层 / 行号槽是**同一次滚动的三个视图**，
-       谁滚都得让另外两个跟上。
-       ★ 藏在别的选项卡里时**不写**：`display:none` ⇒ `clientHeight = 0`，写进去会被浏览器
-       夹成 0，等你切回来正好成了"光标在上面、字在下面"（`V-376` 那条）。 */
+
     syncScroll(){
       const ta = this.$refs.ta, pre = this.$refs.pre;
       if (!ta || !pre || !ta.clientHeight) return;
       pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft;
       this.syncGutter();
     },
-    /* 光标回开头 + 三层一起回左上角（打开一个文件时用，见 `mounted`） */
+
     homeScroll(){
       const ta = this.$refs.ta;
       if (!ta) return;
@@ -1011,7 +802,7 @@ const MossFilePage = {
       ta.scrollTop = 0; ta.scrollLeft = 0;
       this.syncScroll();
     },
-    /* 跳到第 line 行：选中那一行、滚到中间，然后对齐三层视图 */
+
     jumpTo(line){
       const ta = this.$refs.ta;
       const lines = String(this.t.text || "").split("\n");
@@ -1036,9 +827,8 @@ const MossFilePage = {
       this.scheduleHl();
     },
     onScroll(){
-      // 三层（输入层 / 高亮层 / 行号槽）是同一次滚动的三个视图，立刻对齐，别等下一帧
       this.syncScroll();
-      // ★ `V-272`：窗口只画了"视口 ± 60 行" —— 滚出去了得把那几行补上色（按帧合并）
+
       this.scheduleHl();
     },
     onKeydown(ev){
@@ -1054,7 +844,7 @@ const MossFilePage = {
         ev.preventDefault(); fmSave(this.t);
       }
     },
-    /* ---- 浏览 / 代码切换 ---- */
+
     async ensurePreview(){
       const t = this.t;
       if (!t || !this.canPreview || t.previewBase || t._pvLoading) return;
@@ -1070,10 +860,10 @@ const MossFilePage = {
       this.t.preview = !this.t.preview;
       if (this.t.preview) this.ensurePreview();
       fmRender();
-      // 从浏览切回代码时编辑器刚从 `v-show=false` 恢复，量得到高度之后要补画一次高亮 / 滚动。
+
       this.$nextTick(() => this.scheduleHl());
     },
-    /* ---- 标题栏那三颗 + 关闭 ---- */
+
     save(){ fmSave(this.t); },
     revert(){
       const t = this.t;
@@ -1081,7 +871,7 @@ const MossFilePage = {
         const r = await pywebview.api.fs_read(t.rel);
         if (!r.ok){ toast("✗ " + r.msg, true); return; }
         t.text = r.text || ""; t.original = r.text || "";
-        // textarea 的 value 由 `:value="t.text"` 在下一帧补上；高亮层得自己补
+
         this.$nextTick(() => this.scheduleHl());
       });
     },
@@ -1104,7 +894,7 @@ const MossFileBrowse = {
   template: `
 <div class="fmpage" :class="{on: active}" data-page="__browse__">
   <div class="fbnav">
-    <!-- ★「回到默认目录」放在这一排的**最左边** —— 它是个"导航"动作，和 ⬅ ➡ ⬆ ⟳ 同类 -->
+    
     <button class="iconbtn b-home" :title="homeTitle" v-html='ico("home", "i")'
             @click="fmHome()"></button>
     <button class="iconbtn b-back" title="后退" :disabled="s.hpos <= 0"
@@ -1115,12 +905,12 @@ const MossFileBrowse = {
             v-html='ico("arrow-up", "i")' @click="fmUp()"></button>
     <button class="iconbtn b-reload" title="刷新（F5）" v-html='ico("refresh-cw", "i")'
             @click="fmRefresh()"></button>
-    <!-- 按内容搜当前目录（Ctrl+F） -->
+    
     <button class="iconbtn b-search" :class="{on: st.on}"
             title="按内容搜当前目录（Ctrl+F）"
             v-html='ico("search", "i")' @click="fmSearchOpen()"></button>
-    <!-- 面包屑。★ abs/ 那个上下文里第一段是相对写法，**不是**能点进去的目录
-         （abs 本身不是路径），所以它只当个标签："此电脑"。 -->
+    
+
     <div class="crumbs"><template v-for="(c, i) in crumbs" :key="i"
       ><span v-if="i" class="sep">›</span
       ><span v-if="c.here" class="here">{{ c.label }}</span
@@ -1151,7 +941,7 @@ const MossFileBrowse = {
     </div>
   </div>
 
-  <!-- 按内容搜当前目录：左边是范围，回车开始 -->
+  
   <div class="fbsearch" v-if="st.on">
     <span class="fbs-scope" title="搜这个目录和它的子目录">
       <span class="ic" v-html='ico("folder-search", "i")'></span
@@ -1220,7 +1010,7 @@ const MossFileBrowse = {
       </tr>
     </tbody></table>
 
-    <!-- 检索结果：按文件分组，点一行跳过去 -->
+    
     <div class="fbres" v-else>
       <div class="fbres-empty bad" v-if="st.err">{{ st.err }}</div>
       <div class="fbres-empty" v-else-if="st.busy">搜索中…</div>
@@ -1250,13 +1040,9 @@ const MossFileBrowse = {
     ><span class="clipinfo">{{ clipText }}</span></div>
 </div>`,
   computed: {
-    // ★ `DATA`（包表）不是响应式的：读一下版本号登记依赖。目录名被"对齐目录名"改过
-    //   之后，这两颗切换按钮要跳的目录也得跟着换（否则跳进一个不存在的目录）。
     pkgsRev(){ return FM.rev; },
     segs(){ return (this.s.rel || "").split("/"); },
     crumbs(){
-      // 面包屑：逐段累加出 rel。第一段显示成人话（user → user_data…），
-      // 而且**最后一段**（当前目录）和 `abs` 那一段是纯标签，不能点。
       let acc = "";
       return this.segs.map((seg, i) => {
         acc = i === 0 ? seg : acc + "/" + seg;
@@ -1272,15 +1058,13 @@ const MossFileBrowse = {
     homeTitle(){
       return isHistKey(FM.ctx) ? "回到这条调用当初的目录" : "回到默认目录（这个包的目录）";
     },
-    // ★ 这一条和 `fmAtTop()` **不是**同一个判据：原来 `bindBrowse` 里先按 `fmAtTop(s.rel)`
-    //   设过一次 disabled，紧接着（`V-67` 那份代码的第 631 行）又用 `segs.length <= 1`
-    //   覆盖了它。后写的算数，所以这里照**结果**写。`V-69` 只搬结构，不顺手改行为。
+
     atTop(){ return this.segs.length <= 1; },
     selN(){ return this.s.sel.size; },
-    /* 检索相关的三个 computed（模板里裸用） */
+
     st(){ return this.s.search || fmSearchFresh(); },
     searchView(){ return !!this.st.on && !!this.st.ran; },
-    /* 哪些根被掐断了（写出来，否则"没搜到"会被当成"不存在"） */
+
     cutText(){
       const st = this.st;
       const nm = r => (r === "user" ? "user_data" : (r === "system" ? "system" : r));
@@ -1301,7 +1085,7 @@ const MossFileBrowse = {
       return t;
     },
     cand(){
-      void this.pkgsRev;                    // 见 `pkgsRev` 的注释
+      void this.pkgsRev;                    
       return this.s.pkg ? fmLayerRels(this.s.pkg) : {user: "", system: ""};
     },
     infoText(){
@@ -1318,16 +1102,12 @@ const MossFileBrowse = {
     },
   },
   methods: {
-    /* ★ `V-94`：这两条是**给模板用的**（行上色 + hover 说明）。
-       ★ 为什么还要在这儿转一手：这个 Vue 构建的模板是"带前缀"编译的（`_ctx.xxx`），
-         **看不见**脚本里的全局函数（`humanSize` 那几条也是这么递的，见下面 `data()`）——
-         直接写 `bkDiffRow(e.rel)` 会得到 "bkDiffRow is not a function"（`pkg-file` 场景当场抓到）。 */
     bkDiffRow: rel => bkDiffRow(rel),
     bkDiffWhy: rel => bkDiffWhy(rel),
     bkDiffMark: rel => bkDiffMark(rel),
     bkHasSnap: rel => bkHasSnap(rel),
     cmp(e){ bkCompareOpen(e.rel); },
-    /* 按内容搜：逻辑在 `fmSearch*`，这里只是给模板用 */
+
     runSearch(){ fmSearchRun(); },
     toggleOpt(k){ fmSearchOpt(k); },
     toggleFile(f){
@@ -1335,25 +1115,25 @@ const MossFileBrowse = {
       st.open[f.rel] = !st.open[f.rel];
     },
     jump(f, h){ fmSearchJump(f.rel, h.line); },
-    /* 一行命中 → 带 <mark> 的 HTML（按宿主给的 cols 切，别自己重新匹配） */
+
     hitHTML(h){
       const text = String(h.text || "");
       const cols = (h.cols || []).slice().sort((a, b) => a[0] - b[0]);
       let out = "", at = 0;
       cols.forEach(c => {
         const s0 = Math.max(0, c[0] | 0), len = Math.max(1, c[1] | 0);
-        if (s0 < at || s0 > text.length) return;     // 压在一起的（重叠命中）跳过
+        if (s0 < at || s0 > text.length) return;     
         out += esc(text.slice(at, s0)) + "<mark>" + esc(text.slice(s0, s0 + len)) + "</mark>";
         at = s0 + len;
       });
       return out + esc(text.slice(at));
     },
-    /* ---- 表头排序 ---- */
+
     sortBy(k){
       const s = this.s;
       s.sort = {key: k, dir: (s.sort.key === k ? -s.sort.dir : 1)};
     },
-    /* ---- 选中：普通点击 / Ctrl 点 / Shift 点（和原来逐字一致）---- */
+
     rowClick(e, idx, ev){
       const s = this.s, rows = this.rows;
       if (ev.ctrlKey || ev.metaKey){
@@ -1368,7 +1148,7 @@ const MossFileBrowse = {
       }
     },
     rowDbl(e){ e.dir ? fmGoto(e.rel) : fmOpenPage(e.rel); },
-    /* 右键：点在**没选中**的那一行上，先把选中换成它（和资源管理器一样）。 */
+
     rowCtx(e, idx, ev){
       ev.preventDefault();
       const s = this.s;
@@ -1377,9 +1157,9 @@ const MossFileBrowse = {
       }
       showCtx(ev.clientX, ev.clientY, e.rel);
     },
-    /* 空白处的右键：清空选中，菜单是"新建 / 粘贴 / 刷新"那一套 */
+
     wrapCtx(ev){
-      if (this.searchView) return;                 // 检索结果上不给文件操作菜单（不是文件列表）
+      if (this.searchView) return;                 
       if (ev.target.closest("tr.row")) return;
       ev.preventDefault();
       this.s.sel.clear();
@@ -1390,12 +1170,7 @@ const MossFileBrowse = {
 
 const MossFileManager = {
   name: "moss-file-manager",
-  // ★ 「版本快照」边栏（`MossFileSnap`）在 `js/backup.js` 里（那个文件在**本文件之后**
-  //   加载）：这边模板里直接写 `<moss-file-snap>`，那边
-  //   `MossFileManager.components.MossFileSnap = MossFileSnap` 把组件补进来。
-  //   挂载是懒的（第一次 `fmRender()` 才挂），来得及。
-  //   `V-91`：它从"另一个子选项卡"变成**右边一条边栏** —— 快照天生是"这个目录的这些版本"，
-  //   贴着文件列表放最直观，而且边栏只看**当前选中对象**的快照，"分组"下拉就不需要了。
+
   components: {MossFileBrowse: MossFileBrowse, MossFilePage: MossFilePage},
   template: `
 <div class="fm-main">
@@ -1422,7 +1197,7 @@ const MossFileManager = {
   computed: {
     s(){ return FM.st[FM.ctx || "__all__"] || fmState(FM.ctx); },
     tabLabel(){
-      void FM.rev;              // 包表换了要重算（见 `FM.rev` 的注释）
+      void FM.rev;              
       return fmLabel(FM.ctx);
     },
   },
@@ -1433,10 +1208,6 @@ const MossFileManager = {
   },
 };
 
-/* 模板里要用的那些全局函数（`ico` / `esc` / `fmGoto` …）。
-   ★ 为什么显式登记：Vue 的运行时编译器是 `with(this)` 那套，模板里的标识符本来
-     也能落到全局作用域去 —— 但那是"能跑就行"的隐式行为；登记一遍，谁都看得见
-     这个函数是从哪来的（也免得以后换构建模式就悄悄失效）。 */
 const FM_TEMPLATE_HELPERS = {
   ico: ico, esc: esc, isDirty: isDirty,
   fileIconHTML: fileIconHTML, fmtTime: fmtTime, typeLabel: typeLabel, humanSize: humanSize,
@@ -1445,21 +1216,13 @@ const FM_TEMPLATE_HELPERS = {
   fmSearchOpen: fmSearchOpen, fmSearchClose: fmSearchClose,
 };
 
-/* ---- 挂载 + 外面认的那两个"重画"门面 ----
-   `fmRender()` / `fmPaintBar()` 原来真的是把 DOM 重画一遍；现在界面是响应式的，
-   它俩只剩两件事：① 第一次调用把组件挂到 `#pane-file` 上；
-   ② 兜底 `$forceUpdate()`（包表/历史不是响应式，`refreshPkgs()` 这类地方
-   照旧喊一声"重画"，跟拆分之前的分工一样）。
-   ★ 挂载点是 `#pane-file`：模板的根是**两个**兄弟节点（`#fm-bar` + `#fm-body`），
-     Vue 3 允许（fragment 根），挂上去之后 index.html 里那两个占位 div 会被换掉。 */
 let _fmApp = null;
 
 function fmApp(){
   if (!_fmApp){
     const host = document.getElementById("pane-file");
     if (!host) return null;
-    // ★ 走 `mountVue()`（`V-81`）：它顺手挂 `app.config.errorHandler` —— `V-69` 那版是
-    //   裸 `Vue.createApp`，组件里一抛异常只会进控制台，这个界面没有控制台。
+
     _fmApp = mountVue(MossFileManager, host, FM_TEMPLATE_HELPERS);
   }
   return _fmApp;
@@ -1467,9 +1230,6 @@ function fmApp(){
 function fmRender(){ const a = fmApp(); if (a) a.$forceUpdate(); }
 function fmPaintBar(){ const a = fmApp(); if (a) a.$forceUpdate(); }
 
-/* 把光标放进当前那一页的编辑器里（`fmOpenPage` 打开文件时用）。
-   ★ 原来是在 `pageOf(rel).querySelector("textarea")` 上同步 focus；现在 DOM 由 Vue
-     在下一帧画出来，所以走 `$nextTick`。判据照旧：二进制那页（textarea readonly）不抢焦点。 */
 function fmFocusActiveSoon(){
   const go = () => {
     const page = document.querySelector("#fm-body .fmpage.on");
@@ -1480,7 +1240,6 @@ function fmFocusActiveSoon(){
   if (a) a.$nextTick(go); else go();
 }
 
-/* ---- 文件操作（浏览页的按钮 / 右键菜单 / 键盘）---- */
 function showCtx(x, y, rel){
   const s = fmState(FM.ctx);
   const has = !!rel, one = s.sel.size === 1;
@@ -1541,7 +1300,6 @@ async function fmCmd(act){
     return;
   }
   if (act === "opendir"){
-    // 对目录调 startfile 就是"用 Windows 资源管理器打开它"
     const r = await pywebview.api.fs_open_default(s.rel);
     toast(r.msg, !r.ok);
     return;
@@ -1559,7 +1317,7 @@ async function fmCmd(act){
     toast(r.msg, !r.ok);
     if (r.ok && s.clip.cut) s.clip = null;
     fmRefresh();
-    if (r.ok && (r.made || []).some(isPkgManifest)) refreshPkgs();   // 搬进/搬出了一个包
+    if (r.ok && (r.made || []).some(isPkgManifest)) refreshPkgs();   
     return;
   }
   if (act === "newfile" || act === "newdir"){
@@ -1573,7 +1331,7 @@ async function fmCmd(act){
         const s2 = fmState(FM.ctx);
         s2.sel.clear(); s2.sel.add(r.rel);
         if (!isDir) fmOpenPage(r.rel); else fmRender();
-        if (isPkgManifest(r.rel)) refreshPkgs();     // 新建了一个清单 ⇒ 这是新包
+        if (isPkgManifest(r.rel)) refreshPkgs();     
       }
     });
     return;
@@ -1616,7 +1374,6 @@ async function fmCmd(act){
   if (act === "reload") fmRefresh();
 }
 
-/* ---- 键盘 ---- */
 document.addEventListener("keydown", (e) => {
   if ($("#modal").classList.contains("on")) return;
   const typing = /^(INPUT|TEXTAREA)$/.test((e.target.tagName || "").toUpperCase());
@@ -1627,7 +1384,7 @@ document.addEventListener("keydown", (e) => {
     if (k === "Delete"){ e.preventDefault(); fmCmd("del"); return; }
     if (k === "Backspace"){ e.preventDefault(); fmUp(); return; }
     if (k === "F5"){ e.preventDefault(); fmRefresh(); return; }
-    // Ctrl+F：开检索条（Esc 关）
+
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "f"){
       e.preventDefault(); fmSearchOpen(true); return;
     }
@@ -1648,12 +1405,7 @@ document.addEventListener("keydown", (e) => {
     }
   }
   if (e.key === "Escape" && $("#modal").classList.contains("on")) closeModal();
-  // 「设置」面板也认 Esc（`V-60`）：确认框那条路在上面 —— 两个不会同时在
-  // ★ 要判空（`V-188` 查出来的真报错）：`#settings` 是**设置组件挂载时**才建出来的
-  //   （settings.js 的模板里有它，挂载前 getElementById 拿到的是 null）—— 没打开过设置
-  //   就按 Esc，这里原来是 `null.classList` ⇒ 每次都在 `_ui_drop.log` 里留一条
-  //   「Cannot read properties of null (reading 'classList')」。平时不显眼，拖东西时
-  //   按 Esc 取消就会撞上（正好是用户最常见的动作），把后面的处理一起打断。
+
   const setBox = $("#settings");
   if (e.key === "Escape" && setBox && setBox.classList.contains("on")) closeSettings();
 });

@@ -1,22 +1,5 @@
-/* layout.css
-   窗口骨架：顶栏 + 卡片（挑图区吃满剩余高度，设置区压成薄薄几行）
-   —— 取自 exec/ui/css/layout.css，按 img 的实际结构重排：
-      img 没有分类树，主交互是"挑图"，所以纵向空间优先给缩略图网格。
-      <link> 顺序即层叠顺序 */
-
-/* ============================================================================
-   窗口骨架：**没有顶栏** —— 原来的「图片工具 + 目录 + N 个 + 打开输出目录」
-   那一行整条去掉：标题和目录写进系统标题栏，数量在类型行已经有了，
-   打开输出目录挪到动作栏。省下的 52px 全给缩略图。
-   ========================================================================== */
 .window { height: 100%; display: flex; flex-direction: column; }
 
-/* ============================================================================
-   详情：卡片**铺满整个窗口**。
-   原来卡片四周留了 8px、还带圆角和描边 —— 于是"窗口一圈框 + 卡片一圈框"，
-   看着是边框套边框（用户指出）。现在彻底铺平：不留边距、不圆角、不描边、不投影，
-   整扇窗口只剩系统自己那一圈框。
-   ========================================================================== */
 .detail { position: relative; flex: 1 1 auto; min-height: 0; display: flex; padding: 0; overflow: hidden; }
 
 .card {
@@ -26,15 +9,12 @@
   border: none; border-radius: 0; box-shadow: none;
   padding: 12px 14px 10px;
 }
-/* 挑图区：flex:1 —— 窗口多高，网格就多高 */
+
 .card-body {
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column; overflow: hidden;
 }
 
-/* 第一行：刷新 / 地址栏（自带最近使用下拉）/ 选择
-   —— 「最近使用」原来是独立的下拉框，现在**并进地址栏**（用户要求）：
-      点地址栏或右边的小三角就展开，边打字边过滤，↑↓ 选、回车确认 */
 .srcbar { display: flex; align-items: center; gap: var(--sp-2); flex: none; }
 .srcbar .btn.icon { width: 30px; padding: 0; font-size: 14px; }
 
@@ -64,7 +44,6 @@
 .combo-menu .item:hover, .combo-menu .item.on { background: var(--field); color: var(--text); }
 .combo-menu .empty { padding: 8px; font-size: var(--t-sub); color: var(--text-3); }
 
-/* 第二行：模式开关 + 类型快捷选择 + 选择控制 */
 .typebar {
   display: flex; align-items: center; gap: var(--sp-2);
   flex: none; margin-top: 7px; min-height: 26px; flex-wrap: wrap;
@@ -74,18 +53,13 @@
 .typebar .count { font-size: var(--t-sub); color: var(--text-2); font-variant-numeric: tabular-nums; }
 .typebar .btn { height: 24px; padding: 0 8px; font-size: var(--t-sub); }
 
-/* 设置区：两行装完。格式/宽度/质量一行，保存模式一行。
-   这些是常用项，**不折叠** —— 折叠常用项等于每次多一次点击。 */
 .settings {
   display: flex; flex-direction: column; gap: 7px;
   flex: none; margin-top: 9px; padding-top: 9px;
   border-top: 1px solid var(--sep);
 }
 .setrow { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; flex-wrap: wrap; min-height: 34px; }
-/* ★ 保存这一行**高度定死**。
-   右侧那格是两个状态轮流住的：输出目录（输入框+按钮+虚框，约 37px）和警告（一行文字，约 16px）。
-   不钉死高度的话，切保存模式时行高会在两者之间跳，界面跟着抖（用户实测到的）。
-   钉死之后两个槽位都撑满这一行，切换时一行都不动。 */
+
 #saveRow { height: 34px; min-height: 34px; }
 .settings-label {
   flex: none; width: 30px;
@@ -96,9 +70,6 @@
 .settings .slot[hidden] { display: none; }
 .settings .hint { font-size: var(--t-sub); color: var(--text-3); min-width: 0; flex: 1 1 auto; }
 
-/* ============================================================================
-   按钮
-   ========================================================================== */
 .btn {
   height: 30px; padding: 0 var(--sp-3); border-radius: var(--r-sm);
   border: 1px solid var(--btn-border); cursor: pointer; white-space: nowrap;

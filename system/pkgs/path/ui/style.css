@@ -1,31 +1,13 @@
-/* PATH —— 界面样式
-   ────────────────────────────────────────────────────────────────────────────
-   这是一块**操作面板**，不是一个网页：用户来做的事只有一件 —— 看清两级 PATH、
-   改一条、存下去。所以整页只表达三件事，其余一律让位：
-
-     ① 一屏看全  两级都在一张表里（同一套列、同一套节奏），不再分成"主卡 + 侧栏"
-     ② 谁说了算  每一级的分组头都带着自己的条数、自己的"未保存 N 处"、自己的保存按钮 ——
-                 改哪一级、按哪颗，永远在同一行里，不用记
-     ③ 只在一处改 备份那种低频操作收进抽屉，不占常驻宽度
-
-   ★ 视觉上没有卡片、没有圆角大块、没有渐变和毛玻璃：**线 + 字重 + 留白**做层级。
-     一屏里最贵的是纵向空间，所以行高压到 30px、分组头 34px。
-   ★ 颜色只有三个立场：墨（正文/主按钮）、蓝（正在编辑/焦点）、红（失效/危险）。
-     其余全是中性灰阶 —— 专业的观感来自**克制**，不是加装饰。
-   ★ 深浅两套只是换一组变量（`prefers-color-scheme`），结构、字号、间距一模一样。
-   ──────────────────────────────────────────────────────────────────────────── */
-
-/* ── 令牌 ─────────────────────────────────────────────────────────────────── */
 :root{
   --z0:#ffffff; --z25:#fcfcfd; --z50:#f8f8f9; --z75:#f2f3f5; --z100:#eceef1;
   --z200:#dfe2e7; --z300:#c6cbd3; --z400:#9aa1ac; --z500:#767d88;
   --z600:#5b626d; --z700:#3f454e; --z800:#262a31; --z900:#14171c;
 
-  --ink:#14171c;            /* 正文 / 主按钮 */
-  --line:#e6e9ed;           /* 结构线 */
-  --line-soft:#eff1f4;      /* 行分隔 */
+  --ink:#14171c;            
+  --line:#e6e9ed;           
+  --line-soft:#eff1f4;      
   --bg:#ffffff;
-  --chrome:#fbfbfc;         /* 顶栏 / 底栏 / 分组头 */
+  --chrome:#fbfbfc;         
   --hover:#f6f7f9;
   --focus:#2563eb;
   --focus-a:#2563eb26;
@@ -73,9 +55,7 @@ body{
   overflow:hidden;
 }
 ::selection{background:var(--focus-a);color:var(--fg)}
-/* ★ `overflow:hidden` 不能省：抽屉是靠 `translateX(100%)` 藏在右边的，
-   那是一块**真的在视口外面**的盒子 —— 不给这里剪掉，整页就会凭空出现一条横向滚动条
-   （实测过：760px 的窗口量出 1136 的 scrollWidth，正好多出抽屉那 400px）。 */
+
 #app{height:100%;display:flex;flex-direction:column;position:relative;min-width:0;overflow:hidden}
 
 .i{width:15px;height:15px;flex:none;display:block}
@@ -92,7 +72,6 @@ body{
 ::-webkit-scrollbar-thumb:hover{background:var(--z300);background-clip:content-box}
 ::-webkit-scrollbar-track{background:transparent}
 
-/* ── 顶栏 ─────────────────────────────────────────────────────────────────── */
 .bar{
   flex:none;height:var(--h-bar);display:flex;align-items:center;gap:10px;
   padding:0 var(--pad);border-bottom:1px solid var(--line);background:var(--chrome);
@@ -110,7 +89,6 @@ body{
 .sub .bad{color:var(--red);font-weight:500}
 .baracts{margin-left:auto;display:flex;align-items:center;gap:6px}
 
-/* 文字按钮：顶栏那颗带计数，看起来像"一个地方"，不是一个装饰 */
 .tbtn{
   display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
   border:1px solid var(--line);border-radius:6px;background:var(--bg);
@@ -130,7 +108,6 @@ body{
 .icobtn:hover{background:var(--hover);color:var(--fg);border-color:var(--line)}
 .icobtn:disabled{opacity:.45;cursor:not-allowed}
 
-/* ── 输入行 ───────────────────────────────────────────────────────────────── */
 .cmd{
   flex:none;height:var(--h-cmd);display:flex;align-items:center;gap:8px;
   padding:0 var(--pad);border-bottom:1px solid var(--line);background:var(--bg);
@@ -156,8 +133,6 @@ body{
 }
 .fieldx:hover{background:var(--z100);color:var(--fg2)}
 
-/* 按钮：三种，只有三种。primary=墨色实心（真正会改东西的那个）、
-   quiet=线框（次要动作）、danger=文字变红（删除一类） */
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:6px;
   height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--z200);
@@ -177,7 +152,6 @@ body{
 .btn.sm{height:26px;padding:0 9px;font-size:12px;border-radius:5px}
 .btn.sm .i{width:13px;height:13px}
 
-/* ── 表 ───────────────────────────────────────────────────────────────────── */
 .table{flex:1;min-height:0;display:flex;flex-direction:column;position:relative;background:var(--bg)}
 .tbody{flex:1;min-height:0;overflow:auto;overflow-x:hidden}
 
@@ -193,7 +167,6 @@ body{
 .th-state{grid-column:4}
 .th-act{grid-column:5}
 
-/* 分组头：粘在滚动容器顶上，两级的"边界"就是它 —— 顺带把这一级的保存按钮带在身上 */
 .grp{display:block}
 .grphd{
   position:sticky;top:0;z-index:5;
@@ -216,7 +189,6 @@ body{
 .gfill{min-width:0}
 .gacts{display:inline-flex;align-items:center;gap:6px}
 
-/* 行 */
 .rows{list-style:none;margin:0;padding:0}
 .row{
   position:relative;display:grid;
@@ -230,8 +202,7 @@ body{
 .row:hover .grip{opacity:.9}
 .row.invalid{background:var(--red-bg)}
 .row.invalid:hover{background:var(--red-bg)}
-/* 行首那条 2px 的竖线：只在"有情况"的行上出现（失效=红、刚加=琥珀）。
-   扫一列看下来，眼睛先落到颜色上，再落到字上 —— 比给整行换底色安静。 */
+
 .row::before{
   content:"";position:absolute;left:0;top:0;bottom:0;width:2px;
   background:transparent;transition:background .15s;
@@ -289,18 +260,15 @@ body{
 .iabtn:hover{background:var(--z100);color:var(--fg)}
 .iabtn.danger:hover{background:var(--red-bg);color:var(--red)}
 
-/* 拖到列表末尾的落点 */
 .dropend{height:8px;border-bottom:2px solid transparent}
 .dropend.over{border-bottom-color:var(--focus)}
 
-/* 空状态：一句话，一行灰字，没有插画 */
 .empty{
   display:flex;flex-direction:column;gap:3px;padding:22px var(--pad) 22px 58px;
   color:var(--fg4);font-size:12px;
 }
 .empty b{font:600 12.5px/18px var(--sans);color:var(--fg3)}
 
-/* 系统级底部的"加一条" */
 .addline{
   display:flex;align-items:center;gap:8px;height:38px;padding:0 var(--pad) 0 58px;
   border-bottom:1px solid var(--line-soft);color:var(--fg5);
@@ -312,7 +280,6 @@ body{
 .addnote{margin-left:auto;font-size:11px;color:var(--fg5);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;max-width:42%}
 
-/* 拖文件进来的遮罩 */
 .dropmask{
   position:absolute;inset:8px;z-index:20;display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:6px;
@@ -325,7 +292,6 @@ body{
 .dropmask b{font:600 13px/18px var(--sans)}
 .dropmask span{font-size:11.5px;color:var(--fg4)}
 
-/* ── 底栏 ─────────────────────────────────────────────────────────────────── */
 .status{
   flex:none;height:var(--h-foot);display:flex;align-items:center;gap:8px;
   padding:0 var(--pad);border-top:1px solid var(--line);background:var(--chrome);
@@ -338,7 +304,6 @@ body{
 .st-meta{font-size:11px;color:var(--fg5);padding-left:6px;border-left:1px solid var(--line);
   max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-/* ── 备份抽屉 ─────────────────────────────────────────────────────────────── */
 .scrim{
   position:absolute;inset:0;z-index:40;background:rgba(20,23,28,.28);
   animation:fade .16s ease-out;
@@ -401,14 +366,11 @@ body{
 .drempty b{font:600 12.5px/18px var(--sans);color:var(--fg3)}
 .drempty span{font-size:11.5px;line-height:16px}
 
-/* ── Toast：底部居中一条，不糊一屏 ─────────────────────────────────────────── */
 .toasts{
   position:absolute;right:var(--pad);bottom:calc(var(--h-foot) + 10px);z-index:60;
   display:flex;flex-direction:column;align-items:flex-end;gap:6px;pointer-events:none;
 }
-/* ★ 三条规矩：① 放右下角 —— 底部居中会盖住列表最后几行，而那几行常常正是你刚改的；
-   ② 最常用的那种（"已加入草稿"）用浅底细线，**不当成功也不当失败**，安静地说完就走；
-   ③ 只有真错才用红底白字 —— 颜色是留给要注意的东西的，天天亮着就不值钱了。 */
+
 .toast{
   display:flex;align-items:center;gap:7px;max-width:min(420px,80vw);
   padding:6px 10px;border-radius:6px;border:1px solid var(--line);
@@ -422,12 +384,11 @@ body{
 .toast-enter-from,.toast-leave-to{opacity:0;transform:translateY(6px)}
 .toast-enter-active,.toast-leave-active{transition:opacity .18s,transform .18s}
 
-/* ── 窄屏：列先收起来，别把路径挤成省略号 ─────────────────────────────────── */
 @media (max-width:760px){
   :root{--col-state:70px;--col-act:72px;--pad:12px;--h-cmd:48px}
   .greg{display:none}
   .cmdgap{display:none}
-  /* 窄了**不换行**：输入框自己缩，按钮不动 —— 换行会让「添加」孤零零跑到下面一行 */
+
   .field{flex:1 1 0;min-width:120px}
   .cmd{gap:6px}
   .addnote{display:none}
