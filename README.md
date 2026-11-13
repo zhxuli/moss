@@ -133,7 +133,8 @@ venv\Scripts\python.exe moss.py ui
 build.cmd                     # 打 exe；命令在 moss.py 顶部也留了一份，改要两处一起改
 ```
 
-自带运行时是 Python 3.12（`system/runtimes/python`，不进 git，用 `tools/拉取运行时.py` 恢复）：
+自带运行时是 Python 3.12（`system/runtimes/python`，不进 git，用 `tools/拉取运行时.py` 恢复；
+脚本会自动移除不可搬迁的 `Scripts/` 启动器，pip 请用 `python.exe -m pip`）：
 插件不依赖用户装没装 Python、装的哪个版本。
 
 ## 目录

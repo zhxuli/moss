@@ -199,22 +199,35 @@ class ConPty:
         return cls(hpcon, in_fd, out_fd, pi, int(pi.dwProcessId))
 
     def _pump(self):
-        while True:
-            try:
-                chunk = os.read(self._out_fd, 65536)
-            except OSError:
-                chunk = b""
-            if not chunk:
-                break
-            text = self._decoder.decode(chunk)
-            if not text:
-                continue
+        fd = self._out_fd
+        if fd is None:
             with self._cv:
-                self._buf.append(text)
+                self._eof = True
                 self._cv.notify_all()
-        with self._cv:
-            self._eof = True
-            self._cv.notify_all()
+            return
+        try:
+            while not self._closed:
+                try:
+                    chunk = os.read(fd, 65536)
+                except (OSError, TypeError, ValueError):
+                    break
+                if not chunk:
+                    break
+                text = self._decoder.decode(chunk)
+                if not text:
+                    continue
+                with self._cv:
+                    self._buf.append(text)
+                    self._cv.notify_all()
+            tail = self._decoder.decode(b"", final=True)
+            if tail:
+                with self._cv:
+                    self._buf.append(tail)
+                    self._cv.notify_all()
+        finally:
+            with self._cv:
+                self._eof = True
+                self._cv.notify_all()
 
     def read(self, timeout=0.0):
         with self._cv:
@@ -232,15 +245,18 @@ class ConPty:
     def write(self, data):
         if self._closed:
             return False
+        fd = self._in_fd
+        if fd is None:
+            return False
         raw = data.encode("utf-8") if isinstance(data, str) else bytes(data)
         try:
-            os.write(self._in_fd, raw)
+            os.write(fd, raw)
             return True
-        except OSError:
+        except (OSError, TypeError, ValueError):
             return False
 
     def resize(self, cols, rows):
-        if self._closed:
+        if self._closed or self._hpcon is None:
             return False
         hr = _K32.ResizePseudoConsole(self._hpcon,
                                       COORD(max(2, int(cols)), max(2, int(rows))))
@@ -267,13 +283,14 @@ class ConPty:
         except OSError:
             pass
         self._hpcon = None
-        for fd in (self._in_fd, self._out_fd):
+        in_fd, out_fd = self._in_fd, self._out_fd
+        self._in_fd = self._out_fd = None
+        for fd in (in_fd, out_fd):
             try:
                 if fd is not None:
                     os.close(fd)
             except OSError:
                 pass
-        self._in_fd = self._out_fd = None
         if self._proc is not None:
             if kill and self.alive():
                 try:

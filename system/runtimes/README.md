@@ -50,9 +50,29 @@ user_data/runtimes/default.json        ← 也能覆盖默认版本
 
 这是为**以后做"组件下载"留的位置**：装到用户层就能盖掉出厂的那份，不用动 `system/`。
 
+## pip 和命令行入口
+
+运行时里的 `Scripts/` 是复制源环境时留下的 console launchers。`pip.exe` 这类文件内部写死了
+复制前的绝对路径，**不能随发行包搬迁**，否则用户机器上会指到旧目录。
+
+所以 `tools\拉取运行时.py` 复制完运行时会自动删除整个 `Scripts/`。需要 pip 时一律用模块调用：
+
+```
+.\python.exe -m pip --version
+.\python.exe -m pip install 包名
+```
+
+已经有现成运行时、只想修复它：
+
+```
+python tools\拉取运行时.py --repair
+```
+
+不要依赖 `Scripts\pip.exe` / `pip3.exe` / `pip3.12.exe`。
+
 ## 这里的二进制【不进 git】
 
-`python/3.12/` 有 **181.8 MB / 7864 个文件**。这种体量的二进制进 git 历史会让仓库不可用。
+`python/3.12/` 有 **178.2 MB / 8966 个文件**。这种体量的二进制进 git 历史会让仓库不可用。
 
 - 仓库里只留**说明 + `runtime.json` + 拉取脚本**
 - 运行时本体靠 `python tools\拉取运行时.py` 现场复制
@@ -65,7 +85,7 @@ user_data/runtimes/default.json        ← 也能覆盖默认版本
 
 | 部分 | 大小 |
 |---|---|
-| 全部 | 181.8 MB |
+| 全部 | 178.2 MB |
 | numpy + numpy.libs | 41.0 MB |
 | matplotlib | 18.6 MB |
 | PIL | 14.1 MB |
