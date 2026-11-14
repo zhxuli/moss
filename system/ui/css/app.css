@@ -143,7 +143,7 @@ main.mini.hover-aside > aside{width:var(--aside-w,228px) !important;
 #btn-aside-mini svg{transition:transform .18s ease}
 main.mini #btn-aside-mini svg{transform:rotate(180deg)}
 
-.listbar{display:flex;gap:3px;align-items:center;flex-wrap:wrap;padding:6px 8px;flex:none;
+.listbar{display:flex;gap:2px;align-items:center;flex-wrap:wrap;padding:6px 7px;flex:none;
   border-bottom:1px solid var(--line2)}
 .listbar[hidden]{display:none}
 
@@ -167,17 +167,22 @@ main.mini #btn-aside-mini svg{transform:rotate(180deg)}
 .listbar .lb.lb-primary svg{width:13px;height:13px;flex:none}
 .listbar .lb.lb-primary span{white-space:nowrap;line-height:1}
 
+/* 一行放不下「新建插件」四个字 + 三个动作：字让给「全部/自定义」的状态，动作按钮只留图标 */
+.listbar #btn-newpkg{width:26px;min-width:26px;padding:0;justify-content:center}
+.listbar #btn-newpkg span{display:none}
+
 .listbar .lb-sep{width:1px;height:14px;flex:none;background:var(--line2);margin:0 3px}
 
 /* 操作按钮单独占一行：上面选「筛选/排序」，下面一整排动作 —— 窄侧栏也不会挤得乱七八糟 */
-.listbar .lb-acts{display:flex;gap:3px;align-items:center;flex:1 0 100%;margin-top:2px}
+.listbar .lb-acts{display:flex;gap:2px;align-items:center;flex:none;margin-left:auto}
 
 .listbar .dd{position:relative;flex:none}
-.listbar .dd-t{height:22px;display:inline-flex;align-items:center;gap:4px;padding:0 7px;
+.listbar .dd-t{height:22px;display:inline-flex;align-items:center;gap:3px;padding:0 6px;
   border:0;border-radius:6px;background:transparent;color:var(--dim);cursor:pointer;
   font-size:12px;white-space:nowrap;transition:background .12s,color .12s}
 .listbar .dd-t:hover,.listbar .dd:hover .dd-t{background:var(--hover);color:var(--fg)}
 .listbar .dd-t svg{width:14px;height:14px;flex:none}
+.listbar .dd-t svg:not(.caret){display:none}   /* 触发条只留文字 + 箭头，图标让给动作按钮 */
 .listbar .dd-t .caret{width:11px;height:11px;opacity:.55;transition:transform .15s ease}
 .listbar .dd:hover .dd-t .caret{transform:rotate(180deg)}
 .listbar .dd-menu{position:absolute;left:0;top:100%;z-index:45;min-width:130px;
