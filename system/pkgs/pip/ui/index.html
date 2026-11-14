@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pip 管理器</title>
+<script src="moss-embed.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app" data-tab="installed">
+
+  <!-- ── 顶栏：左边品牌，右边整块都是「当前运行时」 ── -->
+  <header class="top">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 1.7l5.4 3v6.6L8 14.3 2.6 11.3V4.7z"/><path d="M2.6 4.7L8 7.7l5.4-3"/><path d="M8 7.7v6.6"/></svg>
+      </span>
+      <b>PIP</b>
+    </div>
+
+    <div class="envpick" id="envpick">
+      <button class="envbtn" id="envbtn" aria-haspopup="listbox" aria-expanded="false">
+        <span class="star" id="env-star" hidden>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.1l1.9 3.9 4.2.6-3 3 .7 4.3L8 11.8 4.2 13.9l.7-4.3-3-3 4.2-.6z"/></svg>
+        </span>
+        <span class="envtxt">
+          <b id="env-name">—</b>
+          <i id="env-path"></i>
+        </span>
+        <span class="envmeta" id="env-meta"></span>
+        <svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 6.3L8 9.9l3.6-3.6"/></svg>
+      </button>
+
+      <div class="envmenu" id="envmenu" hidden>
+        <p class="menu-cap">运行时 / 虚拟环境</p>
+        <div class="menu-list" id="env-list" role="listbox"></div>
+        <div class="menu-foot">
+          <button class="menu-btn" id="btn-add-env">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.2v9.6"/><path d="M3.2 8h9.6"/></svg>
+            添加环境…
+          </button>
+          <button class="menu-btn" id="btn-open-env">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.9 4.4h4l1.4 1.8h6.8v7.4H1.9z"/></svg>
+            打开目录
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="shell">
+    <!-- ── 侧栏：导航在上，装包源和「重新读取」贴底 ── -->
+    <aside class="side">
+      <p class="cap">导航</p>
+      <nav class="tabs" role="tablist">
+        <button class="tab on" data-tab="installed" role="tab" aria-selected="true">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.7l5.4 3v6.6L8 14.3 2.6 11.3V4.7z"/><path d="M2.6 4.7L8 7.7l5.4-3"/><path d="M8 7.7v6.6"/></svg>
+          <span>已装包</span><i class="pill" id="n-installed"></i>
+        </button>
+        <button class="tab" data-tab="search" role="tab" aria-selected="false">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.1" cy="7.1" r="4.4"/><path d="M10.5 10.5l2.9 2.9"/></svg>
+          <span>装新包</span>
+        </button>
+        <button class="tab" data-tab="outdated" role="tab" aria-selected="false">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13.2V3.6"/><path d="M4.3 7.3L8 3.6l3.7 3.7"/></svg>
+          <span>可升级</span><i class="pill" id="n-outdated"></i>
+        </button>
+        <button class="tab" data-tab="export" role="tab" aria-selected="false">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.9h5l3 3v9.2H4z"/><path d="M9 1.9v3h3"/><path d="M6 8.4h4"/><path d="M6 10.7h4"/></svg>
+          <span>导出清单</span>
+        </button>
+      </nav>
+
+      <!-- 字母索引：点一下就跳到那一组，不用一路滚下去 -->
+      <div class="letters-wrap" id="letters-wrap" hidden>
+        <p class="cap">首字母</p>
+        <div class="letters" id="letters"></div>
+      </div>
+
+      <div class="side-foot">
+        <p class="cap">装包源</p>
+        <select class="sel" id="sel-source"></select>
+        <button class="btn ghost block" id="btn-env">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.1 8A5.1 5.1 0 1 1 11.5 4.3"/><path d="M13.3 2.2v3h-3"/></svg>
+          重新读取
+        </button>
+      </div>
+    </aside>
+
+    <!-- ── 主区 ── -->
+    <div class="main">
+      <div class="bar">
+        <h1 class="page" id="page-title">已装包</h1>
+      </div>
+
+      <div class="dropzone" id="dropzone">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.9 4.4h4l1.4 1.8h6.8v7.4H1.9z"/><path d="M8 7.3v4.4"/><path d="M6 9.3L8 7.3l2 2"/></svg>
+        松开就把这个环境加进来
+      </div>
+
+      <main class="stage">
+
+        <section class="panel on" id="panel-installed">
+          <div class="panel-bar">
+            <!-- 输入框和按钮拼成一条，中间不留缝 -->
+            <div class="field">
+              <svg class="field-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.1" cy="7.1" r="4.4"/><path d="M10.5 10.5l2.9 2.9"/></svg>
+              <input id="filter" class="input" type="search" placeholder="按包名过滤"
+                     autocomplete="off" spellcheck="false">
+              <button class="field-btn" id="btn-check">检查更新</button>
+            </div>
+          </div>
+          <div id="list-installed"></div>
+        </section>
+
+        <section class="panel" id="panel-search">
+          <div class="panel-bar">
+            <form class="query" id="lookup-form">
+              <input id="q" class="input" type="search" autocomplete="off" spellcheck="false"
+                     placeholder="包名，多个用空格分开：requests、numpy==2.3.3、./pkg.whl">
+              <button class="btn" id="btn-search" type="submit">查询</button>
+              <button class="btn ghost" id="btn-web" type="button"
+                      title="PyPI 的关键词搜索只有网页这一条路">网页搜索</button>
+            </form>
+          </div>
+          <p class="note" id="search-hint">按名字精确查询，走 pip 自己的索引。</p>
+          <div id="list-search"></div>
+        </section>
+
+        <section class="panel" id="panel-outdated">
+          <div class="panel-bar">
+            <p class="note" id="outdated-hint">点「检查更新」比对一次 PyPI。</p>
+            <div class="rowbar-acts">
+              <button class="btn ghost sm" id="btn-outdated">检查更新</button>
+              <button class="btn sm" id="btn-upgrade-all" disabled>全部升级</button>
+            </div>
+          </div>
+          <div id="list-outdated"></div>
+        </section>
+
+        <section class="panel" id="panel-export">
+          <div class="panel-bar">
+            <input id="export-path" class="input" type="text"
+                   placeholder="存放目录：点右侧选择，或把文件夹拖进来">
+            <div class="rowbar-acts">
+              <button class="btn ghost" id="btn-pick-export" type="button">选择目录</button>
+              <button class="btn" id="btn-export" type="button">导出</button>
+            </div>
+          </div>
+          <p class="note">
+            把当前这套环境的每一行写进一个 <code>requirements.txt</code>，别处
+            <code>pip install -r</code> 就能复现。
+          </p>
+
+          <div class="card pad" id="export-result" hidden>
+            <div class="result-head">
+              <span class="result-path" id="export-path-out"></span>
+              <span class="result-meta" id="export-meta"></span>
+              <button class="btn ghost sm" id="btn-copy">复制</button>
+              <button class="btn danger sm" id="btn-delete-export">删除文件</button>
+            </div>
+            <pre class="preview" id="export-out"></pre>
+          </div>
+        </section>
+
+      </main>
+
+      <aside class="drawer" id="drawer" hidden>
+        <div class="drawer-head">
+          <span class="dot" id="drawer-dot"></span>
+          <strong id="drawer-title">任务</strong>
+          <button class="link" id="btn-close-drawer">收起</button>
+        </div>
+        <pre class="console" id="console"></pre>
+        <div class="drawer-foot" id="drawer-state">正在运行…</div>
+      </aside>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

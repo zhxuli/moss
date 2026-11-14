@@ -1,0 +1,75 @@
+{
+  "spec": 1,
+  "id": "pip",
+  "kind": "app",
+  "version": "2.1",
+  "name": {
+    "zh-CN": "Pip 管理器",
+    "en": "Pip Manager"
+  },
+  "desc": {
+    "zh-CN": "管 moss 自带 Python 运行时里的第三方库。命令行就是 python -m pip 的前门（moss :pip install requests / list / show / download …参数原样交给 pip），点「运行」开界面。"
+  },
+  "docs": {
+    "readme": "README.md",
+    "agent": "AGENT.md"
+  },
+  "tags": [
+    "python",
+    "pip",
+    "包管理",
+    "gui"
+  ],
+  "aliases": [
+    "pip",
+    "pypi"
+  ],
+  "runner": "python",
+  "entry": {
+    "file": "main.py"
+  },
+  "ui": {
+    "embed": "ui/index.html",
+    "title": {
+      "zh-CN": "Pip 管理器"
+    }
+  },
+  "drop": {
+    "label": "加为环境",
+    "dir": {
+      "param": true
+    }
+  },
+  "params": [
+    {
+      "name": "args",
+      "type": "string",
+      "rest": true,
+      "desc": "参数原样交给 pip（install / uninstall / list / show / freeze / download / cache / config / index …全通用）。额外：不填=环境概览；source [源] 看或切装包源；search <名字…> 查包名；web [词] 去 PyPI 网页搜；export [文件] 导出 requirements"
+    }
+  ],
+  "env": {
+    "cwd": "",
+    "elevated": false
+  },
+  "capabilities": {
+    "run": [
+      "python"
+    ],
+    "net": [
+      "pypi.org",
+      "files.pythonhosted.org",
+      "mirrors.aliyun.com",
+      "pypi.tuna.tsinghua.edu.cn",
+      "mirrors.ustc.edu.cn"
+    ]
+  },
+  "output": {
+    "mode": "text"
+  },
+  "ai": {
+    "expose": false,
+    "risk": "high",
+    "why": "它是给人管「宿主那套 Python 运行时」的：每一次安装都改 moss 自带的解释器，会影响所有 python 包能不能跑起来。AI 要给某个包装库走 pkglib（装进那个包自己的 packages/），不该动这一套。"
+  }
+}
