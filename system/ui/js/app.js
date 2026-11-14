@@ -369,6 +369,12 @@ function setAsideMini(on){
   try{ localStorage.setItem("moss.asideMini", on ? "1" : "0"); }catch(e){}
 }
 
+/* 侧栏宽度：默认值写在 CSS（aside{width}）里，用户拖过的宽度记在这把钥匙下。
+   ★ 默认宽度每改一次，就把版本号 +1（asideW → asideW2 → asideW3）：旧值留着的话
+     会一直把新默认顶掉，换钥匙最简单也最不会猜错。 */
+const ASIDE_W_KEY = "moss.asideW3";
+const ASIDE_W_DEF = 228;
+
 function rememberAsideW(){
   const a = $("main > aside");
   if (!a) return;
@@ -377,7 +383,7 @@ function rememberAsideW(){
   const w = (inline > 60 ? inline : (box > 60 ? box : 0));
   if (!w) return;
   $("main").style.setProperty("--aside-w", w + "px");
-  try{ localStorage.setItem("moss.asideW", String(w)); }catch(e){}
+  try{ localStorage.setItem(ASIDE_W_KEY, String(w)); }catch(e){}
 }
 $("#btn-aside-mini").onclick = () => setAsideMini(!asideMiniOn());
 
@@ -391,15 +397,18 @@ $("#btn-aside-mini").onclick = () => setAsideMini(!asideMiniOn());
 
     a.addEventListener("pointerup", () => { if (asideMiniOn()) rememberAsideW(); });
   }
+  /* 拖分隔条改完宽度也记下来（原来只在 mini 模式下才记，普通模式拉完重启就丢） */
+  const g = $("#grip-aside");
+  if (g) g.addEventListener("pointerup", () => { if (!asideMiniOn()) rememberAsideW(); });
 }
 try{
-  const savedW = parseInt(localStorage.getItem("moss.asideW"), 10);
+  const savedW = parseInt(localStorage.getItem(ASIDE_W_KEY), 10);
   if (savedW > 60) $("main").style.setProperty("--aside-w", savedW + "px");
   setAsideMini(localStorage.getItem("moss.asideMini") === "1");
 }catch(e){}
 
-bindColResize($("#grip-aside"), $("main > aside"), +1, 200,
-              () => Math.round((window.innerWidth || 1200) * 0.5), 300);
+bindColResize($("#grip-aside"), $("main > aside"), +1, 170,
+              () => Math.round((window.innerWidth || 1200) * 0.5), ASIDE_W_DEF);
 
 let _booted = false;
 async function boot(){

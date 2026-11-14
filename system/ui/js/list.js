@@ -231,7 +231,7 @@ function paintBarActs(){
   const gb = $("#btn-groups");
   if (gb){
     gb.innerHTML = ico("list-tree", "i");
-    gb.title = "分组：新建 / 改名 / 排序（右键插件可「移到分组」，也可以把插件拖到分组标题上）";
+    gb.title = "分组：新建 / 改名 / 排序";
     gb.onclick = (ev) => groupsBarClick(ev);
   }
 }
@@ -364,7 +364,7 @@ function listSections(){
     out.push({key: "g:" + g.id, gid: g.id, title: g.name || "（没名字的分组）",
               collapsed: !expand && !!g.collapsed, rows: rs, free: false});
   });
-  if (b.rest.length || !filtering)
+  if (b.rest.length)                       // 没剩下的包就整段不显示（不留「未分组 0」这种空壳）
     out.push({key: "__free__", gid: "__free__", title: "未分组",
               collapsed: !expand && !!GROUPS.ungroupedCollapsed, rows: b.rest, free: true});
   return out;
@@ -383,7 +383,7 @@ function _displayOrderAll(){
 
 /* 拖着插件时，指针压在哪个分组标题（或空分组提示）上 */
 function _groupHeadAt(clientX, clientY){
-  const els = [].slice.call(document.querySelectorAll("#list .lgrp, #list .lgrp-empty"));
+  const els = [].slice.call(document.querySelectorAll("#list .lgrp"));
   for (const el of els){
     const r = el.getBoundingClientRect();
     if (clientY >= r.top - 3 && clientY <= r.bottom + 3 &&
@@ -532,7 +532,7 @@ function initListDrag(){
 
     if (e.target.closest && e.target.closest("button")) return;
 
-    if (e.target.closest && e.target.closest(".lgrp, .lgrp-empty, .lgrp-add")) return;
+    if (e.target.closest && e.target.closest(".lgrp, .lgrp-add")) return;
 
     const item = _rowAtY(e.clientY) || (e.target.closest && e.target.closest(".item"));
     if (!item) return;
@@ -1359,14 +1359,16 @@ const MossList = {
       try{ return autoPkgIds().has(String(id)); }catch(e){ return false; }
     },
     rowHTML(p){
-      return '<span class="drag-grip" title="按住拖动排序 / 拖到分组标题上＝移进那组">' +
-          ico("grip-vertical", "i") + '</span>' +
-        iconHTML(p, "ico") +
+      return iconHTML(p, "ico") +
         '<span class="rowdiv"></span>' +
         '<div style="min-width:0;flex:1">' +
           '<div class="nm">' + esc(p.name) + '</div>' +
           '<div class="ds">' + esc(PSYM + p.id) + '</div></div>' +
         '<span class="rowstat"></span>';
+    },
+    rowTitle(p){
+      const auto = this.isAutoRun(p.id) ? "（已设置自动运行）" : "";
+      return (p.name || p.id) + " · " + PSYM + p.id + auto;
     },
     pick(id){
       if (_listDragging) return;
@@ -1384,9 +1386,8 @@ const MossList = {
       else groupToggle(groupById(sec.gid));
     },
     onHeadMenu(sec, ev){
-      const x = ev.clientX, y = ev.clientY;
-      if (sec.free) groupFreeMenu(x, y);
-      else groupHeadMenu(groupById(sec.gid), x, y);
+      if (sec.free) return;                       // 「未分组」没有菜单：点标题就收/展
+      groupHeadMenu(groupById(sec.gid), ev.clientX, ev.clientY);
     },
     onPkgMenu(p, ev){ pkgGroupMenu(p.id, ev.clientX, ev.clientY); },
   },
@@ -1398,25 +1399,21 @@ const MossList = {
           <div v-if="sec.title" class="lgrp"
                :class="{closed: sec.collapsed, drop: G.dropGid === sec.gid,
                         'is-free': sec.free}" :data-gid="sec.gid"
-               :title="sec.collapsed ? '展开这一组' : '收起这一组'"
                @click="onHeadClick(sec)">
             <span class="lgrp-caret" v-html="caret(sec)"></span>
             <span class="lgrp-name">{{ sec.title }}</span>
             <b class="lgrp-n">{{ sec.rows.length }}</b>
-            <button type="button" class="lgrp-more" title="分组菜单：改名 / 上下挪 / 删掉"
-                    @click.stop="onHeadMenu(sec, $event)" v-html="moreIco()"></button>
+            <button v-if="!sec.free" type="button" class="lgrp-more"
+                    title="改名 / 上下挪 / 删掉" @click.stop="onHeadMenu(sec, $event)"
+                    v-html="moreIco()"></button>
           </div>
           <template v-if="!sec.collapsed">
             <div v-for="p in sec.rows" :key="p.id" class="item"
                  :class="{sel: p.id === selId(), dragging: L.dragId === p.id,
                           'pkg-autorun': isAutoRun(p.id)}"
-                 :data-id="p.id" :data-state="stateOf(p.id)"
-                 :title="isAutoRun(p.id) ? '已设置自动运行' : ''"
+                 :data-id="p.id" :data-state="stateOf(p.id)" :title="rowTitle(p)"
                  @click="pick(p.id)" @contextmenu.prevent="onPkgMenu(p, $event)"
                  v-html="rowHTML(p)"></div>
-            <div v-if="!sec.rows.length && sec.title" class="lgrp-empty"
-                 :class="{drop: G.dropGid === sec.gid}" :data-gid="sec.gid">
-              {{ sec.free ? '所有插件都已经分好组了' : '（空 —— 把插件拖到这行标题上就放进来）' }}</div>
           </template>
         </div>
         <button v-if="G.list.length" type="button" class="lgrp-add" @click="newGroupAsk()"

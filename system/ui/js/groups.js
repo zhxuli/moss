@@ -188,9 +188,7 @@ function groupNewAsk(ids, afterGid){
     toast("分组最多 " + GROUP_MAX + " 个", true);
     return;
   }
-  const tip = (ids && ids.length) ? "给这一组起个名字（" + ids.map(x => PSYM + x).join("、") + " 会放进去）"
-                                 : "给这一组起个名字（建好后，右键插件 →「移到分组」放进去）";
-  askText(tip, "", (v) => {
+  askText("新建分组", "", (v) => {
     const nm = String(v || "").replace(/\s+/g, " ").trim();
     if (!nm) return;
     const g = groupNew(nm, ids || [], afterGid);
@@ -295,7 +293,6 @@ function groupBarMenu(x, y){
      run: () => { groupsCollapseAll(true); toast("分组都收起了"); }},
     {sep: true},
     {icon: "trash-2", label: "清掉所有分组…", danger: true, dis: !GROUPS.list.length,
-     tip: "只删分组这层壳：插件都退回「未分组」，插件本身不动",
      run: () => {
        askConfirm("清掉所有分组",
          "一共 <b>" + GROUPS.list.length + "</b> 个分组会被删掉，里面的插件全部退回「未分组」" +
@@ -323,19 +320,7 @@ function groupHeadMenu(g, x, y){
      label: g.collapsed ? "展开这个分组" : "收起这个分组",
      run: () => groupToggle(g)},
     {sep: true},
-    {icon: "trash-2", label: "删掉这个分组", danger: true,
-     tip: "里面的插件退回「未分组」，插件本身不动",
-     run: () => groupDel(g)},
-  ]);
-}
-
-function groupFreeMenu(x, y){
-  ctxMenuOpen(x, y, [
-    {icon: GROUPS.ungroupedCollapsed ? "chevron-down" : "chevron-right",
-     label: GROUPS.ungroupedCollapsed ? "展开「未分组」" : "收起「未分组」",
-     run: () => groupsToggleFree()},
-    {sep: true},
-    {icon: "pencil", label: "这一段是自动的：没进任何分组的插件都在这儿", dis: true},
+    {icon: "trash-2", label: "删掉这个分组", danger: true, run: () => groupDel(g)},
   ]);
 }
 
@@ -354,7 +339,7 @@ function pkgGroupMenu(id, x, y){
                 }});
   });
   if (now){
-    items.push({icon: "circle-slash", label: "移出分组（回「未分组」）",
+    items.push({icon: "circle-slash", label: "移出分组",
                 run: () => {
                   if (groupSetPkg(id, "")) toast("已把 " + PSYM + id + " 移回「未分组」");
                 }});

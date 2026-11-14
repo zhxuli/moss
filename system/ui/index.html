@@ -52,13 +52,14 @@
           <button class="dd-i" data-g="sort" data-v="name" title="按名字排"></button>
           <button class="dd-i" data-g="sort" data-v="born" title="按加入时间排（包目录最后改动的时间）"></button>
           <button class="dd-i" data-g="sort" data-v="run" title="按最后运行排（这个界面自己记的，跑过才有）"></button>
-          <button class="dd-i" data-g="sort" data-v="custom" title="自定义顺序（在列表里按住把手拖动排列）"></button>
+          <button class="dd-i" data-g="sort" data-v="custom" title="自定义顺序（在列表里拖动排列）"></button>
         </div>
       </div>
-      <span class="lb-sep"></span>
-      <button id="btn-groups" class="lb" title="分组：新建 / 改名 / 排序"></button>
-      <button id="btn-refresh" class="lb" title="刷新：重新读一遍插件列表和历史"></button>
-      <button id="btn-newpkg" class="lb lb-primary" title="新建一个包（moss --new）"></button>
+      <span class="lb-acts">
+        <button id="btn-groups" class="lb" title="分组：新建 / 改名 / 排序"></button>
+        <button id="btn-refresh" class="lb" title="刷新：重新读一遍插件列表和历史"></button>
+        <button id="btn-newpkg" class="lb lb-primary" title="新建一个包（moss --new）"></button>
+      </span>
     </div>
     <div class="listbar" id="bar-hist" hidden>
       <div class="dd">
@@ -77,10 +78,11 @@
           <button class="dd-i" data-g="hsort" data-v="kind" title="按类型排"></button>
         </div>
       </div>
-      <span class="lb-sep"></span>
-      <button id="btn-refresh-h" class="lb" title="刷新：重新读一遍插件列表和历史"></button>
-      <button id="btn-openfile" class="lb"
-              title="打开一个可执行文件并运行（等于手敲 moss &lt;文件&gt;：工作目录是它所在的文件夹，也会记进历史）"></button>
+      <span class="lb-acts">
+        <button id="btn-refresh-h" class="lb" title="刷新：重新读一遍插件列表和历史"></button>
+        <button id="btn-openfile" class="lb"
+                title="打开一个可执行文件并运行（等于手敲 moss &lt;文件&gt;：工作目录是它所在的文件夹，也会记进历史）"></button>
+      </span>
     </div>
     <div id="list"></div>
     <div id="hist" hidden></div>

@@ -91,14 +91,22 @@ main{flex:1;display:flex;min-height:0;position:relative}
 .bk-snap.mini .b-bkgrip{display:none}
 body.colres{cursor:col-resize;user-select:none}
 aside{position:relative}
-aside{width:300px;flex:none;border-right:1px solid var(--hair);background:var(--panel);
-  display:flex;flex-direction:column;min-height:0}
+aside{width:228px;flex:none;border-right:1px solid var(--hair);background:var(--panel);
+  display:flex;flex-direction:column;min-height:0;container-type:inline-size}
+
+/* 侧栏窄了（默认 200）：顶部那两个统计按钮压紧一点，别挤成两行字 */
+@container (max-width: 240px){
+  #sideswitch{padding:7px 6px;gap:2px}
+  #sideswitch button{padding:4px 6px;gap:5px;font-size:12.5px;white-space:nowrap}
+  #sideswitch .sw-n{font-size:10.5px;min-width:10px}
+  #btn-aside-mini{min-width:26px;padding:4px}
+}
 
 main.mini > aside{position:absolute;left:0;top:0;bottom:0;z-index:40;
   width:56px !important;transition:width .16s ease;overflow:hidden}
 
 main.mini > #right{margin-left:56px;transition:margin-left .16s ease}
-main.mini.hover-aside > #right{margin-left:var(--aside-w,300px)}
+main.mini.hover-aside > #right{margin-left:var(--aside-w,228px)}
 main.mini:not(.hover-aside) .grip{display:none}
 
 main.mini > aside #sideswitch,
@@ -121,18 +129,16 @@ main.mini:not(.hover-aside) > aside #sideswitch,
 main.mini:not(.hover-aside) > aside .listbar{flex-wrap:nowrap;overflow:hidden}
 main.mini:not(.hover-aside) > aside .hitem,
 main.mini:not(.hover-aside) > aside .item{padding-left:0;padding-right:0;gap:0;justify-content:center}
-main.mini:not(.hover-aside) > aside .item .drag-grip{display:none}
 main.mini:not(.hover-aside) > aside .item .rowdiv{display:none}
 main.mini:not(.hover-aside) > aside .lgrp,
-main.mini:not(.hover-aside) > aside .lgrp-add,
-main.mini:not(.hover-aside) > aside .lgrp-empty{display:none}
+main.mini:not(.hover-aside) > aside .lgrp-add{display:none}
 main.mini:not(.hover-aside) > aside .item .rowstat,
 main.mini:not(.hover-aside) > aside .hitem .hstat{display:none}
 
 main.mini:not(.hover-aside) > aside .item > div{flex:0 0 0 !important;overflow:hidden}
 main.mini:not(.hover-aside) > aside .hitem .hmain{flex:0 0 0;overflow:hidden}
 
-main.mini.hover-aside > aside{width:var(--aside-w,300px) !important;
+main.mini.hover-aside > aside{width:var(--aside-w,228px) !important;
   box-shadow:0 12px 34px rgba(0,0,0,.18)}
 #btn-aside-mini svg{transition:transform .18s ease}
 main.mini #btn-aside-mini svg{transform:rotate(180deg)}
@@ -162,6 +168,9 @@ main.mini #btn-aside-mini svg{transform:rotate(180deg)}
 .listbar .lb.lb-primary span{white-space:nowrap;line-height:1}
 
 .listbar .lb-sep{width:1px;height:14px;flex:none;background:var(--line2);margin:0 3px}
+
+/* 操作按钮单独占一行：上面选「筛选/排序」，下面一整排动作 —— 窄侧栏也不会挤得乱七八糟 */
+.listbar .lb-acts{display:flex;gap:3px;align-items:center;flex:1 0 100%;margin-top:2px}
 
 .listbar .dd{position:relative;flex:none}
 .listbar .dd-t{height:22px;display:inline-flex;align-items:center;gap:4px;padding:0 7px;
@@ -205,7 +214,7 @@ main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;he
 #sideswitch #btn-newpkg{margin-left:auto;padding:4px 7px;min-width:28px}
 #sideswitch #btn-refresh{padding:4px 7px;min-width:28px}
 
-.hitem,.item{display:flex;gap:10px;padding:11px 12px;border-bottom:1px solid var(--line2);
+.hitem,.item{display:flex;gap:8px;padding:11px 9px;border-bottom:1px solid var(--line2);
   cursor:pointer;align-items:center}
 .item{position:relative}
 .hitem:hover,.item:hover{background:var(--hover)}
@@ -234,13 +243,9 @@ main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;he
   text-overflow:ellipsis}
 .sub{color:var(--dim);font-family:var(--mono);font-size:11.5px}
 
-.item .drag-grip{width:16px;flex:none;display:flex;align-items:center;justify-content:center;
-  color:var(--dim2);opacity:0;cursor:grab;transition:opacity .12s;
-  user-select:none;-webkit-user-select:none}
-.item:hover .drag-grip{opacity:.5}
-.item .drag-grip:hover{opacity:1}
-.item .drag-grip:active{cursor:grabbing}
-.item .drag-grip svg{width:15px;height:15px}
+/* 图标本身就是拖拽把手（原来左边那个六点把手白占 16px，去掉了） */
+.item .ico{cursor:grab}
+.item .ico:active{cursor:grabbing}
 
 .item.dragging{background:var(--accent);color:var(--accent-fg);
   box-shadow:0 12px 28px rgba(0,113,227,.35);border-radius:10px;position:relative;
@@ -248,7 +253,7 @@ main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;he
 .item.dragging .nm{color:var(--accent-fg)}
 .item.dragging .ds{color:var(--accent-fg);opacity:.86}
 .item.dragging .sub{color:var(--accent-fg);opacity:.8}
-.item.dragging .ico,.item.dragging .drag-grip{color:var(--accent-fg);opacity:.95}
+.item.dragging .ico{color:var(--accent-fg);opacity:.95}
 
 .hint{color:var(--dim);font-size:12px;line-height:1.6;margin-top:8px;word-break:break-all}
 .hint .mono{font-size:11.5px}
@@ -363,7 +368,9 @@ body.float #pane-embed{padding:0}
 .hitem:hover .hstat .idle,.item:hover .rowstat .idle{opacity:.45}
 .hstat .idle:hover,.rowstat .idle:hover{opacity:1;color:var(--fg)}
 
-.hstat,.rowstat{flex:none;display:flex;align-items:center;margin-left:6px}
+.hstat,.rowstat{flex:none;display:flex;align-items:center;margin-left:4px}
+.item .rowstat{margin-left:1px}
+.item .rowstat button svg{width:14px;height:14px}
 .hstat button,.rowstat button{display:flex;align-items:center;justify-content:center;padding:3px;
   border:none;border-radius:6px;background:transparent;cursor:pointer}
 .hstat button:hover,.rowstat button:hover{background:var(--hover)}
@@ -377,8 +384,8 @@ body.float #pane-embed{padding:0}
    尺寸照参考站的侧栏（它的分组标题 19.2px/700、上下 16+15px；每行 18px 上下留白）
    按我们 14px 的基准等比缩一点，组和组之间就松开了。 */
 .lsec{display:block}
-.lgrp{display:flex;align-items:center;gap:6px;
-  padding:24px 8px 13px 18px;background:var(--panel);color:var(--fg2);
+.lgrp{display:flex;align-items:center;gap:5px;
+  padding:24px 8px 13px 0;background:var(--panel);color:var(--fg2);
   font-size:16px;font-weight:700;letter-spacing:.01em;user-select:none;cursor:pointer;
   transition:color .12s}
 .lgrp:hover{color:var(--fg);background:var(--hover)}
@@ -399,10 +406,8 @@ body.float #pane-embed{padding:0}
 .lgrp.is-free .lgrp-name{font-weight:600}
 .lgrp.drop{background:var(--sel);color:var(--accent)}
 .lgrp.drop .lgrp-caret,.lgrp.drop .lgrp-more{color:var(--accent)}
-.lgrp-empty{padding:0 12px 14px 46px;color:var(--dim2);font-size:12px;line-height:1.5}
-.lgrp-empty.drop{color:var(--accent)}
 .lgrp-add{display:flex;align-items:center;gap:6px;width:100%;margin-top:2px;
-  padding:14px 12px 14px 46px;border:0;border-top:1px dashed var(--line2);background:transparent;
+  padding:14px 10px 14px 19px;border:0;border-top:1px dashed var(--line2);background:transparent;
   color:var(--dim2);font:inherit;font-size:12px;cursor:pointer;text-align:left}
 .lgrp-add:hover{background:var(--hover);color:var(--fg)}
 .lgrp-add svg{width:13px;height:13px}
