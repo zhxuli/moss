@@ -41,11 +41,27 @@
 
     __emit: function (name, data) { fire(name, data); },
     call: function (method, params) {
-      if (EMBEDDED) return callViaHost(method, params);
-      return callViaPywebview(method, params);
+      // ★ postMessage 用的是结构化克隆，它克隆不了 Proxy ——
+      //   前端传进来的常常是 Vue 的响应式对象，直接发会抛
+      //   "could not be cloned"。所以先转成纯数据再发。
+      const safe = plainCopy(params);
+      if (EMBEDDED) return callViaHost(method, safe);
+      return callViaPywebview(method, safe);
     }
   };
   window.moss = moss;
+
+  /* Vue 的 reactive/ref 是 Proxy，webview 桥和 postMessage 都吃不下；
+     走一遍 JSON 就是纯对象 / 数组 / 基本类型了。 */
+  function plainCopy(value) {
+    if (value === null || typeof value !== 'object') return value;
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (e) {
+      console.error('[moss] 参数没法转成纯数据，按空对象发', e);
+      return {};
+    }
+  }
 
   function callViaHost(method, params) {
     return new Promise(function (resolve, reject) {

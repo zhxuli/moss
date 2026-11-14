@@ -21,18 +21,37 @@ export default {
     run: { type: Object, required: true },
     confirming: { type: Boolean, default: false },
     code: { type: String, default: "" },
+    panelReady: { type: Boolean, default: false },
+    tab: { type: String, default: "view" },
+    frameUrl: { type: String, default: "" },
+    saving: { type: Boolean, default: false },
   },
   emits: ["change", "set-html-view", "set-last-args", "set-confirming", "set-code",
+          "set-open-in", "set-tab", "refresh-panel",
           "pick", "save", "run", "delete", "stop", "close-run", "console", "save-run"],
   computed: {
     codeLocal: {
       get() { return this.code; },
       set(v) { this.$emit("set-code", v); },
     },
+    openIn() {
+      return (this.command && this.command.open_in) || "panel";
+    },
+    canBrowse() {
+      return !!(this.command && !this.command._new
+                && this.command.type === "url" && this.openIn === "panel");
+    },
+    browsing() {
+      return this.canBrowse && this.tab === "view";
+    },
+    viewTitle() {
+      const code = (this.code || "").trim();
+      return code ? code.replace(/^https?:\/\//, "").split("/")[0] : "还没填网址";
+    },
   },
   template: `
   <main class="detail">
-    <section class="card" v-if="command">
+    <section class="card" :class="{ wide: browsing }" v-if="command">
       <div class="d-head">
         <div>
           <h1 class="d-title"><span class="prefix">pa :exec </span>{{ command.alias || '（未命名）' }}</h1>
@@ -41,7 +60,22 @@ export default {
         <span class="pill" :title="spec.hint">{{ spec.label }}</span>
       </div>
 
-      <div class="card-body">
+      <div class="d-tabs" v-if="canBrowse">
+        <button :aria-selected="tab === 'view'" @click="$emit('set-tab', 'view')">浏览</button>
+        <button :aria-selected="tab === 'edit'" @click="$emit('set-tab', 'edit')">设置</button>
+        <div class="d-tabs-arg" v-if="tab === 'view'">
+          <input :value="lastArgs" placeholder="参数（回车刷新）" spellcheck="false"
+                 @input="$emit('set-last-args', $event.target.value)"
+                 @keydown.enter="$emit('refresh-panel')">
+          <button class="btn" @click="$emit('refresh-panel')">刷新</button>
+        </div>
+      </div>
+
+      <div class="view-host" v-if="browsing">
+        <iframe v-if="frameUrl" :src="frameUrl" referrerpolicy="no-referrer"></iframe>
+      </div>
+
+      <div class="card-body" v-if="!browsing">
         <div class="field" style="margin-top:14px">
           <div class="label">激活命令</div>
           <div class="alias-row">
@@ -91,14 +125,24 @@ export default {
           <div class="field-note"></div>
         </div>
 
+        <div class="field" v-if="spec.openers">
+          <div class="label">打开方式</div>
+          <span class="seg fit">
+            <button v-for="o in spec.openers" :key="o.id"
+                    :aria-selected="openIn === o.id"
+                    @click="$emit('set-open-in', o.id)">{{ o.label }}</button>
+          </span>
+        </div>
+
         <advanced-options v-if="spec.kind === 'proc'" :command="command"
                           :after-actions="afterActions"
                           @change="$emit('change')" @pick="$emit('pick', $event)"></advanced-options>
       </div>
 
-      <output-area :run="run" @stop="$emit('stop')" @close="$emit('close-run')"></output-area>
+      <output-area v-if="!browsing" :run="run" @stop="$emit('stop')"
+                  @close="$emit('close-run')"></output-area>
 
-      <action-bar :confirming="confirming" :wants-args="wantsArgs" :last-args="lastArgs"
+      <action-bar v-if="!browsing" :saving="saving" :confirming="confirming" :wants-args="wantsArgs" :last-args="lastArgs"
                   :is-new="!!command._new" :is-proc="spec.kind === 'proc'"
                   @set-confirming="$emit('set-confirming', $event)"
                   @set-last-args="$emit('set-last-args', $event)"

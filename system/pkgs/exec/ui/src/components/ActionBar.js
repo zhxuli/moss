@@ -6,6 +6,7 @@ export default {
     lastArgs: { type: String, default: "" },
     isNew: { type: Boolean, default: false },
     isProc: { type: Boolean, default: false },
+    saving: { type: Boolean, default: false },
   },
   emits: ["set-confirming", "set-last-args", "run", "save", "delete", "console", "save-run"],
   computed: {
@@ -31,7 +32,9 @@ export default {
       <button v-if="isProc" class="btn ghost" @click="$emit('console')"
               title="在新控制台窗口中运行（适合 ping 这类需要交互的命令）">新窗口</button>
       <span class="spacer"></span>
-      <button class="btn" @click="$emit('save')">保存 <span class="kbd">Ctrl+S</span></button>
+      <button class="btn" :disabled="saving" @click="$emit('save')">
+        {{ saving ? '保存中…' : '保存' }} <span class="kbd" v-if="!saving">Ctrl+S</span>
+      </button>
       <button v-if="!isNew" class="btn danger" @click="$emit('set-confirming', true)">删除</button>
     </template>
   </div>`,

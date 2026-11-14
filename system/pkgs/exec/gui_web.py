@@ -112,9 +112,70 @@ class Api:
         self._window = None
         self._runs = {}
         self._lock = threading.Lock()
+        self._panel = None
 
     def attach(self, window):
         self._window = window
+        try:
+            import panel
+            self._panel = panel.WebPanel(log_path=os.path.join(core.TEMP_DIR, 'panel.log'))
+            self._panel.attach(TITLE)
+        except Exception:
+            self._panel = None
+
+    # ---- 右侧内嵌的网页面板 ---------------------------------------
+    def _panel_box(self, p):
+        try:
+            dpr = float(p.get('dpr') or 1) or 1.0
+            r = p.get('rect') or {}
+            return tuple(float(r.get(k) or 0) * dpr for k in ('x', 'y', 'w', 'h'))
+        except (TypeError, ValueError):
+            return None
+
+    def panel_show(self, params=None):
+        p = self._p(params)
+        if (p.get('open_in') or 'panel') != 'panel':
+            return {'ok': False, 'message': '这条命令用的是系统浏览器'}
+        if not self._panel:
+            return {'ok': False, 'message': '这种运行方式下没有可贴的窗口'}
+        url = (p.get('url') or '').strip()
+        alias = str(p.get('alias') or '').strip()
+        if alias:
+            item = core.load_command(alias)
+            if not item or item['type'] != 'url':
+                return {'ok': False, 'message': '这条不是网址命令'}
+            url = core._absolute_url(core.expand(item['code'], p.get('args') or ''))
+        ok = self._panel.show(url, self._panel_box(p), force=bool(p.get('force')))
+        self._panel._note('panel_show ok=%s url=%s available=%s'
+                          % (ok, url, self._panel.available))
+        return {'ok': ok, 'message': None if ok else '网页面板没能打开'}
+
+
+    def panel_url(self, params=None):
+        """命令 + 参数 -> 最终网址。前端用它给 iframe 填地址。"""
+        p = self._p(params)
+        url = (p.get('url') or '').strip()
+        alias = str(p.get('alias') or '').strip()
+        if alias:
+            item = core.load_command(alias)
+            if not item or item['type'] != 'url':
+                return {'ok': False, 'message': '这条不是网址命令'}
+            url = core._absolute_url(core.expand(item['code'], p.get('args') or ''))
+        return {'ok': bool(url), 'url': url}
+
+    def panel_move(self, params=None):
+        if not self._panel:
+            return {'ok': False}
+        box = self._panel_box(self._p(params))
+        return {'ok': bool(box and self._panel.move(box))}
+
+    def panel_hide(self, params=None):
+        if not self._panel:
+            return {'ok': False}
+        return {'ok': self._panel.hide()}
+
+    def panel_state(self, params=None):
+        return {'ok': True, 'ready': bool(self._panel and self._panel.is_ready())}
 
     @staticmethod
     def _p(params):
@@ -123,6 +184,8 @@ class Api:
     def bootstrap(self, params=None):
         core.init_cmds_dir()
         look = appearance()
+        if self._panel and not self._panel.available:
+            self._panel.attach(TITLE)
         return {
             'apiVersion': 2,
             'ok': True,
@@ -137,6 +200,7 @@ class Api:
             'theme': look['theme'],
             'accent': look,
             'embedded': bool(os.environ.get('MOSS_UI_EMBED')),
+            'panel': bool(self._panel and self._panel.available),
         }
 
     def cmd_list(self, params=None):

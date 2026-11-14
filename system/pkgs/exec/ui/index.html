@@ -50,6 +50,8 @@
 
       <detail-pane :command="current" :commands-count="commands.length" :spec="spec"
                    :placeholder-hint="placeholderHint" :after-actions="afterActions"
+                   :panel-ready="panelReady" :tab="tab" :frame-url="frameUrl"
+                   :saving="saving"
                    :dirty="dirty" :alias-bad="aliasBad" :is-html="isHtml"
                    :html-view="htmlView" :wants-args="wantsArgs" :last-args="lastArgs"
                    :run="run" :confirming="confirming" :code="codeText"
@@ -58,6 +60,8 @@
                    @set-last-args="lastArgs = $event"
                    @set-confirming="confirming = $event"
                    @set-code="codeText = $event"
+                   @set-open-in="setOpenIn"
+                   @set-tab="setTab" @refresh-panel="refreshPanel"
                    @pick="pickInto"
                    @save="save" @run="runCommand" @delete="doDelete"
                    @stop="stopRun" @close-run="closeRun" @console="openConsole"

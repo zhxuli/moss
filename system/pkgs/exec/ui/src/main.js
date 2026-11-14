@@ -21,6 +21,7 @@ window.__execApp = createApp({
       dirty: false, confirming: false, lastArgs: "", toasts: [], toastSeq: 0,
       sheetOpen: false, hover: null, htmlView: "code",
       run: { output: null, running: false, id: null, returncode: null },
+      panelReady: false, tab: "view", frameUrl: "", saving: false,
     };
   },
 
@@ -50,6 +51,16 @@ window.__execApp = createApp({
     isHtml() {
       return !!this.current && this.current.type === "html";
     },
+    // 网址命令就能在右边看：能贴真窗口就贴（任何站点都行），
+    // 贴不了（界面被内嵌进 moss 时没有自己的窗口）就用 iframe
+    canBrowse() {
+      const c = this.current;
+      return !!(c && !c._new && c.type === "url"
+                && (c.open_in || "panel") === "panel");
+    },
+    browsing() {
+      return this.canBrowse && this.tab === "view";
+    },
     aliasBad() {
       const a = this.current && this.current.alias;
       return !!a && !/^[a-z0-9_-]{1,64}$/.test(a);
@@ -75,8 +86,10 @@ window.__execApp = createApp({
   },
 
   watch: {
-    selectedKey() { this.dirty = false; this.confirming = false; },
+    selectedKey() { this.dirty = false; this.confirming = false; this.tab = "view"; },
     query() { this.ensureVisible(); },
+    browsing() { this.$nextTick(() => this.syncPanel()); },
+    "current.open_in"() { this.$nextTick(() => this.syncPanel()); },
   },
 
   methods: {
@@ -136,6 +149,65 @@ window.__execApp = createApp({
       else this.codeText = r.path;
       this.dirty = true;
     },
+    setOpenIn(id) {
+      if (!this.current) return;
+      this.current.open_in = id;
+      this.dirty = true;
+    },
+    setTab(id) {
+      this.tab = id === "edit" ? "edit" : "view";
+    },
+
+    /* 右侧浏览：能贴真窗口就贴（任何站点都能显示），贴不了就用 iframe */
+    async syncPanel(force) {
+      if (!this.browsing || !this.current) {
+        this.frameUrl = "";
+        await api.panel.hide();
+        return;
+      }
+      const r = await api.panel.url({
+        alias: this.current.alias,
+        args: this.lastArgs || "",
+      });
+      const url = (r && r.url) || "";
+      if (!url) { this.frameUrl = ""; return; }
+      if (!this.panelReady) { this.frameUrl = url; return; }
+
+      const host = document.querySelector(".view-host");
+      if (!host || !host.offsetWidth) { this.frameUrl = url; return; }
+      const b = host.getBoundingClientRect();
+      const res = await api.panel.show({
+        alias: this.current.alias,
+        args: this.lastArgs || "",
+        open_in: this.current.open_in || "panel",
+        force: !!force,
+        rect: { x: b.left, y: b.top, w: b.width, h: b.height },
+        dpr: window.devicePixelRatio || 1,
+      });
+      if (!res || !res.ok) {
+        // 这台机器上贴不上窗口（比如界面被内嵌了），退回 iframe
+        this.panelReady = false;
+        this.frameUrl = url;
+        return;
+      }
+      this.frameUrl = "";
+      // 窗口是后台建的：等一会儿还没出来就退回 iframe，别让右边一直空着
+      this.$nextTick(() => {
+        setTimeout(async () => {
+          if (!this.browsing) return;
+          try {
+            const st = await api.panel.state();
+            if (st && st.ok && !st.ready) {
+              this.panelReady = false;
+              this.frameUrl = url;
+            }
+          } catch (e) { /* 查不到就算了，下回再试 */ }
+        }, 3000);
+      });
+    },
+    refreshPanel() {
+      this.syncPanel(true);
+    },
 
     newCommand(typeId) {
       this.sheetOpen = false;
@@ -153,7 +225,7 @@ window.__execApp = createApp({
       }
       const c = {
         _key: "__new__", alias: "", type: typeId, description: "", codes: {},
-        cwd: "", env: "", elevated: false, after: "none", _new: true,
+        cwd: "", env: "", elevated: false, after: "none", open_in: "panel", _new: true,
       };
       this.commands.push(c);
       this.select(c._key);
@@ -164,19 +236,47 @@ window.__execApp = createApp({
     },
     async save() {
       const c = this.current;
-      if (!c) return false;
-      const res = await api.cmd.save({
-        alias: c.alias, type: c.type, description: c.description,
-        codes: c.codes || {}, cwd: c.cwd || "", env: c.env || "",
-        elevated: !!c.elevated, after: c.after || "none",
-      }, c._new ? null : this.originalAlias);
-      if (!res.ok) { this.toast(res.message, true); return false; }
-      const list = await api.cmd.list();
-      this.commands = this.stamp(list.commands || []);
-      const saved = this.commands.find(c => c.alias === res.alias);
-      this.select(saved ? saved._key : null);      
-      this.toast("已保存");
-      return true;
+      if (!c) { this.toast("没有选中命令", true); return false; }
+      if (this.saving) return false;
+      this.saving = true;
+      try {
+        let res;
+        try {
+          res = await api.cmd.save({
+            alias: c.alias, type: c.type, description: c.description,
+            codes: c.codes || {}, cwd: c.cwd || "", env: c.env || "",
+            elevated: !!c.elevated, after: c.after || "none",
+            open_in: c.open_in || "browser",
+          }, c._new ? null : this.originalAlias);
+        } catch (e) {
+          this.toast("保存失败：" + this.reason(e), true);
+          return false;
+        }
+        if (!res || !res.ok) {
+          this.toast((res && res.message) || "保存失败：后端没有返回结果", true);
+          return false;
+        }
+        try {
+          const list = await api.cmd.list();
+          this.commands = this.stamp((list && list.commands) || []);
+        } catch (e) {
+          this.toast("已写入，但列表没刷新：" + this.reason(e), true);
+          return true;
+        }
+        const saved = this.commands.find(x => x.alias === res.alias);
+        this.select(saved ? saved._key : null);
+        this.toast("已保存");
+        return true;
+      } finally {
+        this.saving = false;
+      }
+    },
+
+    /* 把任何异常变成一句话，别让失败静默 */
+    reason(e) {
+      if (!e) return "未知错误";
+      if (typeof e === "string") return e;
+      return e.message || e.error || JSON.stringify(e);
     },
     async doDelete() {
       const c = this.current;
@@ -196,6 +296,14 @@ window.__execApp = createApp({
       const c = this.current;
       if (!c) return;
       if (c._new) { this.toast("请先保存再运行", true); return; }
+      // 正在右侧浏览时，「运行」就是按当前参数重新加载这一页
+      if (this.browsing) {
+        if (this.dirty && !(await this.save())) return;
+        this.syncPanel(true);
+        return;
+      }
+      // 改了设置（比如换「打开方式」）直接按运行，先落盘再跑，免得跑的是旧设置
+      if (this.dirty && !(await this.save())) return;
       this.run = { output: "", running: true, id: null, returncode: null };
       const res = await api.run.start(c.alias, this.lastArgs || "");
       if (!res.ok) { this.toast(res.message, true); this.run.output = null; return; }
@@ -253,7 +361,25 @@ window.__execApp = createApp({
     this.afterActions = r.afterActions || [];
     this.placeholders = r.placeholders || [];
     this.dataDir = r.dataDir || "";
+    this.panelReady = !!r.panel;
     if (this.commands.length) this.select(this.commands[0]._key);
+    this.$nextTick(() => this.syncPanel());
+
+    let resizeTimer = 0;
+    window.addEventListener("resize", () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => this.syncPanel(), 120);
+    });
+
+    // 任何没接住的异常都要冒出来，不能表现成「点了没反应」
+    window.addEventListener("unhandledrejection", (e) => {
+      const r = e && e.reason;
+      console.error("[unhandled]", r);
+      this.toast("出错了：" + this.reason(r), true);
+    });
+    window.addEventListener("error", (e) => {
+      if (e && e.message) { console.error("[error]", e.message); }
+    });
 
     document.addEventListener("keydown", (e) => {
       const mod = e.ctrlKey || e.metaKey;

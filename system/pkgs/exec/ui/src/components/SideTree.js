@@ -18,6 +18,22 @@ export default {
       if (this.searching) return true;
       return this.expanded[g.id] !== false;
     },
+    /* 窄栏只放短名字：括号补充说明去掉，开头的别名去掉（左边已经有一列），太长就截断；
+       完整描述还在悬浮提示里 */
+    shortDesc(c) {
+      const text = (c.description || "").trim();
+      let out = text
+        .replace(/[（(][^）)]*[）)]/g, "")
+        .replace(/[「【\[][^」】\]]*[」】\]]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      const alias = (c.alias || "").trim().toLowerCase();
+      if (alias && out.toLowerCase().startsWith(alias + " ")) out = out.slice(alias.length + 1).trim();
+      const head = out.split(" / ")[0].trim();
+      if (head.length >= 2) out = head;
+      if (!out) return "";
+      return out.length > 9 ? out.slice(0, 9).trimEnd() + "…" : out;
+    },
 
     onEnter(e, c) {
       if (!c.description) { this.$emit("hover", null); return; }
@@ -54,7 +70,7 @@ export default {
                @mouseenter="onEnter($event, c)" @mouseleave="$emit('hover', null)">
             <span class="dot" :class="c.type"></span>
             <span class="alias">{{ c.alias || '（未命名）' }}</span>
-            <span class="desc">{{ c.description || '' }}</span>
+            <span class="desc">{{ shortDesc(c) }}</span>
           </div>
         </template>
       </template>

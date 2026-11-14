@@ -1,4 +1,4 @@
-.body { display: grid; grid-template-columns: 320px minmax(0, 1fr); min-height: 0; }
+.body { display: grid; grid-template-columns: 180px minmax(0, 1fr); min-height: 0; }
 
 .sidebar {
   display: flex; flex-direction: column; min-height: 0;
@@ -10,9 +10,9 @@
 }
 
 .row {
-  display: grid; grid-template-columns: 8px minmax(48px, auto) minmax(0, 1fr);
-  gap: 8px; align-items: center;
-  padding: 4px 8px 4px 30px; margin-bottom: 1px;
+  display: grid; grid-template-columns: 6px minmax(0, auto) minmax(0, 1fr);
+  gap: 6px; align-items: center;
+  padding: 3px 5px 3px 2px; margin-bottom: 1px;
   border-radius: var(--r-sm); cursor: default;
   transition: background var(--dur-fast) var(--ease-out);
 }
@@ -20,16 +20,19 @@
 .row.sel { background: var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.14); }
 .row.sel .alias, .row.sel .desc { color: var(--accent-fg); }
 .row.sel .dot { background: color-mix(in srgb, var(--accent-fg) 85%, transparent) !important; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); }
 .dot.python     { background: #3b82f6; }
 .dot.powershell { background: #0ea5e9; }
 .dot.shell      { background: #64748b; }
 .dot.url        { background: #22c55e; }
 .dot.path       { background: #f59e0b; }
 .dot.html       { background: #ec4899; }
-.row .alias { font-weight: 520; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .alias {
+  font-size: 12px; font-weight: 520;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .row .desc {
-  font-size: var(--t-sub); letter-spacing: var(--t-sub-ls); color: var(--text-2);
+  font-size: 10.5px; letter-spacing: 0; color: var(--text-2);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
@@ -274,6 +277,8 @@ textarea.small:focus { border-color: var(--ring); box-shadow: 0 0 0 3px var(--fi
   background: #ffffff;
 }
 .seg.mini { width: auto; padding: 1px; margin-left: auto; align-self: center; }
+.seg.fit { display: inline-flex; width: fit-content; }
+.seg.fit button { flex: none; padding: 5px 18px; }
 .seg.mini button { flex: none; padding: 2px 10px; font-size: var(--t-sub); }
 
 @keyframes sheetIn { from { opacity: 0; transform: scale(.96) translateY(10px); } to { opacity: 1; transform: none; } }
@@ -301,6 +306,45 @@ textarea.small:focus { border-color: var(--ring); box-shadow: 0 0 0 3px var(--fi
   animation: rise var(--dur-base) var(--ease-spring) both;
 }
 .toast.bad { color: var(--danger); }
+
+/* ---- 网址命令的「浏览 / 设置」两个页签 ---------------------------------- */
+.d-tabs {
+  display: flex; align-items: flex-end; gap: 2px;
+  margin: 14px 0 12px; border-bottom: 1px solid var(--sep);
+}
+.d-tabs > button {
+  appearance: none; background: none; border: 0; cursor: pointer;
+  padding: 6px 11px 8px; margin-bottom: -1px;
+  font: 500 13px/1 var(--font-ui); color: var(--text-2);
+  border-bottom: 2px solid transparent;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.d-tabs > button:hover { color: var(--text); }
+.d-tabs > button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+
+.d-tabs-arg { display: flex; align-items: center; gap: 6px; margin-left: auto; padding-bottom: 5px; }
+.d-tabs-arg input {
+  width: 190px; padding: 5px 9px; font-size: 12.5px;
+  border-radius: var(--r-sm); border: 1px solid var(--sep);
+  background: var(--field); color: var(--text);
+}
+.d-tabs-arg input::placeholder { color: var(--text-3); }
+.d-tabs-arg input:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+.d-tabs-arg .btn { padding: 4px 10px; font-size: 12.5px; }
+
+/* 网页窗口是系统窗口盖在这块地方上（贴窗口模式），这里只留底色；
+   贴不了窗口时里面放一个 iframe */
+.view-host {
+  flex: 1 1 0; min-height: 0;
+  border-radius: var(--r-md); background: var(--surface-3);
+  overflow: hidden;
+}
+.view-host iframe { width: 100%; height: 100%; border: 0; background: #fff; display: block; }
+
+/* 浏览时把卡片放宽、把标题行让出去，网页能多用点地方 */
+.card.wide { max-width: 1180px; }
+.card.wide .d-head { display: none; }
+.card.wide .d-tabs { margin-top: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }

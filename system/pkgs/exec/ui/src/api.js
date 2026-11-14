@@ -4,6 +4,8 @@ const BACKEND = {
   cmd: { list: "cmd_list", save: "cmd_save", remove: "cmd_remove" },
   run: { start: "run_start", poll: "run_poll", stop: "run_stop", console: "run_console" },
   sys: { reveal: "sys_reveal", copy: "sys_copy", pickPath: "sys_pick_path" },
+  panel: { show: "panel_show", move: "panel_move", hide: "panel_hide",
+           url: "panel_url", state: "panel_state" },
 };
 
 let readyPromise = null;
@@ -51,6 +53,14 @@ export const api = {
     save: (item, originalAlias) =>
       call(BACKEND.cmd.save, { item: item, original_alias: originalAlias }),
     remove: (alias) => call(BACKEND.cmd.remove, { alias: alias }),
+  },
+
+  panel: {
+    show: (body) => call(BACKEND.panel.show, body),
+    move: (body) => call(BACKEND.panel.move, body),
+    hide: () => call(BACKEND.panel.hide),
+    url: (body) => call(BACKEND.panel.url, body),
+    state: () => call(BACKEND.panel.state),
   },
 
   run: {

@@ -45,7 +45,9 @@ TYPES = {
     'url': {
         'label': '网址', 'kind': 'builtin', 'lang': None,
         'multiline': False, 'payload': '网址模板',
-        'hint': '用默认浏览器打开；{args} 会拼进网址（如 .../s?wd={args}）',
+        'openers': [{'id': 'panel', 'label': '右侧浏览'},
+                    {'id': 'browser', 'label': '系统浏览器'}],
+        'hint': '打开网址；{args} 会拼进网址（如 .../s?wd={args}）',
     },
     'path': {
         'label': '文件 / 文件夹', 'kind': 'builtin', 'lang': None,
@@ -228,6 +230,7 @@ def normalize(item):
         "env": str(item.get('env') or ''),
         "elevated": bool(item.get('elevated')),
         "after": item.get('after') if item.get('after') in ('none', 'clipboard', 'file') else 'none',
+        "open_in": item.get('open_in') if item.get('open_in') in ('panel', 'browser') else 'panel',
     }
 
 def validate(item):
@@ -484,18 +487,81 @@ def make_env(item, extra=None):
         env.update({k: str(v) for k, v in extra.items()})
     return env
 
-def _open_url(url):
-    import webbrowser
+def _absolute_url(url):
     url = (url or '').strip()
     if not url:
-        return False, '没有填网址。'
+        return ''
     if not re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*://', url):
         url = 'https://' + url
+    return url
+
+_WEBVIEW_PY = []
+
+def _webview_python():
+    """找一个能 import webview 的解释器；宿主自己那份未必装了，所以挨个试一遍。"""
+    if _WEBVIEW_PY:
+        return _WEBVIEW_PY[0]
+    import shutil
+    cands = [sys.executable, os.environ.get('MOSS_PYTHON', ''),
+             shutil.which('python') or '', shutil.which('python3') or '']
+    seen = set()
+    for exe in cands:
+        if not exe or exe in seen or not os.path.isfile(exe):
+            continue
+        seen.add(exe)
+        try:
+            rc = subprocess.run([exe, '-c', 'import webview'],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                timeout=30, creationflags=_NO_WINDOW).returncode
+        except Exception:
+            continue
+        if rc == 0:
+            _WEBVIEW_PY.append(exe)
+            return exe
+    _WEBVIEW_PY.append('')
+    return ''
+
+def _open_url_in_window(url):
+    """用 pywebview 单开一个窗口（独立进程，避免抢主线程的 GUI 循环）。"""
+    python = _webview_python()
+    if not python:
+        return False, '找不到装了 pywebview 的 Python，改用默认浏览器'
+    script = os.path.join(PLUGIN_DIR, 'urlwin.py')
+    if not os.path.isfile(script):
+        return False, '内置窗口的启动脚本不见了，改用默认浏览器'
+    try:
+        os.makedirs(TEMP_DIR, exist_ok=True)
+        log = open(os.path.join(TEMP_DIR, 'urlwin.log'), 'a', encoding='utf-8')
+    except OSError:
+        log = subprocess.DEVNULL
+    try:
+        subprocess.Popen([python, script, url], cwd=PLUGIN_DIR,
+                         stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                         creationflags=_NO_WINDOW)
+    except Exception as e:
+        return False, '无法打开内置窗口：%s' % e
+    finally:
+        if log is not subprocess.DEVNULL:
+            log.close()
+    return True, '已用内置窗口打开：%s' % url
+
+def _open_url(url, open_in='browser'):
+    import webbrowser
+    url = _absolute_url(url)
+    if not url:
+        return False, '没有填网址。'
+    note = ''
+    # 命令行 / 没有界面的情况下贴不了右侧面板，用独立的内置窗口顶上
+    if open_in in ('panel', 'webview'):
+        ok, msg = _open_url_in_window(url)
+        if ok:
+            return True, msg
+        note = '（%s）' % msg
     try:
         webbrowser.open(url)
     except Exception as e:
         return False, '无法打开网址：%s' % e
-    return True, '已用默认浏览器打开：%s' % url
+    return True, '已用默认浏览器打开%s：%s' % (note, url)
 
 def _open_path(path):
     path = (path or '').strip().strip('"')
@@ -579,7 +645,7 @@ def run_in_console(item, args=None):
     if kind == 'builtin':
         code = expand(item['code'], raw_args)
         if item['type'] == 'url':
-            ok, msg = _open_url(code)
+            ok, msg = _open_url(code, item['open_in'])
         elif item['type'] == 'path':
             ok, msg = _open_path(code)
         else:
@@ -690,7 +756,7 @@ class RunSession(_BaseSession):
     def _run_builtin(self, raw_args):
         code = expand(self.item['code'], raw_args)
         if self.item['type'] == 'url':
-            ok, msg = _open_url(code)
+            ok, msg = _open_url(code, self.item['open_in'])
         elif self.item['type'] == 'path':
             ok, msg = _open_path(code)
         else:
