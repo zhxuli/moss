@@ -1701,6 +1701,59 @@ AUTOSTART_MAX = 20
 
 PARASITE_FILE = USER_DATA / "state" / "_ui_parasite.json"
 
+GROUPS_FILE = USER_DATA / "state" / "_ui_groups.json"
+GROUPS_MAX = 60
+GROUP_NAME_MAX = 40
+GROUP_IDS_MAX = 400
+
+def _groups_clean(groups, ungrouped_collapsed=False):
+    """把分组表洗干净再落盘 / 再回给界面。
+
+    界面是分组的唯一主人（顺序、名字、谁在哪组），这里只负责挡住脏数据：
+    没有 id / id 重复 / 名字为空 / ids 里混进非字符串 —— 一律收拾掉。"""
+    if not isinstance(groups, (list, tuple)):
+        groups = []
+    out = []
+    for g in groups[:GROUPS_MAX]:
+        if not isinstance(g, dict):
+            continue
+        gid = str(g.get("id") or "").strip()[:24]
+        if not gid or any(x["id"] == gid for x in out):
+            continue
+        name = str(g.get("name") or "").replace("\r", " ").replace("\n", " ").strip()
+        raw = g.get("ids")
+        if not isinstance(raw, (list, tuple)):
+            raw = []
+        ids = []
+        for i in raw[:GROUP_IDS_MAX]:
+            s = str(i or "").strip()[:64]
+            if s and s not in ids:
+                ids.append(s)
+        out.append({"id": gid, "name": name[:GROUP_NAME_MAX] or "未命名分组",
+                    "collapsed": bool(g.get("collapsed")), "ids": ids})
+    return {"groups": out, "ungrouped_collapsed": bool(ungrouped_collapsed)}
+
+def _groups_read():
+    try:
+        data = json.loads(GROUPS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    return _groups_clean(data.get("groups"), data.get("ungrouped_collapsed"))
+
+def _groups_write(groups, ungrouped_collapsed=False):
+    data = _groups_clean(groups, ungrouped_collapsed)
+    try:
+        d = GROUPS_FILE.parent
+        d.mkdir(parents=True, exist_ok=True)
+        tmp = GROUPS_FILE.with_name(GROUPS_FILE.name + ".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        os.replace(str(tmp), str(GROUPS_FILE))
+    except Exception as e:
+        return False, str(e), data
+    return True, "", data
+
 def _parasite_read():
     try:
         data = json.loads(PARASITE_FILE.read_text(encoding="utf-8"))
@@ -4272,6 +4325,17 @@ class Api:
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "msg": str(e)}
+
+    def list_groups(self):
+        d = _groups_read()
+        return {"ok": True, "groups": d["groups"],
+                "ungrouped_collapsed": d["ungrouped_collapsed"],
+                "file": str(GROUPS_FILE)}
+
+    def list_groups_set(self, groups, ungrouped_collapsed=False):
+        ok, msg, d = _groups_write(groups, ungrouped_collapsed)
+        return {"ok": ok, "msg": msg, "groups": d["groups"],
+                "ungrouped_collapsed": d["ungrouped_collapsed"]}
 
     def ai_config(self, name="", reveal=False):
         if not HOST:

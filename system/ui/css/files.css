@@ -319,6 +319,9 @@ table.bk-tbl td.dim{color:var(--dim)}
 #ctxmenu .mi:hover{background:var(--hover)}
 #ctxmenu .mi.dis{opacity:.4;cursor:default}
 #ctxmenu .mi.dis:hover{background:transparent}
+#ctxmenu .mi.danger{color:#ef4444}
+#ctxmenu .mi.danger:hover{background:color-mix(in srgb, #ef4444 12%, transparent)}
+#ctxmenu .mi .mi-note{margin-left:auto;padding-left:10px;font-size:11px;color:var(--dim2)}
 #ctxmenu .sep{height:1px;background:var(--line2);margin:4px 6px}
 
 #pane-detail{overflow:auto;padding:0}

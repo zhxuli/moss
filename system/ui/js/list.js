@@ -21,6 +21,8 @@ function setSide(which){
   $("#list").hidden = which !== "pkg";
   $("#hist").hidden = which !== "hist";
   $("#btn-newpkg").hidden = which !== "pkg";   
+  const gb = $("#btn-groups");
+  if (gb) gb.hidden = which !== "pkg";
   $("#q").placeholder = which === "pkg" ? "搜索包名 / 说明 / 标签…"
                                         : "搜索历史（名字 / 参数 / 目录）…";
   if (which === "hist") loadHist().then(renderHist); else renderList();
@@ -225,6 +227,13 @@ function paintBarActs(){
   if (rh && r) rh.onclick = () => r.click();          
   const of = $("#btn-openfile");
   if (of) of.onclick = () => openFileAndRun();
+
+  const gb = $("#btn-groups");
+  if (gb){
+    gb.innerHTML = ico("list-tree", "i");
+    gb.title = "分组：新建 / 改名 / 排序（右键插件可「移到分组」，也可以把插件拖到分组标题上）";
+    gb.onclick = (ev) => groupsBarClick(ev);
+  }
 }
 
 async function openFileAndRun(){
@@ -289,22 +298,100 @@ function _dragLog(msg){
   try{ pywebview.api.ui_log("[排序] " + msg); }catch(e){}
 }
 
-function _allIdsInView(){
+/* 一个包该排在哪儿：先看分组顺序，组内再按当前排序方式 */
+function _pkgCmp(){
   const dirName = p => String(p.name || p.id || "").toLowerCase();
   const bornOf = p => LISTR.born[(p.dir || "").split(/[\\/]/).pop()] || 0;
-  return (DATA.packages || []).slice().sort((a, b) => {
-    if (LISTR.sort === "custom"){
+  const key = LISTR.sort;
+  return (a, b) => {
+    if (key === "custom"){
       const ia = LISTR.custom.indexOf(a.id), ib = LISTR.custom.indexOf(b.id);
       const ka = ia < 0 ? 1e9 : ia, kb = ib < 0 ? 1e9 : ib;
       if (ka !== kb) return ka - kb;
-    } else if (LISTR.sort === "born"){
+    } else if (key === "born"){
       const d = bornOf(b) - bornOf(a); if (d) return d;
-    } else if (LISTR.sort === "run"){
+    } else if (key === "run"){
       const d = lastRunOf(b.id) - lastRunOf(a.id); if (d) return d;
     }
     return dirName(a) < dirName(b) ? -1 : (dirName(a) > dirName(b) ? 1 : 0);
-  }).map(p => p.id);
+  };
 }
+function _sortedPkgs(){
+  return (DATA.packages || []).slice().sort(_pkgCmp());
+}
+function _pkgHit(p, f){
+  if (!f) return true;
+  return [p.id, p.name, p.desc, (p.tags || []).join(" "), (p.aliases || []).join(" ")]
+    .join(" ").toLowerCase().includes(f);
+}
+
+/* 按分组把「已经排好序的一串包」分堆：分组的先后决定大段的先后，段内保持传进来的排序 */
+function _bucketRows(rows){
+  const map = new Map();
+  const gidOf = new Map();
+  GROUPS.list.forEach(g => {
+    map.set(g.id, []);
+    (g.ids || []).forEach(id => { if (!gidOf.has(id)) gidOf.set(id, g.id); });
+  });
+  const rest = [];
+  rows.forEach(p => {
+    const gid = gidOf.get(p.id);
+    const bucket = gid ? map.get(gid) : null;
+    if (bucket) bucket.push(p); else rest.push(p);
+  });
+  return {map: map, rest: rest};
+}
+
+/* 列表怎么分段：没分组 → 一整段（不显示标题）；有分组 → 各归各组，「未分组」收剩下的 */
+function listSections(){
+  const f = (($("#q") && $("#q").value) || "").trim().toLowerCase();
+  const all = _sortedPkgs();
+  const byLayer = LISTR.filt === "all" ? all : all.filter(p => p.layer === LISTR.filt);
+  let rows = byLayer.filter(p => _pkgHit(p, f));
+  const dragFilt = !!(DRAG.on && !DRAG.framePid);
+  if (dragFilt) rows = rows.filter(p => dropAccepts(p, DRAG.items));
+  const filtering = !!f || LISTR.filt !== "all" || dragFilt;
+  if (!GROUPS.list.length)
+    return [{key: "__all__", gid: "", title: "", collapsed: false, rows: rows, free: false}];
+
+  const b = _bucketRows(rows);
+  /* 搜索 / 拖文件进来时，收起来的分组也要摊开 —— 不然命中就在里面，看着像"没搜到" */
+  const expand = !!f || dragFilt;
+  const out = [];
+  GROUPS.list.forEach(g => {
+    const rs = b.map.get(g.id) || [];
+    if (filtering && !rs.length) return;        // 搜索/筛选时，空分组别占地方
+    out.push({key: "g:" + g.id, gid: g.id, title: g.name || "（没名字的分组）",
+              collapsed: !expand && !!g.collapsed, rows: rs, free: false});
+  });
+  if (b.rest.length || !filtering)
+    out.push({key: "__free__", gid: "__free__", title: "未分组",
+              collapsed: !expand && !!GROUPS.ungroupedCollapsed, rows: b.rest, free: true});
+  return out;
+}
+
+/* 整张列表的"名义顺序"（不看筛选）：组内拖动排序时按这个算自定义顺序 */
+function _displayOrderAll(){
+  const all = _sortedPkgs();
+  if (!GROUPS.list.length) return all.map(p => p.id);
+  const b = _bucketRows(all);
+  const out = [];
+  GROUPS.list.forEach(g => (b.map.get(g.id) || []).forEach(p => out.push(p.id)));
+  b.rest.forEach(p => out.push(p.id));
+  return out;
+}
+
+/* 拖着插件时，指针压在哪个分组标题（或空分组提示）上 */
+function _groupHeadAt(clientX, clientY){
+  const els = [].slice.call(document.querySelectorAll("#list .lgrp, #list .lgrp-empty"));
+  for (const el of els){
+    const r = el.getBoundingClientRect();
+    if (clientY >= r.top - 3 && clientY <= r.bottom + 3 &&
+        clientX >= r.left - 4 && clientX <= r.right + 4) return el;
+  }
+  return null;
+}
+
 function _rowAtY(clientY){
   const rows = [].slice.call(document.querySelectorAll("#list .item"));
   for (const el of rows){
@@ -316,23 +403,30 @@ function _rowAtY(clientY){
 function _reorderLive(clientY){
   const from = _pdrag && _pdrag.id;
   if (!from) return false;
-  const vis = [].slice.call(document.querySelectorAll("#list .item")).map(el => el.dataset.id);
-  const others = [].slice.call(document.querySelectorAll("#list .item"))
-    .filter(el => el.dataset.id !== from);
-  let ti = others.length;                            
-  for (let i = 0; i < others.length; i++){
-    const r = others[i].getBoundingClientRect();
+  const el = document.querySelector('#list .item[data-id="' + from + '"]');
+  if (!el) return false;
+  const sec = el.closest(".lsec");
+  const mates = [].slice.call(document.querySelectorAll("#list .item"))
+    .filter(x => x !== el && x.closest(".lsec") === sec);
+  let ti = mates.length;
+  for (let i = 0; i < mates.length; i++){
+    const r = mates[i].getBoundingClientRect();
     if (clientY < r.top + r.height / 2){ ti = i; break; }
   }
-  const v = vis.filter(id => id !== from);
-  v.splice(ti, 0, from);
-  if (v.join(",") === vis.join(",")) return false;   
-  const full = _allIdsInView();
-  const visset = new Set(vis);
-  const slots = [];
-  full.forEach((id, i) => { if (visset.has(id)) slots.push(i); });
-  const out = full.slice();
-  slots.forEach((slot, k) => { out[slot] = v[k]; });
+  const prevId = ti > 0 ? mates[ti - 1].dataset.id : null;
+  const nextId = ti < mates.length ? mates[ti].dataset.id : null;
+  const full = _displayOrderAll();
+  const out = full.filter(id => id !== from);
+  let at = out.length;
+  if (nextId){
+    const k = out.indexOf(nextId);
+    if (k >= 0) at = k;
+  } else if (prevId){
+    const k = out.indexOf(prevId);
+    if (k >= 0) at = k + 1;
+  }
+  out.splice(at, 0, from);
+  if (out.join(",") === full.join(",")) return false;    // 位置没变，别白重排
   LISTR.custom = out;
   LISTR.sort = "custom";
   paintListBars();
@@ -381,6 +475,7 @@ function _finalizeDrag(){
   document.removeEventListener("pointerup", _onDragEnd);
   document.removeEventListener("pointercancel", _onDragEnd);
   LISTDR.dragId = null;
+  GROUPS.dropGid = null;
   document.querySelectorAll("#list .item").forEach(el => {
     el.style.transition = ""; el.style.transform = ""; el.style.zIndex = "";
   });
@@ -398,6 +493,14 @@ function _onDragMove(e){
     _dragLog("开始拖 " + _pdrag.id + "(" + _nm(_pdrag.id) + ")");
   }
   e.preventDefault();
+
+  const head = _groupHeadAt(e.clientX, e.clientY);
+  GROUPS.dropGid = head ? String(head.dataset.gid || "") : null;
+  if (GROUPS.dropGid){                                  // 压在分组标题上：松手＝放进这组
+    _followDrag(e.clientY);
+    return;
+  }
+
   const before = _measureTops();                       
   const changed = _reorderLive(e.clientY);
   if (changed) Vue.nextTick(() => { if (_pdrag){ _flipAnimate(before); _followDrag(e.clientY); } });
@@ -406,8 +509,19 @@ function _onDragMove(e){
 function _onDragEnd(e){
   if (!_pdrag || (e.pointerId != null && e.pointerId !== _pdrag.pid)) return;
   const moved = _pdrag.moved;
+  const id = _pdrag.id;
+  const gid = GROUPS.dropGid;
   _finalizeDrag();
-  if (moved){ saveListView(); _dragLog("松手 -> " + (LISTR.custom || []).join(",")); }
+  if (!moved) return;
+  if (gid){
+    if (groupSetPkg(id, gid === "__free__" ? "" : gid)){
+      toast("已把 " + PSYM + id + " 移到「" + groupFreeLabel(gid) + "」");
+      saveListView();
+    }
+    return;
+  }
+  saveListView();
+  _dragLog("松手 -> " + (LISTR.custom || []).join(","));
 }
 function initListDrag(){
   const list = $("#list");
@@ -417,6 +531,8 @@ function initListDrag(){
     if (e.button != null && e.button !== 0) return;
 
     if (e.target.closest && e.target.closest("button")) return;
+
+    if (e.target.closest && e.target.closest(".lgrp, .lgrp-empty, .lgrp-add")) return;
 
     const item = _rowAtY(e.clientY) || (e.target.closest && e.target.closest(".item"));
     if (!item) return;
@@ -1017,6 +1133,7 @@ async function pkgFollowId(oldId, newId){
   if (ARGS[oldId] !== undefined){ ARGS[newId] = ARGS[oldId]; delete ARGS[oldId]; }
   if (RUNS[oldId]){ RUNS[newId] = RUNS[oldId]; delete RUNS[oldId]; }
   if (consoleKey === oldId) consoleKey = newId;
+  try{ groupsRenamePkg(oldId, newId); }catch(e){  }
   try{ await autoRename(oldId, newId); }catch(e){  }
 
   try{ await parasiteRename(oldId, newId); }catch(e){  }
@@ -1214,38 +1331,17 @@ async function cmdForgetHist(it){
 
 const MossList = {
   name: "moss-list",
-  data(){ return { R: LISTR, L: LISTDR }; },
+  data(){ return { R: LISTR, L: LISTDR, G: GROUPS }; },
   computed: {
-    rows(){
-      this.R.rev;                                  
-
+    sections(){
+      this.R.rev; this.G.rev;
       if (!this.R.ready) return [];
-      const f = $("#q").value.trim().toLowerCase();
-      const all = DATA.packages.filter(p => !f ||
-        [p.id, p.name, p.desc, (p.tags||[]).join(" "), (p.aliases||[]).join(" ")]
-          .join(" ").toLowerCase().includes(f));
-
-      const byLayer = this.R.filt === "all" ? all : all.filter(p => p.layer === this.R.filt);
-
-      const dirName = p => String(p.name || p.id || "").toLowerCase();
-      const bornOf = p => this.R.born[(p.dir || "").split(/[\\/]/).pop()] || 0;
-      const sortKey = this.R.sort;
-      const sorted = byLayer.slice().sort((a, b) => {
-        if (sortKey === "custom"){                    
-          const ia = this.R.custom.indexOf(a.id), ib = this.R.custom.indexOf(b.id);
-          const ka = ia < 0 ? 1e9 : ia, kb = ib < 0 ? 1e9 : ib;   
-          if (ka !== kb) return ka - kb;
-        } else if (sortKey === "born"){
-          const d = bornOf(b) - bornOf(a);
-          if (d) return d;
-        } else if (sortKey === "run"){
-          const d = lastRunOf(b.id) - lastRunOf(a.id);
-          if (d) return d;
-        }
-        return dirName(a) < dirName(b) ? -1 : (dirName(a) > dirName(b) ? 1 : 0);
-      });
-
-      return (DRAG.on && !DRAG.framePid) ? sorted.filter(p => dropAccepts(p, DRAG.items)) : sorted;
+      return listSections();
+    },
+    hasAny(){
+      this.R.rev; this.G.rev;
+      if (!this.R.ready) return false;
+      return listSections().some(s => s.rows.length);
     },
     emptyHTML(){
       this.R.rev;
@@ -1263,8 +1359,10 @@ const MossList = {
       try{ return autoPkgIds().has(String(id)); }catch(e){ return false; }
     },
     rowHTML(p){
-      return '<span class="drag-grip" title="拖动排序">' + ico("grip-vertical", "i") + '</span>' +
+      return '<span class="drag-grip" title="按住拖动排序 / 拖到分组标题上＝移进那组">' +
+          ico("grip-vertical", "i") + '</span>' +
         iconHTML(p, "ico") +
+        '<span class="rowdiv"></span>' +
         '<div style="min-width:0;flex:1">' +
           '<div class="nm">' + esc(p.name) + '</div>' +
           '<div class="ds">' + esc(PSYM + p.id) + '</div></div>' +
@@ -1277,17 +1375,52 @@ const MossList = {
       select(id);
       parasiteOnPick(id, prev);
     },   
+    caret(sec){ return ico("chevron-down", "i"); },   // 收起时靠 CSS 转 -90° 指向右
+    moreIco(){ return ico("ellipsis", "i"); },
+    addHTML(){ return ico("folder-plus", "i") + '<span>新建分组</span>'; },
+    newGroupAsk(){ groupNewAsk(); },
+    onHeadClick(sec){
+      if (sec.free) groupsToggleFree();
+      else groupToggle(groupById(sec.gid));
+    },
+    onHeadMenu(sec, ev){
+      const x = ev.clientX, y = ev.clientY;
+      if (sec.free) groupFreeMenu(x, y);
+      else groupHeadMenu(groupById(sec.gid), x, y);
+    },
+    onPkgMenu(p, ev){ pkgGroupMenu(p.id, ev.clientX, ev.clientY); },
   },
   template: `
     <template v-if="R.ready">
-      <div v-if="!rows.length" class="empty">{{ emptyHTML }}</div>
+      <div v-if="!hasAny" class="empty">{{ emptyHTML }}</div>
       <template v-else>
-        <div v-for="p in rows" :key="p.id" class="item"
-             :class="{sel: p.id === selId(), dragging: L.dragId === p.id,
-                      'pkg-autorun': isAutoRun(p.id)}"
-             :data-id="p.id" :data-state="stateOf(p.id)"
-             :title="isAutoRun(p.id) ? '已设置自动运行' : ''"
-             @click="pick(p.id)" v-html="rowHTML(p)"></div>
+        <div v-for="sec in sections" :key="sec.key" class="lsec">
+          <div v-if="sec.title" class="lgrp"
+               :class="{closed: sec.collapsed, drop: G.dropGid === sec.gid,
+                        'is-free': sec.free}" :data-gid="sec.gid"
+               :title="sec.collapsed ? '展开这一组' : '收起这一组'"
+               @click="onHeadClick(sec)">
+            <span class="lgrp-caret" v-html="caret(sec)"></span>
+            <span class="lgrp-name">{{ sec.title }}</span>
+            <b class="lgrp-n">{{ sec.rows.length }}</b>
+            <button type="button" class="lgrp-more" title="分组菜单：改名 / 上下挪 / 删掉"
+                    @click.stop="onHeadMenu(sec, $event)" v-html="moreIco()"></button>
+          </div>
+          <template v-if="!sec.collapsed">
+            <div v-for="p in sec.rows" :key="p.id" class="item"
+                 :class="{sel: p.id === selId(), dragging: L.dragId === p.id,
+                          'pkg-autorun': isAutoRun(p.id)}"
+                 :data-id="p.id" :data-state="stateOf(p.id)"
+                 :title="isAutoRun(p.id) ? '已设置自动运行' : ''"
+                 @click="pick(p.id)" @contextmenu.prevent="onPkgMenu(p, $event)"
+                 v-html="rowHTML(p)"></div>
+            <div v-if="!sec.rows.length && sec.title" class="lgrp-empty"
+                 :class="{drop: G.dropGid === sec.gid}" :data-gid="sec.gid">
+              {{ sec.free ? '所有插件都已经分好组了' : '（空 —— 把插件拖到这行标题上就放进来）' }}</div>
+          </template>
+        </div>
+        <button v-if="G.list.length" type="button" class="lgrp-add" @click="newGroupAsk()"
+                v-html="addHTML()"></button>
       </template>
     </template>`,
 };

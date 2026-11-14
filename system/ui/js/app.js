@@ -43,6 +43,8 @@ async function init(){
 
   if (DATA && DATA.symbols && DATA.symbols.plugin !== undefined) PSYM = DATA.symbols.plugin;
 
+  try{ await loadGroups(); }catch(e){ reportError("读分组失败", (e && e.message) || String(e), ""); }
+
   if (FLOAT_PID){ await initFloatMode(); return; }
 
   document.querySelector("header .brand").title =

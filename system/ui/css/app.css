@@ -122,6 +122,10 @@ main.mini:not(.hover-aside) > aside .listbar{flex-wrap:nowrap;overflow:hidden}
 main.mini:not(.hover-aside) > aside .hitem,
 main.mini:not(.hover-aside) > aside .item{padding-left:0;padding-right:0;gap:0;justify-content:center}
 main.mini:not(.hover-aside) > aside .item .drag-grip{display:none}
+main.mini:not(.hover-aside) > aside .item .rowdiv{display:none}
+main.mini:not(.hover-aside) > aside .lgrp,
+main.mini:not(.hover-aside) > aside .lgrp-add,
+main.mini:not(.hover-aside) > aside .lgrp-empty{display:none}
 main.mini:not(.hover-aside) > aside .item .rowstat,
 main.mini:not(.hover-aside) > aside .hitem .hstat{display:none}
 
@@ -201,10 +205,20 @@ main.mini #list::-webkit-scrollbar,main.mini #hist::-webkit-scrollbar{width:0;he
 #sideswitch #btn-newpkg{margin-left:auto;padding:4px 7px;min-width:28px}
 #sideswitch #btn-refresh{padding:4px 7px;min-width:28px}
 
-.hitem,.item{display:flex;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line2);
+.hitem,.item{display:flex;gap:10px;padding:11px 12px;border-bottom:1px solid var(--line2);
   cursor:pointer;align-items:center}
+.item{position:relative}
 .hitem:hover,.item:hover{background:var(--hover)}
 .hitem.sel,.item.sel{background:var(--sel)}
+
+/* 选中行左边那道竖条（参考 UI 的做法：浅色底就用强调色，运行中变绿） */
+.item.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:var(--accent);border-radius:0 3px 3px 0;pointer-events:none;z-index:1}
+.item.sel[data-state=running]::before{background:#1f9d55}
+
+/* 图标和文字之间那道细分隔线 */
+.item .rowdiv{width:1px;height:24px;flex:none;background:var(--line2);border-radius:1px;
+  margin:0 -2px}
 .hitem .hico,.ico{width:24px;height:24px;flex:none;display:flex;align-items:center;
   justify-content:center;color:var(--dim)}
 .hitem .hico svg,.hitem .hico img,.ico svg,.ico img{width:24px;height:24px}
@@ -356,8 +370,42 @@ body.float #pane-embed{padding:0}
 .item[data-state=running],.hitem[data-state=running]{box-shadow:inset 3px 0 0 #1f9d55}
 
 .item.pkg-autorun{position:relative}
-.item.pkg-autorun::before{content:"";position:absolute;left:0;top:25%;height:50%;width:3px;
-  background:var(--accent);border-radius:0 3px 3px 0;pointer-events:none}
+.item.pkg-autorun::after{content:"";position:absolute;right:0;top:25%;height:50%;width:3px;
+  background:var(--accent);border-radius:3px 0 0 3px;pointer-events:none}
+
+/* ===== 列表分组（标题条 / 空组提示 / 末尾「新建分组」） =====
+   尺寸照参考站的侧栏（它的分组标题 19.2px/700、上下 16+15px；每行 18px 上下留白）
+   按我们 14px 的基准等比缩一点，组和组之间就松开了。 */
+.lsec{display:block}
+.lgrp{display:flex;align-items:center;gap:6px;
+  padding:24px 8px 13px 18px;background:var(--panel);color:var(--fg2);
+  font-size:16px;font-weight:700;letter-spacing:.01em;user-select:none;cursor:pointer;
+  transition:color .12s}
+.lgrp:hover{color:var(--fg);background:var(--hover)}
+.lgrp .lgrp-caret{display:flex;flex:none;width:14px;height:14px;color:var(--dim);
+  transition:transform .16s ease}
+.lgrp .lgrp-caret svg{width:14px;height:14px}
+.lgrp.closed .lgrp-caret{transform:rotate(-90deg)}
+.lgrp .lgrp-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lgrp .lgrp-n{flex:none;min-width:17px;padding:0 5px;border-radius:6px;
+  background:var(--fill);color:var(--dim2);font-size:11px;font-weight:600;
+  letter-spacing:0;line-height:17px;text-align:center;font-variant-numeric:tabular-nums}
+.lgrp .lgrp-more{flex:none;margin-left:auto;display:flex;align-items:center;justify-content:center;
+  width:20px;height:20px;padding:0;border:0;border-radius:5px;background:transparent;
+  color:var(--dim2);cursor:pointer;opacity:0;transition:opacity .12s,background .12s}
+.lgrp:hover .lgrp-more{opacity:1}
+.lgrp .lgrp-more:hover{background:var(--hover);color:var(--fg)}
+.lgrp .lgrp-more svg{width:13px;height:13px}
+.lgrp.is-free .lgrp-name{font-weight:600}
+.lgrp.drop{background:var(--sel);color:var(--accent)}
+.lgrp.drop .lgrp-caret,.lgrp.drop .lgrp-more{color:var(--accent)}
+.lgrp-empty{padding:0 12px 14px 46px;color:var(--dim2);font-size:12px;line-height:1.5}
+.lgrp-empty.drop{color:var(--accent)}
+.lgrp-add{display:flex;align-items:center;gap:6px;width:100%;margin-top:2px;
+  padding:14px 12px 14px 46px;border:0;border-top:1px dashed var(--line2);background:transparent;
+  color:var(--dim2);font:inherit;font-size:12px;cursor:pointer;text-align:left}
+.lgrp-add:hover{background:var(--hover);color:var(--fg)}
+.lgrp-add svg{width:13px;height:13px}
 
 .hitem.dead{opacity:.45}
 .hitem.dead .hname{color:var(--dim)}

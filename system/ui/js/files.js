@@ -350,6 +350,7 @@ async function refreshPkgs(preferId, quiet){
   try{ fresh = await pywebview.api.state(); }catch(e){ return; }
   if (!fresh || !fresh.packages) return;
   DATA = fresh;
+  try{ if (typeof groupsRefresh === "function") groupsRefresh(); }catch(e){}
   FM.rev++;                      
   renderList(); paintStates();
 
