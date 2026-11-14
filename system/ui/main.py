@@ -3982,12 +3982,15 @@ class Api:
         with _FLOAT_LOCK:
             cur = _FLOAT.get(pid)
         if cur is not None:
-            try:
-                cur.show()
-                cur.restore()
-            except Exception:
-                pass
-            return {"ok": True, "msg": "这个包的窗口已经开着了"}
+            if _float_ready(cur):
+                try:
+                    cur.show()
+                    cur.restore()
+                except Exception:
+                    pass
+                return {"ok": True, "msg": "这个包的窗口已经开着了"}
+            # 那个窗口还在、但页面从来没加载成功（空白窗）⇒ 扔掉重开，别把白板又抬出来
+            _close_float_quiet(pid)
         rec = None
         for p in (DATA.get("packages") or []):
             if str(p.get("id")) == pid:
@@ -4012,6 +4015,7 @@ class Api:
         with _FLOAT_LOCK:
             _FLOAT[pid] = w
         _wire_float(pid, w, title)
+        _watch_float(pid, w)
         _note("float: :%s 弹出为窗口「%s」" % (pid, title))
         return {"ok": True, "msg": "已弹出为窗口（点最小化就收回）"}
 
@@ -5043,6 +5047,48 @@ def _float_win(pid):
     with _FLOAT_LOCK:
         return _FLOAT.get(str(pid))
 
+_FLOAT_LOAD_TIMEOUT = 10.0
+
+
+def _float_ready(win):
+    """这扇浮动窗口算不算「能用」：还在，而且页面当初真加载成功过。
+    ★ 页面没加载成功的窗口 = 一扇白板（连 HTTP 请求都不发），留着只会骗人：
+      下次再点「独立窗口」会走到 `show()` 那条路，把同一块白板又抬出来。"""
+    try:
+        if win.events.closed.is_set():
+            return False
+        return bool(win.events.loaded.is_set())
+    except Exception:
+        return False
+
+
+def _watch_float(pid, win):
+    """窗口建出来 ≠ 页面加载成功。
+
+    ★ 真事（2026-11-14 用户报的「点独立窗口是一片空白」）：WebView2 运行时会自己更新
+      （这台机器 11-14 凌晨 3:37 从 157.0.4341.46 换成了 .57）。moss 界面进程要是那会儿
+      还开着，它手里那套 WebView2 环境还是旧的 —— 之后**新开**的 WebView2（= 浮动窗口）
+      就初始化不起来：窗口出来了，里面一帧文档都没有，连请求都不发，页面那边一行日志
+      都留不下（所以只看页内日志会以为是"啥也没发生"）。关掉重开一样白，重启 moss 立刻好。
+
+    ⇒ 这里等不到 `loaded` 就把这扇窗关掉、退回内嵌，并把原因告诉用户。"""
+    def run():
+        try:
+            ok = win.events.loaded.wait(_FLOAT_LOAD_TIMEOUT)
+        except Exception:
+            ok = False
+        if ok or _float_win(pid) is not win:
+            return
+        _close_float_quiet(pid)
+        _note("float: :%s 窗口建出来了但页面 %g 秒内没加载（WebView2 环境起不来？）"
+              % (pid, _FLOAT_LOAD_TIMEOUT))
+        _js(window, "window.__mossFloatFailed && window.__mossFloatFailed(%s, %s)"
+            % (json.dumps(pid), json.dumps(
+                "窗口没加载出来（WebView2 运行时刚更新过？重启 moss 就好）",
+                ensure_ascii=False)))
+    threading.Thread(target=run, daemon=True).start()
+
+
 def _pkg_title(rec):
     def pick(v):
         if isinstance(v, dict):
@@ -5195,10 +5241,33 @@ def _arm_file_drop():
     except Exception as e:
         drop_log("armed 失败（拖放会完全没反应）：%r" % (e,))
 
+def _hook_webview_log():
+    """把 pywebview 自己的日志也接进 `user_data/state/_ui_drop.log`。
+
+    ★ 它的报错（最典型的就是 `WebView2 initialization failed with exception: ...`）默认只
+      走 logging 到 stderr —— 双击启动的 moss 根本没有 stderr，于是"窗口空白"这种事就彻底
+      没有线索可查（2026-11-14 那次排查就是卡在这儿）。"""
+    try:
+        import logging as _logging
+
+        class _WebviewLog(_logging.Handler):
+            def emit(self, record):
+                try:
+                    drop_log("webview[%s] %s" % (record.levelname, record.getMessage()))
+                except Exception:
+                    pass
+
+        lg = _logging.getLogger("pywebview")
+        lg.addHandler(_WebviewLog())
+        lg.setLevel(_logging.WARNING)
+    except Exception:
+        pass
+
 if __name__ == "__main__":
     DEBUG = any(a in ("--debug", "--dev", "-d") for a in sys.argv[1:])
     if DEBUG:
         print("[moss] 开发模式：devtools 已开（F12 / 右键「检查」）。"
               "页面里的报错也会写到界面右下角状态栏。", flush=True)
+    _hook_webview_log()
     window.events.closing += _on_ui_closing
     webview.start(_arm_file_drop, debug=DEBUG)

@@ -124,6 +124,17 @@ window.__mossFloatClosed = function(pid){
   toast("这个包已经停了");
 };
 
+window.__mossFloatFailed = async function(pid, msg){
+  pid = String(pid);
+  EMB.floated[pid] = false;
+  delete EMB.alive[pid];
+  paintEmbedTab();
+  toast("✗ " + (msg || "窗口没打开，已经退回这一页"), true);
+  const p = (DATA.packages || []).find(x => String(x.id) === pid);
+  if (p && embedSupported(p)) await embedOpen(p, {keepTab: true});
+  paintEmbedTab(); EMBR.rev++;
+};
+
 window.addEventListener("message", async (ev) => {
   const m = ev.data;
   if (!m || m.moss !== 1) return;
