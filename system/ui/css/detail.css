@@ -42,25 +42,63 @@
   .dp-card{border-color:rgba(255,255,255,.05)}
 }
 
+/* 使用说明：折在整页最下面；展开 / 收起改成箭头（原来是"展开 / 收起"那行字，
+   固定占一条右边缘，还看不出到底开没开） */
+.dp-card.dp-doc-card{padding:0}
 .dp-doc{padding:0;border-radius:var(--dp-radius-lg)}
 .dp-doc-sum{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;
-  padding:18px 24px;color:var(--dp-text-main);font-size:14px;font-weight:600;
-  user-select:none}
+  padding:14px 32px;color:var(--dp-text-main);font-size:13.5px;font-weight:600;
+  user-select:none;border-radius:var(--dp-radius-lg)}
+.dp-doc-sum:hover{background:var(--dp-fill-row)}
 .dp-doc-sum::-webkit-details-marker{display:none}
-.dp-doc-sum::after{content:"展开 / 收起";margin-left:auto;font-size:11px;
-  font-weight:400;color:var(--dp-text-muted)}
+.dp-doc-chev{display:inline-flex;align-items:center;flex:none;color:var(--dp-text-light);
+  transition:transform .16s ease-out}
+.dp-doc-chev svg{width:15px;height:15px}
+.dp-doc[open] .dp-doc-chev{transform:rotate(90deg)}
 .dp-doc-ico{display:inline-flex;color:var(--dp-text-muted)}
 .dp-doc-ico svg{width:15px;height:15px}
 .dp-doc-title{letter-spacing:-.01em}
-.dp-doc-file{font-size:11px;font-weight:400;color:var(--dp-text-muted)}
-.dp-doc-body{margin:0;padding:0 24px 20px;max-height:420px;overflow:auto;
-  font:12.5px/1.7 ui-monospace,Consolas,"Microsoft YaHei",monospace;
-  color:var(--dp-text-muted);white-space:pre-wrap;word-break:break-word}
-.dp-doc-body::-webkit-scrollbar{width:8px}
+.dp-doc-file{font-size:11px;font-weight:400;color:var(--dp-text-muted);margin-left:auto}
+.dp-doc-body{margin:0;padding:0 32px 20px 55px;max-height:480px;overflow:auto;
+  word-break:break-word}
+.dp-doc-body.is-pre{font:12.5px/1.7 ui-monospace,Consolas,"Microsoft YaHei",monospace;
+  color:var(--dp-text-muted);white-space:pre-wrap}
+.dp-doc-body::-webkit-scrollbar{width:8px;height:8px}
 .dp-doc-body::-webkit-scrollbar-thumb{background:rgba(0,0,0,.14);border-radius:4px}
 @media (prefers-color-scheme: dark){
   .dp-doc-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18)}
 }
+
+/* ── 渲染出来的 markdown 正文（源文件是 .md，走的是文件管理那套 renderMarkdown）──
+   字号比正文小一档、行距松一点，块间距压紧，免得说明一打开就把面板撑爆。 */
+.dp-md{font-size:13.5px;line-height:1.72;color:var(--dp-text-main)}
+.dp-md > :first-child{margin-top:0}
+.dp-md > :last-child{margin-bottom:0}
+.dp-md h1,.dp-md h2,.dp-md h3,.dp-md h4,.dp-md h5,.dp-md h6{
+  margin:1.15em 0 .5em;line-height:1.35;color:var(--dp-text-main);font-weight:600}
+.dp-md h1{font-size:1.5em;padding-bottom:.25em;border-bottom:1px solid var(--dp-border)}
+.dp-md h2{font-size:1.28em;padding-bottom:.2em;border-bottom:1px solid var(--dp-border)}
+.dp-md h3{font-size:1.12em}
+.dp-md h4,.dp-md h5,.dp-md h6{font-size:1em;color:var(--dp-text-muted)}
+.dp-md p{margin:.6em 0}
+.dp-md a{color:var(--dp-primary);text-decoration:none}
+.dp-md a:hover{text-decoration:underline}
+.dp-md strong{font-weight:600}
+.dp-md ul,.dp-md ol{margin:.55em 0;padding-left:1.5em}
+.dp-md li{margin:.22em 0}
+.dp-md blockquote{margin:.8em 0;padding:.3em 1em;border-left:3px solid var(--dp-primary);
+  background:var(--dp-fill-row);color:var(--dp-text-muted);border-radius:0 6px 6px 0}
+.dp-md code{font-family:var(--mono);font-size:.92em;background:var(--dp-bg-body);
+  padding:.12em .38em;border-radius:5px}
+.dp-md pre{margin:.75em 0;padding:12px 14px;background:var(--dp-bg-body);
+  border:1px solid var(--dp-border);border-radius:8px;overflow:auto;line-height:1.6}
+.dp-md pre code{background:none;padding:0;border:0;font-size:12.5px}
+.dp-md table{border-collapse:collapse;margin:.85em 0;font-size:13px;max-width:100%}
+.dp-md th,.dp-md td{border:1px solid var(--dp-border);padding:6px 10px;text-align:left}
+.dp-md th{background:var(--dp-fill-row);font-weight:600}
+.dp-md img{max-width:100%;height:auto;border-radius:6px}
+.dp-md hr{border:0;border-top:1px solid var(--dp-border);margin:1.2em 0}
+.dp-md .pv-empty{color:var(--dp-text-light)}
 
 .dp-card.dp-head{display:flex;gap:24px;align-items:flex-start}
 .dp-icon{width:68px;height:68px;border-radius:16px;flex-shrink:0;display:flex;
@@ -185,56 +223,66 @@ button.dp-primary svg{width:17px;height:17px}
 .dp-split-item:hover{background:var(--dp-bg-body)}
 .dp-split-item:hover svg{color:var(--dp-primary)}
 
-button.dp-ghost{padding:8px 16px;background:transparent;border:1px solid var(--dp-border);
-  border-radius:var(--dp-radius-md);color:var(--dp-text-main);font-size:13px;cursor:pointer;
-  transition:var(--dp-transition);display:flex;align-items:center;gap:6px}
-button.dp-ghost:hover{background:var(--dp-bg-body);border-color:var(--dp-text-light)}
-button.dp-ghost.on{border-color:var(--dp-primary);color:var(--dp-primary);
-  background:rgba(59,130,246,.05)}
-button.dp-ghost svg{width:16px;height:16px}
-button.dp-ghost.danger{color:var(--dp-danger);border-color:transparent;
-  background:var(--dp-danger-bg)}
-button.dp-ghost.danger:hover{background:var(--dp-danger);color:#fff;
-  border-color:var(--dp-danger)}
+/* ── 详情页底部：操作区（一行工具栏） ─────────────────────────────────
+   一条 = 图标 + 名字 + 控件（更名 / 开关），卸载靠最右。
+   原来每个动作占一整行（40px 圆图标 + 两行说明），四个动作吃掉 280px；
+   说明改成 hover 才浮出来；自动运行的工作路径 / 启动参数开着时才占一行。 */
+.dp-card.dp-acts-card{padding:15px 24px}
+.dp-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 28px}
+.dp-bar-i{position:relative;display:flex;align-items:center;gap:8px;min-height:28px}
+.dp-bar-ico{display:inline-flex;flex:none;color:var(--dp-text-muted)}
+.dp-bar-ico svg{width:16px;height:16px}
+.dp-bar-t{font-size:14px;color:var(--dp-text-main);white-space:nowrap}
+.dp-bar-end{margin-left:auto}          /* 「卸载」推到最右 */
 
-.dp-list{display:flex;flex-direction:column}
-.dp-item{display:flex;justify-content:space-between;align-items:center;padding:20px 0;
-  border-bottom:1px solid var(--dp-border)}
-.dp-item:last-child{border-bottom:none;padding-bottom:0}
-.dp-item:first-child{padding-top:0}
-.dp-item-info{display:flex;align-items:center;gap:16px;min-width:0}
-.dp-item-ico{width:40px;height:40px;background:var(--dp-bg-body);border-radius:50%;
-  display:flex;align-items:center;justify-content:center;color:var(--dp-text-muted);
-  flex:none}
-.dp-item-ico svg{width:20px;height:20px}
-.dp-item-ico.danger{color:var(--dp-danger);background:var(--dp-danger-bg)}
-.dp-item-text{min-width:0}
-.dp-item-text h4{font-size:15px;font-weight:500;color:var(--dp-text-main);display:flex;
-  align-items:center;gap:6px;margin:0}
-.dp-item-text h4.danger{color:var(--dp-danger)}
-.dp-item-text p{font-size:13px;color:var(--dp-text-light);margin:4px 0 0}
-.dp-item-acts{display:flex;align-items:center;gap:12px;flex:none;flex-wrap:wrap;
-  justify-content:flex-end}
+/* hover 说明（自己一套，不复用 .dp-tip：那个是 nowrap + 居中，长句子会溢出） */
+.dp-bar-i[data-tip]::after{content:attr(data-tip);position:absolute;left:-4px;
+  bottom:calc(100% + 7px);z-index:80;width:max-content;max-width:min(340px,86vw);
+  padding:6px 10px;
+  border-radius:6px;background:rgba(17,24,39,.94);color:#fff;font-size:11.5px;
+  line-height:1.5;font-weight:400;white-space:normal;text-align:left;
+  opacity:0;visibility:hidden;pointer-events:none;transform:translateY(3px);
+  transition:opacity .12s ease-out,transform .12s ease-out}
+.dp-bar-i[data-tip]:hover::after{opacity:1;visibility:visible;transform:none}
+/* 最右边那条（卸载）的提示往左长，别把面板撑出横向滚动条 */
+.dp-bar-end[data-tip]::after{left:auto;right:0}
 
-#pane-detail .dp-auto-input{width:0;padding:0;border:1px solid transparent;
-  border-radius:6px;font-size:13px;outline:none;transition:var(--dp-transition);
-  opacity:0;pointer-events:none;background:transparent;color:var(--dp-text-main);
-  font-family:var(--mono)}
-#pane-detail .dp-auto-input.show{width:200px;padding:8px 12px;
-  border-color:var(--dp-border);opacity:1;pointer-events:auto}
-#pane-detail .dp-auto-input:focus{border-color:var(--dp-primary);
-  background:var(--dp-bg-card)}
-#pane-detail .dp-auto-input::placeholder{color:var(--dp-text-light);font-family:inherit}
+/* 文字按钮（更名 / 打开 / 卸载）：没有底色，只有字和图标 */
+button.dp-link{display:inline-flex;align-items:center;gap:5px;border:0;background:none;
+  padding:0;margin:0;font-family:inherit;font-size:13.5px;line-height:1.4;
+  color:var(--dp-primary);cursor:pointer;white-space:nowrap;
+  transition:opacity .13s ease-out,color .13s ease-out}
+button.dp-link:hover{opacity:.7}
+button.dp-link.soft{color:var(--dp-text-muted);font-size:12.5px}
+button.dp-link.soft:hover{color:var(--dp-primary);opacity:1}
+button.dp-link.danger{color:var(--dp-danger)}
+button.dp-link.danger .dp-bar-ico{color:currentColor;opacity:.55}
+button.dp-link.danger:hover{opacity:.75}
 
-.dp-expand{display:flex;align-items:center;width:0;opacity:0;overflow:hidden;
-  transition:var(--dp-transition)}
-.dp-expand.show{width:420px;opacity:1;margin-right:12px;gap:12px}
+/* 小开关 */
+.dp-switch{position:relative;display:inline-block;flex:none;width:36px;height:20px;
+  margin-left:2px;cursor:pointer;vertical-align:middle}
+.dp-switch input{position:absolute;inset:0;width:100%;height:100%;margin:0;
+  opacity:0;cursor:pointer}
+.dp-switch-track{position:absolute;inset:0;border-radius:20px;background:var(--dp-border);
+  transition:background .16s ease-out;pointer-events:none}
+.dp-switch-track::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;
+  border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);
+  transition:transform .16s ease-out}
+.dp-switch input:checked + .dp-switch-track{background:var(--dp-primary)}
+.dp-switch input:checked + .dp-switch-track::after{transform:translateX(16px)}
+.dp-switch input:focus-visible + .dp-switch-track{outline:2px solid var(--dp-primary);
+  outline-offset:2px}
+.dp-switch input.saved + .dp-switch-track{box-shadow:0 0 0 3px rgba(16,185,129,.28)}
+
+/* 自动运行的参数行：只在开着的时候占一行，关掉就不占地方 */
+.dp-act-panel{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;
+  padding:8px 10px;background:var(--dp-fill-row);border-radius:8px}
 
 .dp-pathgroup{display:flex;align-items:center;flex:1.2;min-width:0;
-  border:1px solid transparent;border-radius:6px;background:transparent;
+  border:1px solid var(--dp-border);border-radius:6px;background:var(--dp-bg-card);
   transition:var(--dp-transition)}
-.dp-expand.show .dp-pathgroup{border-color:var(--dp-border)}
-.dp-pathgroup:focus-within{border-color:var(--dp-primary);background:var(--dp-bg-card)}
+.dp-pathgroup:focus-within{border-color:var(--dp-primary)}
 .dp-pathgroup.drag-over{border-color:var(--dp-primary);border-style:dashed;
   background:rgba(59,130,246,.1)}
 #pane-detail .dp-pathgroup input[type="text"]{flex:1;min-width:0;border:none;
@@ -243,29 +291,25 @@ button.dp-ghost.danger:hover{background:var(--dp-danger);color:#fff;
 #pane-detail .dp-pathgroup input[type="text"]::placeholder{color:var(--dp-text-light)}
 button.dp-browse{display:flex;align-items:center;justify-content:center;
   background:transparent;border:none;color:var(--dp-text-muted);padding:8px 12px;
-  cursor:pointer;transition:var(--dp-transition);border-left:1px solid transparent}
-.dp-expand.show button.dp-browse{border-left-color:var(--dp-border)}
+  cursor:pointer;transition:var(--dp-transition);border-left:1px solid var(--dp-border)}
 button.dp-browse:hover{color:var(--dp-primary);background:rgba(0,0,0,.02)}
 button.dp-browse svg{width:15px;height:15px}
 
-#pane-detail .dp-param{flex:1;min-width:0;border:1px solid transparent;border-radius:6px;
-  padding:8px 12px;font-size:13px;outline:none;background:transparent;
+#pane-detail .dp-param{flex:1;min-width:0;border:1px solid var(--dp-border);border-radius:6px;
+  padding:8px 12px;font-size:13px;outline:none;background:var(--dp-bg-card);
   transition:var(--dp-transition);color:var(--dp-text-main);font-family:inherit}
-.dp-expand.show .dp-param{border-color:var(--dp-border)}
-#pane-detail .dp-param:focus{border-color:var(--dp-primary);background:var(--dp-bg-card)}
+#pane-detail .dp-param:focus{border-color:var(--dp-primary)}
 #pane-detail .dp-param::placeholder{color:var(--dp-text-light)}
 
-#pane-detail .dp-param.saved,
-#pane-detail .dp-pathgroup input[type="text"].saved,
-#pane-detail .dp-auto-input.saved{border-color:#10b981;
-  box-shadow:0 0 0 3px rgba(16,185,129,.15);border-radius:6px}
-#pane-detail .dp-saved{display:inline-flex;align-items:center;gap:4px;
-  font-size:12.5px;color:#10b981;white-space:nowrap;
-  animation:dp-saved-in .18s ease-out}
-#pane-detail .dp-saved::before{content:"✓";font-weight:700}
-@keyframes dp-saved-in{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
+/* 参数行里再压一层（比上面那套更紧凑） */
+#pane-detail .dp-act-panel .dp-pathgroup{flex:1 1 240px}
+#pane-detail .dp-act-panel .dp-pathgroup input[type="text"]{padding:6px 10px;font-size:12.5px}
+#pane-detail .dp-act-panel .dp-param{flex:1 1 180px;padding:6px 10px;font-size:12.5px}
+.dp-act-panel button.dp-browse{padding:6px 10px}
 
-#pane-detail .auto-st{font-size:13px;color:var(--dp-text-light);margin:4px 0 0}
+#pane-detail .dp-param.saved,
+#pane-detail .dp-pathgroup input[type="text"].saved{border-color:#10b981;
+  box-shadow:0 0 0 3px rgba(16,185,129,.15);border-radius:6px}
 
 .dp-tip{position:relative;cursor:pointer;display:inline-flex;align-items:center}
 .dp-tip-ico{color:var(--dp-text-light);transition:color .2s}
@@ -282,6 +326,11 @@ button.dp-browse svg{width:15px;height:15px}
   visibility:hidden;transition:var(--dp-transition);pointer-events:none;z-index:100}
 .dp-tip:hover::after,.dp-tip:hover::before{opacity:1;visibility:visible;
   transform:translateX(-50%) translateY(-4px)}
+
+/* ★ 详情页的 tip 允许换行 + 限宽：参数说明那种长句原来 nowrap，一条就能把
+   #pane-detail 撑出 600px 横向滚动条（页面底部就多出个横条，白白占地方） */
+#pane-detail .dp-tip::after{max-width:min(320px,60vw);white-space:normal;
+  text-align:left;line-height:1.5}
 
 #pane-detail .warnbox{margin:0}
 

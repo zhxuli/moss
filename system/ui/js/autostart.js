@@ -74,36 +74,33 @@ async function autoRename(oldId, newId){
 function autoSectionHTML(kind, id, opts){
   const it = autoFind(kind, id);
   const on = !!(it && it.on !== false);
-  return '<div class="dp-item" id="auto-sec">' +
-      '<div class="dp-item-info">' +
-        '<span class="dp-item-ico">' + ico("rocket", "i") + '</span>' +
-        '<div class="dp-item-text">' +
-          '<h4>自动运行' +
-            '<span class="dp-tip dp-tip-ico" data-tip="开 moss 界面时自动跑一次">' +
-              ico("info", "i") + '</span>' +
-          '</h4>' +
-          '<p class="auto-st">随宿主程序启动时自动初始化</p>' +
-        '</div>' +
-      '</div>' +
-      '<div class="dp-item-acts">' +
+  return '<div class="dp-bar-i" id="auto-sec"' +
+      ' data-tip="开 moss 界面时自动跑一次；开着的时候可以在下面填工作路径和启动参数">' +
+      '<span class="dp-bar-ico">' + ico("history", "i") + '</span>' +
+      '<span class="dp-bar-t">自动运行</span>' +
+      '<label class="dp-switch" title="' +
+        (on ? "现在跟着启动 —— 点一下关掉（等于从自动启动里拿掉）"
+            : "点一下让它跟着启动，然后填工作路径 / 启动参数") + '">' +
+        '<input type="checkbox" id="auto-sw"' + (on ? " checked" : "") + '>' +
+        '<span class="dp-switch-track"></span>' +
+      '</label>' +
+    '</div>';
+}
 
-        '<div class="dp-expand' + (on ? " show" : "") + '" id="auto-panel">' +
-          '<div class="dp-pathgroup" id="auto-dropzone" title="可以把文件夹拖到这里">' +
-            '<input type="text" id="auto-cwd" placeholder="工作路径 (拖拽或点选)"' +
-              ' spellcheck="false" autocomplete="off" value="' + esc(it ? it.cwd : "") + '">' +
-            '<button type="button" class="dp-browse dp-tip" id="btn-auto-pick"' +
-              ' data-tip="浏览目录">' + ico("folder-open", "i") + '</button>' +
-          '</div>' +
-          '<input type="text" class="dp-param" id="auto-args" placeholder="启动参数 (选填)"' +
-            ' spellcheck="false" autocomplete="off" value="' + esc(it ? it.args : "") + '">' +
-        '</div>' +
-        '<button type="button" class="dp-ghost' + (on ? " on" : "") + '" id="auto-sw"' +
-          ' role="switch" aria-checked="' + (on ? "true" : "false") + '" title="' +
-          (on ? "现在跟着启动 —— 点一下禁用（等于从自动启动里拿掉）"
-              : "点一下让它跟着启动，然后填工作路径 / 启动参数") + '">' +
-          ico(on ? "circle-slash" : "circle-check", "i") +
-          '<span>' + (on ? "禁用" : "启用") + '</span></button>' +
+// 工作路径 / 启动参数：只在自动运行开着时出现，作为这一条下面的一行
+function autoPanelHTML(kind, id){
+  const it = autoFind(kind, id);
+  if (!it || it.on === false) return "";
+  return '<div class="dp-act-panel" id="auto-panel">' +
+      '<div class="dp-pathgroup" id="auto-dropzone" title="可以把文件夹拖到这里">' +
+        '<input type="text" id="auto-cwd" placeholder="工作路径"' +
+          ' title="可以把文件夹拖到这里，或点右边的按钮挑一个"' +
+          ' spellcheck="false" autocomplete="off" value="' + esc(it.cwd || "") + '">' +
+        '<button type="button" class="dp-browse dp-tip" id="btn-auto-pick"' +
+          ' data-tip="浏览目录">' + ico("folder-open", "i") + '</button>' +
       '</div>' +
+      '<input type="text" class="dp-param" id="auto-args" placeholder="启动参数（选填）"' +
+        ' spellcheck="false" autocomplete="off" value="' + esc(it.args || "") + '">' +
     '</div>';
 }
 
@@ -118,7 +115,7 @@ async function autoWire(kind, id, opts){
   AUTO.curKind = kind;
   AUTO.curId = String(id);
 
-  if (sw) sw.onclick = async () => {
+  if (sw) sw.onchange = async () => {
     const it = autoFind(kind, id);
     if (it){                                   
       AUTO.items = (AUTO.items || []).filter(
@@ -126,18 +123,18 @@ async function autoWire(kind, id, opts){
 
       await autoPersist("");
       renderDetail();
-      setTimeout(() => autoSavedHint($("#auto-sw"), "已移除"), 60);
+      setTimeout(() => autoSavedHint($("#auto-sec"), "已移除"), 60);
       autoPaintMarks();                       
       return;
     }
     if ((AUTO.items || []).length >= (AUTO.max || AUTO_MAX)){
-      toast("自动启动最多 " + (AUTO.max || AUTO_MAX) + " 条", true); return;
+      toast("自动启动最多 " + (AUTO.max || AUTO_MAX) + " 条", true); renderDetail(); return;
     }
 
     AUTO.items.push(autoMake(kind, id, o, {cwd: o.cwd || "", args: ""}));
     await autoPersist("");
     renderDetail();
-    setTimeout(() => autoSavedHint($("#auto-sw"), "已启用"), 60);
+    setTimeout(() => autoSavedHint($("#auto-sec"), "已启用"), 60);
     autoPaintMarks();                         
 
     let tries = 0;
@@ -226,23 +223,9 @@ async function autoSaveFields(kind, id){
 }
 
 function autoSavedHint(box, text){
+  // 紧凑网格里没有地方摆"✓ 已保存"那串小字了：输入框闪一下边，话放到状态栏去
   if (box) flashAutoInput(box);
-  const words = String(text || "已保存");
-  try{
-    const host = (box && box.parentElement) ||
-                 document.querySelector("#auto-sec .dp-item-acts");
-    if (!host) return;
-    let hint = host.querySelector(".dp-saved");
-    if (!hint){
-      hint = document.createElement("span");
-      hint.className = "dp-saved";
-      host.appendChild(hint);
-    }
-    hint.textContent = words;
-    hint.classList.add("on");
-    clearTimeout(hint._t);
-    hint._t = setTimeout(() => { try{ hint.remove(); }catch(e){} }, 1600);
-  }catch(e){  }
+  try{ setStatus(String(text || "已保存")); }catch(e){  }
 }
 
 function flashAutoInput(box){

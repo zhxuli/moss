@@ -664,60 +664,140 @@ function renderDetailHTML(){
 
   const exs = (p.examples || []).map(x => String(x || "")).filter(x => x.trim());
   if (exs.length){
+    const cmd = "moss " + PSYM + p.id;
     html += '<div class="dp-hint">常用的参数（点一下填进上面的框）：<span class="chips">' +
-      exs.map(e => '<button class="chip" data-args="' + esc(e) + '">' + esc(e) +
-        '</button>').join("") + '</span></div>';
+      exs.map(e => {
+        const a = argsOnly(p, e);
+        const full = cmd + (a ? " " + a : "");
+        return '<button class="chip" data-args="' + esc(a) + '" title="' + esc(full) + '">' +
+          esc(a || "（无参数）") + '</button>';
+      }).join("") + '</span></div>';
   }
   html += '</div>';
 
   const docReadme = (p.docs && p.docs.readme) || null;
+
+  // 底部操作区：**一行**工具栏（图标 + 名字 + 控件），卸载靠最右。
+  // 原来每个动作占一整行（40px 圆图标 + 两行说明），四个动作就吃掉 280px；
+  // 说明改成 hover 才浮出来，自动运行的工作路径 / 启动参数开着时才占一行。
+  html += '<div class="dp-card dp-acts-card">' +
+      '<div class="dp-bar">' +
+        '<div class="dp-bar-i" id="act-rename"' +
+          ' data-tip="改名字 / 改 ID：包目录名、数据目录、清单里的 id 一起改（moss --rename）">' +
+          '<span class="dp-bar-ico">' + ico("pencil", "i") + '</span>' +
+          '<span class="dp-bar-t">标识符</span>' +
+          '<button type="button" class="dp-link" id="btn-rename">更名</button>' +
+          (oddDir
+            ? '<button type="button" class="dp-link soft" id="btn-align"' +
+              ' title="只把包目录名改成 id —— 数据目录和清单都不动">对齐目录名</button>'
+            : '') +
+        '</div>' +
+
+        autoSectionHTML("pkg", p.id, {}) +
+
+        parasiteSectionHTML(p.id) +
+
+        '<div class="dp-bar-i dp-bar-end" id="act-remove"' +
+          ' data-tip="永久删除：包本体 + 它的数据（不进回收站，删了就没了）">' +
+          '<button type="button" class="dp-link danger" id="btn-remove">' +
+            '<span class="dp-bar-ico">' + ico("trash-2", "i") + '</span>' +
+            '<span>卸载插件</span></button>' +
+        '</div>' +
+      '</div>' +
+      autoPanelHTML("pkg", p.id) +
+    '</div>';
+
+  // 使用说明：整页最下面；默认折起来（开 / 关记在 localStorage，下次照旧）
+  // 使用说明：整页最下面；默认折起来（开 / 关记在 localStorage，下次照旧）。
+  // 正文跟「文件管理」里预览 .md 用同一套渲染（renderMarkdown），不再原样贴文本。
   if (docReadme && docReadme.text){
-    html += '<div class="dp-card"><details class="dp-doc" open>' +
+    html += '<div class="dp-card dp-doc-card"><details class="dp-doc" id="dp-doc"' +
+        (docOpenState() ? ' open' : '') + '>' +
         '<summary class="dp-doc-sum">' +
+          '<span class="dp-doc-chev">' + ico("chevron-right", "i") + '</span>' +
           '<span class="dp-doc-ico">' + ico("book-open", "i") + '</span>' +
           '<span class="dp-doc-title">使用说明</span>' +
           '<span class="dp-doc-file mono">' + esc(docReadme.file || "") + '</span>' +
           (docReadme.truncated ? '<span class="dp-badge">太长，只显示前面一段</span>' : '') +
         '</summary>' +
-        '<pre class="dp-doc-body">' + esc(docReadme.text) + '</pre>' +
+        docBodyHTML(p, docReadme) +
       '</details></div>';
   }
+  return html + '</div>';
+}
 
-  const renameBtn = '<button class="dp-ghost" id="btn-rename" title="给这个包改名（moss --rename）">' +
-      ico("pencil", "i") + '<span>更名</span></button>';
-  html += '<div class="dp-card"><div class="dp-list">' +
-      '<div class="dp-item">' +
-        '<div class="dp-item-info">' +
-          '<span class="dp-item-ico">' + ico("text-cursor-input", "i") + '</span>' +
-          '<div class="dp-item-text"><h4>更改标识符' +
-            '<span class="dp-tip dp-tip-ico" data-tip="将同步修改包目录名、数据目录及清单中的 id">' +
-              ico("circle-alert", "i") + '</span></h4>' +
-            '<p>修改插件的唯一 ID 和文件夹名称</p></div>' +
-        '</div>' +
-        '<div class="dp-item-acts">' +
-          (oddDir
-            ? '<button class="dp-ghost" id="btn-align" title="只把包目录名改成 id —— ' +
-              '数据目录和清单都不动">' + ico("folder-tree", "i") + '<span>对齐目录名</span></button>'
-            : '') +
-          renameBtn + '</div>' +
-      '</div>' +
+/* 说明正文：.md 当成 markdown 渲染（和文件管理那条预览同一个 renderMarkdown）。
+   ★ 渲染出来的 HTML 是"可信"的：renderMarkdown 内部先 esc() 再拼标签，
+     链接/图片地址也过了 mdSafeUrl（挡 javascript: 之类）。 */
+function docBodyHTML(p, doc){
+  const text = String((doc && doc.text) || "");
+  if (typeof renderMarkdown !== "function")
+    return '<pre class="dp-doc-body is-pre">' + esc(text) + '</pre>';
+  const base = docBaseRel(p, doc && doc.file);
+  return '<div class="dp-doc-body dp-md">' + mdRebase(renderMarkdown(text), base) + '</div>';
+}
 
-      autoSectionHTML("pkg", p.id, {}) +
+// 说明文件所在目录（相对 moss 安装根，能当 URL 用），用来把 ![](img/a.png) 这种相对路径补全
+function docBaseRel(p, file){
+  const norm = s => String(s || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const dir = norm(p && p.dir), home = norm(DATA && DATA.home);
+  const f = norm(file);
+  if (!dir || !home) return "";
+  const dl = dir.toLowerCase(), hl = home.toLowerCase();
+  if (dl !== hl && dl.indexOf(hl + "/") !== 0) return "";
+  const rel = dir.slice(home.length).replace(/^\/+/, "");
+  const sub = f.indexOf("/") >= 0 ? f.slice(0, f.lastIndexOf("/")) : "";
+  return rel + (sub ? "/" + sub : "");
+}
 
-      parasiteSectionHTML(p.id) +
-      '<div class="dp-item">' +
-        '<div class="dp-item-info">' +
-          '<span class="dp-item-ico danger">' + ico("trash-2", "i") + '</span>' +
-          '<div class="dp-item-text"><h4 class="danger">卸载此插件' +
-            '<span class="dp-tip dp-tip-ico" data-tip="永久删除：包本体 + 数据">' +
-              ico("circle-alert", "i") + '</span></h4>' +
-            '<p>将永久抹除数据，此操作无法撤销</p></div>' +
-        '</div>' +
-        '<button class="dp-ghost danger" id="btn-remove" title="卸载这个包（moss --remove）">' +
-          ico("trash-2", "i") + '<span>卸载</span></button>' +
-      '</div>' +
-    '</div></div></div>';
-  return html;
+function mdRebase(html, base){
+  if (!base) return html;
+  return String(html).replace(/(<(?:img|a)\s[^>]*?(?:src|href)=")([^"]*)(")/g,
+    (m, pre, url, post) => {
+      if (!url || /^(?:[a-z][a-z0-9+.-]*:|\/|#|\?)/i.test(url)) return m;   // 绝对地址 / 锚点不动
+      return pre + esc(base + "/" + url) + post;
+    });
+}
+
+const DOC_OPEN_KEY = "moss.dpDocOpen";
+
+function docOpenState(){
+  try{ return localStorage.getItem(DOC_OPEN_KEY) === "1"; }catch(e){ return false; }
+}
+
+/* 「常用的参数」那些例子在 pkg.json 里常写成**整条命令**（`moss :higgs engine`）。
+   可命令框里已经写着 `moss :higgs` 了 —— 原样塞进参数框会变成
+   `moss :higgs moss :higgs engine`，跑起来当然不对。
+   ⇒ 这里把命令头（moss / moss.exe / moss.py + 这个包的 `:id` / 别名）剥掉，只留参数。
+   剥不动（例子本来就是纯参数，或者长得不像命令）就原样返回，绝不瞎切。 */
+function argsOnly(p, text){
+  const s = String(text || "").trim();
+  if (!s) return "";
+  const toks = [];
+  const re = /[^\s"']+|"[^"]*"|'[^']*'/g;
+  let m;
+  while ((m = re.exec(s))) toks.push({t: m[0], i: m.index});
+  if (!toks.length) return "";
+
+  const bare = (x) => String(x || "").replace(/^["']|["']$/g, "");
+  const ids = {};
+  [p && p.id].concat((p && p.aliases) || []).forEach(x => { if (x) ids[String(x)] = 1; });
+  const isPkgTok = (t) => {
+    const b = bare(t);
+    if (!b) return false;
+    if (ids[b]) return true;                                   // 包符号留空时：裸名
+    return !!PSYM && b.indexOf(PSYM) === 0 && !!ids[b.slice(PSYM.length)];
+  };
+
+  let k = 0;
+  if (/^moss(\.exe|\.py)?$/i.test(bare(toks[0].t))){
+    const nxt = toks[1] ? bare(toks[1].t) : "";
+    // 只有"像命令头"才剥：后面没东西 / 后面是这个包 / 后面直接是参数
+    if (!nxt || isPkgTok(nxt) || nxt.charAt(0) === "-") k = 1;
+  }
+  if (toks[k] && isPkgTok(toks[k].t)) k += 1;
+  if (!k) return s;
+  return k < toks.length ? s.slice(toks[k].i).trim() : "";
 }
 
 function runSplitMenu(show){
@@ -808,6 +888,10 @@ function wireDetail(){
   };
   autoWire("pkg", p.id, {});          
   parasiteWire(p.id);                 
+  const det = $("#dp-doc");
+  if (det) det.addEventListener("toggle", () => {
+    try{ localStorage.setItem(DOC_OPEN_KEY, det.open ? "1" : "0"); }catch(e){}
+  });
 }
 
 async function copyDirPath(text){
@@ -1051,28 +1135,26 @@ function renderDetailHistHTML(it){
         ico("play", "i") + '<span>运行</span></button>' +
     '</div><span hidden id="hpreview"></span></div>';
 
-  html += '<div class="dp-card"><div class="dp-list">' +
-      autoSectionHTML("hist", it.target, {cwd: it.cwd || "", name: it.name || "",
-                                          args: it.args || ""}) +
-      '<div class="dp-item">' +
-        '<div class="dp-item-info">' +
-          '<span class="dp-item-ico">' + ico("folder-open", "i") + '</span>' +
-          '<div class="dp-item-text"><h4>打开所在目录</h4>' +
-            '<p>用资源管理器打开它当初跑的那个目录</p></div>' +
+  // 和插件详情同一套一行工具栏（历史这边只有三个动作，删除靠最右）
+  html += '<div class="dp-card dp-acts-card">' +
+      '<div class="dp-bar">' +
+        autoSectionHTML("hist", it.target, {cwd: it.cwd || "", name: it.name || "",
+                                            args: it.args || ""}) +
+        '<div class="dp-bar-i" id="act-hist-open"' +
+          ' data-tip="用资源管理器打开它当初跑的那个目录">' +
+          '<span class="dp-bar-ico">' + ico("folder-open", "i") + '</span>' +
+          '<span class="dp-bar-t">所在目录</span>' +
+          '<button type="button" class="dp-link" id="btn-opendir">打开</button>' +
         '</div>' +
-        '<button class="dp-ghost" id="btn-opendir" title="用 Windows 资源管理器打开它所在的目录">' +
-          ico("folder-open", "i") + '<span>打开</span></button>' +
-      '</div>' +
-      '<div class="dp-item">' +
-        '<div class="dp-item-info">' +
-          '<span class="dp-item-ico danger">' + ico("trash-2", "i") + '</span>' +
-          '<div class="dp-item-text"><h4 class="danger">删除这条记录</h4>' +
-            '<p>只删这条记录，那个文件本身不动</p></div>' +
+        '<div class="dp-bar-i dp-bar-end" id="act-hist-forget"' +
+          ' data-tip="只删这条记录，那个文件本身不动">' +
+          '<button type="button" class="dp-link danger" id="btn-forget">' +
+            '<span class="dp-bar-ico">' + ico("trash-2", "i") + '</span>' +
+            '<span>删除这条记录</span></button>' +
         '</div>' +
-        '<button class="dp-ghost danger" id="btn-forget" title="从历史里删掉这条记录">' +
-          ico("trash-2", "i") + '<span>删除</span></button>' +
       '</div>' +
-    '</div></div></div>';
+      autoPanelHTML("hist", it.target) +
+    '</div></div>';
   return html;
 }
 

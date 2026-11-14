@@ -39,25 +39,16 @@ async function parasiteRename(oldId, newId){
 
 function parasiteSectionHTML(id){
   const on = parasiteHas(id);
-  return '<div class="dp-item" id="para-sec">' +
-      '<div class="dp-item-info">' +
-        '<span class="dp-item-ico">' + ico("plug", "i") + '</span>' +
-        '<div class="dp-item-text">' +
-          '<h4>寄生模式' +
-            '<span class="dp-tip dp-tip-ico" data-tip="与moss合体，点它自动运行、切到别的插件它自动停">' +
-              ico("info", "i") + '</span>' +
-          '</h4>' +
-          '<p>与系统结合更加紧密</p>' +
-        '</div>' +
-      '</div>' +
-      '<div class="dp-item-acts">' +
-        '<button type="button" class="dp-ghost' + (on ? " on" : "") + '" id="para-sw"' +
-          ' role="switch" aria-checked="' + (on ? "true" : "false") + '" title="' +
-          (on ? "现在开着 —— 点一下关掉（关掉之后点它不再自动运行）"
-              : "点一下打开：以后选中这个插件就自动运行、切走自动停") + '">' +
-          ico(on ? "circle-slash" : "circle-check", "i") +
-          '<span>' + (on ? "禁用" : "启用") + '</span></button>' +
-      '</div>' +
+  return '<div class="dp-bar-i" id="para-sec"' +
+      ' data-tip="寄生模式：和 moss 合体 —— 选中它自动运行，切到别的插件自动停">' +
+      '<span class="dp-bar-ico">' + ico("plug", "i") + '</span>' +
+      '<span class="dp-bar-t">寄生模式</span>' +
+      '<label class="dp-switch" title="' +
+        (on ? "现在开着 —— 点一下关掉（关掉之后点它不再自动运行）"
+            : "点一下打开：以后选中这个插件就自动运行、切走自动停") + '">' +
+        '<input type="checkbox" id="para-sw"' + (on ? " checked" : "") + '>' +
+        '<span class="dp-switch-track"></span>' +
+      '</label>' +
     '</div>';
 }
 
@@ -67,13 +58,13 @@ async function parasiteWire(id){
   if (!before && PARA.loaded && typeof renderDetail === "function") renderDetail();
   const sw = $("#para-sw");
   if (!sw) return;
-  sw.onclick = async () => {
+  sw.onchange = async () => {
     const was = parasiteHas(id);
     if (was) PARA.ids = (PARA.ids || []).filter(x => String(x) !== String(id));
     else PARA.ids = (PARA.ids || []).concat([String(id)]);
     if (!await parasitePersist()) { renderDetail(); return; }
     renderDetail();                       
-    setTimeout(() => autoSavedHint($("#para-sw"), was ? "已关掉" : "已打开"), 60);
+    setTimeout(() => autoSavedHint($("#para-sec"), was ? "已关掉" : "已打开"), 60);
   };
 }
 
