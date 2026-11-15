@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>极简同步</title>
+<title>GitHub 可视化助手</title>
 
-<link rel="stylesheet" href="style.css?v=22">
+<link rel="stylesheet" href="style.css?v=42">
 
 <script src="error-guard.js?v=1"></script>
 <script src="moss-embed.js"></script>
@@ -26,17 +26,23 @@
       <div class="logo" id="icoLogo"></div>
       <div class="brand-txt">
         <div class="brand-row">
-          <h1>极简同步</h1>
+          <h1>GitHub 可视化助手</h1>
           <button class="folder-chip" id="dirBtn" data-act="dir-menu" title="换一个文件夹">
             <span id="icoFolder"></span><span id="dirName">moss</span>
           </button>
         </div>
       </div>
     </div>
-    <button class="scan-btn" data-act="refresh" title="扫描文件变动">
-      <span class="scan-ico" id="icoScan"></span>
-      <span>扫描变动</span>
-    </button>
+    <div class="head-acts">
+      <button class="scan-btn" data-act="refresh" title="扫描文件变动">
+        <span class="scan-ico" id="icoScan"></span>
+        <span>扫描</span>
+      </button>
+      <button class="gear-btn" id="gearBtn" data-act="gear" title="设置">
+        <span class="gear-ico" id="icoGear"></span>
+        <span class="gear-txt">设置</span>
+      </button>
+    </div>
     <div class="dir-menu" id="dirMenu"></div>
   </header>
 
@@ -205,7 +211,7 @@
     <span class="log mono" id="log">正在启动…</span>
     <span class="grow"></span>
 
-    <span class="uiver mono" id="uiVer" title="界面版本（不是你的仓库版本）">界面 v23</span>
+    <span class="uiver mono" id="uiVer" title="界面版本（不是你的仓库版本）">界面 v42</span>
     <button class="link" data-act="env-detail" title="Git / GitHub 那几项是否就绪、下一步做什么（快捷键 F8）">环境检查 F8</button>
     <button class="link" data-act="more" title="分支 / 标记版本 / 镜像备份 / 命令记录…">更多功能</button>
   </footer>
@@ -215,6 +221,6 @@
 <div id="toastBox" class="toasts"></div>
 <div id="modal" class="modal"></div>
 
-<script src="app.js?v=23"></script>
+<script src="app.js?v=41"></script>
 </body>
 </html>

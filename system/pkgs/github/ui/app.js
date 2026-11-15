@@ -1,7 +1,8 @@
 'use strict';
 
 var ICON = {
-  feather: '<path d="M20.2 3.8a5 5 0 0 0-7 0L4 13v7h7l9.2-9.2a5 5 0 0 0 0-7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M16 8 8 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
+  github: '<g transform="scale(0.375)"><path d="M32 12c-11.05 0-20 8.95-20 20 0 8.84 5.73 16.33 13.68 18.98.99.18 1.36-.43 1.36-.96 0-.47-.02-2.03-.03-3.69-5.02.96-6.32-1.22-6.72-2.35-.22-.58-1.2-2.35-2.06-2.83-.7-.37-1.7-1.29-.03-1.31 1.58-.03 2.7 1.45 3.08 2.05 1.8 3.03 4.68 2.18 5.82 1.66.18-1.3.7-2.18 1.28-2.68-4.45-.5-9.1-2.22-9.1-9.88 0-2.18.78-3.98 2.05-5.38-.2-.5-.9-2.53.2-5.28 0 0 1.68-.54 5.5 2.05a19 19 0 0 1 10 0c3.82-2.6 5.5-2.05 5.5-2.05 1.1 2.75.4 4.78.2 5.28 1.27 1.4 2.05 3.19 2.05 5.38 0 7.68-4.67 9.37-9.13 9.87.72.62 1.36 1.84 1.36 3.71 0 2.68-.03 4.84-.03 5.5 0 .53.37 1.15 1.37.96A20.01 20.01 0 0 0 52 32c0-11.05-8.95-20-20-20Z" fill="currentColor"/></g>',
+  gear: '<path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M19.3 13.4a1.5 1.5 0 0 0 .3 1.7l.1.1a1.8 1.8 0 1 1-2.6 2.6l-.1-.1a1.5 1.5 0 0 0-1.7-.3 1.5 1.5 0 0 0-.9 1.4v.3a1.8 1.8 0 1 1-3.6 0v-.2a1.5 1.5 0 0 0-1-1.4 1.5 1.5 0 0 0-1.7.3l-.1.1a1.8 1.8 0 1 1-2.6-2.6l.1-.1a1.5 1.5 0 0 0 .3-1.7 1.5 1.5 0 0 0-1.4-.9H3.9a1.8 1.8 0 1 1 0-3.6h.2a1.5 1.5 0 0 0 1.4-1 1.5 1.5 0 0 0-.3-1.7l-.1-.1a1.8 1.8 0 1 1 2.6-2.6l.1.1a1.5 1.5 0 0 0 1.7.3h.1a1.5 1.5 0 0 0 .9-1.4V3.9a1.8 1.8 0 1 1 3.6 0v.2a1.5 1.5 0 0 0 .9 1.4 1.5 1.5 0 0 0 1.7-.3l.1-.1a1.8 1.8 0 1 1 2.6 2.6l-.1.1a1.5 1.5 0 0 0-.3 1.7v.1a1.5 1.5 0 0 0 1.4.9h.3a1.8 1.8 0 1 1 0 3.6h-.2a1.5 1.5 0 0 0-1.4.9Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>',
   folder: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3c.7 0 1.3.3 1.7.9l1 1.4h7.3A2.5 2.5 0 0 1 21 9.8v7.7A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
   refresh: '<path d="M20.5 12a8.5 8.5 0 1 1-2.5-6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M20.5 3.8v4.7h-4.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
   laptop: '<rect x="4" y="5" width="16" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M2.5 19.2h19" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -189,6 +190,9 @@ function paintEnv() {
   var bad = items.filter(function (i) { return i.state === 'bad'; });
   var warn = items.filter(function (i) { return i.state === 'warn'; });
 
+  // 齿轮颜色＝当前状态，不管横幅显不显示都得先定下来
+  if (items.length) { setGear(gearState(items)); }
+
   if (e.pendingInstall) {
     var pw = e.pendingInstall.what || '';
     bar.className = 'envbar';
@@ -210,17 +214,10 @@ function paintEnv() {
   if (S.envTimer) { clearTimeout(S.envTimer); S.envTimer = null; }
 
   if (!bad.length && !warn.length && !e.pendingInstall) {
-    bar.className = 'envbar ok';
-    if (items.length && !S.envSeen) {
-      bar.classList.add('hide');
-      S.envSeen = 1;
-      return;
-    }
+    // 没什么要补的就什么都不显示 —— 齿轮是绿色已经说明"都齐了"，
+    // 再来一条「环境都齐了」的横幅纯属占地方（也跟设置里的内容重复）。
+    bar.className = 'envbar ok hide';
     S.envSeen = 1;
-    el('envIco').innerHTML = svg('check');
-    el('envTitle').textContent = '环境都齐了';
-    el('envSub').textContent = 'Git、署名、GitHub 登录、网络都正常。';
-    el('envBtns').innerHTML = '<button class="env-btn alt" data-act="env-detail">看详情</button>';
     return;
   }
 
@@ -229,10 +226,20 @@ function paintEnv() {
 
   var first = bad[0] || warn[0] || {};
   var rest = bad.length + warn.length - 1;
+
+  // 「只是没登录 GitHub」这种情况不占横幅 —— 右上角齿轮普通色就是提示，
+  // 点齿轮就能看到「登录 GitHub」。登录本来就是可选的，不该拿一段话劝人。
+  var onlyLogin = !bad.length && warn.length === 1 && first.fix === 'gh_login';
+  if (onlyLogin) {
+    bar.classList.add('hide');
+    S.envSeen = 1;
+    return;
+  }
+
   el('envTitle').textContent = bad.length
     ? ('还差一步才能用：' + (first.label || ''))
     : ('建议补上：' + (first.label || ''));
-  el('envSub').textContent = (first.detail || '')
+  el('envSub').textContent = mdText(first.detail)
     + (rest > 0 ? '（另外还有 ' + rest + ' 项，点「看详情」）' : '');
 
   var h = '';
@@ -243,8 +250,7 @@ function paintEnv() {
     h += '<button class="env-btn" data-act="env-install" data-what="gh">帮我装 gh</button>' +
          '<button class="env-btn alt" data-act="env-detail">看看别的办法</button>';
   } else if (first.fix === 'gh_login') {
-    h += '<button class="env-btn" data-act="env-login">登录 GitHub</button>' +
-         '<button class="env-btn alt" data-act="env-open" data-url="' + URL_SIGNUP + '">还没有账号？注册</button>';
+    h += '<button class="env-btn" data-act="env-login">登录 GitHub</button>';
   } else if (first.fix === 'identity') {
     h += '<button class="env-btn" data-act="env-identity">帮我填好</button>';
   } else {
@@ -262,9 +268,45 @@ function paintEnv() {
 
 var URL_GIT_DL = 'https://git-scm.com/download/win';
 var URL_GH_DL = 'https://cli.github.com/';
-var URL_SIGNUP = 'https://github.com/signup';
 
-function dialogEnv() {
+// 后端有些说明里带 **重点**，给纯文字的地方去掉星号、给 innerHTML 的地方换成 <b>
+function mdText(s) { return String(s || '').replace(/\*\*/g, ''); }
+
+// 右上角的齿轮：所有设置都收在这里，用颜色直接说状态
+//   红色 = 连不上 GitHub；绿色 = 已登录授权；普通色 = 能连上但还没授权
+function setGear(state) {
+  var b = el('gearBtn');
+  if (!b) { return; }
+  b.classList.remove('ok', 'bad');
+  if (state === 'ok') { b.classList.add('ok'); }
+  else if (state === 'bad') { b.classList.add('bad'); }
+  b.title = state === 'ok' ? '设置（已登录 GitHub）'
+    : (state === 'bad' ? '设置（连不上 GitHub）' : '设置（还没登录 GitHub）');
+}
+
+function gearState(items) {
+  var net = null, login = null;
+  (items || []).forEach(function (i) {
+    if (i.key === 'net') { net = i; }
+    if (i.key === 'login') { login = i; }
+  });
+  if (net && net.state !== 'ok') { return 'bad'; }      // 连不上，先说这个
+  if (login && login.state === 'ok') { return 'ok'; }   // 登录并授权过
+  return '';                                            // 能连上但没授权
+}
+
+// 齿轮点开就是环境检查这一页 —— 不再多套一层菜单。
+// 登录 / 退出登录 / 注册的入口就在对应那一行里，就近点。
+function openGear() {
+  dialogEnv();
+}
+
+function envSignup() {
+  call('open_url', { url: 'https://github.com/signup' });
+}
+function md(s) { return esc(s).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>'); }
+
+function dialogEnv(notice) {
   openModal('环境检查', '<div class="note">正在检查…（最多等 8 秒，不会一直转）</div>',
     [{ text: '再检查一次', key: 'ok', kind: 'primary' },
      { text: '关闭', key: 'close', kind: 'ghost' }], true);
@@ -274,6 +316,14 @@ function dialogEnv() {
     var e = r || S.env || {};
     var b = sub('.dlg-b');
     if (!b || !el('modal').classList.contains('show')) { return; }
+    // 上一次操作用砸了的话，先在最上面交代一句，下面照常是检查结果
+    var top = notice
+      ? '<div class="note" style="border-left:3px solid #f59e0b;padding-left:10px">' +
+        '<b>' + esc(notice) + '</b><br>检查结果在下面，没受影响。' +
+        '<button class="env-btn" data-act="env-login" style="margin-top:6px">再试一次</button>' +
+        '</div>'
+      : '';
+    notice = '';
 
     if (S.envTimeout) {
       b.innerHTML = '<div class="note"><b>这次检查没能按时完成。</b><br>' +
@@ -284,15 +334,15 @@ function dialogEnv() {
       return;
     }
     var mark = { ok: '✓', warn: '!', bad: '✗', skip: '·' };
-    var h = '<div class="note">这一屏就是"为什么用不了 / 还差什么"。' +
+    var h = top + '<div class="note">这一屏就是"为什么用不了 / 还差什么"。' +
       '缺的东西我能替你装的都直接装了，装不了的给你下载页。</div><div class="envlist">';
     (r.items || []).forEach(function (i, n) {
       h += '<div class="envrow ' + i.state + '">' +
         '<span class="st">' + (mark[i.state] || '?') + '</span><div class="bd">' +
         '<div class="lb">' + esc(i.label) + '</div>' +
-        '<div class="dt">' + esc(i.detail || '') + '</div>' +
-        (i.extra ? '<div class="dt">' + esc(i.extra) + '</div>' : '') +
-        (i.help && i.state !== 'ok' ? '<div class="hp">' + esc(i.help) + '</div>' : '') +
+        '<div class="dt">' + md(i.detail) + '</div>' +
+        (i.extra ? '<div class="dt">' + md(i.extra) + '</div>' : '') +
+        (i.help && i.state !== 'ok' ? '<div class="hp">' + md(i.help) + '</div>' : '') +
         '<div class="row-btns">';
       if (i.fix === 'install_git') {
         h += '<button class="env-btn" data-act="env-install" data-what="git">帮我装</button>';
@@ -308,8 +358,12 @@ function dialogEnv() {
           (i.key === 'git' ? URL_GIT_DL : URL_GH_DL) + '">手动下载页</button>';
       }
       if (i.key === 'login') {
-        h += '<button class="env-btn alt" data-act="env-open" data-url="' + URL_SIGNUP +
-          '">注册 GitHub</button>';
+        if (i.state === 'ok') {
+          h += '<button class="env-btn alt" data-act="env-logout" ' +
+            'title="清掉 gh 的登录，好重新走一遍登录流程 / 换账号">退出登录</button>';
+        } else {
+          h += '<button class="env-btn alt" data-act="env-signup">还没有账号？注册</button>';
+        }
       }
       h += '</div></div></div>';
     });
@@ -317,7 +371,7 @@ function dialogEnv() {
     h += '<div class="note" style="padding:4px 0 8px">' +
       '<button class="env-btn alt" data-act="env-askai">把这段情况复制给 AI</button></div>';
     if (e.next) {
-      h += '<div class="note"><b>下一步：</b>' + esc(e.next) + ' —— ' + esc(e.nextText || '') + '</div>';
+      h += '<div class="note"><b>下一步：</b>' + esc(e.next) + ' —— ' + md(e.nextText) + '</div>';
     } else {
       h += '<div class="note">该有的都齐了，可以正常用。</div>';
     }
@@ -466,7 +520,7 @@ function paintInst(what, st) {
   var s = sub('.inst-sub');
   if (s) {
     s.textContent = done
-      ? ('一共花了 ' + secs + ' 秒。' + (what === 'gh' ? '下一步：登录 gh（可选）。' : '下一步：再检查一次。'))
+      ? ('一共花了 ' + secs + ' 秒。' + (what === 'gh' ? '下一步：登录 GitHub（可选）。' : '下一步：再检查一次。'))
       : (bad ? ('用了 ' + secs + ' 秒，看下面的日志。')
         : ('已经 ' + secs + ' 秒' + (pct !== null ? ' · ' + pct + '%' : '') +
            ' · 可以关掉这个窗口，安装会继续'));
@@ -620,36 +674,189 @@ function instPollBroken(why) {
   };
 }
 
+var loginTimer = null;
+function stopLoginPoll() {
+  if (loginTimer) { clearInterval(loginTimer); loginTimer = null; }
+}
+
 function envLogin() {
-  busyOn('正在打开登录窗口…');
+  stopLoginPoll();
+  busyOn('正在向 GitHub 要登录码…');
   call('gh_login', {}).then(function (r) {
     busyOff();
-    if (r.ok) {
-      openModal('登录 gh（可选，不影响上传）',
-        '<div class="note">我已经开好一个窗口（标题「GitHub 登录（照窗口里的字做）」）。' +
-        '窗口最上面就写着步骤，照做就行：</div>' +
-        '<div class="note">① 窗口里出现一个 <b>8 位代码</b>，像 <span class="hintline">ABCD-1234</span><br>' +
-        '② 按一下回车 → 自动打开浏览器<br>' +
-        '③ 把代码粘进去（或直接点页面上的 Authorize）→ 点同意<br>' +
-        '④ 窗口里出现 <b>Logged in as 你的名字</b> = 成了</div>' +
-        '<div class="note">窗口<b>不会一闪就没</b>了：出什么错都会停在窗口里给你看。' +
-        '卡住的话直接关掉它，我再帮你换别的办法。</div>' +
-        '<div class="note"><b>这一步是"可选"的</b>：它只是让「备份到云端」能替你自动建仓库。' +
-        '<b>上传本身用不着它</b>（走的是 git 自己的登录，第一次推会自己弹浏览器）。' +
-        '不想弄就点「关闭」，用「我已有仓库，填地址」一样能上传。</div>' +
-        '<div class="note">还没有 GitHub 账号？点下面的「注册 GitHub」（免费，两分钟）。</div>',
-        [{ text: '登录好了，再检查', key: 'ok', kind: 'primary' },
-         { text: '注册 GitHub', key: 'signup', kind: 'ghost' },
-         { text: '不用它也行', key: 'close', kind: 'ghost' }], true);
-      S.modalActs.ok = function () { refreshEnv().then(dialogEnv); };
-      S.modalActs.signup = function () { call('open_url', { url: URL_SIGNUP }); };
-    } else {
-      openModal('打不开登录窗口', '<div class="note">' + esc(r.why || '') + '</div>',
-        [{ text: '手动下载 gh', key: 'ok', kind: 'primary' },
-         { text: '关闭', key: 'close', kind: 'ghost' }], true);
-      S.modalActs.ok = function () { call('open_url', { url: URL_GH_DL }); };
+    if (r.already) {
+      // 已经登录过：没什么可做的，别弹一张"失败"的脸
+      openModal('已经是登录状态',
+        '<div class="note">当前账号：<b>' + esc(r.login || '已登录') + '</b>。</div>' +
+        '<div class="note">「备份到云端」已经能替你自动建仓库，不用再登录。<br>' +
+        '想换账号或重新走一遍流程，先点「退出登录」。</div>',
+        [{ text: '知道了', key: 'close', kind: 'primary' }], true);
+      return;
     }
+    if (!r.ok) {
+      // 别把环境检查那张单子盖掉 —— 带着这条错回去，界面上还是原来的检查结果
+      backToEnv(r.why || '登录没开始', true);
+      return;
+    }
+    showLoginCode(r);
+    // 浏览器替你打开授权页（系统默认浏览器，不是弹窗）
+    call('open_url', { url: r.url || URL_LOGIN }).catch(function () {  });
+    pollLogin(true);
+    return;
   }).catch(function (e) { busyOff(); fail(e); });
+}
+
+function showLoginCode(r) {
+  // 主线：Device Activation → Continue → 粘代码 → Authorize → Confirm access。
+  // 只有「登录」这一环是有可能没有的（浏览器里已经登过就没有），所以它单独挂一个问号，
+  // 其余部分一条线走完，不重复。两处页面都画成缩略图，看一眼就认得出来。
+  function step(n, txt, cls, extra) {
+    return '<div class="fstep' + (cls ? ' ' + cls : '') + '"><span class="dot">' +
+      n + '</span><div class="ftxt">' + txt + (extra || '') + '</div></div>';
+  }
+  // GitHub 官方 octicon 的路径（16 格），缩略图里按这个画，跟真页面一致
+  var cat = '<svg viewBox="0 0 16 16" class="thcat" aria-hidden="true">' +
+    '<path fill="currentColor" d="M6.766 11.328c-2.063-.25-3.516-1.734-3.516-3.656 0-.781.281-1.625.75-2.188' +
+    '-.203-.515-.172-1.609.063-2.062.625-.078 1.468.25 1.968.703.594-.187 1.219-.281 ' +
+    '1.985-.281.765 0 1.39.094 1.953.265.484-.437 1.344-.765 1.969-.687.218.422.25 ' +
+    '1.515.046 2.047.5.593.766 1.39.766 2.203 0 1.922-1.453 3.375-3.547 3.64.531.344.89 ' +
+    '1.094.89 1.954v1.625c0 .468.391.734.86.547C13.781 14.359 16 11.53 16 8.03 16 3.61 ' +
+    '12.406 0 7.984 0 3.563 0 0 3.61 0 8.031a7.88 7.88 0 0 0 5.172 7.422c.422.156.828-.125.828-.547v-1.25' +
+    'c-.219.094-.5.156-.75.156-1.031 0-1.64-.562-2.078-1.609-.172-.422-.36-.672-.719-.719' +
+    '-.187-.015-.25-.093-.25-.187 0-.188.313-.328.625-.328.453 0 .844.281 1.25.86.313.452.64.655 ' +
+    '1.031.655s.641-.14 1-.5c.266-.265.47-.5.657-.656"/></svg>';
+
+  openModal('在浏览器里点几下（可选）',
+    // ── 可能没有的一步：登录 ────────────────────────────────
+    '<div class="maybe">' +
+      '<div class="mhd"><span class="q">?</span><b>页面上是 Sign in to GitHub？</b>' +
+      '<span class="mfs">有这一步就先登，登完它会自己回到下面那张卡</span></div>' +
+      '<div class="thwrap">' +
+        '<div class="th">' + cat +
+          '<div class="tt">Sign in to GitHub</div>' +
+          '<div class="tf"></div>' +
+          '<div class="tb">Sign in</div>' +
+          '<div class="tl">Create an account</div>' +
+        '</div>' +
+        '<div class="thtip">有账号 → 登录<br>没账号 → <b>Create an account</b> 注册</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="then">下面这张卡一定会有，从这儿开始两边一样</div>' +
+
+    // ── 一定有的那一步：Device Activation ──────────────────
+    '<div class="thwrap">' +
+      '<div class="th main">' + cat +
+        '<div class="tt">Device Activation</div>' +
+        '<div class="trow"><span class="tdot"></span>' +
+        '<span class="tnm">Signed in as<br><b>你的名字</b></span>' +
+        '<span class="tb go">Continue</span></div>' +
+      '</div>' +
+      '<div class="thtip">这张卡一定会有<br>点绿色 <b>Continue</b></div>' +
+    '</div>' +
+
+    '<div class="flow">' +
+    step('1', '出现输入框 → 粘这串 → <b>Continue</b>',
+      'hl',
+      '<div class="codebox" id="loginCodeBox">' + esc(r.code || '······') + '</div>' +
+      '<span id="loginCopyTip">' + (r.copied ? '已经复制好了，直接 Ctrl+V。' : '') + '</span>') +
+    step('2', '点 <b>Authorize github</b> 同意') +
+    step('3', '跳出 <b>Confirm access</b> → 再输一次密码 → <b>Confirm</b>') +
+    step('✓', '看到绿色对勾 = 成了', 'ok') +
+    '</div>' +
+    '<div class="note" id="loginState">这边会自动收到结果，<b>不用回来点任何按钮</b>。</div>',
+    [{ text: '打开授权页', key: 'open', kind: 'primary' },
+     { text: '复制代码', key: 'copy', kind: 'ghost' },
+     { text: '以后再说', key: 'close', kind: 'ghost' }], true);
+  S.modalActs.open = function () { call('open_url', { url: r.url || URL_LOGIN }); };
+  S.modalActs.copy = function () {
+    call('copy_text', { text: r.code || '' }).then(function (x) {
+      var tip = el('loginCopyTip');
+      if (tip) { tip.textContent = x.ok ? '复制好了，去网页里 Ctrl+V。' : (x.why || '复制没成，手动选中上面那串吧'); }
+      if (!x.ok && window.getSelection) {
+        var box = el('loginCodeBox');
+        if (box) {
+          var rr = document.createRange(); rr.selectNodeContents(box);
+          var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(rr);
+        }
+      }
+    });
+  };
+}
+
+function envLogout() {
+  var who = '';
+  (S.env && S.env.items || []).forEach(function (i) {
+    if (i.key === 'login' && i.state === 'ok') {
+      var m = /gh 已登录：([^\s—]+)/.exec(i.detail || '');
+      if (m) { who = m[1]; }
+    }
+  });
+  openModal('要退出 GitHub 登录吗？',
+    '<div class="note">会清掉 ' + (who ? '「' + esc(who) + '」的' : '') +
+    ' gh 登录，效果等于在 GitHub 网站上撤销这个设备。</div>' +
+    '<div class="note"><b>不影响上传/推送</b> —— 推送用的是 git 自己的凭据，那部分一点不动。</div>' +
+    '<div class="note">退出之后点「登录 GitHub」就能重新走一遍那套步骤。</div>',
+    [{ text: '取消', key: 'close', kind: 'ghost' },
+     { text: '退出登录', key: 'ok', kind: 'primary' }], true);
+  S.modalActs.ok = function () {
+    closeModal();
+    busyOn('正在退出…');
+    call('gh_logout', {}).then(function (r) {
+      busyOff();
+      if (!r.ok) {
+        openModal('没退成', '<div class="note">' + esc(r.why || '') + '</div>' +
+          '<div class="note">也可以自己去 GitHub 网站的 Settings → Applications 里撤销这个设备。</div>',
+          [{ text: '知道了', key: 'close', kind: 'ghost' }], true);
+        return;
+      }
+      toast('已经退出登录', 'ok');
+      refreshEnv(true).then(dialogEnv);
+    }).catch(function (e) { busyOff(); fail(e); });
+  };
+}
+
+// 出了问题就回到那张检查单子，别用一张错误弹窗把检查结果顶掉
+function backToEnv(msg, offerRetry) {
+  dialogEnv(msg || '');
+}
+
+var loginPolls = 0;
+function pollLogin(first) {
+  stopLoginPoll();
+  loginPolls = 0;
+  loginTimer = setInterval(function () {
+    call('gh_login_state', {}).then(function (s) {
+      if (s.state === 'ok') {
+        stopLoginPoll();
+        var who = s.login ? ('『' + s.login + '』') : '';
+        openModal('登录好了',
+          '<div class="note">GitHub 已经认了你这个账号' + esc(who) + '。</div>' +
+          '<div class="note">现在点「备份到云端」，它就能替你自动建仓库了。</div>',
+          [{ text: '知道了', key: 'ok', kind: 'primary' }], true);
+        S.modalActs.ok = function () { closeModal(); refreshEnv().then(dialogEnv); };
+        refreshEnv();
+      } else if (s.state === 'error') {
+        stopLoginPoll();
+        var st = el('loginState');
+        if (st) { st.textContent = s.why || '登录没走完。'; }
+      } else {
+        if (s.code) {
+          var box = el('loginCodeBox');
+          if (box && box.textContent !== s.code) { box.textContent = s.code; }
+        }
+        // 码还没出来：说一声在等，别让人对着省略号发愣（这儿最容易以为点坏了）
+        var tip = el('loginState');
+        if (tip && !s.code) {
+          tip.innerHTML = s.running
+            ? '正在向 GitHub 要登录码…（网络慢时要十几秒，这个框会自己更新）'
+            : '这次没要着码，点「以后再说」重来一次。';
+        }
+        if (loginPolls > 40) { stopLoginPoll(); }   // 最多等 60 秒
+        loginPolls += 1;
+      }
+    }).catch(function () {  });
+  }, 1500);
 }
 
 function envAskAi() {
@@ -717,7 +924,8 @@ var S = {
 };
 
 function boot() {
-  put('icoLogo', 'feather'); put('icoFolder', 'folder'); put('icoScan', 'refresh');
+  put('icoLogo', 'github'); put('icoFolder', 'folder'); put('icoScan', 'refresh');
+  put('icoGear', 'gear');
   put('icoLaptop', 'laptop'); put('icoHistory', 'history'); put('icoCloud', 'cloud');
 
   put('icoStat', 'chart');
@@ -1469,6 +1677,7 @@ function openModal(title, body, buttons, wide) {
 }
 function closeModal() {
   if (typeof stopInstPoll === 'function') { stopInstPoll(); }
+  if (typeof stopLoginPoll === 'function') { stopLoginPoll(); }
 
   if (INST && INST.what) {
     INST.what = '';
@@ -1537,7 +1746,25 @@ function showResult(title) {
       h += '<pre class="out">' + esc(String(r.out).slice(0, 6000)) + '</pre>';
     }
   }
-  openModal(title || '这次做了什么', h, [{ text: '知道了', key: 'close', kind: 'ghost' }], true);
+  // 后端说"还缺一步"的时候，直接把那一步做成按钮 —— 别只丢一行红字让人自己找
+  var btns = [];
+  var need = (r && r.need) || '';
+  if (!r || !r.ok) {
+    if (need === 'gh_login') {
+      h += '<div class="note">登录完再点一次原来那个按钮就行，不用重选文件夹。</div>';
+      btns.push({ text: '去登录 GitHub', key: 'need-login', kind: 'primary' });
+    } else if (need === 'install_gh') {
+      h += '<div class="note">装完再点一次原来那个按钮就行。</div>';
+      btns.push({ text: '帮我装 gh', key: 'need-install', kind: 'primary' });
+    }
+  }
+  btns.push({ text: '知道了', key: 'close', kind: 'ghost' });
+  openModal(title || '这次做了什么', h, btns, true);
+  if (need === 'gh_login') {
+    S.modalActs['need-login'] = function () { closeModal(); envLogin(); };
+  } else if (need === 'install_gh') {
+    S.modalActs['need-install'] = function () { closeModal(); envInstall('gh'); };
+  }
 }
 
 function showCommit(hash) {
@@ -2132,23 +2359,27 @@ function dialogAll() {
 }
 
 function mirrorMenu() {
-  var hasGh = S.gh && S.gh.installed && S.gh.loggedIn;
+  var ghIn = !!(S.gh && S.gh.installed);
+  var hasGh = ghIn && !!S.gh.loggedIn;
+  // 没登录时要说清"差的是哪一步"：装没装 gh、还是只是没登录
+  var blocked = !ghIn ? '这台电脑还没装 gh（GitHub 的命令行工具），装了还得登录一次。'
+    : 'gh 已经装好了，但还<b>没登录 GitHub</b> —— 点下面的「登录 GitHub」，登录完这个按钮就能用了。';
   openModal('备到 GitHub',
     '<div class="note">这个文件夹还没连上 GitHub。选一种：</div>' +
     '<div class="actions">' +
     '<button class="act" data-act="mirror-pick" data-mode="gh_create"' + (hasGh ? '' : ' disabled') + '>' +
     '<span class="ai">' + svg('cloud') + '</span><span>' +
-    '<span class="at">让 GitHub 自动建一个仓库并传上去</span>' +
+    '<span class="at">让 GitHub 自动建一个仓库并传上去' +
+    (hasGh ? '' : '（要先登录，见下面）') + '</span>' +
     '<span class="ad">' + (hasGh ? '最简单，一键完成（账号：' + esc(S.gh.user || '已登录') + '）'
-      : '要先装 gh 并登录一次（可选功能）。不想弄就直接选下面「我已经有一个仓库」——'
-        + '上传用的是 git 自己的登录，跟 gh 没关系') +
+      : blocked + ' 不想弄就直接选下面「我已经有一个仓库」—— 上传用的是 git 自己的登录，跟 gh 没关系') +
     '</span></span></button>' +
 
     (hasGh ? '' :
       '<div class="note" style="padding:2px 0 6px">' +
-      '<button class="env-btn" data-act="env-install" data-what="gh">帮我装 gh</button> ' +
-      '<button class="env-btn alt" data-act="env-login">登录 gh（可选）</button> ' +
-      '<button class="env-btn alt" data-act="env-open" data-url="' + URL_SIGNUP + '">还没有账号？注册</button>' +
+      (ghIn ? '' : '<button class="env-btn" data-act="env-install" data-what="gh">帮我装 gh</button> ') +
+      '<button class="env-btn' + (ghIn ? '' : ' alt') + '" data-act="env-login">' +
+      (ghIn ? '登录 GitHub（这一步缺）' : '登录 GitHub（可选）') + '</button>' +
       '</div>') +
     '<button class="act" data-act="mirror-pick" data-mode="url">' +
     '<span class="ai">' + svg('arrowUp') + '</span><span>' +
@@ -2380,7 +2611,10 @@ document.addEventListener('click', function (ev) {
     case 'env-detail': dialogEnv(); break;
     case 'env-recheck': refreshEnv().then(function () { toast('又检查了一遍', 'ok'); }); break;
     case 'env-install': envInstall(d('what')); break;
-    case 'env-login': envLogin(); break;
+    case 'gear': openGear(); break;
+    case 'env-signup': envSignup(); break;
+    case 'env-login': closeModal(); envLogin(); break;
+    case 'env-logout': envLogout(); break;
     case 'env-identity': envIdentity(); break;
     case 'env-open': call('open_url', { url: d('url') }); break;
     case 'env-askai': envAskAi(); break;

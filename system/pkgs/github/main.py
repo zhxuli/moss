@@ -24,6 +24,18 @@ STORE = os.path.join(DATA_DIR, 'paths.json')
 
 NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
 
+LOG_PATH = os.path.join(DATA_DIR, 'gh-login.log')
+
+
+def log(msg):
+    """后台的事（登录）必须留痕：界面吞掉 stdout，出问题只能靠这个文件。"""
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(LOG_PATH, 'a', encoding='utf-8') as fh:
+            fh.write('%s %s\n' % (now_text(), msg))
+    except Exception:
+        pass
+
 os.environ.setdefault('GH_NO_UPDATE_NOTIFIER', '1')
 os.environ.setdefault('GH_PROMPT_DISABLED', '1')
 os.environ.setdefault('GH_PAGER', 'cat')
@@ -1607,6 +1619,10 @@ class Core:
     def __init__(self, path=''):
         self.default_path = str(path or '')
         self._gh_cache = (0.0, None)
+        # gh 登录：后台跑 gh auth login，界面轮询这里的状态（不开任何窗口）
+        self._login = {'proc': None, 'state': 'idle', 'code': '', 'url': '',
+                       'why': '', 'login': '', 'at': ''}
+        self._login_lock = threading.Lock()
 
     def _path(self, params):
         return resolve_path((params or {}).get('path') or self.default_path)
@@ -2166,12 +2182,13 @@ class Core:
                                     % (gh['user'] or '（账号名没读出来）')})
         elif gh['installed']:
             items.append({
-                'key': 'login', 'state': 'skip',
-                'label': 'GitHub 自动建仓库（可选，不影响推送）',
-                'detail': 'gh 装了但没登录。**推送照样能用**（走 git 自己的登录）；'
-                          '登录只是让「备份到云端」能替你一键建仓库，不用手动去网站建。',
-                'fix': 'gh_login', 'fixLabel': '登录 gh（可选）', 'url': URL_LOGIN,
-                'help': '点「登录 gh」会开一个窗口，并在里面一步步写给你看；'
+                'key': 'login', 'state': 'warn',
+                'label': '还没登录 GitHub（登录后能自动建仓库）',
+                'detail': '**还差一步：没登录 GitHub**。不登录的话「备份到云端」不能替你自动建仓库，'
+                          '得你自己去网站上建。**推送/上传照样能用**（走 git 自己的登录）。',
+                'fix': 'gh_login', 'fixLabel': '登录 GitHub', 'url': URL_LOGIN,
+                'help': '点「登录 GitHub」会帮你复制好一串代码，并自动打开 GitHub 的授权页，'
+                        '你只要在网页上点几下（有流程图一步步指给你）；'
                         '不想弄也完全没关系，用「我已有仓库，填地址」那条路一样能上传。',
             })
         else:
@@ -2372,15 +2389,28 @@ class Core:
     def open_url(self, params=None):
         return open_url(str((params or {}).get('url') or ''))
 
+    def _gh_login_flags(self, gh):
+        """gh auth login 支不支持 --clipboard / --skip-ssh-key。
+
+        ★ 这里绝对不能再跑 `gh auth login --help` 去问：
+        它和真正的 `gh auth login` 同时起，两个 gh 抢同一把配置锁，
+        结果就是第一次点登录一个字都不输出、12 秒后失败、点第二次才好
+        （真机上"第一次总没反应"就是这么来的）。
+        这两个参数 gh 2.28 起就有，直接按新版传；老版本会报 unknown flag，
+        由调用方退一步去掉重试。"""
+        return (True, True)
+
     def gh_login(self, params=None):
         refresh_tools()
         gh = local_tool('gh') or shutil.which('gh')
         if not gh:
             return {'ok': False, 'why': '还没装 gh —— 先点「帮我装 gh」', 'url': URL_GH}
-        _help = run([gh, 'auth', 'login', '--help'], timeout=10)['out'] or ''
-        flags = ['--hostname', 'github.com', '--git-protocol', 'https', '--web']
-        has_clip = '--clipboard' in _help
-        has_skip = '--skip-ssh-key' in _help
+        # 不带 --web：浏览器由界面自己打开（带了 --web gh 也会去开一次，两个标签页）
+        flags = ['--hostname', 'github.com', '--git-protocol', 'https']
+        plain = bool((params or {}).get('plain'))     # 老版本 gh：只用最基本的参数
+        has_clip, has_skip = self._gh_login_flags(gh)
+        if plain:
+            has_clip = has_skip = False
         if has_clip:
             flags.append('--clipboard')
         if has_skip:
@@ -2391,54 +2421,170 @@ class Core:
                     'clipboard': has_clip, 'skipSshKey': has_skip,
                     'cmd': '"%s" auth login %s' % (gh, flag_text)}
 
-        steps = [
-            'echo ============================================',
-            'echo  登录 GitHub（这一步只是让「自动建仓库」能用）',
-            'echo --------------------------------------------',
-            'echo  接下来：',
-            'echo   1) 屏幕上会出现一个 8 位代码，形如 ABCD-1234',
-        ]
-        if has_clip:
-            steps += [
-                'echo      ★ 这个代码我已经**替你复制到剪贴板**了（--clipboard），',
-                'echo        直接 Ctrl+V 粘就完事。',
-            ]
-        steps += [
-            'echo   2) 浏览器会自动打开；没打开就手动去 github.com/login/device',
-            'echo   3) 粘上代码，点 Authorize（同意）',
-            'echo   4) 看到 "Logged in as 你的名字" 就成功了',
-            'echo --------------------------------------------',
-        ]
-        if has_skip:
-            steps += [
-                'echo  不会再问你要不要生成密钥（--skip-ssh-key 已经关掉那一步）——',
-                'echo  推送走的是 https + Git Credential Manager，跟密钥无关。',
-            ]
-        steps += [
-            'echo  卡住不动 / 想放弃：直接关掉这个窗口即可，推送照样能用。',
-            'echo ============================================',
-            'echo.',
-        ]
-        line = ('%s && echo. && "%s" auth login %s'
-                % (' & '.join(steps), gh, flag_text))
-        line += ' && echo. && echo 登录完成（按任意键关掉这个窗口） && pause'
+        # 已经登录过就别再跑 auth login 了：gh 在无人值守下会直接以退出码 1 结束，
+        # 界面只会看到"登录没走完"，白白吓人一跳。
+        box = self._gh()
+        if box.get('loggedIn') and not (params or {}).get('force'):
+            return {'ok': True, 'already': True, 'state': 'ok',
+                    'login': box.get('user') or '', 'code': '',
+                    'why': '已经登录过了：%s。想换账号或重走一遍流程，先点「退出登录」。'
+                           % (box.get('user') or '（gh 已登录）')}
+
+        with self._login_lock:
+            old = self._login.get('proc')
+            if old is not None and old.poll() is None:
+                # 上一个还在等授权：同一个码继续等，别起第二个 gh 去抢
+                if self._login.get('code'):
+                    st = dict(self._login)
+                    return {'ok': True, 'reused': True, 'state': st['state'],
+                            'code': st['code'], 'url': st['url'] or URL_LOGIN,
+                            'login': st['login'], 'copied': has_clip}
+                try:
+                    old.kill()
+                except Exception:
+                    pass
+            self._login.update({'proc': None, 'state': 'starting', 'code': '',
+                                'url': '', 'why': '', 'login': '', 'at': now_text()})
+        log('开始登录（%s）' % ' '.join([os.path.basename(gh)] + flags))
+
+        # 不开任何窗口：gh 在这里当后台进程跑，它吐出来的东西我们读出来交给界面。
+        # stdin 必须给空（DEVNULL）：留一个开着的管道，gh 会一直等着读输入，
+        # 结果就是"没有任何输出、等到超时"（真机上就是这么空的）。
         try:
-            if os.name == 'nt':
-                subprocess.Popen('start "GitHub 登录（照窗口里的字做）" cmd /k %s' % line,
-                                 shell=True)
-            else:
-                subprocess.Popen(['sh', '-c', 'x-terminal-emulator -e "%s auth login %s" '
-                                              '|| gnome-terminal -- "%s auth login %s"'
-                                              % (gh, flag_text, gh, flag_text)])
+            proc = subprocess.Popen([gh, 'auth', 'login'] + flags,
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT,
+                                    creationflags=NO_WINDOW, cwd=DATA_DIR)
         except Exception as e:
-            return {'ok': False, 'why': '打不开命令行窗口：%s' % e, 'url': URL_LOGIN}
+            return {'ok': False, 'why': '启动 gh 失败：%s' % e, 'url': URL_LOGIN}
+        with self._login_lock:
+            self._login['proc'] = proc
+        threading.Thread(target=self._login_read, args=(proc, gh), daemon=True).start()
+
+        # 稍微等一下（1.5 秒）：网络正常时这会儿码已经出来了，界面能一次就画全。
+        # ★ 等不到也不算失败 —— 向 GitHub 要 device code 是个网络请求，
+        #   慢的时候十几秒都正常。界面会一直轮询 gh_login_state，走慢点就好，
+        #   以前在这儿卡 12 秒然后报"失败"，用户点了像没反应、非得点第二次（真机就这么来的）。
+        for _ in range(15):
+            if self._login.get('code') or self._login.get('state') in ('ok', 'error'):
+                break
+            time.sleep(0.1)
+        st = dict(self._login)
+        if st['state'] == 'error':
+            return {'ok': False, 'why': st['why'] or 'gh 报错了', 'url': URL_LOGIN}
+        if not st['code']:
+            said = (st.get('tail') or '').strip()
+            low = said.lower()
+            # 老版本 gh 不认 --clipboard / --skip-ssh-key：去掉它们再走一次
+            if not (params or {}).get('retried') and (
+                    'unknown flag' in low or 'flag provided but not defined' in low
+                    or 'unknown shorthand' in low):
+                log('gh 不认新参数，去掉后重试')
+                retry = dict(params or {})
+                retry['retried'] = True
+                return self.gh_login(dict(retry, **{'plain': True}))
+            # 还没出码但进程还活着 —— 正常，界面接着等（有进度提示，不算失败）
+            lines = [x for x in said.splitlines() if x.strip()][-3:]
+            return {'ok': True, 'state': 'starting', 'code': '', 'url': URL_LOGIN,
+                    'copied': False, 'login': '',
+                    'slow': not lines, 'out': ' / '.join(lines)}
+        return {'ok': True, 'state': st['state'], 'code': st['code'],
+                'url': st['url'] or URL_LOGIN, 'copied': has_clip, 'login': st['login']}
+
+    def _gh_user(self, gh):
+        """已经登录的话，gh 知道自己叫谁。"""
+        got = run([gh, 'api', 'user', '--jq', '.login'], timeout=20)
+        return (got.get('out') or '').strip().splitlines()[0].strip() if got.get('ok') else ''
+
+    def _login_read(self, proc, gh):
+        """把 gh 的输出逐行读出来，抓到 8 位代码和授权网址，状态写进 self._login。"""
+        try:
+            for raw in iter(proc.stdout.readline, b''):
+                line = (raw or b'').decode('utf-8', 'replace').rstrip()
+                if not line:
+                    continue
+                log('  gh| %s' % line)
+                tail = (self._login.get('tail') or '')
+                tail = (tail + '\n' + line)[-1200:]
+                self._login['tail'] = tail
+                low = line.lower()
+                m = re.search(r'\b([A-Z0-9]{4}-[A-Z0-9]{4})\b', line)
+                if m and 'code' in low:
+                    with self._login_lock:
+                        self._login['code'] = m.group(1)
+                        if self._login['state'] == 'starting':
+                            self._login['state'] = 'waiting'
+                m = re.search(r'https://[^\s]+', line)
+                if m:
+                    with self._login_lock:
+                        self._login['url'] = m.group(0).rstrip('.,;)')
+                        if self._login['state'] == 'starting':
+                            self._login['state'] = 'waiting'
+        except Exception as e:
+            log('读登录输出出错：%s' % e)
+        code = proc.wait()
+        log('gh 退出码 %s' % code)
+        login = self._gh_user(gh) if code == 0 else ''
+        with self._login_lock:
+            self._login['state'] = 'ok' if (code == 0 or login) else 'error'
+            self._login['login'] = login
+            if self._login['state'] == 'error':
+                said = (self._login.get('tail') or '').strip().splitlines()
+                said = [x for x in said if x.strip()][-3:]
+                self._login['why'] = ('登录没走完（gh 退出码 %s）%s'
+                                      % (code, ('：' + ' / '.join(said)) if said else ''))
         self._gh_cache = (0.0, None)
-        return {'ok': True, 'window': True, 'ghPath': gh, 'clipboard': has_clip,
-                'help': '窗口里我把步骤写在最上面了：屏幕上给一个 8 位代码'
-                        + ('（已经帮你复制到剪贴板）' if has_clip else '') +
-                        ' → 浏览器自动打开 → 粘代码点同意 → 看到 "Logged in as 你" 就成了。'
-                        '窗口不会一闪就没（出错了会停在窗口里给你看）。'
-                        '实在不想弄也没关系：推送不受影响。'}
+        log('登录结果：%s %s' % (self._login['state'], login or ''))
+
+    def gh_login_state(self, params=None):
+        """界面用来轮询登录进度（不阻塞）。"""
+        with self._login_lock:
+            st = dict(self._login)
+        proc = st['proc']
+        return {'ok': True, 'state': st['state'], 'code': st['code'],
+                'url': st['url'] or URL_LOGIN, 'login': st['login'],
+                'why': st['why'], 'at': st['at'],
+                'running': bool(proc is not None and proc.poll() is None)}
+
+    def gh_logout(self, params=None):
+        """退出 gh 的 GitHub 登录。
+
+        用途：想重新走一遍「登录 GitHub」的流程（比如测界面）、或者换账号。
+        只清 gh 自己的凭据，不动 git 的凭据助手 —— 推送那张卡不会因此掉。"""
+        global GH
+        refresh_tools()
+        gh = local_tool('gh') or shutil.which('gh')
+        if not gh:
+            return {'ok': False, 'why': '这台机器上没有 gh，本来就没登录过什么'}
+        before = self._gh()
+        self._login.update({'proc': None, 'state': 'idle', 'code': '', 'url': '',
+                            'why': '', 'login': '', 'at': now_text()})
+        got = run([gh, 'auth', 'logout', '--hostname', 'github.com'], timeout=30)
+        out = (got.get('out') or '').strip()
+        log('gh auth logout → %s %s' % (got.get('ok'), out[:200]))
+        self._gh_cache = (0.0, None)
+        now = self._gh()
+        if now['loggedIn']:
+            return {'ok': False, 'why': out or 'gh 说还是登录着的，没退成',
+                    'user': now['user'], 'loggedIn': True}
+        return {'ok': True, 'was': before.get('user') or '',
+                'loggedIn': False, 'out': out,
+                'why': ('已经退出了%s —— 现在再点「登录 GitHub」，就能重新看到那套登录步骤。'
+                        % ('（原来是 %s）' % before['user'] if before.get('user') else ''))}
+
+    def copy_text(self, params=None):
+        """把一段字放进剪贴板（界面上那个「复制代码」按钮用）。"""
+        text = str((params or {}).get('text') or '')
+        if not text:
+            return {'ok': False, 'why': '没有要复制的内容'}
+        if os.name != 'nt':
+            return {'ok': False, 'why': '这个系统上请手动选一下复制'}
+        try:
+            subprocess.run(['clip'], input=text.encode('mbcs', 'replace'),
+                           creationflags=NO_WINDOW, timeout=10)
+            return {'ok': True}
+        except Exception as e:
+            return {'ok': False, 'why': '复制没成：%s' % e}
 
     OWN_JUNK = ('_how.py', '_how.txt', '_probe.py', '_probe.txt', '_tmp_probe.py')
 
@@ -3157,12 +3303,10 @@ class Core:
             refresh_tools()
             if not shutil.which('gh'):
                 return {'ok': False, 'steps': [], 'need': 'install_gh', 'url': URL_GH,
-                        'why': '这台电脑上没有 gh（GitHub CLI），我没法替你建仓库。'
-                               '点上面「帮我装 gh」，装完再点「登录 GitHub」，'
-                               '然后回来这里就能一键建仓库并上传了。'}
+                        'why': '这台电脑上没有 gh（GitHub CLI），我没法替你建仓库。点下面的「帮我装 gh」，装完再登录一次 GitHub，然后回来这里就能一键建仓库并上传了。'}
             if not self._gh().get('loggedIn'):
                 return {'ok': False, 'steps': [], 'need': 'gh_login', 'url': URL_LOGIN,
-                        'why': 'gh 装了、但还没登录 GitHub —— 点「登录 GitHub」走一下，'
+                        'why': 'gh 装了、但还没登录 GitHub —— 点下面的「去登录 GitHub」走一下，'
                                '回来再点这里。'}
             name = str(p.get('name') or '').strip() or os.path.basename(root.rstrip('\\/'))
             remote = str(p.get('remote') or 'origin').strip() or 'origin'
@@ -3217,7 +3361,7 @@ class Core:
                                % res['suggest'])
             elif 'auth' in blob or 'not logged' in blob or 'gh auth' in blob:
                 res['need'] = 'gh_login'
-                res['note'] = 'gh 还没登录 GitHub —— 点「登录 GitHub」走一下，回来再点这里。'
+                res['note'] = 'gh 还没登录 GitHub —— 点下面的「去登录 GitHub」走一下，回来再点这里。'
         return res
 
     def remote_repo(self, params=None):
@@ -3421,7 +3565,8 @@ def cli(action, path, arg='', extra=None):
                 'run_action', 'file_op', 'gh', 'set_path', 'forget_path', 'browse', 'disks',
                 'net_probe', 'remote_repo', 'mirror', 'stashes', 'drop_stash',
                 'delete_commit', 'env_check', 'install_tool', 'install_status',
-                'fix_identity', 'open_url', 'gh_login',
+                'fix_identity', 'open_url', 'gh_login', 'gh_login_state', 'gh_logout',
+                'copy_text',
                 'job_start', 'job_state', 'job_cancel',
                 'push_check', 'bigfiles', 'shield', 'ignore', 'sync_log']
         missing = [m for m in need if not callable(getattr(core, m, None))]
@@ -3440,7 +3585,24 @@ def cli(action, path, arg='', extra=None):
         return 0 if not missing else 1
     if action == 'gh_login':
         got = core.gh_login({'dry': bool((arg or '').strip() == 'dry')})
-        print('[github] %s' % (got.get('cmd') or got.get('why') or got.get('help') or ''))
+        if got.get('dry'):
+            print('[github] gh=%s' % got.get('ghPath'))
+            print('[github] 参数=%s' % ' '.join(got.get('flags') or []))
+        elif got.get('code'):
+            print('[github] 登录码：%s' % got['code'])
+            print('[github] 打开这个地址，粘上代码点同意：%s' % got.get('url'))
+            if got.get('login'):
+                print('[github] 已经登录：%s' % got['login'])
+        elif got.get('slow'):
+            print('[github] 已经开跑，登录码还在向 GitHub 要（网络慢要十几秒），稍等一下')
+            print('[github] 授权页：%s' % got.get('url'))
+        else:
+            print('[github] %s' % (got.get('why') or '没能开始登录'))
+        write_result(got)
+        return 0 if got.get('ok') else 1
+    if action == 'gh_logout':
+        got = core.gh_logout({})
+        print('[github] %s' % (got.get('why') or '没退成'))
         write_result(got)
         return 0 if got.get('ok') else 1
     if action == 'install_portable':
