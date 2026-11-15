@@ -266,13 +266,12 @@ svg { display: block; }
 .node-acts { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .ico-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; flex: none; padding: 0;
-  border-radius: 8px; border: 1px solid var(--line);
-  background: var(--bg2, rgba(127, 127, 127, .06)); color: var(--mut1, #666);
-  cursor: pointer; font: inherit;
-  transition: background .2s, color .2s, transform .1s;
+  width: 26px; height: 26px; flex: none; padding: 0;
+  border-radius: 8px; border: 0; background: none;
+  color: var(--mut); cursor: pointer; font: inherit;
+  transition: color .2s, transform .1s;
 }
-.ico-btn:hover { background: rgba(127, 127, 127, .16); color: var(--fg, #222); }
+.ico-btn:hover { background: none; color: var(--txt); }
 .ico-btn:active { transform: scale(.94); }
 .ico-btn svg { width: 16px; height: 16px; }
 

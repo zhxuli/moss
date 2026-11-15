@@ -13,7 +13,7 @@ var ICON = {
   arrowUp: '<path d="M12 19V6M12 6 7.5 10.5M12 6l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
   rotate: '<path d="M3.6 12a8.4 8.4 0 1 1 2.9 6.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M3.2 17.5V13h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
   x: '<path d="M4 4 12 12M12 4 4 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
-  chart: '<path d="M3 13.2V9.6M7.6 13.2V5.4M12.2 13.2V7.8M16.8 13.2V3.4"/>',
+  chart: '<path d="M4 14V9.5M8.2 14V5.5M12.4 14V7.5M16.6 14V3.6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M3 17.6h14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity=".55"/>',
   warn: '<path d="M8 2.6 14.6 14H1.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 6.4v3.2M8 11.6v.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
   check: '<path d="M3 8.6 6.4 12 13 4.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
   link: '<path d="M6.6 9.4a2.6 2.6 0 0 1 0-3.7l1.6-1.6a2.6 2.6 0 1 1 3.7 3.7l-.9.9M9.4 6.6a2.6 2.6 0 0 1 0 3.7l-1.6 1.6a2.6 2.6 0 1 1-3.7-3.7l.9-.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
@@ -2113,9 +2113,8 @@ function locBlock(title, d, key) {
     '<b>' + (d.cut ? '≥ ' : '') + n0(d.lines || 0) + '</b> 行　<span class="hintline">' +
     n0(d.files || 0) + ' 个文件</span></div>';
   if (d.cut) {
-    h += '<div class="note" style="color:#b45309">这一份没走完（' + esc(d.secs || '') +
-      ' 秒 / 目录太多就先停了）：这个项目里有海量素材目录（音频、图标、上传件），' +
-      '那些不是代码。要确定的数字看上面「跟着提交的」那一份。</div>';
+    h += '<div class="note" style="color:#b45309">这个目录太大，没数完（' +
+      esc(d.secs || '') + ' 秒就停了）。数字是「至少」。要确定的数字看上面那份。</div>';
   }
   var rows = d.byLang || [];
   if (!rows.length) { return h + '<div class="note">没有代码文件。</div>'; }

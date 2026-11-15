@@ -1342,6 +1342,49 @@ LOC_LANG = {
     'rb': 'Ruby', 'php': 'PHP', 'lua': 'Lua', 'sql': 'SQL',
     'sh': 'Shell', 'bash': 'Shell', 'ps1': 'PowerShell', 'bat': 'Batch',
 }
+def _is_ignored(rel, ignored):
+    """rel 本身被忽略，或者它的某一层父目录被忽略。"""
+    if rel in ignored:
+        return True
+    p = rel
+    while '/' in p:
+        p = p.rsplit('/', 1)[0]
+        if p in ignored:
+            return True
+    return False
+
+def ignored_rel_set(root):
+    """让 git 自己列出"被忽略"的路径，用来排除。
+
+    以前「磁盘上全部」只按硬编码目录名跳过，压根没看 .gitignore ——
+    于是 user_data/（项目 .gitignore 第 9 行就写着）连同里面的第三方库、
+    vendor.js 全被当代码数进去了（真机上数出 140 万行 Python，全是垃圾）。
+    这里用 `git ls-files -o -i --exclude-standard --directory` 拿忽略清单，
+    路径一律按 posix 斜杠。
+    """
+    got = run([GIT, '-C', root, 'ls-files', '-o', '-i', '--exclude-standard',
+               '--directory', '-z'], timeout=60)
+    out = set()
+    if not got.get('ok'):
+        return out
+    for x in (got.get('out') or '').split('\0'):
+        x = x.strip().strip('/').replace('\\', '/')
+        if x:
+            out.add(x)
+    return out
+
+def tracked_rel_set(root):
+    """git 已跟踪的文件（这些永远算代码，哪怕目录名看着像素材）。"""
+    got = run([GIT, '-C', root, 'ls-files', '-z'], timeout=90)
+    out = set()
+    if not got.get('ok'):
+        return out
+    for x in (got.get('out') or '').split('\0'):
+        x = x.strip().replace('\\', '/')
+        if x:
+            out.add(x)
+    return out
+
 LOC_SKIP_DIRS = {
     '.git', '.hg', '.svn', '.venv', 'venv', 'env', '.env', 'node_modules',
     '__pycache__', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.tox',
@@ -1402,6 +1445,10 @@ def loc_scan(root, names=None, limit=12, budget=8.0, keep_libs=False,
             if os.path.isfile(fp):
                 one(rel, fp)
     else:
+        # 先把 git 的忽略清单拿到：被 .gitignore / .git/info/exclude 挡掉的路径不数。
+        # 不是 git 仓库就退化成只按 LOC_SKIP_DIRS 跳过。
+        ignored = ignored_rel_set(root) if not keep_libs else set()
+        tracked = tracked_rel_set(root) if ignored else set()
         stack = [root]
         dirs_done = 0
         while stack:
@@ -1426,11 +1473,18 @@ def loc_scan(root, names=None, limit=12, budget=8.0, keep_libs=False,
                 continue
             for e in entries:
                 try:
+                    rel = os.path.relpath(e.path, root).replace('\\', '/')
+                    is_tracked = rel in tracked
+                    # git 说被忽略的就不数（已跟踪的例外：git 不会忽略已跟踪的文件）。
+                    # 忽略清单里可能是「某个目录」（如 user_data），也可能是「某个文件」，
+                    # 目录条目只有它本身一条，所以子路径要用前缀再判一次。
+                    if ignored and not is_tracked and _is_ignored(rel, ignored):
+                        continue
                     if e.is_dir():
-                        if e.name.lower() not in LOC_SKIP_DIRS:
+                        if e.name.lower() not in LOC_SKIP_DIRS or is_tracked:
                             stack.append(e.path)
                     elif e.is_file():
-                        one(os.path.relpath(e.path, root), e.path)
+                        one(rel, e.path)
                 except OSError:
                     continue
     top.sort(key=lambda x: -x['lines'])
@@ -1494,8 +1548,8 @@ def _fake_out(name, path):
                        '那些地方不是代码。要一个确定的数字，看上面「git 跟踪的」那一份。'
                        % alld.get('secs'))
         out.append('')
-        out.append('（跳过 .venv / node_modules / __pycache__ / dist / media 这些目录；'
-                   '压缩过的 *.min.js 也不算）')
+        out.append('（.gitignore 里挡掉的、.venv / node_modules / __pycache__ / dist / media '
+                   '这些目录、压缩过的 *.min.js 都不算）')
         return '\n'.join(out)
     if name == 'precheck':
         info = repo_info(path)
