@@ -96,7 +96,6 @@ function paintStaticIcons(){
   $("#sw-hist").innerHTML = ico("history", "i") + '<span>历史</span>' +
                             '<b class="sw-n" id="sw-n-hist"></b>';
 
-  $("#btn-newpkg").innerHTML = ico("moss-plus", "i") + "<span>新建插件</span>";
   $("#btn-settings").innerHTML = ico("settings", "i");   
 
   $("#m-x").innerHTML = ico("x", "i");
@@ -119,7 +118,6 @@ $("#btn-refresh").onclick = async () => {
 $("#sw-pkg").onclick = () => { setSide("pkg"); window.syncListBars && window.syncListBars(); };
 $("#sw-hist").onclick = () => { setSide("hist"); window.syncListBars && window.syncListBars(); };
 window.syncListBars && window.syncListBars();       
-$("#btn-newpkg").onclick = cmdNewPkg;
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
   if (b.dataset.tab === "file") fmSelect(fmCtxKey());
   else if (b.dataset.tab === "embed"){                 

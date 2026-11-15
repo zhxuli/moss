@@ -182,7 +182,7 @@ const MossSettings = {
 
               <div class="ai-fgroup" data-ai="api_key">
                 <label class="ai-flabel" for="ai-in-key"
-                       title="明文存在 user_data/config.toml；留空 = 不修改。">API Key (密钥)</label>
+                       title="明文存在 user_data/config/config.toml；留空 = 不修改。">API Key (密钥)</label>
                 <div class="ai-keywrap" :class="{nokey: !aiVal('api_key')}">
                   <input class="ai-input" id="ai-in-key" :type="ai.showKey ? 'text' : 'password'"
                          spellcheck="false" autocomplete="off" :placeholder="aiKeyPh()"
@@ -521,7 +521,7 @@ const MossSettings = {
 
       if (this.errs) return "✗ " + this.errs + " 处冲突 —— 改好再点一次保存";
       if (this.changed.length){
-        return "改了 " + this.changed.length + " 项 · 点保存写入 config.toml（下次启动 moss 生效）"
+        return "改了 " + this.changed.length + " 项 · 点保存写入 config/config.toml（下次启动 moss 生效）"
                + (this.msg ? "（" + this.msg + "）" : "");
       }
 
@@ -1235,7 +1235,7 @@ const MossSettings = {
 
       const scMsgs = (r && r.shortcut) || [];
       const head = list.length ? ("已保存（有 " + list.length + " 条提醒）")
-                               : "已保存到 config.toml";
+                               : "已保存到 config/config.toml";
       const det = scMsgs.slice(0, 4).join("；") + (scMsgs.length > 4 ? ("；…还有 " + (scMsgs.length - 4) + " 条") : "");
       toast(det ? (head + "；" + det) : (head + "（下一次启动 moss 生效）"));
 

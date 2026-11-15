@@ -582,9 +582,11 @@ EMBED = {}
 EMBED_LOCK = threading.Lock()
 EMBED_STOPPED = set()
 
-_EMBED_DENY = ("user_data/config.toml", "user_data/backups/", "user_data/history/",
-               "user_data/state/", "user_data/trash/", "user_data/snapshot.ignore",
-               "user_data/runners.json", ".git/", "core/", "venv/")
+_EMBED_DENY = ("user_data/config/", "user_data/backups/", "user_data/history/",
+               "user_data/state/", "user_data/trash/", ".git/", "core/", "venv/",
+               # 旧位置也继续挡住，避免迁移前遗留文件被插件读到
+               "user_data/config.toml", "user_data/snapshot.ignore",
+               "user_data/runners.json")
 
 _FAVICON_RELS = ("system/icon/moss.ico", "icon.ico")
 
@@ -739,7 +741,20 @@ def _hist_is_record(r):
     return (r.get("kind") or "") != "pkg"
 
 _PLUGIN_RUNS_FILE = USER_DATA / "state" / "_plugin_runs.jsonl"
+_PLUGIN_CREATES_FILE = USER_DATA / "state" / "_plugin_creates.jsonl"
 _PLUGIN_RUNS_LOCK = threading.Lock()
+
+def _plugin_create_note(pid):
+    """记录一次成功的插件创建（只由 UI 新建入口触发）。"""
+    try:
+        _PLUGIN_CREATES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        row = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "pid": str(pid)}
+        line = json.dumps(row, ensure_ascii=False)
+        with _PLUGIN_RUNS_LOCK:
+            with open(_PLUGIN_CREATES_FILE, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+    except Exception:
+        pass
 
 def _plugin_run_note(pid):
     """记录一次成功的插件启动。概览统计只认这一份，不碰文件运行历史。"""
@@ -1394,7 +1409,7 @@ def _cfg(section, key, default=None):
         data = {}
         try:
             import tomllib
-            data = tomllib.loads((USER_DATA / "config.toml").read_text(encoding="utf-8"))
+            data = tomllib.loads((USER_DATA / "config" / "config.toml").read_text(encoding="utf-8"))
         except Exception:
             data = {}
         _CFG_CACHE["data"] = data if isinstance(data, dict) else {}
@@ -2096,6 +2111,62 @@ class Api:
                         total += 1
         except OSError:
             pass
+        today = time.strftime("%Y-%m-%d")
+        mon = today[:7]
+        active_days = sum(1 for d, n in days.items() if n > 0 and d[:7] == mon)
+        return {
+            "ok": True,
+            "today": days.get(today, 0),
+            "month": months.get(mon, 0),
+            "total": total,
+            "active_days": active_days,
+            "days": days,
+            "months": months,
+        }
+
+    def plugin_create_stats(self):
+        """插件新建统计：新记录精确落盘；旧插件用目录创建时间回填。"""
+        days = {}
+        logged = set()
+        try:
+            if _PLUGIN_CREATES_FILE.is_file():
+                with open(_PLUGIN_CREATES_FILE, "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            row = json.loads(line)
+                        except ValueError:
+                            continue
+                        pid = str(row.get("pid") or "")
+                        day = str(row.get("ts") or "")[:10]
+                        if not pid or len(day) != 10:
+                            continue
+                        logged.add(pid)
+                        days[day] = days.get(day, 0) + 1
+        except OSError:
+            pass
+
+        # 兼容这次统计功能之前已经存在的插件：用包目录的创建时间回填。
+        for p in (DATA.get("packages") or []):
+            pid = str(p.get("id") or "")
+            if not pid or pid in logged:
+                continue
+            try:
+                ts = os.path.getctime(str(p.get("dir") or ""))
+                day = time.strftime("%Y-%m-%d", time.localtime(ts))
+            except Exception:
+                continue
+            if len(day) != 10:
+                continue
+            days[day] = days.get(day, 0) + 1
+
+        months = {}
+        total = 0
+        for day, n in days.items():
+            months[day[:7]] = months.get(day[:7], 0) + n
+            total += n
         today = time.strftime("%Y-%m-%d")
         mon = today[:7]
         active_days = sum(1 for d, n in days.items() if n > 0 and d[:7] == mon)
@@ -3691,7 +3762,8 @@ class Api:
         return _bk.BackupStore(USER_DATA / _bk.STORE_DIRNAME, _rel_page,
                                lambda rel: _resolve(rel)[1],
                                trash=lambda p: _trash(Path(p)),
-                               log=drop_log)
+                               log=drop_log,
+                               ignore_file=USER_DATA / "config" / _bk.IGNORE_NAME)
 
     def backup_list(self, group=""):
         try:
@@ -4485,6 +4557,8 @@ class Api:
             argv.append("kind=" + str(kind).strip())
         r = _run_capture(argv)
         ok = r.get("code") == 0
+        if ok:
+            _plugin_create_note(pid)
         text = (r.get("out") or "").strip() or ("建好了" if ok else "没建成")
         return {"ok": ok, "code": r.get("code"), "msg": text, "out": text}
 

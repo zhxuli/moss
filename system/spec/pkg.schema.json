@@ -38,7 +38,7 @@
     },
     "runner": {
       "type": "string",
-      "description": "内置：python / go / html / exe / shell / powershell。用户在 user_data/runners.json 里可以自己加（E-19），所以这里不用 enum，免得把合法的自定义 runner 判成非法"
+      "description": "内置：python / go / html / exe / shell / powershell。用户在 user_data/config/runners.json 里可以自己加（E-19），所以这里不用 enum，免得把合法的自定义 runner 判成非法"
     },
     "entry": {
       "type": "object",

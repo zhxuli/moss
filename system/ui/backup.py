@@ -197,12 +197,19 @@ def hash_bytes(data):
     return h.hexdigest()
 
 class BackupStore:
-    def __init__(self, root, rel_of, resolve, excludes=None, trash=None, log=None):
+    def __init__(self, root, rel_of, resolve, excludes=None, trash=None, log=None,
+                 ignore_file=None):
         self.root = Path(root)
         self.rel_of = rel_of
         self.resolve = resolve
         self.excludes = list(DEFAULT_EXCLUDES if excludes is None else excludes)
-        self.ignore_file = Path(root).parent / IGNORE_NAME
+        base = Path(root).parent
+        if ignore_file:
+            self.ignore_file = Path(ignore_file)
+        else:
+            new_ignore = base / "config" / IGNORE_NAME
+            old_ignore = base / IGNORE_NAME
+            self.ignore_file = new_ignore if (new_ignore.exists() or not old_ignore.exists()) else old_ignore
         if excludes is None:
             self.excludes += parse_ignore(self._read_ignore())
         self.trash = trash

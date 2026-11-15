@@ -14,6 +14,7 @@ const HOME = Vue.reactive({
   busy: false,
   err: "",
   stats: { today: 0, month: 0, total: 0, active_days: 0, days: {}, months: {} },
+  created: { today: 0, month: 0, total: 0, active_days: 0, days: {}, months: {} },
 });
 
 const HOME_CATEGORY_DEFS = [
@@ -77,19 +78,33 @@ function hmCatOf(p){
 }
 
 async function homeRefresh(){
-  let s = null;
+  let runs = null, creates = null;
   try{
     if (window.pywebview && pywebview.api && typeof pywebview.api.plugin_run_stats === "function")
-      s = await pywebview.api.plugin_run_stats();
-  }catch(e){ s = null; }
-  if (s && s.ok){
+      runs = await pywebview.api.plugin_run_stats();
+  }catch(e){ runs = null; }
+  try{
+    if (window.pywebview && pywebview.api && typeof pywebview.api.plugin_create_stats === "function")
+      creates = await pywebview.api.plugin_create_stats();
+  }catch(e){ creates = null; }
+  if (runs && runs.ok){
     HOME.stats = {
-      today: +s.today || 0,
-      month: +s.month || 0,
-      total: +s.total || 0,
-      active_days: +s.active_days || 0,
-      days: s.days || {},
-      months: s.months || {},
+      today: +runs.today || 0,
+      month: +runs.month || 0,
+      total: +runs.total || 0,
+      active_days: +runs.active_days || 0,
+      days: runs.days || {},
+      months: runs.months || {},
+    };
+  }
+  if (creates && creates.ok){
+    HOME.created = {
+      today: +creates.today || 0,
+      month: +creates.month || 0,
+      total: +creates.total || 0,
+      active_days: +creates.active_days || 0,
+      days: creates.days || {},
+      months: creates.months || {},
     };
   }
   HOME.rev++;
@@ -113,8 +128,10 @@ const MossHome = {
       return ((typeof DATA !== "undefined" && DATA && DATA.packages) || []).slice();
     },
     pluginTotal(){ return this.pluginList.length; },
-    userCount(){ return this.pluginList.filter(p => String(p.layer || "") === "user").length; },
-    systemCount(){ return this.pluginList.filter(p => String(p.layer || "") === "system").length; },
+    createdMonth(){
+      this.H.rev;
+      return +this.H.created.month || 0;
+    },
 
     sections(){
       this.H.rev;
@@ -222,6 +239,7 @@ const MossHome = {
       const cells = [];
       let active = 0, monthTotal = 0;
       const statsDays = this.H.stats.days || {};
+      const createdDays = this.H.created.days || {};
 
       for (let i = 0; i < rows * 7; i++){
         let dayNum, mo;
@@ -238,13 +256,15 @@ const MossHome = {
         const future = d.getTime() > today.getTime();
         const isToday = d.getTime() === today.getTime();
         const count = (+statsDays[key] || 0) + (isToday ? this.todayExtra : 0);
+        const created = +createdDays[key] || 0;
         if (!mo && count > 0){ active++; monthTotal += count; }
         cells.push({
           day: dayNum, key: key, other: mo !== 0, today: isToday, future: future,
           count: count, heat: future ? 0 : hmHeatLevel(count),
-          hasRuns: !future && count > 0,
+          hasRuns: !future && (count > 0 || created > 0),
           tip: (d.getMonth() + 1) + "月" + d.getDate() + "日\n" +
                (future ? "暂无数据" : ("启动 " + count + " 次" +
+                 (created ? ("\n新建 " + created + " 个插件") : "") +
                  (isToday && this.runningCount ? ("\n其中 " + this.runningCount + " 个插件正在运行") : ""))),
         });
       }
@@ -446,7 +466,7 @@ const MossHome = {
                 <span>插件总数</span>
               </div>
               <div class="hm-stat-num">{{ pluginTotal }}</div>
-              <div class="hm-stat-meta">用户层 {{ userCount }} · 系统层 {{ systemCount }}</div>
+              <div class="hm-stat-meta">本月新建 {{ createdMonth }} 个</div>
             </div>
             <div class="hm-stat-card">
               <div class="hm-stat-label">
@@ -497,7 +517,7 @@ const MossHome = {
                 <span v-if="c.hasRuns" class="hm-cal-dot"></span>
               </div>
             </div>
-            <div class="hm-cal-foot">本月活跃 <b>{{ calendar.activeDays }}</b> 天 · 共 <b>{{ calendar.monthTotal }}</b> 次插件启动</div>
+            <div class="hm-cal-foot">本月活跃 <b>{{ calendar.activeDays }}</b> 天 · 启动 <b>{{ calendar.monthTotal }}</b> 次 · 新建 <b>{{ createdMonth }}</b> 个</div>
           </div>
         </div>
 

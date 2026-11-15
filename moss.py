@@ -1,3 +1,5 @@
+# 打包命令（tools/build.py 会核对这一行，必须和实际命令一致）：
+# venv\Scripts\python.exe -m nuitka --onefile --lto=yes --remove-output --assume-yes-for-downloads --onefile-tempdir-spec="{CACHE_DIR}/moss_build/moss-<stamp>" --onefile-cache-mode=cached --windows-icon-from-ico=system/icon/moss.ico --windows-console-mode=hide --include-package=core -o moss.build moss.py
 import sys
 from pathlib import Path
 

@@ -47,7 +47,7 @@ GitHub / Git 的可视化助手：**每个按钮都告诉你它替你敲了哪�
 > `moss :github action=version` / `moss :github action=gitlog` 现在**都能跑**（退出码 0）。
 > 先看上表的默认调法；真报"找不到目标"再回来看下面这一节。
 
-这台机器的 `user_data/config.toml` 里是 `path_mode = ""` / `plugin_mode = "-"`
+这台机器的 `user_data/config/config.toml` 里是 `path_mode = ""` / `plugin_mode = "-"`
 （裸名 = 路径调用，不是默认档），所以上面写的 `moss :github …` **在本机解析不到**：
 
 | 写法 | 本机实测 |

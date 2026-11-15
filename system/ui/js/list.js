@@ -20,7 +20,6 @@ function setSide(which){
   $("#sw-hist").classList.toggle("on", which === "hist");
   $("#list").hidden = which !== "pkg";
   $("#hist").hidden = which !== "hist";
-  $("#btn-newpkg").hidden = which !== "pkg";   
   const gb = $("#btn-groups");
   if (gb) gb.hidden = which !== "pkg";
   $("#q").placeholder = which === "pkg" ? "搜索包名 / 说明 / 标签…"
@@ -221,7 +220,6 @@ function paintListBars(){
 function paintBarActs(){
   const put = (sel, ic) => { const b = $(sel); if (b && !b.querySelector("svg")) b.innerHTML = ico(ic, "i"); };
   put("#btn-refresh", "refresh-cw");
-  put("#btn-newpkg", "file-plus");
   put("#btn-refresh-h", "refresh-cw");
   put("#btn-openfile", "play-circle");
   const rh = $("#btn-refresh-h"), r = $("#btn-refresh");

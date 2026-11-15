@@ -73,10 +73,10 @@ USAGE = """moss —— 多语言启动器
   · 包可以把某个参数标成 rest:true，表示「剩下的参数全部交给这个包自己解释」
     （img 就是这种：moss :img webp 60% 1200 *.png）
   · 环境变量 MOSS_HOME / MOSS_PLUGIN_DATA_DIR 会注入给子进程
-  · 配置在 user_data\\config.toml（带注释：命令前缀符号 / 输出横幅 / 清屏 /
+  · 配置在 user_data\\config\\config.toml（带注释：命令前缀符号 / 输出横幅 / 清屏 /
     搜索层数 / Ctrl-C 策略 —— 打开那个文件就知道每一项是干什么的）
   · 裸名（不带前缀）归谁可以改：默认 moss m 找文件、moss :img 跑包；
-    若主要用途是"跑装好的包"（不常写脚本），把 config.toml 里的 plugin_mode 留空、
+    若主要用途是"跑装好的包"（不常写脚本），把 config/config.toml 里的 plugin_mode 留空、
     path_mode 填 ":" —— 于是 moss img 直接跑包，moss :img 才是找文件
   · 有没有参数决定干什么，有没有控制台决定怎么进来：
       终端里敲 moss           → 用法 + 包列表（命令行）
@@ -193,7 +193,7 @@ def _fill_interpreter(inv, table):
     spec = table.get(inv.get("runner"))
     if spec is None:
         return inv, ("不认识 runner '%s'。检查 system\\runners.json，"
-                     "或往 user_data\\runners.json 里加一条。" % inv.get("runner"))
+                     "或往 user_data\\config\\runners.json 里加一条。" % inv.get("runner"))
 
     kind = "package" if inv.get("kind") == "pkg" else "path"
     probe = runners_mod.probe(inv.get("runner"), spec, {
@@ -204,7 +204,7 @@ def _fill_interpreter(inv, table):
     if not probe.get("available"):
         return inv, ("这个包需要 '%s'，但本机用不了。\n"
                      "       原因：%s\n"
-                     "       装好它，或往 user_data\\runners.json 里补一条可用的解释器路径。"
+                     "       装好它，或往 user_data\\config\\runners.json 里补一条可用的解释器路径。"
                      % (inv.get("runner"), probe.get("why")))
     inv["interpreter"] = probe.get("interpreter")
     inv["venv"] = probe.get("venv")

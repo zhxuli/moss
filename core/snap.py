@@ -626,7 +626,7 @@ def _cmd_check(pos, opt, flag):
 
 def _cmd_ignore(opt, flag):
     b = _store()
-    f = paths.USER_DIR / b.IGNORE_NAME
+    f = paths.SNAPSHOT_IGNORE
     user = []
     if f.is_file():
         try:
@@ -810,7 +810,7 @@ USAGE_SNAP = """moss --snap …                版本快照（备份/恢复）�
                                          导出到某个文件夹（原文件不动）
   moss --snap rm <id|latest> [--yes]     删掉一次
   moss --snap rm --group <包id> --all [--yes]   删掉这个包的全部
-  moss --snap ls <对象> [目录]           这次快照里有什么（路径 + 大小）\n  moss --snap cat <对象> <路径> [--save-to <目录> --yes]\n                                         看快照里**某个文件的内容**（包废了就看它原来写了什么）\n                                         ★ 默认只吐内容、**不给可写路径**；要落到磁盘得显式 --save-to --yes\n  moss --snap check [对象]               按**指纹**逐个校验内容块（被改过 / 丢了当场看得见）\n  moss --snap ignore                     看过滤规则（哪些文件不会被存进去）—— 规则文件是\n                                         user_data/snapshot.ignore，写法同 .gitignore 的常用那几条\n  moss --snap gc [--group G] [--yes]     回收没人引用的内容块
+  moss --snap ls <对象> [目录]           这次快照里有什么（路径 + 大小）\n  moss --snap cat <对象> <路径> [--save-to <目录> --yes]\n                                         看快照里**某个文件的内容**（包废了就看它原来写了什么）\n                                         ★ 默认只吐内容、**不给可写路径**；要落到磁盘得显式 --save-to --yes\n  moss --snap check [对象]               按**指纹**逐个校验内容块（被改过 / 丢了当场看得见）\n  moss --snap ignore                     看过滤规则（哪些文件不会被存进去）—— 规则文件是\n                                         user_data/config/snapshot.ignore，写法同 .gitignore 的常用那几条\n  moss --snap gc [--group G] [--yes]     回收没人引用的内容块
 
   · 会动磁盘的动作（restore / export / rm / gc）**必须显式 --yes**，否则只打印"会干什么"
   · 加 --json 得到结构化输出（AI 用）；退出码：0 成功 / 2 用法错 / 3 没东西可做 / 4 出错"""

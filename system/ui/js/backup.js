@@ -216,7 +216,7 @@ const MossFileSnap = {
       const g = BK.ig || {};
       const builtin = (g.builtin || []).join(" / ");
       return "存快照时按这份规则过滤（写法同 .gitignore 的常用那几条）：\n" +
-             (g.path || "user_data/snapshot.ignore") + "\n" +
+             (g.path || "user_data/config/snapshot.ignore") + "\n" +
              (g.count ? ("你的规则：\n" + (g.user || []).join("\n")) : "你的规则：还没有（点一下看怎么写）") +
              "\n内置（永远生效）：" + builtin +
              "\n写法：*.log 按名字 / build/ 只排目录 / user/pkgs/old/ 按路径 / !keep.log 反向保留";
