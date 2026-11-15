@@ -307,6 +307,17 @@ def git_identity(path=''):
     return {'name': (nm['out'] or '').strip() if nm['ok'] else '',
             'email': (em['out'] or '').strip() if em['ok'] else ''}
 
+def git_identity_global():
+    """只读全局配置。
+
+    ★ 别用 git_identity('')：不带 --global 的 `git config --get` 会先看当前目录所在仓库的
+    本地配置。改动署名的进程如果恰好跑在某个仓库里（moss 自己的目录就是），读到的就是那个
+    仓库的值，全局改动看起来像没生效（真机上就这么误判过）。"""
+    nm = run([GIT, 'config', '--global', '--get', 'user.name'], timeout=10)
+    em = run([GIT, 'config', '--global', '--get', 'user.email'], timeout=10)
+    return {'name': (nm['out'] or '').strip() if nm['ok'] else '',
+            'email': (em['out'] or '').strip() if em['ok'] else ''}
+
 def ensure_identity(path, force=False):
     refresh_tools()
     argv_git = [GIT] + (['-C', path] if path else [])
@@ -2386,6 +2397,53 @@ class Core:
         return {'ok': bool(git_identity(path)['name']), 'identity': git_identity(path),
                 'note': note or '已经有署名了，没动'}
 
+    def set_identity(self, params=None):
+        """改署名（每个版本记在谁名下）。
+
+        传了 name / email 就直接写，没传就把当前值读出来给界面填。
+        写哪儿：这个文件夹已经是仓库 ⇒ 只写进这个仓库；否则写进全局配置。
+        scope='global' 能强制写全局。"""
+        p = params or {}
+        path = self._path(p)
+        refresh_tools()
+        inside = bool(path) and run([GIT, '-C', path, 'rev-parse', '--git-dir'],
+                                    timeout=15).get('ok')
+        scope = ['--global'] if (p.get('scope') == 'global' or not inside) else []
+        cur = git_identity(path if inside else '')
+
+        name = str(p.get('name') or '').strip()
+        mail = str(p.get('email') or '').strip()
+        if not name and not mail:
+            glob = git_identity_global()
+            # 界面上显示"当前生效的"：仓库里有就用仓库的，否则用全局的
+            show = cur if (inside and cur.get('name')) else glob
+            return {'ok': True, 'identity': show, 'global': glob,
+                    'scopeNow': '这个仓库' if (inside and cur.get('name')) else '全局',
+                    'inRepo': inside}
+
+        if name and not re.match(r'^[^<>]{1,80}$', name):
+            return {'ok': False, 'why': '名字里不能有尖括号，也别太长（80 字以内）'}
+        if mail and not re.match(r'^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$', mail):
+            return {'ok': False, 'why': '邮箱看起来不对：要像 you@example.com 这种'}
+        if not name or not mail:
+            return {'ok': False, 'why': '名字和邮箱都要填 —— 提交记录里两样都在'}
+
+        argv = [GIT] + (['-C', path] if inside and scope == [] else [])
+        # --replace-all：老的 .gitconfig 里可能已经有多条 user.name（历史反复设置过），
+        # 不带它 git 会直接报 "cannot overwrite multiple values" 而不写进去。
+        a = run(argv + ['config'] + scope + ['--replace-all', 'user.name', name], timeout=10)
+        b = run(argv + ['config'] + scope + ['--replace-all', 'user.email', mail], timeout=10)
+        log('设置署名 %s <%s> → %s' % (name, mail, '全局' if scope else '这个仓库'))
+        if not (a.get('ok') and b.get('ok')):
+            return {'ok': False,
+                    'why': (a.get('out') or b.get('out') or '写不进去，可能是配置文件被锁了').strip()}
+        self._gh_cache = (0.0, None)
+        return {'ok': True, 'identity': {'name': name, 'email': mail},
+                'identityAll': git_identity_global(),
+                'scopeNow': '全局' if scope else '这个仓库',
+                'note': '署名改成 %s <%s>（写进了%s）'
+                        % (name, mail, '全局配置' if scope else '这个仓库')}
+
     def open_url(self, params=None):
         return open_url(str((params or {}).get('url') or ''))
 
@@ -3565,7 +3623,7 @@ def cli(action, path, arg='', extra=None):
                 'run_action', 'file_op', 'gh', 'set_path', 'forget_path', 'browse', 'disks',
                 'net_probe', 'remote_repo', 'mirror', 'stashes', 'drop_stash',
                 'delete_commit', 'env_check', 'install_tool', 'install_status',
-                'fix_identity', 'open_url', 'gh_login', 'gh_login_state', 'gh_logout',
+                'fix_identity', 'set_identity', 'open_url', 'gh_login', 'gh_login_state', 'gh_logout',
                 'copy_text',
                 'job_start', 'job_state', 'job_cancel',
                 'push_check', 'bigfiles', 'shield', 'ignore', 'sync_log']

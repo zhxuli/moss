@@ -352,6 +352,9 @@ function dialogEnv(notice) {
         h += '<button class="env-btn" data-act="env-login">登录 GitHub</button>';
       } else if (i.fix === 'identity') {
         h += '<button class="env-btn" data-act="env-identity">帮我填好</button>';
+      } else if (i.key === 'id') {
+        // 署名已经有了也要能改 —— 之前只能看，找不到地方改
+        h += '<button class="env-btn alt" data-act="env-identity-edit">改署名</button>';
       }
       if (i.key === 'gh' || i.key === 'git') {
         h += '<button class="env-btn alt" data-act="env-open" data-url="' +
@@ -782,6 +785,39 @@ function showLoginCode(r) {
       }
     });
   };
+}
+
+// 改署名：名字 + 邮箱，直接写进 git config
+function envIdentityEdit() {
+  call('set_identity', {}).then(function (r) {
+    var cur = (r && r.identity) || {};
+    var glob = (r && r.global) || {};
+    var where = (r && r.scopeNow) || '全局';
+    openModal('署名',
+      '<div class="note">每个版本都会记在谁名下 —— 名字和邮箱都对得上，' +
+      'GitHub 才会把你的提交算到你的账号里。</div>' +
+      '<label class="fld"><span>名字</span><input id="idName" value="' +
+        esc(cur.name || glob.name || r.name || '') + '" placeholder="张三"></label>' +
+      '<label class="fld"><span>邮箱</span><input id="idMail" value="' +
+        esc(cur.email || glob.email || '') + '" placeholder="you@example.com"></label>' +
+      '<div class="note">写进：<b>' + esc(where) + '</b>' +
+      (where === '这个仓库'
+        ? '（这个文件夹已经是仓库了。想一次改掉所有项目，登录后再说也行）'
+        : '（所有项目都用这个署名）') + '</div>',
+      [{ text: '取消', key: 'close', kind: 'ghost' },
+       { text: '保存', key: 'save', kind: 'primary' }], true);
+    S.modalActs.save = function () {
+      var nm = (el('idName') || {}).value || '';
+      var ml = (el('idMail') || {}).value || '';
+      busyOn('正在保存…');
+      call('set_identity', { name: nm.trim(), email: ml.trim() }).then(function (x) {
+        busyOff();
+        if (!x.ok) { toast(x.why || '没保存上', 'bad'); return; }
+        toast(x.note || '署名改好了', 'ok');
+        refreshEnv(true).then(function () { dialogEnv(); });
+      }).catch(function (e) { busyOff(); fail(e); });
+    };
+  }).catch(function (e) { fail(e); });
 }
 
 function envLogout() {
@@ -2613,6 +2649,7 @@ document.addEventListener('click', function (ev) {
     case 'env-install': envInstall(d('what')); break;
     case 'gear': openGear(); break;
     case 'env-signup': envSignup(); break;
+    case 'env-identity-edit': envIdentityEdit(); break;
     case 'env-login': closeModal(); envLogin(); break;
     case 'env-logout': envLogout(); break;
     case 'env-identity': envIdentity(); break;

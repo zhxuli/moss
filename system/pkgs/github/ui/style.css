@@ -863,6 +863,20 @@ pre.out .hunk { color: var(--blue-d); }
 .env-title { font-size: 12px; font-weight: 700; color: var(--txt); }
 .env-sub { font-size: 11px; color: var(--txt2); margin-top: 2px; line-height: 1.55; }
 .env-btns { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* 小表单：一行标签 + 输入框（改署名用） */
+.fld { display: block; margin: 0 0 10px; }
+.fld > span {
+  display: block; font-size: 11.5px; color: var(--mut);
+  margin-bottom: 5px; font-weight: 600;
+}
+.fld > input {
+  width: 100%; box-sizing: border-box;
+  padding: 9px 11px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg2); color: var(--txt);
+  font: inherit; font-size: 13px; outline: none;
+}
+.fld > input:focus { border-color: #2f6feb; background: var(--card); }
+
 .env-btn {
   font: inherit; font-size: 11.5px; font-weight: 600;
   padding: 5px 11px; border-radius: 999px; cursor: pointer;
