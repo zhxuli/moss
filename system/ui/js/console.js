@@ -211,7 +211,7 @@ async function sendConsoleLine(){
     return;
   }
   RUNS[key] = {rid: r.run_id, cmd: r.cmd || line, manual: true, stopped: false,
-               switched: true, tabAtStart: tab};
+               switched: true, tabAtStart: tab, startedAt: Date.now()};
   setConsole(key, "$ " + (r.cmd || line) + "\n", "运行中");
   paintInbar(key);
   paintRowStats();
@@ -279,6 +279,7 @@ function rowStateOf(id){
 }
 
 function paintRowStats(){
+  try{ if (typeof homeBump === "function") homeBump(); }catch(e){}
   try{
     const runningIds = Object.keys(PST || {}).filter(k => (PST[k] || {}).running);
     if (typeof noteRunning === "function") noteRunning(runningIds);
@@ -717,7 +718,7 @@ async function termRunPackage(p, args, cwd){
   lastRun = {id: p.id, args: args, label: r.cmd || ("moss " + PSYM + p.id)};
   consoleKey = p.id;
   RUNS[p.id] = {term: true, cmd: r.cmd || "", t0: Date.now(), stopped: false,
-                switched: true, tabAtStart: tab};
+                switched: true, tabAtStart: tab, startedAt: Date.now()};
 
   MOSS_TERM.owner = p.id;
   paintConsole();
@@ -756,6 +757,8 @@ function termFinishRun(id){
   if (!run) return;
   clearTimeout(run.timer);
   delete RUNS[id];
+  if (typeof homeBump === "function") homeBump();
+  if (typeof homeScheduleRefresh === "function") homeScheduleRefresh();
   toast((run.stopped ? "已停止 " : "跑完了 ") + (run.cmd || ""));
   paintRowStats();
   paintActions(selObj());

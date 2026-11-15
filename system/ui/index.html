@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>moss</title>
+<title>MOSS</title>
 
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 
@@ -13,12 +13,12 @@
 <link rel="stylesheet" href="css/settings.css">
 
 <link rel="stylesheet" href="css/detail.css">
+<link rel="stylesheet" href="css/home.css">
 
 <link rel="stylesheet" href="vendor/xterm.css">
 </head>
 <body>
 <header>
-  <div class="brand"><span class="dot"></span>moss</div>
   <input id="q" placeholder="搜索包名 / 说明 / 标签…">
   <div class="meta" id="meta"></div>
   <button id="btn-selfcheck" class="iconbtn" title="自检（moss --selfcheck）"></button>
@@ -90,7 +90,7 @@
     <div class="grip" id="grip-aside" title="拖我调宽（双击复原）"></div>
   </aside>
   <div id="right">
-    <div id="tabs">
+    <div id="tabs" hidden>
       <button class="tab active" data-tab="detail">详情</button>
       <button class="tab" data-tab="console">命令行</button>
       <button class="tab" data-tab="file">文件管理</button>
@@ -108,7 +108,9 @@
       </div>
     </div>
 
-    <section class="pane on" id="pane-detail"><div class="empty">左边选一个包</div></section>
+    <section class="pane on" id="pane-home"></section>
+
+    <section class="pane" id="pane-detail"><div class="empty">左边选一个包</div></section>
 
     <section class="pane" id="pane-console"></section>
 
@@ -219,6 +221,7 @@
 <script src="js/embed.js"></script>
 <script src="js/groups.js"></script>
 <script src="js/list.js"></script>
+<script src="js/home.js"></script>
 <script src="js/files.js"></script>
 <script src="js/backup.js"></script>
 <script src="js/modal.js"></script>

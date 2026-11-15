@@ -7,12 +7,16 @@ function paintStates(){
 function setTab(name){
   tab = name;
 
+  /* 没有选中插件时，整个右侧是「概览」；它不属于详情页，也不该露出运行按钮。 */
+  const tabbar = document.getElementById("tabs");
+  if (tabbar) tabbar.hidden = (name === "home");
+
   if (name === "embed" && cur && embedRunning(cur.id)) embedShow(cur.id);
   if (name !== "embed") pushEmbedEvent(cur && cur.id, "visible", {visible: false});
   document.querySelectorAll(".tab").forEach(b =>
     b.classList.toggle("active", b.dataset.tab === name));
 
-  ["detail", "console", "file", "ai", "embed"].forEach(t =>
+  ["home", "detail", "console", "file", "ai", "embed"].forEach(t =>
     $("#pane-" + t).classList.toggle("on", t === name));
 
   try{

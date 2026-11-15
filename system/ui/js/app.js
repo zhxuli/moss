@@ -47,13 +47,13 @@ async function init(){
 
   if (FLOAT_PID){ await initFloatMode(); return; }
 
-  document.querySelector("header .brand").title =
-    "moss · " + DATA.home + " · 启动方式：" + DATA.launch_kind;
   renderList(); paintStates();
 
   loadListView();
-  await loadHist();        
-  setSide(side);           
+  await loadHist();
+  setSide(side);
+  if (!cur && !curH) setTab("home");
+  if (typeof homeRefresh === "function") homeRefresh();           
 
   await Vue.nextTick();
   writeStartDiag();
@@ -266,7 +266,7 @@ async function npCreate(){
   }
 }
 
-function cmdNewPkg(){
+function cmdNewPkg(initialMode){
   const card = document.querySelector("#modal .card");
   if (card) card.classList.add("np-card");
   const box = $("#m-extra");
@@ -310,11 +310,17 @@ function cmdNewPkg(){
   $("#np-close").onclick = () => { if (!NP.busy) closeModal(); };
   $("#np-go").onclick = () => npCreate();
 
+  const startMode = initialMode === "manual" ? "manual" : "ai";
+  npSetMode(startMode);
+
   box.onkeydown = e => {
     if (e.key === "Escape" && !NP.busy){ e.stopPropagation(); closeModal(); }
   };
   $("#modal").classList.add("on");
-  setTimeout(() => { const t = $("#np-idea"); try{ if (t) t.focus(); }catch(e){} }, 40);
+  setTimeout(() => {
+    const t = startMode === "manual" ? $("#np-name") : $("#np-idea");
+    try{ if (t) t.focus(); }catch(e){}
+  }, 40);
 }
 
 async function cmdRemovePkg(p){

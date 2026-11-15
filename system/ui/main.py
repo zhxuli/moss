@@ -738,6 +738,21 @@ def _hist_key(r):
 def _hist_is_record(r):
     return (r.get("kind") or "") != "pkg"
 
+_PLUGIN_RUNS_FILE = USER_DATA / "state" / "_plugin_runs.jsonl"
+_PLUGIN_RUNS_LOCK = threading.Lock()
+
+def _plugin_run_note(pid):
+    """记录一次成功的插件启动。概览统计只认这一份，不碰文件运行历史。"""
+    try:
+        _PLUGIN_RUNS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        row = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "pid": str(pid)}
+        line = json.dumps(row, ensure_ascii=False)
+        with _PLUGIN_RUNS_LOCK:
+            with open(_PLUGIN_RUNS_FILE, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+    except Exception:
+        pass
+
 def _hist_drop_lines(path, key):
     try:
         with open(path, "rb+") as fh:
@@ -1857,6 +1872,7 @@ class Api:
                     if RUNS[old]["code"] is not None:
                         RUNS.pop(old, None)
         threading.Thread(target=_pump_output, args=(rid,), daemon=True).start()
+        _plugin_run_note(pid)
         return {"ok": True, "run_id": rid, "pid": proc.pid}
 
     def cmd_start(self, cwd, line, pid=""):
@@ -1986,7 +2002,10 @@ class Api:
                 line = line + ") & popd"
         except OSError:
             pre = ""
-        return t.run(pre + line)
+        r = t.run(pre + line)
+        if r and r.get("ok"):
+            _plugin_run_note(pid)
+        return r
 
     def term_resize(self, cols=100, rows=30):
         t = _term_mod()
@@ -2008,6 +2027,7 @@ class Api:
         except OSError as e:
             return {"ok": False, "msg": "启动失败：%s" % e}
         _remember_proc(pid, proc.pid)
+        _plugin_run_note(pid)
         return {"ok": True, "msg": "已后台启动：" + " ".join(argv[1:])}
 
     def hist_list(self, n=30):
@@ -2050,6 +2070,44 @@ class Api:
                 "icon_svg": icon_svg,
             })
         return {"ok": True, "items": items}
+
+    def plugin_run_stats(self):
+        """概览口径：只统计插件启动次数，按天/月聚合。"""
+        days = {}
+        months = {}
+        total = 0
+        try:
+            if _PLUGIN_RUNS_FILE.is_file():
+                with open(_PLUGIN_RUNS_FILE, "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            row = json.loads(line)
+                        except ValueError:
+                            continue
+                        day = str(row.get("ts") or "")[:10]
+                        if len(day) != 10 or day[4:5] != "-" or day[7:8] != "-":
+                            continue
+                        days[day] = days.get(day, 0) + 1
+                        mon = day[:7]
+                        months[mon] = months.get(mon, 0) + 1
+                        total += 1
+        except OSError:
+            pass
+        today = time.strftime("%Y-%m-%d")
+        mon = today[:7]
+        active_days = sum(1 for d, n in days.items() if n > 0 and d[:7] == mon)
+        return {
+            "ok": True,
+            "today": days.get(today, 0),
+            "month": months.get(mon, 0),
+            "total": total,
+            "active_days": active_days,
+            "days": days,
+            "months": months,
+        }
 
     def hist_forget(self, key):
         key = str(key or "").strip()
@@ -4164,6 +4222,7 @@ class Api:
         with EMBED_LOCK:
             EMBED[pid] = {"proc": proc, "lines": []}
         threading.Thread(target=_pump_embed, args=(pid, proc), daemon=True).start()
+        _plugin_run_note(pid)
         return {"ok": True, "pid": proc.pid}
 
     def embed_send(self, pid, text):
@@ -5219,7 +5278,7 @@ _WIN_GEOM_FILE = USER_DATA / "state" / win_geom.WIN_GEOM_NAME
 _WIN_GEOM = win_geom.resolve(win_geom.load(_WIN_GEOM_FILE))
 
 window = webview.create_window(
-    "moss",
+    "MOSS",
     _PAGE_URL,
     js_api=_API,
     width=_WIN_GEOM["width"],

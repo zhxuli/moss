@@ -361,7 +361,7 @@ async function startRun(p, args, cwd, opts){
     return;
   }
   RUNS[p.id] = {rid: r.run_id, cmd: cmd, timer: null, stopped: false,
-                switched: false, tabAtStart: tab};   
+                switched: false, tabAtStart: tab, startedAt: Date.now()};   
   setStatus("正在跑 " + cmd);                       
   paintInbar(p.id);                      
 
@@ -405,6 +405,8 @@ function finishRun(id, code, text){
   if (!run) return;
   clearTimeout(run.timer);
   delete RUNS[id];
+  if (typeof homeBump === "function") homeBump();
+  if (typeof homeScheduleRefresh === "function") homeScheduleRefresh();
   const stopped = !!run.stopped;
   maybeAutoSwitch(id, run, text);        
 

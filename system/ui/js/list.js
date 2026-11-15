@@ -40,6 +40,7 @@ async function loadHist(){
     const k = histKey(curH);
     curH = HIST.find(x => histKey(x) === k) || curH;
   }
+  if (typeof homeScheduleRefresh === "function") homeScheduleRefresh();
 }
 
 function histKey(it){ return "hist:" + it.target + (it.args ? " " + it.args : ""); }
@@ -114,7 +115,7 @@ function selectHist(it, keepTab){
   curH = it; cur = null;
   consoleKey = histKey(it);
   renderList(); renderHist(); renderDetail(); paintConsole();
-  if (!keepTab) setTab("detail");
+  if (!keepTab || tab === "home") setTab("detail");
   fmSelect(histKey(it),  true);     
 }
 
@@ -135,7 +136,7 @@ async function rerunHist(it, args){
   const cmd = r.cmd || ("moss /" + it.name);
   setConsole(key, "$ " + cmd + (r.cwd ? "\n# 当前目录：" + r.cwd : ""), "运行中");
   RUNS[key] = {rid: r.run_id, cmd: cmd, timer: null, stopped: false,
-               switched: false, tabAtStart: tab};
+               switched: false, tabAtStart: tab, startedAt: Date.now()};
   paintHistStats();
   paintActions(selObj());
   pollRun(key);
@@ -671,7 +672,7 @@ function select(id, keepTab){
   curH = null;                                
   consoleKey = cur ? cur.id : "__host__";     
   renderList(); renderHist(); renderDetail(); paintConsole();
-  if (!keepTab) setTab("detail");
+  if (!keepTab || tab === "home") setTab("detail");
 
   if (cur) fmSelect(cur.id,  true);
   paintEmbedTab();                            
@@ -1372,6 +1373,10 @@ const MossList = {
     },
     pick(id){
       if (_listDragging) return;
+      if (cur && cur.id === id){
+        if (typeof window.mossShowHome === "function") window.mossShowHome();
+        return;
+      }
 
       const prev = cur && cur.id;
       select(id);
@@ -1466,7 +1471,13 @@ const MossHist = {
         '</div>' +
         '<span class="hstat"></span>';
     },
-    pick(it){ selectHist(it); },                   
+    pick(it){
+      if (curH && histKey(curH) === histKey(it)){
+        if (typeof window.mossShowHome === "function") window.mossShowHome();
+        return;
+      }
+      selectHist(it);
+    },                   
   },
   template: `
     <div v-if="!rows.length" class="empty" v-html="emptyHTML"></div>
@@ -1482,7 +1493,11 @@ mountVue(MossList, "#list");
 mountVue(MossHist, "#hist");
 
 const DETAILR = Vue.reactive({rev: 0});
-function renderDetail(){ DETAILR.rev++; }
+function renderDetail(){
+  DETAILR.rev++;
+  if (!selObj() && typeof setTab === "function") setTab("home");
+  if (typeof homeBump === "function") homeBump();
+}
 
 const MossDetail = {
   name: "moss-detail",
