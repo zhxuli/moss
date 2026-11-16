@@ -17,44 +17,47 @@ const HOME = Vue.reactive({
   created: { today: 0, month: 0, total: 0, active_days: 0, days: {}, months: {} },
 });
 
-const HOME_CATEGORY_DEFS = [
-  {
-    id: "dev", title: "开发", icon: "code",
-    ids: ["github", "cli-proxy-check", "pip", "pack", "tree", "h"],
-    re: /(^|[\s,，|])(开发|代码|编程|git|github|python|pip|打包|发布|命令行|终端)([\s,，|]|$)/i,
-  },
-  {
-    id: "eff", title: "效率", icon: "rocket",
-    ids: ["fanyi", "paste", "exec", "skill", "mark", "temp-session", "autokey"],
-    re: /(^|[\s,，|])(效率|快捷|翻译|剪贴板|热键|宏|历史|书签|重跑|启动器|多开|反编译)([\s,，|]|$)/i,
-  },
-  {
-    id: "sys", title: "系统", icon: "settings",
-    ids: ["path", "kill", "startup", "junk", "suoluetu", "ip", "md5"],
-    re: /(^|[\s,，|])(系统|进程|端口|注册表|自启动|启动项|清理|缓存|环境变量|PATH|哈希|md5|图标)([\s,，|]|$)/i,
-  },
-  {
-    id: "file", title: "文件与网络", icon: "globe",
-    ids: ["sync", "img", "lan-view", "dsh"],
-    re: /(^|[\s,，|])(文件|网络|局域网|同步|图片|压缩|转换|远程|隧道|代理|websocket)([\s,，|]|$)/i,
-  },
-  {
-    id: "ai", title: "AI 与多媒体", icon: "sparkles",
-    ids: ["higgs", "av-device-test", "captcha-lab"],
-    re: /(^|[\s,，|])(AI|语音|音频|麦克风|音箱|TTS|配音|克隆|验证码|OCR|多媒体)([\s,，|]|$)/i,
-  },
-  {
-    id: "other", title: "其他", icon: "package",
-    ids: [], re: null,
-  },
-];
+/* 概览里的插件分组直接复用左侧列表的 GROUPS，不再维护一份写死的分类表。
+ * 这样新增分组、拖动分组、把插件放进别的组，首页和列表页会始终一致。 */
+function homeSectionsOf(plugins){
+  const rows = (plugins || []).slice();
+  const groups = (typeof GROUPS !== "undefined" && GROUPS && Array.isArray(GROUPS.list))
+    ? GROUPS.list : [];
+  if (!groups.length){
+    return rows.length
+      ? [{id: "__all__", title: "全部插件", icon: "package", rows: rows}]
+      : [];
+  }
 
-const HOME_ID_CAT = (() => {
-  const m = {};
-  HOME_CATEGORY_DEFS.forEach(d => d.ids.forEach(id => { m[id] = d.id; }));
-  return m;
-})();
+  const byGroup = new Map();
+  const owner = new Map();
+  groups.forEach(g => {
+    byGroup.set(g.id, []);
+    (g.ids || []).forEach(id => {
+      if (!owner.has(id)) owner.set(id, g.id);   // 和列表页一样：同一个插件只归第一个组
+    });
+  });
 
+  const rest = [];
+  rows.forEach(p => {
+    const gid = owner.get(p.id);
+    if (gid && byGroup.has(gid)) byGroup.get(gid).push(p);
+    else rest.push(p);
+  });
+
+  const out = [];
+  groups.forEach(g => {
+    const groupRows = byGroup.get(g.id) || [];
+    if (groupRows.length){
+      out.push({id: "g:" + g.id, title: g.name || "（没名字的分组）",
+                icon: "folder", rows: groupRows});
+    }
+  });
+  if (rest.length){
+    out.push({id: "__free__", title: "未分组", icon: "package", rows: rest});
+  }
+  return out;
+}
 function hmPad(n){ return String(n).padStart(2, "0"); }
 function hmDayKey(d){
   return d.getFullYear() + "-" + hmPad(d.getMonth() + 1) + "-" + hmPad(d.getDate());
@@ -66,17 +69,6 @@ function hmHeatLevel(v){
   if (v <= 10) return 3;
   return 4;
 }
-function hmCatOf(p){
-  const id = String((p && p.id) || "");
-  if (HOME_ID_CAT[id]) return HOME_ID_CAT[id];
-  const text = [p && p.name, p && p.desc, (p && p.tags || []).join(" ")]
-    .map(x => String(x || "")).join(" ");
-  for (const d of HOME_CATEGORY_DEFS){
-    if (d.re && d.re.test(text)) return d.id;
-  }
-  return "other";
-}
-
 async function homeRefresh(){
   let runs = null, creates = null;
   try{
@@ -135,21 +127,13 @@ const MossHome = {
 
     sections(){
       this.H.rev;
-      const buckets = {};
-      HOME_CATEGORY_DEFS.forEach(d => { buckets[d.id] = []; });
-      this.pluginList.forEach(p => buckets[hmCatOf(p)].push(p));
-      return HOME_CATEGORY_DEFS
-        .map(d => {
-          const rank = new Map(d.ids.map((id, i) => [id, i]));
-          const rows = (buckets[d.id] || []).slice().sort((a, b) => {
-            const ra = rank.has(a.id) ? rank.get(a.id) : 9999;
-            const rb = rank.has(b.id) ? rank.get(b.id) : 9999;
-            if (ra !== rb) return ra - rb;
-            return String(a.name || a.id).localeCompare(String(b.name || b.id), "zh-CN");
-          });
-          return {id: d.id, title: d.title, icon: d.icon, rows: rows};
-        })
-        .filter(s => s.rows.length);
+      /* 列表页的分组、搜索排序都在这两个响应式对象里；home 要跟着一起变。 */
+      if (typeof GROUPS !== "undefined" && GROUPS) GROUPS.rev;
+      if (typeof LISTR !== "undefined" && LISTR) LISTR.rev;
+      /* DATA 要等 init() 里的 pywebview.api.state() 回来才有；挂载首帧时不能直接碰它。 */
+      const rows = (typeof _sortedPkgs === "function" && typeof DATA !== "undefined" && DATA)
+        ? _sortedPkgs() : this.pluginList;
+      return homeSectionsOf(rows);
     },
 
     runningTasks(){
