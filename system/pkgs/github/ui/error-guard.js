@@ -206,14 +206,32 @@
     } catch (e) { return false; }
   }
 
+  // 报错**不再往界面上弹红条**：主界面只用右上角齿轮说话（app.js 的 __mossProblem
+  // 把齿轮染红，鼠标停上去看原因，点开能看到全文 + 复制给 AI）。
+  // 只有连 app.js 都没起来（这时没有齿轮可染）才退回底部那条红条，这是最后的兜底。
   function paint() {
     if (busy) return;
     busy = true;
     try {
+      var last = errors[errors.length - 1];
+      if (!last) return;
+      var told = false;
+      if (typeof window.__mossProblem === 'function') {
+        try { window.__mossProblem('界面脚本报错：' + oneLine(last)); told = true; }
+        catch (x) { told = false; }
+      }
+      if (!told) { paintBar(last); }
+    } catch (e) {
+    } finally {
+      busy = false;
+    }
+  }
+
+  function paintBar(last) {
+    try {
       var bar = ensureBar();
       if (!bar) return;
       var msg = document.getElementById(BAR_ID + '-msg');
-      var last = errors[errors.length - 1];
       if (msg) msg.textContent = oneLine(last) + (errors.length > 1 ? '（+' + (errors.length - 1) + '）' : '');
       var detail = document.getElementById(BAR_ID + '-detail');
       if (detail) {
@@ -223,12 +241,9 @@
                              'white-space:pre-wrap;word-break:break-word');
         pre.textContent = dumpText();
       }
-      bar.style.display = 'block';                       
+      bar.style.display = 'block';
       bar.style.background = '#7f1d1d';
-    } catch (e) {
-    } finally {
-      busy = false;
-    }
+    } catch (e) {  }
   }
 
   var lastSig = '', lastAt = 0;

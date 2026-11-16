@@ -60,18 +60,31 @@ function stamp() {
   return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
 }
 
-var busyN = 0, busyT = null;
+// 忙的提示只是顶上一个小胶囊：**不挡点击、不压暗屏幕**。
+// 以前它是全屏遮罩，git 在大目录里跑 / 联网读云端要十几秒，界面看着就像卡死了。
+var busyN = 0, busyT = null, busyTick = null, busyT0 = 0, busyMsg = '';
+function paintBusy() {
+  var x = el('busyText');
+  if (!x) { return; }
+  var s = Math.round((Date.now() - busyT0) / 1000);
+  x.textContent = (busyMsg || '正在处理…') + (s >= 3 ? '（已 ' + s + ' 秒）' : '');
+}
 function busyOn(t) {
+  if (t) { busyMsg = t; }
   busyN++;
   if (busyN > 1) { return; }
-  busyT = setTimeout(function () {
-    var x = el('busyText'); if (x) { x.textContent = t || '正在处理…'; }
-    el('busy').classList.add('show');
-  }, 120);
+  busyT0 = Date.now();
+  busyT = setTimeout(function () { el('busy').classList.add('show'); paintBusy(); }, 120);
+  busyTick = setInterval(paintBusy, 1000);
 }
 function busyOff() {
   busyN = Math.max(0, busyN - 1);
-  if (!busyN) { clearTimeout(busyT); el('busy').classList.remove('show'); }
+  if (!busyN) {
+    clearTimeout(busyT); busyT = null;
+    if (busyTick) { clearInterval(busyTick); busyTick = null; }
+    busyMsg = '';
+    el('busy').classList.remove('show');
+  }
 }
 function log(t) { var x = el('log'); if (x) { x.textContent = t; } }
 function toast(text, kind) {
@@ -89,11 +102,30 @@ function call(m, p) {
   }
   return Promise.resolve(moss.call(m, p || {}));
 }
+// 「出问题」只有一个出口：右上角齿轮变红，鼠标停上去就是那一句原因；
+// 点开齿轮能看到全文和修法。主界面上不再弹任何红条/红字，长期开着才清爽。
+var PROBLEM_MS = 10 * 60 * 1000;      // 十分钟后不再拿它染红（免得昨天的错一直红着）
+function problem(text, kind) {
+  // 只记在 S 里 + 染红齿轮：底部状态栏也不写（那也是界面提示），
+  // 全文在齿轮的 title 和齿轮对话框顶部，需要时点开就看得到。
+  S.problem = { text: String(text === undefined ? '' : text), kind: kind || 'op', at: Date.now() };
+  paintGear();
+}
+function clearProblem() { S.problem = null; paintGear(); }
+function problemLive() {
+  var p = S.problem;
+  if (!p) { return null; }
+  return (Date.now() - p.at < PROBLEM_MS) ? p : null;
+}
 function fail(e) {
   var why = (e && e.message) ? e.message : String(e);
-  log('出了点问题：' + why);
-  toast('出了点问题：' + why, 'no');
+  problem('出了点问题：' + why);
 }
+// 界面脚本自己报错（error-guard.js 抓到的）也走这条路。
+// 故意包一层 try：万一出错时 S / 齿轮还没就绪，别让"报错处理"自己再抛一个错。
+window.__mossProblem = function (text) {
+  try { problem(text, 'ui'); } catch (e) {  }
+};
 
 function bindSearch(inputId, wrapId) {
   var inp = el(inputId), wrap = el(wrapId);
@@ -157,6 +189,8 @@ function refreshEnv(fresh) {
     .then(function (r) {
       S.env = r || {};
       S.envTimeout = false;
+      // 这次检查好好回来了 ⇒ 上一条"检查超时/没跑起来"自动销账，齿轮不用一直红着
+      if (S.problem && S.problem.kind === 'env') { S.problem = null; }
       paintEnv();
       return r;
     }).catch(function (e) {
@@ -168,42 +202,25 @@ function refreshEnv(fresh) {
     });
 }
 
+// 检查卡住 / 没跑起来：同样只让齿轮变红，界面上一句话都不加。
+// 原因挂在齿轮的 title 上，点开齿轮看全文，还能点「再检查一次」。
 function paintTimeout(isTimeout) {
-  var bar = el('envBar');
-  if (!bar) { return; }
-  bar.className = 'envbar red';
-  el('envIco').innerHTML = svg('warn');
-  el('envTitle').textContent = isTimeout ? '环境检查太慢，先不等了' : '环境检查没跑起来';
-  el('envSub').textContent = isTimeout
-    ? '多半是这台机器上 git 或 gh 在某一步卡住了（网络/大目录）。界面不会被它拖住，可以照常干活。'
-    : '界面和后端没通上。关掉界面重新打开这个包试试。';
-  el('envBtns').innerHTML =
-    '<button class="env-btn alt" data-act="env-recheck">再试一次</button>' +
-    '<button class="env-btn alt" data-act="env-detail">看详情</button>';
+  problem(isTimeout
+    ? '环境检查超过 6 秒没回来（git 或 gh 在某一步卡住了）'
+    : '环境检查没跑起来（界面和后端没通上）', 'env');
 }
 
 function paintEnv() {
-  var bar = el('envBar');
-  if (!bar) { return; }
   var e = S.env || {};
   var items = e.items || [];
-  var bad = items.filter(function (i) { return i.state === 'bad'; });
-  var warn = items.filter(function (i) { return i.state === 'warn'; });
 
-  // 齿轮颜色＝当前状态，不管横幅显不显示都得先定下来
-  if (items.length) { setGear(gearState(items)); }
+  // 环境状态只体现在右上角那颗齿轮上：红 = 缺东西 / 连不上，绿 = 都齐了。
+  // 主界面上一条横幅都不加 —— 要看细节、要修，就点齿轮（每项都带按钮）。
+  if (items.length) { paintGear(); }
+  S.envSeen = 1;
 
+  // 正在装 Git / gh：后台在装，界面不催也不挡；隔 3 秒问一次，装完齿轮自己变绿。
   if (e.pendingInstall) {
-    var pw = e.pendingInstall.what || '';
-    bar.className = 'envbar';
-    el('envIco').innerHTML = svg('download');
-    el('envTitle').textContent = '正在装 ' + (pw === 'git' ? 'Git' : 'GitHub CLI') + '…';
-    el('envSub').textContent = '已经 ' + (e.pendingInstall.secs || 0) + ' 秒' +
-      ' —— 进度和日志都在「看进度」里，可以关掉窗口，装完我会告诉你。';
-    el('envBtns').innerHTML =
-      '<button class="env-btn" data-act="env-progress" data-what="' + esc(pw) + '">看进度</button>' +
-      '<button class="env-btn alt" data-act="env-recheck">再检查一次</button>';
-
     if (S.envTimer) { clearTimeout(S.envTimer); }
     S.envTimer = setTimeout(function () {
       S.envTimer = null;
@@ -212,87 +229,49 @@ function paintEnv() {
     return;
   }
   if (S.envTimer) { clearTimeout(S.envTimer); S.envTimer = null; }
-
-  if (!bad.length && !warn.length && !e.pendingInstall) {
-    // 没什么要补的就什么都不显示 —— 齿轮是绿色已经说明"都齐了"，
-    // 再来一条「环境都齐了」的横幅纯属占地方（也跟设置里的内容重复）。
-    bar.className = 'envbar ok hide';
-    S.envSeen = 1;
-    return;
-  }
-
-  bar.className = 'envbar' + (bad.length ? ' red' : '');
-  el('envIco').innerHTML = svg(bad.length ? 'warn' : 'warn');
-
-  var first = bad[0] || warn[0] || {};
-  var rest = bad.length + warn.length - 1;
-
-  // 「只是没登录 GitHub」这种情况不占横幅 —— 右上角齿轮普通色就是提示，
-  // 点齿轮就能看到「登录 GitHub」。登录本来就是可选的，不该拿一段话劝人。
-  var onlyLogin = !bad.length && warn.length === 1 && first.fix === 'gh_login';
-  if (onlyLogin) {
-    bar.classList.add('hide');
-    S.envSeen = 1;
-    return;
-  }
-
-  el('envTitle').textContent = bad.length
-    ? ('还差一步才能用：' + (first.label || ''))
-    : ('建议补上：' + (first.label || ''));
-  el('envSub').textContent = mdText(first.detail)
-    + (rest > 0 ? '（另外还有 ' + rest + ' 项，点「看详情」）' : '');
-
-  var h = '';
-  if (first.fix === 'install_git') {
-    h += '<button class="env-btn" data-act="env-install" data-what="git">帮我装 Git</button>' +
-         '<button class="env-btn alt" data-act="env-open" data-url="' + URL_GIT_DL + '">下载页</button>';
-  } else if (first.fix === 'install_gh') {
-    h += '<button class="env-btn" data-act="env-install" data-what="gh">帮我装 gh</button>' +
-         '<button class="env-btn alt" data-act="env-detail">看看别的办法</button>';
-  } else if (first.fix === 'gh_login') {
-    h += '<button class="env-btn" data-act="env-login">登录 GitHub</button>';
-  } else if (first.fix === 'identity') {
-    h += '<button class="env-btn" data-act="env-identity">帮我填好</button>';
-  } else {
-    h += '<button class="env-btn alt" data-act="env-detail">看详情</button>';
-  }
-  h += '<button class="env-btn alt" data-act="env-recheck" title="装完 / 登录完之后点这个">再检查一次</button>';
-
-  h += '<button class="env-btn alt" data-act="env-askai" title="把现在的情况复制成一段话，粘给 AI">告诉 AI</button>';
-  if (!bad.length) {
-    h += '<button class="env-btn alt" data-act="env-detail">别的办法</button>';
-  }
-  el('envBtns').innerHTML = h;
-  S.envSeen = 1;
 }
 
 var URL_GIT_DL = 'https://git-scm.com/download/win';
 var URL_GH_DL = 'https://cli.github.com/';
 
-// 后端有些说明里带 **重点**，给纯文字的地方去掉星号、给 innerHTML 的地方换成 <b>
-function mdText(s) { return String(s || '').replace(/\*\*/g, ''); }
 
 // 右上角的齿轮：所有设置都收在这里，用颜色直接说状态
 //   红色 = 连不上 GitHub；绿色 = 已登录授权；普通色 = 能连上但还没授权
-function setGear(state) {
+function setGear(state, why) {
   var b = el('gearBtn');
   if (!b) { return; }
   b.classList.remove('ok', 'bad');
   if (state === 'ok') { b.classList.add('ok'); }
   else if (state === 'bad') { b.classList.add('bad'); }
-  b.title = state === 'ok' ? '设置（已登录 GitHub）'
-    : (state === 'bad' ? '设置（连不上 GitHub）' : '设置（还没登录 GitHub）');
+  var base = state === 'ok' ? '设置（都齐了）'
+    : (state === 'bad' ? '设置（有问题，点开看）' : '设置');
+  b.title = why ? (base + '：' + why) : base;
 }
 
 function gearState(items) {
-  var net = null, login = null;
+  var net = null, login = null, bad = null;
   (items || []).forEach(function (i) {
     if (i.key === 'net') { net = i; }
     if (i.key === 'login') { login = i; }
+    if (i.state === 'bad' && !bad) { bad = i; }
   });
-  if (net && net.state !== 'ok') { return 'bad'; }      // 连不上，先说这个
-  if (login && login.state === 'ok') { return 'ok'; }   // 登录并授权过
-  return '';                                            // 能连上但没授权
+  if (net && net.state !== 'ok') { return { state: 'bad', why: '连不上 GitHub' }; }
+  if (bad) { return { state: 'bad', why: '缺 ' + (bad.label || '东西') }; }
+  if (login && login.state === 'ok') { return { state: 'ok', why: '' }; }
+  return { state: '', why: '' };                        // 能连上，但还没登录
+}
+
+// 齿轮这一个点就是全部状态，优先级：刚出的错 > 正在装东西 > 环境检查结果
+function paintGear() {
+  var p = problemLive();
+  if (p) { setGear('bad', p.text); return; }
+  var inst = (S.env || {}).pendingInstall;
+  if (inst) {
+    setGear('', '正在装 ' + (inst.what === 'git' ? 'Git' : 'GitHub CLI') + '…');
+    return;
+  }
+  var g = gearState((S.env || {}).items || []);
+  setGear(g.state, g.why);
 }
 
 // 齿轮点开就是环境检查这一页 —— 不再多套一层菜单。
@@ -307,7 +286,7 @@ function envSignup() {
 function md(s) { return esc(s).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>'); }
 
 function dialogEnv(notice) {
-  openModal('环境检查', '<div class="note">正在检查…（最多等 8 秒，不会一直转）</div>',
+  openModal('环境检查', '<div class="note">正在检查…（最多等 6 秒，不会一直转）</div>',
     [{ text: '再检查一次', key: 'ok', kind: 'primary' },
      { text: '关闭', key: 'close', kind: 'ghost' }], true);
 
@@ -316,17 +295,27 @@ function dialogEnv(notice) {
     var e = r || S.env || {};
     var b = sub('.dlg-b');
     if (!b || !el('modal').classList.contains('show')) { return; }
-    // 上一次操作用砸了的话，先在最上面交代一句，下面照常是检查结果
-    var top = notice
+    // 界面上没有红条了，所以"最近一次哪一步没成"就放在这里交代一句；
+    // 齿轮变红也删得掉：点「知道了」就不再拿它染红。
+    var pp = problemLive();
+    var top = (pp
+      ? '<div class="note" style="border-left:3px solid #dc2626;padding-left:10px">' +
+        '<b>刚才出过问题</b><br>' + esc(pp.text) +
+        (pp.kind === 'ui'
+          ? '<br><button class="env-btn alt" data-act="problem-copy" style="margin-top:6px">复制作战记录给 AI</button>'
+          : '') +
+        '<button class="env-btn alt" data-act="problem-clear" style="margin-top:6px">知道了</button>' +
+        '</div>'
+      : '') + (notice
       ? '<div class="note" style="border-left:3px solid #f59e0b;padding-left:10px">' +
         '<b>' + esc(notice) + '</b><br>检查结果在下面，没受影响。' +
         '<button class="env-btn" data-act="env-login" style="margin-top:6px">再试一次</button>' +
         '</div>'
-      : '';
+      : '');
     notice = '';
 
     if (S.envTimeout) {
-      b.innerHTML = '<div class="note"><b>这次检查没能按时完成。</b><br>' +
+      b.innerHTML = top + '<div class="note"><b>这次检查没能按时完成。</b><br>' +
         '多半是这台机器上 git 或 gh 在某一步卡住了（网络不通 / 目录特别大）。' +
         '<br>界面不会因此卡死，你可以照常保存、上传。</div>' +
         '<div class="note">想直接看结论，可以在命令行敲：<br>' +
@@ -934,9 +923,24 @@ function envAskAi() {
   }
 }
 
+// 界面脚本自己报错（齿轮红了）时，把整段报错复制出去给 AI 修 ——
+// 这是不弹红条之后，用户还能拿到细节的唯一入口。
+function copyUiErrors() {
+  var api = window.__mossErrorGuardApi;
+  var text = '我这个 moss 的 github 包界面报错了，帮我看看。\n\n' +
+    ((api && api.dump) ? api.dump() : ((S.problem && S.problem.text) || '（没抓到细节）'));
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () {
+      toast('复制好了，粘给 AI 就行');
+    }).catch(function () { toast('复制没成功'); });
+  } else {
+    toast('这个窗口不让复制，按 F8 点「告诉 AI」也有同样的内容');
+  }
+}
+
 function envIdentity() {
   call('fix_identity', { path: S.path }).then(function (r) {
-    toast(r.ok ? '署名填好了' : '没填上，看看详情', r.ok ? 'ok' : 'no');
+    if (r.ok) { toast('署名填好了', 'ok'); } else { problem('署名没填上：' + ((r && r.why) || '原因不明')); }
     refreshEnv();
   }).catch(fail);
 }
@@ -1036,7 +1040,7 @@ function refreshCloud() {
   busyOn('正在联网读云端…');
   shootOrb('track2', 'up', 'purple');
   return call('run_action', { name: 'fetch', path: S.path }).then(function (r) {
-    if (!r.ok) { toast('读不到云端：' + (r.why || ''), 'no'); }
+    if (!r.ok) { problem('读不到云端：' + (r.why || '')); }
     S.last = { title: '刷新云端', res: r, at: stamp() };
     return loadAll();
   }).catch(fail).then(function () { busyOff(); });
@@ -1521,7 +1525,7 @@ function startJob(method, params, title, orb, after) {
   return call('job_start', p).then(function (r) {
     busyOff();
     if (!r || !r.ok) {
-      toast((r && r.why) || '没跑起来（后端没答话）', 'no');
+      problem((r && r.why) || '没跑起来（后端没答话）');
       return null;
     }
     JOB.id = r.id; JOB.t0 = Date.now(); JOB.lastSig = ''; JOB.after = after || null;
@@ -1573,7 +1577,7 @@ function finishJob(st, title) {
     S.picks = null; S.drawer = false;
     closeModal();
   } else {
-    toast('没成功：' + (res.why || '看看详情'), 'no');
+    problem('没成功：' + (res.why || '看看详情'));
     log('没成功：' + (res.why || title));
     showResult(title);
   }
@@ -1654,8 +1658,8 @@ function pushGuard(next) {
 
 function fetchNew() {
   var v = viewState();
-  if (!v.isRepo) { toast('先选一个文件夹', 'no'); return; }
-  if (!v.hasRemote) { toast('这个文件夹还没连上 GitHub', 'no'); return; }
+  if (!v.isRepo) { toast('先选一个文件夹'); return; }
+  if (!v.hasRemote) { toast('这个文件夹还没连上 GitHub'); return; }
   var extra = v.dirty
     ? '现在有 <b>' + v.count + ' 个文件改了还没保存</b>，我会先把它们收起来备份（之后能在「更多功能 → 找回收起的改动」里拿回来）。'
     : '现在没有没保存的改动，不会丢东西。';
@@ -2208,7 +2212,7 @@ function dialogBranches() {
     S.modalActs.ok = function () {
       var v = (fieldValues().name || '').trim();
       closeModal();
-      if (!v) { toast('给它起个名字', 'no'); return; }
+      if (!v) { toast('给它起个名字'); return; }
       doSteps('switch_branch', { branch: v, create: true, stash: true }, '新建并换到 ' + v);
     };
   };
@@ -2255,7 +2259,7 @@ function fileDrop(file) {
     closeModal();
     busyOn('正在丢弃…');
     call('file_op', { path: S.path, op: 'discard', file: file }).then(function (r) {
-      toast(r.ok ? '已丢弃：' + file : ('没成功：' + (r.why || '')), r.ok ? 'ok' : 'no');
+      if (r.ok) { toast('已丢弃：' + file, 'ok'); } else { problem('没成功：' + (r.why || '')); }
       return loadAll();
     }).catch(fail).then(function () { busyOff(); });
   };
@@ -2365,12 +2369,12 @@ function dialogClone() {
   S.modalActs.ok = function () {
     var v = (fieldValues().url || '').trim();
     closeModal();
-    if (!v) { toast('还没填仓库地址', 'no'); return; }
+    if (!v) { toast('还没填仓库地址'); return; }
     busyOn('正在下载…');
     shootOrb('track2', 'up', 'purple');
     call('run_action', { name: 'clone', arg: v, path: S.path }).then(function (res) {
       S.last = { title: '从 GitHub 下载一份', res: res, at: stamp() };
-      toast(res.ok ? '下载完成' : ('没成功：' + (res.why || '')), res.ok ? 'ok' : 'no');
+      if (res.ok) { toast('下载完成', 'ok'); } else { problem('没成功：' + (res.why || '')); }
       if (!res.ok) { showResult('从 GitHub 下载一份'); }
       return loadAll();
     }).catch(fail).then(function () { busyOff(); });
@@ -2455,7 +2459,7 @@ function mirrorForm(mode) {
     S.modalActs.ok = function () {
       var v = (fieldValues().url || '').trim();
       closeModal();
-      if (!v) { toast('还没填地址', 'no'); return; }
+      if (!v) { toast('还没填地址'); return; }
       doSteps('mirror', { mode: 'add_remote', url: v, remote: 'origin' },
         '连上 GitHub 并上传', ['track2', 'down', 'blue']);
     };
@@ -2527,10 +2531,10 @@ function typeDir() {
   };
 }
 function openPath(p) {
-  if (!p) { toast('还没填路径', 'no'); return; }
+  if (!p) { toast('还没填路径'); return; }
   busyOn('正在打开…');
   call('set_path', { path: p }).then(function (r) {
-    if (r.ok === false) { toast(r.why || '打不开这个文件夹', 'no'); log(r.why || ''); return null; }
+    if (r.ok === false) { problem(r.why || '打不开这个文件夹'); return null; }
     S.path = r.path || p; S.picks = null; S.limit = 20; S.tl = null; S.drawer = false;
     S.snap = r;
     renderHead();
@@ -2654,6 +2658,8 @@ document.addEventListener('click', function (ev) {
     case 'env-identity': envIdentity(); break;
     case 'env-open': call('open_url', { url: d('url') }); break;
     case 'env-askai': envAskAi(); break;
+    case 'problem-clear': clearProblem(); dialogEnv(); break;
+    case 'problem-copy': copyUiErrors(); break;
 
     case 'env-progress':
       INST.what = d('what') || 'gh';
@@ -2686,7 +2692,7 @@ document.addEventListener('click', function (ev) {
       break;
     case 'ignore-add': {
       var igv = ((el('igNew') || {}).value || '').trim();
-      if (!igv) { toast('先填一条再点', 'no'); break; }
+      if (!igv) { toast('先填一条再点'); break; }
       call('ignore', { path: S.path, op: 'add', pattern: igv }).then(function (r) {
         toast((r && r.kept) ? '这条已经在清单里了' : '加好了', 'ok');
         paintIgnore();
@@ -2718,7 +2724,7 @@ document.addEventListener('click', function (ev) {
         S.modalActs.ok = function () {
           var v = (fieldValues().arg || '').trim();
           closeModal();
-          if (!v) { toast('还没填', 'no'); return; }
+          if (!v) { toast('还没填'); return; }
 
           startJob('run_action', { name: name, arg: v }, a.label || name);
         };
@@ -2760,7 +2766,7 @@ if (window.moss) {
   moss.on('drop', function (d) {
     hideHint(); dragCaptured = false;
     var items = (d && d.items) || [];
-    if (!items.length) { toast('没拿到路径（拖的可能是文件，这个窗口只认文件夹）', 'no'); return; }
+    if (!items.length) { toast('没拿到路径（拖的可能是文件，这个窗口只认文件夹）'); return; }
     var p = String(items[0]);
     toast('打开：' + baseName(p), 'ok');
     openPath(p);
