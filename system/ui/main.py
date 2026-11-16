@@ -2335,6 +2335,11 @@ class Api:
         import ai_runs
         return ai_runs
 
+    def _ai_history(self):
+        self._ai_dir()
+        import ai_history
+        return ai_history
+
     def _ai_ask(self):
         self._ai_dir()
         import ai_ask
@@ -2464,7 +2469,8 @@ class Api:
             out["steps"] = len(st.get("steps") or [])
         return out
 
-    def ai_start(self, task="", workdir="", max_tokens=None, continue_id="", model="", attachments=None):
+    def ai_start(self, task="", workdir="", max_tokens=None, continue_id="", model="",
+                 attachments=None, handoff_id=""):
         task = str(task or "").strip()
         raw_atts = attachments if isinstance(attachments, list) else []
         atts = []
@@ -2517,8 +2523,28 @@ class Api:
                 return {"ok": False, "msg": "AI 起不来：%s" % exc}
             wd = str(workdir or "").strip() or str(e.write_root())
             hist, cont_from, cont_note = [], "", ""
+            handoff_text, handoff_from = "", ""
             cid = str(continue_id or "").strip()
-            if not cid:
+            hid = "" if cid else str(handoff_id or "").strip()
+            R = self._ai_runs()
+            if not cid and hid:
+                try:
+                    hrec = R.get(hid)
+                    same_scope = False
+                    if hrec:
+                        try:
+                            same_scope = bool(R.pkg_of(hrec.get("workdir") or "") == R.pkg_of(wd))
+                        except Exception:
+                            same_scope = False
+                    if hrec and (same_scope or str(hrec.get("workdir") or "") == wd):
+                        handoff_text = R.handoff_text(hrec)
+                        handoff_from = hid
+                        cont_note = "新会话（带上一任务交接摘要 %s；需要细节可查历史档案）" % hid
+                    else:
+                        cont_note = "新会话（上一任务摘要不在当前包/目录，没用它）"
+                except Exception as exc:
+                    cont_note = "新会话（交接摘要读不出来：%s）" % exc
+            elif not cid:
                 cont_note = "新会话（没带之前的对话）"
             else:
                 try:
@@ -2565,7 +2591,6 @@ class Api:
             _at = _bud.compact_at(_model, _ctx)
             _retain = _bud.retain_tokens(_model, _ctx)
             M = self._ai_mode()
-            R = self._ai_runs()
             run_id = R.new_id()
             scope = R.scope_of(wd)
             M.begin_run(wd)
@@ -2585,6 +2610,7 @@ class Api:
                 "tmp_dir": str(tmp_dir or ""),
                 "scope": scope.get("kind"), "scope_id": scope.get("id") or "",
                 "asked_continue": cid, "continue_note": cont_note,
+                "handoff_from": handoff_from,
             }
             AI.update({"task": task, "stop": False, "t0": started,
                        "task_dir": wd,
@@ -2701,7 +2727,8 @@ class Api:
                 try:
                     if cont_note:
                         say(cont_note)
-                    got = loop.run(task, history=hist, from_id=cont_from, attachments=atts)
+                    got = loop.run(task, history=hist, from_id=cont_from, attachments=atts,
+                                   handoff=handoff_text)
                     got["continue_note"] = cont_note
                     got["asked_continue"] = cid
                 except Exception as exc:
@@ -2733,19 +2760,29 @@ class Api:
                         "ok": bool(got.get("ok")), "reason": got.get("reason") or "",
                         "kind": got.get("kind") or "work",
                         "summary": got.get("summary") or "", "caveats": got.get("caveats") or "",
+                        "decisions": got.get("decisions") or "",
+                        "next_steps": got.get("next_steps") or "",
                         "usage": got.get("usage") or {}, "files": got.get("files") or [],
                         "snapshot": got.get("snapshot"), "steps": got.get("steps") or [],
                         "snapshot_note": got.get("snapshot_note") or "",
                         "folded": got.get("folded") or 0,
                         "messages": got.get("messages") or [],
-                        "continued_from": got.get("continued_from") or "",
+                        "continued_from": got.get("continued_from") or handoff_from or "",
+                        "handoff_from": handoff_from,
                         "asked_continue": got.get("asked_continue") or "",
                         "continue_note": got.get("continue_note") or "",
                         "procs_killed": got.get("procs_killed") or [],
                         "edited": got.get("edited") or 0,
                     })
+                    rec["handoff"] = R.make_handoff(rec)
+                    got["handoff"] = rec["handoff"]
                     saved = R.save(rec, scope)
                     got["run_id"] = saved.get("id") or run_id
+                    try:
+                        rec["id"] = got.get("run_id") or run_id
+                        self._ai_history().index_run(rec)
+                    except Exception as _idx:
+                        got["index_error"] = "%s: %s" % (type(_idx).__name__, _idx)
                 except Exception as exc:
                     got["run_id"] = run_id
                     got["save_error"] = "%s: %s" % (type(exc).__name__, exc)
@@ -3044,6 +3081,26 @@ class Api:
         except Exception as e:
             return {"ok": False, "messages": [], "msg": "%s: %s" % (type(e).__name__, e)}
 
+    def ai_history_search(self, query="", workdir="", limit=8, all_scope=False,
+                          tool="", run_id=""):
+        try:
+            wd = str(workdir or self._ai_last_workdir())
+            return self._ai_history().search(
+                str(query or ""), workdir=wd, limit=int(limit or 8),
+                all_scope=bool(all_scope), tool=str(tool or ""),
+                run_id=str(run_id or ""))
+        except Exception as e:
+            return {"ok": False, "hits": [], "msg": "%s: %s" % (type(e).__name__, e)}
+
+    def ai_history_open(self, run_id="", seq=0, before=3, after=3):
+        try:
+            wd = str(self._ai_last_workdir())
+            return self._ai_history().open_run(
+                str(run_id or ""), workdir=wd, seq=int(seq or 0),
+                before=int(before or 0), after=int(after or 0))
+        except Exception as e:
+            return {"ok": False, "events": [], "msg": "%s: %s" % (type(e).__name__, e)}
+
     def ai_run(self, run_id=""):
         try:
             rec = self._ai_runs().get(run_id)
@@ -3077,6 +3134,9 @@ class Api:
                     "result": {"ok": bool(r.get("ok")), "reason": r.get("reason") or "",
                                "kind": r.get("kind") or "work",
                                "summary": r.get("summary") or "", "caveats": r.get("caveats") or "",
+                               "decisions": r.get("decisions") or "",
+                               "next_steps": r.get("next_steps") or "",
+                               "handoff": r.get("handoff") or None,
                                "files": r.get("files") or [], "usage": r.get("usage") or {},
                                "snapshot": r.get("snapshot"), "folded": r.get("folded") or 0,
                                "run_id": r.get("id") or "",
@@ -3314,8 +3374,15 @@ class Api:
     def ai_run_forget(self, run_id="", all_of_them=False, workdir=""):
         try:
             R = self._ai_runs()
-            scope = R.scope_of(workdir or self._ai_last_workdir())
-            return R.clear(scope) if all_of_them else R.delete(run_id)
+            wd = workdir or self._ai_last_workdir()
+            scope = R.scope_of(wd)
+            got = R.clear(scope) if all_of_them else R.delete(run_id)
+            try:
+                H = self._ai_history()
+                H.clear(wd) if all_of_them else H.forget(run_id)
+            except Exception:
+                pass
+            return got
         except Exception as e:
             return {"ok": False, "msg": str(e)}
 

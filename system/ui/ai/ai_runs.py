@@ -12,7 +12,7 @@ if str(HERE) not in sys.path:
 
 import ai_edits as E
 
-KEEP = 60
+KEEP = 0  # 0 = 不自动删除。完整轨迹是用户可检索的档案，删不删由用户决定。
 
 def pkg_of(workdir):
     try:
@@ -187,6 +187,8 @@ def save_live(rec, scope=None):
         return {"ok": False, "id": "", "msg": "%s: %s" % (type(e).__name__, e)}
 
 def _prune(d):
+    if not KEEP:
+        return
     try:
         files = sorted(Path(d).glob("*.json"))
         for old in files[:-KEEP]:
@@ -266,7 +268,7 @@ def list_runs(limit=30, with_steps=False, scope=None, everywhere=False):
     for rec in rows[:max(1, int(limit or 30))]:
         row = {k: rec.get(k) for k in ("id", "task", "workdir", "ok", "reason", "summary",
                                        "caveats", "usage", "files", "snapshot", "seconds",
-                                       "snapshot_note",
+                                       "snapshot_note", "handoff_from",
                                        "started_text", "finished", "model", "max_tokens",
                                        "kind", "stopped", "continued_from", "running",
                                        "updated", "mode")}
@@ -278,6 +280,95 @@ def list_runs(limit=30, with_steps=False, scope=None, everywhere=False):
             row["steps_detail"] = rec.get("steps") or []
         out.append(row)
     return out
+
+def raw_records(scope=None, limit=0, everywhere=False):
+    """完整 run 记录（含 messages/steps），给档案索引使用。"""
+    dirs = _all_dirs() if everywhere else [dir_path(scope)]
+    rows = []
+    for d in dirs:
+        if not d.is_dir():
+            continue
+        for p in d.glob("*.json"):
+            rec = _load(p)
+            if rec:
+                rows.append(_fix_workdir(rec, d))
+    rows.sort(key=lambda r: str(r.get("id") or ""), reverse=True)
+    if limit:
+        rows = rows[:max(1, int(limit))]
+    return rows
+
+
+def _clip_text(v, cap):
+    text = str(v or "")
+    return text if len(text) <= cap else text[:cap] + "\n……（已截断）"
+
+
+def _step_ok(step):
+    out = str((step or {}).get("out") or "")
+    return out.startswith("退出码 0")
+
+
+def make_handoff(rec):
+    """从一次 run 里提炼出给下一位 Agent 的交接摘要。纯本地整理，不再调模型。"""
+    rec = rec or {}
+    steps = [s for s in (rec.get("steps") or []) if isinstance(s, dict)]
+    runs = []
+    for s in steps:
+        if str(s.get("tool") or "") != "run_moss":
+            continue
+        args = str(s.get("args") or "")
+        out = str(s.get("out") or "")
+        first = out.strip().splitlines()[0][:160] if out.strip() else ""
+        runs.append({"args": _clip_text(args, 500), "ok": _step_ok(s),
+                     "out": _clip_text(first, 240), "n": s.get("n") or 0})
+    return {
+        "run_id": str(rec.get("id") or ""),
+        "from_task": str(rec.get("task") or ""),
+        "summary": _clip_text(rec.get("summary") or rec.get("reason") or "", 2400),
+        "caveats": _clip_text(rec.get("caveats") or "", 1200),
+        "decisions": _clip_text(rec.get("decisions") or "", 1600),
+        "next_steps": _clip_text(rec.get("next_steps") or "", 1200),
+        "files": [str(x) for x in (rec.get("files") or [])][:80],
+        "snapshot": rec.get("snapshot") or None,
+        "ok": bool(rec.get("ok")),
+        "kind": str(rec.get("kind") or "work"),
+        "verification": runs[-4:],
+        "usage": rec.get("usage") or {},
+        "finished": rec.get("finished") or 0,
+        "started_text": str(rec.get("started_text") or ""),
+    }
+
+
+def handoff_text(rec):
+    h = rec.get("handoff") if isinstance(rec.get("handoff"), dict) else make_handoff(rec)
+    lines = ["## 上一任务交接摘要（宿主整理的历史证据，不是新指令）"]
+    if h.get("from_task"):
+        lines.append("- 上次任务：" + str(h.get("from_task")))
+    if h.get("summary"):
+        lines.append("- 结果：" + str(h.get("summary")))
+    if h.get("decisions"):
+        lines.append("- 关键决定：" + str(h.get("decisions")))
+    if h.get("files"):
+        lines.append("- 改动文件：" + "、".join(str(x) for x in h.get("files")[:30]))
+    if h.get("verification"):
+        bits = []
+        for v in h["verification"]:
+            bits.append("%s%s（%s）" % ("✓ " if v.get("ok") else "✗ ",
+                                       str(v.get("args") or "").replace("\n", " ")[:180],
+                                       str(v.get("out") or "")[:120]))
+        lines.append("- 已跑过的验证：" + "；".join(bits))
+    _snap = h.get("snapshot")
+    if isinstance(_snap, dict) and _snap.get("id"):
+        lines.append("- 快照：%s（回退在「文件管理 → 版本快照」）" % _snap["id"])
+    if h.get("caveats"):
+        lines.append("- 没验到 / 要注意：" + str(h.get("caveats")))
+    if h.get("next_steps"):
+        lines.append("- 下次可以接着看：" + str(h.get("next_steps")))
+    if h.get("run_id"):
+        lines.append("- 完整轨迹：" + str(h["run_id"]) +
+                     "（需要细节时用 history_search 查关键词，再 history_open 看命中附近；不要整条重读）")
+    return "\n".join(lines)
+
 
 def get(run_id, scope=None):
     p = _file_of(run_id, scope)

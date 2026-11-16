@@ -185,8 +185,11 @@ def _read_attachment(a):
             return "note", name, "（附件读不出来：%s）" % e, mime
     return "note", name, "（不认识的附件类型）", mime
 
-def build_user_content(task, env_text, attachments=None):
-    text_bits = [str(task or ""), str(env_text or "")]
+def build_user_content(task, env_text, attachments=None, handoff=""):
+    text_bits = []
+    if handoff:
+        text_bits.append(str(handoff).strip())
+    text_bits += [str(task or ""), str(env_text or "")]
     images = []
     for a in (attachments or []):
         if not isinstance(a, dict):
@@ -523,14 +526,17 @@ class Loop:
             self.say("（收摊：杀掉了 %d 个还在跑的子进程）" % got["killed"])
         return got
 
-    def run(self, task, extra_fragments=(), snapshot=True, history=None, from_id="", attachments=None):
+    def run(self, task, extra_fragments=(), snapshot=True, history=None, from_id="",
+            attachments=None, handoff=""):
         try:
             return self._run(task, extra_fragments=extra_fragments, snapshot=snapshot,
-                             history=history, from_id=from_id, attachments=attachments)
+                             history=history, from_id=from_id, attachments=attachments,
+                             handoff=handoff)
         finally:
             self.cleanup("跑完了 / 停了 / 出错了")
 
-    def _run(self, task, extra_fragments=(), snapshot=True, history=None, from_id="", attachments=None):
+    def _run(self, task, extra_fragments=(), snapshot=True, history=None, from_id="",
+             attachments=None, handoff=""):
         sys_text, used, missing = compose_system(task, extra_fragments, self.self_tools,
                                                   workdir=str(self.tools.workdir))
         self.task = str(task or "")
@@ -544,7 +550,7 @@ class Loop:
         except Exception:
             _perm, _allow = "", []
         _env_text = env_note(self.tools.workdir, perm=_perm, tmp=self.tmp_dir, allow=_allow)
-        user_content = build_user_content(task, _env_text, attachments)
+        user_content = build_user_content(task, _env_text, attachments, handoff=handoff)
         messages = [{"role": "system", "content": sys_text}] + old + \
                    [{"role": "user", "content": user_content}]
         self.messages = messages
@@ -686,9 +692,12 @@ class Loop:
                                      "content": "【工具结果】%s\n%s" % (name, out)})
                 if name == "done":
                     if self.tools.verified():
+                        _da = call.get("args") or {}
                         return self._finish(True, "验收通过", used, missing,
-                                            summary=str((call.get("args") or {}).get("summary") or ""),
-                                            caveats=str((call.get("args") or {}).get("caveats") or ""))
+                                            summary=str(_da.get("summary") or ""),
+                                            caveats=str(_da.get("caveats") or ""),
+                                            decisions=str(_da.get("decisions") or ""),
+                                            next_steps=str(_da.get("next_steps") or ""))
                     nudges += 1
                     self._step(n, "(打回)", "done 但没验收", self.tools.gate_reason()[:70],
                                out=self.tools.gate_reason())
@@ -765,9 +774,11 @@ class Loop:
         self._snap_at_start = ""
         return True
 
-    def _finish(self, ok, reason, used, missing, summary="", caveats="", kind="work"):
+    def _finish(self, ok, reason, used, missing, summary="", caveats="", kind="work",
+                decisions="", next_steps=""):
         self._drop_untouched_snapshot()
         got = {"ok": bool(ok), "reason": reason, "summary": summary, "caveats": caveats,
+               "decisions": str(decisions or ""), "next_steps": str(next_steps or ""),
                "kind": str(kind or "work"),
                "steps": self.steps, "usage": dict(self.usage),
                "prompts": used, "missing_prompts": missing, "tools_log": self.tools.log,

@@ -37,6 +37,10 @@ const AIR = Vue.reactive({
   askNoted: "",
 
   contId: "", contTask: "", lastId: "", lastAdopted: "",
+  nextMode: "fresh", handoffId: "", handoffTask: "", modeOpen: false,
+
+  histQ: "", histHits: [], histBusy: false, histSearched: false, histErr: "",
+  histCtxOpen: false, histCtx: null, histCtxBusy: false,
 
   sentTask: "", muted: 0, pickId: "",
 
@@ -581,6 +585,77 @@ async function aiLoadRuns(){
   }catch(e){  }
 }
 
+function aiSetNextMode(mode, runId, task){
+  mode = String(mode || "fresh");
+  if (mode !== "handoff" && mode !== "continue" && mode !== "fresh") mode = "fresh";
+  AIR.nextMode = mode;
+  AIR.modeOpen = false;
+  if (mode === "handoff"){
+    AIR.handoffId = String(runId || AIR.handoffId || "");
+    AIR.handoffTask = String(task || AIR.handoffTask || "");
+    AIR.contId = "";
+  } else if (mode === "continue"){
+    AIR.contId = String(runId || AIR.contId || "");
+    AIR.handoffId = "";
+    AIR.handoffTask = "";
+  } else {
+    AIR.contId = "";
+    AIR.handoffId = "";
+    AIR.handoffTask = "";
+  }
+  AIR.rev++;
+}
+
+function aiNextModeLabel(){
+  if (AIR.nextMode === "handoff"){
+    const t = String(AIR.handoffTask || "").trim();
+    return "带上次摘要" + (t ? ("：" + (t.length > 18 ? t.slice(0, 18) + "…" : t)) : "");
+  }
+  if (AIR.nextMode === "continue") return "接着本会话";
+  return "全新会话";
+}
+
+async function aiSearchHistory(){
+  const q = String(AIR.histQ || "").trim();
+  if (!q){ AIR.histSearched = false; AIR.histHits = []; AIR.histErr = ""; AIR.rev++; return; }
+  AIR.histBusy = true; AIR.histSearched = true; AIR.histErr = "";
+  AIR.rev++;
+  try{
+    const got = await window.pywebview.api.ai_history_search(q, aiWhereDir(), 20, false, "", "");
+    if (!got || !got.ok){
+      AIR.histErr = (got && got.msg) || "搜不了历史";
+      AIR.histHits = [];
+    } else {
+      AIR.histHits = got.hits || [];
+    }
+  }catch(e){
+    AIR.histErr = String(e && e.message ? e.message : e);
+    AIR.histHits = [];
+  }
+  AIR.histBusy = false;
+  AIR.rev++;
+}
+
+async function aiOpenHistoryHit(h){
+  if (!h || !h.run_id) return;
+  AIR.histOpen = false;
+  AIR.histCtxOpen = true; AIR.histCtxBusy = true; AIR.histCtx = null;
+  AIR.rev++;
+  try{
+    const got = await window.pywebview.api.ai_history_open(h.run_id, h.seq || 0, 3, 3);
+    AIR.histCtx = got || {ok: false, msg: "读不到"};
+  }catch(e){
+    AIR.histCtx = {ok: false, msg: String(e && e.message ? e.message : e)};
+  }
+  AIR.histCtxBusy = false;
+  AIR.rev++;
+}
+
+function aiCloseHistoryCtx(){
+  AIR.histCtxOpen = false; AIR.histCtx = null; AIR.histCtxBusy = false;
+  AIR.rev++;
+}
+
 function aiLastRunFor(dir){
   const d = normDir(dir);
   const mine = (AIR.runs || []).filter(r => normDir(r.workdir) === d);
@@ -639,14 +714,14 @@ async function aiAdoptLast(){
   const mine = aiLastRunFor(aiWhereDir());
   const last = mine || (AIR.runs || [])[0] || null;
   AIR.lastId = (last && last.id) || "";
-  if (!last || AIR.contId || AIR.pickId) return;
-  AIR.contId = last.id;
-  AIR.contTask = last.task || "";
+  if (!last || AIR.contId || AIR.handoffId || AIR.pickId) return;
   AIR.pickId = last.id;
+  AIR.contTask = last.task || "";
 
   if (last.cont && mine){
     await aiOpenThread(last.id, true);
   }
+  aiSetNextMode(last.cont || mine ? "handoff" : "fresh", last.id, last.task || "");
 }
 
 function aiAttachLiveTurn(){
@@ -698,9 +773,12 @@ function aiShowDone(done){
   if (done.run_id){
     AIR.lastAdopted = done.run_id;
     AIR.lastId = done.run_id;
-    AIR.contId = done.run_id;
     AIR.pickId = done.run_id;
     if (t.task) AIR.contTask = t.task;
+    if (done.result && done.result.ok && done.result.kind !== "chat")
+      aiSetNextMode("handoff", done.run_id, t.task);
+    else
+      aiSetNextMode("continue", done.run_id, t.task);
   }
   AIR.pendingDone = null;
   AIR.rev++;
@@ -729,6 +807,7 @@ async function aiOpenRun(id, quiet){
                   steps: AIR.steps, result: AIR.result,
                   folded: !!AIR.result, autoFolded: !!AIR.result}];
     AIR.cur = 0;
+    aiSetNextMode("handoff", r.id, r.task || "");
     AIR.rev++;
   }catch(e){ if (!quiet) toast("读不到这条记录：" + (e && e.message ? e.message : e), true); }
 }
@@ -1055,7 +1134,12 @@ async function aiStart(opt){
   AIR.sentTask = task;
   AIR.muted = 0;
 
-  const cont = AIR.contId || (AIR.viewing ? "" : (AIR.lastId || ""));
+  const mode = String((opt && opt.mode) || AIR.nextMode || "fresh");
+  let cont = "", handoff = "";
+  if (mode === "continue")
+    cont = AIR.contId || (AIR.viewing ? "" : (AIR.lastId || ""));
+  else if (mode === "handoff")
+    handoff = AIR.handoffId || AIR.lastId || "";
 
   const liveKey = "t" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1);
   AIR.turns.push({key: liveKey, task: task,
@@ -1066,7 +1150,8 @@ async function aiStart(opt){
                     text: a.kind === "text" ? String(a.text || "").slice(0, 200000) : "",
                     truncated: a.kind === "text" && String(a.text || "").length > 200000,
                   })),
-                  at: (cont ? "接着聊" : "新会话") + " · " +
+                  at: (mode === "handoff" ? "新会话 + 上次摘要"
+                       : (cont ? "接着聊" : "新会话")) + " · " +
                       new Date().toTimeString().slice(0, 8),
                   steps: [], result: null, folded: false, autoFolded: false, note: ""});
   AIR.cur = AIR.turns.length - 1;
@@ -1079,7 +1164,7 @@ async function aiStart(opt){
   AIR.snapNoted = "";            
 
   try {
-    const got = await window.pywebview.api.ai_start(task, dir, AIR.maxTokens, cont, AIR.model || "", atts);
+    const got = await window.pywebview.api.ai_start(task, dir, AIR.maxTokens, cont, AIR.model || "", atts, handoff);
     if (!got || !got.ok) { toast((got && got.msg) || "起不来。", true); AIR.busy = false; return; }
     AIR.running = true;
 
@@ -1087,7 +1172,8 @@ async function aiStart(opt){
     if (AIR.liveRunId) AIR.liveListFor = "";       
     AIR.task = "";
     AIR.attachments = [];
-    toast((cont ? "接着上次那条聊" : "开了一条新会话") +
+    toast((mode === "handoff" ? "开了新会话，带上次任务摘要"
+            : (cont ? "接着上次那条聊" : "开了一条新会话")) +
           "（模型 " + (got.model || "?") + "）—— 步骤会实时出现在下面。");
   } catch (e) {
     toast("起不来：" + (e && e.message ? e.message : e), true);
@@ -1115,6 +1201,12 @@ const MossAi = {
   name: "moss-ai",
   data(){ return { A: AIR, focused: false, shake: false, stopHover: false }; },
   computed: {
+    nextModeLabel(){ this.A.rev; return aiNextModeLabel(); },
+    nextModeIcon(){
+      this.A.rev;
+      return this.A.nextMode === "handoff" ? "file-text"
+           : (this.A.nextMode === "continue" ? "message-square" : "sparkles");
+    },
     pkg(){ this.A.rev; return aiPackage(); },
 
     selfList(){
@@ -1271,6 +1363,34 @@ const MossAi = {
       this.A.rev;
       const id = this.A.pickId || "";
       return this.sessChains.filter(c => c.head.id !== id && c.tail.id !== id);
+    },
+
+    toggleNextMode(){
+      this.A.modeOpen = !this.A.modeOpen;
+      if (this.A.modeOpen){ this.A.histOpen = false; this.A.permPop = false; this.A.modelOpen = false; }
+      this.A.rev++;
+    },
+    chooseNextMode(mode){
+      if (mode === "continue") aiSetNextMode("continue", this.A.contId || this.A.lastId || "", this.A.contTask || "");
+      else if (mode === "handoff") aiSetNextMode("handoff", this.A.handoffId || this.A.lastId || "", this.A.handoffTask || this.A.contTask || "");
+      else aiSetNextMode("fresh");
+    },
+    async searchHistory(){ await aiSearchHistory(); },
+    histInput(){
+      if (!String(this.A.histQ || "").trim()){
+        this.A.histSearched = false; this.A.histHits = []; this.A.histErr = "";
+      }
+      this.A.rev++;
+    },
+    async openHistoryHit(h){ await aiOpenHistoryHit(h); },
+    closeHistoryCtx(){ aiCloseHistoryCtx(); },
+    async openHistoryRun(){
+      const c = this.A.histCtx || {};
+      const r = c.run || {};
+      if (!r.id) return;
+      aiCloseHistoryCtx();
+      this.A.histOpen = false;
+      await aiOpenRun(r.id, true);
     },
 
     logCards(){
@@ -1539,7 +1659,7 @@ const MossAi = {
     toggleHist(){
       AIR.histOpen = !AIR.histOpen;
       if (AIR.histOpen){
-        AIR.permPop = false; aiLoadRuns();
+        AIR.permPop = false; AIR.modeOpen = false; aiLoadRuns();
         this.$nextTick(() => this.fitPop("hist"));      
       }
       AIR.rev++;
@@ -2099,6 +2219,7 @@ const MossAi = {
         AIR.viewing = ""; AIR.sentTask = ""; AIR.steps = []; AIR.result = null;
         AIR.turns = []; AIR.cur = -1;                    
         AIR.contId = ""; AIR.contTask = ""; AIR.lastId = ""; AIR.muted = 0;
+        aiSetNextMode("fresh");
 
         if (AIR.running) aiAttachLiveTurn();
         AIR.rev++;
@@ -2122,12 +2243,13 @@ const MossAi = {
       if (!(await aiOpenThread(tail))) return;
       AIR.viewing = tail;                 
       if (r && r.cont){
-        AIR.contId = tail; AIR.contTask = r.task || "";
+        aiSetNextMode("continue", tail, r.task || "");
         toast("接着这条聊 —— 在下面写下一句，点发送"
               + (AIR.running ? "（正在跑的那一轮接在最下面，还在更新）" : ""));
       } else {
         AIR.contId = ""; AIR.contTask = "";
-        toast("这条是更早的记录（当时还没存对话）—— 只能看，接不上", true);
+        aiSetNextMode("handoff", id, r && r.task || "");
+        toast("这条记录接不上完整对话 —— 下一条默认只带它的交接摘要", true);
       }
     },
 
@@ -2262,7 +2384,8 @@ const MossAi = {
       toast("下一条按新会话跑（老记录还在，随时能接着聊）");
     },
     again(r){ AIR.task = r.task || ""; AIR.contId = ""; AIR.contTask = "";
-              toast("需求已填回输入框（按新会话跑）—— 改一改再点发送"); },
+              aiSetNextMode("fresh");
+      toast("需求已填回输入框（按新会话跑）—— 改一改再点发送"); },
 
     onKey(e){
       if (e.key === "Enter" && !e.shiftKey){
@@ -2529,6 +2652,7 @@ const MossAi = {
     this._md = e => {
       const t = e.target;
       if (AIR.histOpen && !(t && t.closest && t.closest(".ai-hist-wrap"))) AIR.histOpen = false;
+      if (AIR.modeOpen && !(t && t.closest && t.closest(".ai-nextmode-wrap"))) AIR.modeOpen = false;
       if (AIR.permPop && !(t && t.closest && t.closest(".ai-perm-wrap"))) AIR.permPop = false;
 
       if (AIR.modelOpen && !(t && t.closest && t.closest(".ai-model-pick"))) AIR.modelOpen = false;
@@ -2928,7 +3052,16 @@ const MossAi = {
                 </button>
                 <div ref="histPanel" class="popover-panel ai-hist-list" :class="{show: A.histOpen}" v-if="A.histOpen" @click.stop>
                   <div class="popover-title">当前包的历史<span class="popover-hint">点一条就切过去</span></div>
-                  <div class="history-list">
+                  <div class="ai-hist-search">
+                    <span v-html='ico("search", "i")'></span>
+                    <input v-model="A.histQ" spellcheck="false" autocomplete="off"
+                           placeholder="搜历史：报错 / 文件名 / 命令片段"
+                           @input="histInput()" @keydown.enter.prevent="searchHistory()">
+                    <button type="button" @click="searchHistory()" :disabled="A.histBusy || !A.histQ.trim()"
+                            :title="'在当前包的完整轨迹里搜关键词'">搜</button>
+                  </div>
+
+                  <div class="history-list" v-if="!A.histSearched">
                     <div class="history-item ai-hist-i" v-for="c in sessChains" :key="c.head.id"
                          :class="{active: sessCurrent && (sessCurrent.head.id === c.head.id),
                                   live: isLiveChain(c)}"
@@ -2943,6 +3076,20 @@ const MossAi = {
                         <button class="btn-delete ai-hist-x" @click.stop="delChain(c)" title="删除这次会话（它下面所有轮次）"
                                 v-html='ico("trash-2", "i")'></button>
                       </div>
+                    </div>
+                  </div>
+                  <div class="history-list ai-hist-results" v-else>
+                    <div class="ai-hist-state" v-if="A.histBusy">正在翻档案…</div>
+                    <div class="ai-hist-state bad" v-else-if="A.histErr">{{ A.histErr }}</div>
+                    <div class="ai-hist-state" v-else-if="!A.histHits.length">没搜到。换个更短、更具体的关键词。</div>
+                    <div class="history-item ai-hist-i ai-hist-hit" v-for="(h, i) in A.histHits" :key="h.run_id + ':' + h.seq + ':' + i"
+                         :title="'打开命中附近（run ' + h.run_id + ' · seq ' + h.seq + '）'"
+                         @click="openHistoryHit(h)">
+                      <div class="ai-hist-hit-head">
+                        <span class="ai-hist-hit-task">{{ h.task || '（没有任务名）' }}</span>
+                        <span class="ai-hist-hit-meta">{{ (h.started_text || '').slice(5, 16) }} · {{ h.tool || h.role || '记录' }}</span>
+                      </div>
+                      <div class="ai-hist-hit-snip">{{ h.snippet }}</div>
                     </div>
                   </div>
                 </div>
@@ -3189,6 +3336,37 @@ const MossAi = {
                 </div>
               </div>
               
+              <div class="popover-wrapper ai-nextmode-wrap">
+                <button type="button" class="trigger-btn ai-mini ai-txtbtn ai-nextmode-btn"
+                        :class="{active: A.modeOpen, handoff: A.nextMode === 'handoff'}"
+                        @click.stop="toggleNextMode()"
+                        :title="'下一条怎么开：' + nextModeLabel + '。点开可切换「带摘要新会话 / 接着本会话 / 全新会话」'">
+                  <span v-html='ico(nextModeIcon, "i")'></span>
+                  <span class="ai-btn-txt">{{ nextModeLabel }}</span>
+                </button>
+                <div class="popover-panel ai-nextmode-pop" :class="{show: A.modeOpen}"
+                     v-if="A.modeOpen" @click.stop>
+                  <div class="popover-title">下一条指令怎么开
+                    <span class="popover-hint">摘要不占完整旧对话</span>
+                  </div>
+                  <button type="button" class="ai-nextmode-it" :class="{on: A.nextMode === 'handoff'}"
+                          @click="chooseNextMode('handoff')">
+                    <span v-html='ico("file-text", "i")'></span>
+                    <span><b>新会话 + 上次摘要</b><i>推荐：做下一个功能时用</i></span>
+                  </button>
+                  <button type="button" class="ai-nextmode-it" :class="{on: A.nextMode === 'continue'}"
+                          @click="chooseNextMode('continue')">
+                    <span v-html='ico("message-square", "i")'></span>
+                    <span><b>接着本会话</b><i>继续修同一个问题，带完整当前对话</i></span>
+                  </button>
+                  <button type="button" class="ai-nextmode-it" :class="{on: A.nextMode === 'fresh'}"
+                          @click="chooseNextMode('fresh')">
+                    <span v-html='ico("sparkles", "i")'></span>
+                    <span><b>全新会话</b><i>什么都不带，只靠项目和文件</i></span>
+                  </button>
+                </div>
+              </div>
+
               <button class="trigger-btn ai-mini ai-messages-icon ai-txtbtn" @click="openMessages()"
                       title="查看这条会话的完整提示词历史">
                 <span v-html='ico("book-open", "i")'></span>
@@ -3226,6 +3404,48 @@ const MossAi = {
       </footer>
 
       
+      <div class="ai-modal-overlay" v-if="A.histCtxOpen" @click.self="closeHistoryCtx()">
+        <div class="ai-modal-box ai-hist-ctx-box">
+          <div class="ai-modal-header">
+            <div class="ai-modal-title-group">
+              <h3 class="ai-modal-title">
+                <span v-html='ico("search", "i")'></span>
+                历史命中附近
+              </h3>
+              <span class="ai-modal-meta">{{ (A.histCtx && A.histCtx.run && A.histCtx.run.id) || "" }}</span>
+            </div>
+            <button class="ai-modal-close" type="button" title="关闭"
+                    @click="closeHistoryCtx()">&times;</button>
+          </div>
+          <div class="ai-hist-ctx-body">
+            <div class="ai-hist-state" v-if="A.histCtxBusy">正在打开档案…</div>
+            <div class="ai-hist-state bad" v-else-if="!A.histCtx || !A.histCtx.ok">
+              {{ (A.histCtx && A.histCtx.msg) || "读不到这条记录" }}
+            </div>
+            <template v-else>
+              <div class="ai-hist-ctx-head">
+                <div>
+                  <b>{{ A.histCtx.run.task || "（没有任务名）" }}</b>
+                  <span>{{ A.histCtx.run.started_text || "" }} · {{ A.histCtx.run.ok ? "成功" : "未完成" }}</span>
+                </div>
+                <button type="button" class="btn" @click="openHistoryRun()">打开这条记录</button>
+              </div>
+              <div class="ai-hist-ctx-ev" v-for="(ev, i) in A.histCtx.events" :key="i">
+                <div class="ai-hist-ctx-meta">
+                  <span>seq {{ ev.seq }}</span>
+                  <span>{{ ev.role || "?" }}</span>
+                  <span v-if="ev.tool">{{ ev.tool }}</span>
+                </div>
+                <pre>{{ ev.text }}</pre>
+              </div>
+              <p class="ai-hist-ctx-note" v-if="A.histCtx.more_before || A.histCtx.more_after">
+                命中附近先看这些。需要更早/更晚的内容，可以让 AI 用 history_open 再取，或点「打开这条记录」看完整步骤。
+              </p>
+            </template>
+          </div>
+        </div>
+      </div>
+
       <div class="ai-modal-overlay" v-if="A.stepOpen" @click.self="closeStep()">
         <div class="ai-modal-box">
           <div class="ai-modal-header">
