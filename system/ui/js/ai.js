@@ -37,7 +37,7 @@ const AIR = Vue.reactive({
   askNoted: "",
 
   contId: "", contTask: "", lastId: "", lastAdopted: "",
-  nextMode: "fresh", handoffId: "", handoffTask: "", modeOpen: false,
+  nextMode: "fresh", handoffId: "", handoffTask: "", handoffPkg: "", modeOpen: false,
 
   histQ: "", histHits: [], histBusy: false, histSearched: false, histErr: "",
   histCtxOpen: false, histCtx: null, histCtxBusy: false,
@@ -585,6 +585,8 @@ async function aiLoadRuns(){
   }catch(e){  }
 }
 
+let AI_HIST_TIMER = 0;
+
 function aiSetNextMode(mode, runId, task){
   mode = String(mode || "fresh");
   if (mode !== "handoff" && mode !== "continue" && mode !== "fresh") mode = "fresh";
@@ -593,15 +595,19 @@ function aiSetNextMode(mode, runId, task){
   if (mode === "handoff"){
     AIR.handoffId = String(runId || AIR.handoffId || "");
     AIR.handoffTask = String(task || AIR.handoffTask || "");
+    const _hr = (AIR.runs || []).filter(x => x && String(x.id || "") === String(AIR.handoffId))[0];
+    AIR.handoffPkg = _hr ? (aiPkgIdOfDir(_hr.workdir) || "") : "";
     AIR.contId = "";
   } else if (mode === "continue"){
     AIR.contId = String(runId || AIR.contId || "");
     AIR.handoffId = "";
     AIR.handoffTask = "";
+    AIR.handoffPkg = "";
   } else {
     AIR.contId = "";
     AIR.handoffId = "";
     AIR.handoffTask = "";
+    AIR.handoffPkg = "";
   }
   AIR.rev++;
 }
@@ -616,6 +622,7 @@ function aiNextModeLabel(){
 }
 
 async function aiSearchHistory(){
+  if (AI_HIST_TIMER){ clearTimeout(AI_HIST_TIMER); AI_HIST_TIMER = 0; }
   const q = String(AIR.histQ || "").trim();
   if (!q){ AIR.histSearched = false; AIR.histHits = []; AIR.histErr = ""; AIR.rev++; return; }
   AIR.histBusy = true; AIR.histSearched = true; AIR.histErr = "";
@@ -721,7 +728,9 @@ async function aiAdoptLast(){
   if (last.cont && mine){
     await aiOpenThread(last.id, true);
   }
-  aiSetNextMode(last.cont || mine ? "handoff" : "fresh", last.id, last.task || "");
+  const _work = !!(last.ok && last.kind !== "chat");
+  aiSetNextMode(_work ? "handoff" : (last.cont ? "continue" : "fresh"),
+                last.id, last.task || "");
 }
 
 function aiAttachLiveTurn(){
@@ -807,7 +816,12 @@ async function aiOpenRun(id, quiet){
                   steps: AIR.steps, result: AIR.result,
                   folded: !!AIR.result, autoFolded: !!AIR.result}];
     AIR.cur = 0;
-    aiSetNextMode("handoff", r.id, r.task || "");
+    if (r.ok && r.kind !== "chat")
+      aiSetNextMode("handoff", r.id, r.task || "");
+    else if (r.cont)
+      aiSetNextMode("continue", r.id, r.task || "");
+    else
+      aiSetNextMode("fresh");
     AIR.rev++;
   }catch(e){ if (!quiet) toast("读不到这条记录：" + (e && e.message ? e.message : e), true); }
 }
@@ -815,8 +829,11 @@ async function aiOpenRun(id, quiet){
 async function aiForgetRun(id){
   try{
     const got = await window.pywebview.api.ai_run_forget(id || "", !id, aiWhereDir());
-    if (got && got.ok){ toast(id ? "删掉那条记录了" : "历史清空了"); AIR.viewing = ""; await aiLoadRuns(); }
-    else toast((got && got.msg) || "删不掉", true);
+    if (got && got.ok){
+      toast(id ? "删掉那条记录了" : "历史清空了");
+      if (got.index_warning) toast(got.index_warning, true);
+      AIR.viewing = ""; await aiLoadRuns();
+    } else toast((got && got.msg) || "删不掉", true);
   }catch(e){ toast("删不掉：" + (e && e.message ? e.message : e), true); }
 }
 
@@ -1134,12 +1151,19 @@ async function aiStart(opt){
   AIR.sentTask = task;
   AIR.muted = 0;
 
-  const mode = String((opt && opt.mode) || AIR.nextMode || "fresh");
+  let mode = String((opt && opt.mode) || AIR.nextMode || "fresh");
   let cont = "", handoff = "";
   if (mode === "continue")
     cont = AIR.contId || (AIR.viewing ? "" : (AIR.lastId || ""));
-  else if (mode === "handoff")
+  else if (mode === "handoff"){
     handoff = AIR.handoffId || AIR.lastId || "";
+    const _nowPkg = aiPkgIdOfDir(dir) || "";
+    if (handoff && AIR.handoffPkg && _nowPkg && AIR.handoffPkg !== _nowPkg){
+      handoff = "";
+      mode = "fresh";
+      toast("上一个任务摘要属于别的包 —— 这条按全新会话跑", true);
+    }
+  }
 
   const liveKey = "t" + (AIR.turnSeq = (AIR.turnSeq || 0) + 1);
   AIR.turns.push({key: liveKey, task: task,
@@ -1377,8 +1401,11 @@ const MossAi = {
     },
     async searchHistory(){ await aiSearchHistory(); },
     histInput(){
+      if (AI_HIST_TIMER) { clearTimeout(AI_HIST_TIMER); AI_HIST_TIMER = 0; }
       if (!String(this.A.histQ || "").trim()){
         this.A.histSearched = false; this.A.histHits = []; this.A.histErr = "";
+      } else {
+        AI_HIST_TIMER = setTimeout(() => { AI_HIST_TIMER = 0; aiSearchHistory(); }, 350);
       }
       this.A.rev++;
     },
@@ -2248,8 +2275,9 @@ const MossAi = {
               + (AIR.running ? "（正在跑的那一轮接在最下面，还在更新）" : ""));
       } else {
         AIR.contId = ""; AIR.contTask = "";
-        aiSetNextMode("handoff", id, r && r.task || "");
-        toast("这条记录接不上完整对话 —— 下一条默认只带它的交接摘要", true);
+        if (r && r.ok && r.kind !== "chat") aiSetNextMode("handoff", id, r.task || "");
+        else aiSetNextMode("fresh");
+        toast("这条记录接不上完整对话 —— 下一条不会带完整旧对话", true);
       }
     },
 
@@ -3435,10 +3463,14 @@ const MossAi = {
                   <span>seq {{ ev.seq }}</span>
                   <span>{{ ev.role || "?" }}</span>
                   <span v-if="ev.tool">{{ ev.tool }}</span>
+                  <span v-if="ev.truncated" class="ai-hist-cut">截断</span>
                 </div>
                 <pre>{{ ev.text }}</pre>
               </div>
-              <p class="ai-hist-ctx-note" v-if="A.histCtx.more_before || A.histCtx.more_after">
+              <p class="ai-hist-ctx-note" v-if="!(A.histCtx.events || []).length">
+                {{ A.histCtx.msg || "原始轨迹已清理；这条记录只剩摘要和元数据。" }}
+              </p>
+              <p class="ai-hist-ctx-note" v-else-if="A.histCtx.more_before || A.histCtx.more_after">
                 命中附近先看这些。需要更早/更晚的内容，可以让 AI 用 history_open 再取，或点「打开这条记录」看完整步骤。
               </p>
             </template>

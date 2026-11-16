@@ -1,3 +1,4 @@
+import gzip
 import json
 import os
 import random
@@ -123,6 +124,7 @@ def _drop_stale(rid, keep):
         try:
             if p.is_file():
                 p.unlink()
+            trace_path_for(str(rid), d).unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -139,14 +141,90 @@ def _all_dirs():
         pass
     return out
 
+def all_dirs():
+    return _all_dirs()
+
+
 def _new_id():
     return "%s-%04x" % (time.strftime("%Y%m%d-%H%M%S"), random.randint(0, 0xffff))
 
 def new_id():
     return _new_id()
 
-def _write(path, rec):
+def trace_dir_for(run_dir):
+    return Path(run_dir).parent / "traces"
+
+
+def trace_path_for(run_id, run_dir):
+    return trace_dir_for(run_dir) / (str(run_id) + ".jsonl.gz")
+
+
+def _read_trace(path, rec):
+    """按 metadata 里的 trace 文件读回 messages；旧记录直接返回内嵌 messages。"""
+    if isinstance(rec.get("messages"), list):
+        return rec
+    meta = rec.get("trace") if isinstance(rec.get("trace"), dict) else {}
+    name = str(meta.get("file") or "")
+    if not name or meta.get("deleted"):
+        rec["messages"] = []
+        return rec
+    p = trace_dir_for(path.parent) / name
+    if not p.is_file():
+        rec["messages"] = []
+        return rec
+    msgs = []
+    try:
+        with gzip.open(str(p), "rt", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    m = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(m, dict):
+                    msgs.append(m)
+    except OSError:
+        msgs = []
+    rec["messages"] = msgs
+    rec["_trace_missing"] = not bool(msgs) and int(meta.get("msgs") or 0) > 0
+    return rec
+
+
+def _write(path, rec, write_trace=True):
     path.parent.mkdir(parents=True, exist_ok=True)
+    rec = dict(rec or {})
+    msgs = rec.pop("messages", None)
+    rec = {k: v for k, v in rec.items() if not str(k).startswith("_")}
+    if not write_trace and msgs:
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(old, dict) and old.get("trace"):
+                rec["trace"] = old.get("trace")
+                rec["has_trace"] = bool(old.get("has_trace"))
+                rec["msgs"] = int(old.get("msgs") or 0)
+        except Exception:
+            pass
+    rid = str(rec.get("id") or path.stem)
+    if isinstance(msgs, list) and write_trace:
+        if msgs:
+            td = trace_dir_for(path.parent)
+            td.mkdir(parents=True, exist_ok=True)
+            tf = td / (rid + ".jsonl.gz")
+            tmp = tf.with_name(tf.name + ".tmp")
+            with gzip.open(str(tmp), "wt", encoding="utf-8", compresslevel=6) as fh:
+                for m in msgs:
+                    fh.write(json.dumps(m, ensure_ascii=False) + "\n")
+            os.replace(tmp, tf)
+            rec["has_trace"] = True
+            rec["msgs"] = len(msgs)
+            rec["trace"] = {"file": tf.name, "bytes": tf.stat().st_size,
+                            "msgs": len(msgs), "compressed": True,
+                            "at": time.time()}
+        elif not rec.get("has_trace"):
+            rec["has_trace"] = False
+            rec["msgs"] = 0
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, path)
@@ -179,7 +257,15 @@ def save_live(rec, scope=None):
         rec["updated"] = time.time()
         d = dir_path(rec.get("workdir") if moved
                      else (scope if scope is not None else rec.get("workdir")))
-        _write(d / (rid + ".json"), rec)
+        dest = d / (rid + ".json")
+        due = True
+        try:
+            tf = trace_path_for(rid, d)
+            if tf.is_file():
+                due = (time.time() - tf.stat().st_mtime) >= 5.0
+        except OSError:
+            due = True
+        _write(dest, rec, write_trace=due)
         if moved:
             _drop_stale(rid, d)
         return {"ok": True, "id": rid, "dir": str(d)}
@@ -196,10 +282,12 @@ def _prune(d):
     except OSError:
         pass
 
-def _load(path):
+def _load(path, with_trace=False):
     try:
         got = json.loads(Path(path).read_text(encoding="utf-8"))
-        return got if isinstance(got, dict) else None
+        if not isinstance(got, dict):
+            return None
+        return _read_trace(Path(path), got) if with_trace else got
     except Exception:
         return None
 
@@ -259,7 +347,7 @@ def list_runs(limit=30, with_steps=False, scope=None, everywhere=False):
         if not d.is_dir():
             continue
         for p in d.glob("*.json"):
-            rec = _load(p)
+            rec = _load(p, with_trace=False)
             if not rec:
                 continue
             rows.append(_fix_workdir(rec, d))
@@ -272,8 +360,15 @@ def list_runs(limit=30, with_steps=False, scope=None, everywhere=False):
                                        "started_text", "finished", "model", "max_tokens",
                                        "kind", "stopped", "continued_from", "running",
                                        "updated", "mode")}
-        row["cont"] = bool(rec.get("messages"))
-        row["msgs"] = len(rec.get("messages") or [])
+        has_trace = bool(rec.get("messages") or rec.get("has_trace"))
+        if has_trace and rec.get("has_trace"):
+            try:
+                has_trace = trace_path_for(str(rec.get("id") or ""), d).is_file()
+            except OSError:
+                has_trace = False
+        row["cont"] = bool(has_trace or rec.get("messages"))
+        row["trace_missing"] = bool(rec.get("has_trace") and not has_trace)
+        row["msgs"] = int(rec.get("msgs") or len(rec.get("messages") or []))
         row["steps"] = len(rec.get("steps") or [])
         row["interrupted"] = bool(rec.get("running"))
         if with_steps:
@@ -281,20 +376,25 @@ def list_runs(limit=30, with_steps=False, scope=None, everywhere=False):
         out.append(row)
     return out
 
-def raw_records(scope=None, limit=0, everywhere=False):
-    """完整 run 记录（含 messages/steps），给档案索引使用。"""
+def raw_records(scope=None, limit=0, everywhere=False, with_trace=False):
+    """完整 run 记录（含 messages/steps），给档案索引使用。
+
+    limit 先按文件名截，再读 JSON —— 避免为了取最近 N 条把上千个大文件全读进内存。
+    """
     dirs = _all_dirs() if everywhere else [dir_path(scope)]
-    rows = []
+    paths = []
     for d in dirs:
         if not d.is_dir():
             continue
-        for p in d.glob("*.json"):
-            rec = _load(p)
-            if rec:
-                rows.append(_fix_workdir(rec, d))
-    rows.sort(key=lambda r: str(r.get("id") or ""), reverse=True)
+        paths.extend(d.glob("*.json"))
+    paths.sort(key=lambda x: x.name, reverse=True)
     if limit:
-        rows = rows[:max(1, int(limit))]
+        paths = paths[:max(1, int(limit))]
+    rows = []
+    for p in paths:
+        rec = _load(p, with_trace=bool(with_trace))
+        if rec:
+            rows.append(_fix_workdir(rec, p.parent))
     return rows
 
 
@@ -370,11 +470,29 @@ def handoff_text(rec):
     return "\n".join(lines)
 
 
+def split_trace_file(path):
+    """把旧 run JSON 里内嵌的 messages 搬到 traces/*.jsonl.gz。"""
+    p = Path(path)
+    rec = _load(p, with_trace=False)
+    if not rec:
+        return False
+    msgs = rec.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        return False
+    _write(p, rec)
+    return True
+
+
+def write_meta(path, rec):
+    """只写 run metadata；messages 会按统一规则进 trace。"""
+    _write(Path(path), rec)
+
+
 def get(run_id, scope=None):
     p = _file_of(run_id, scope)
     if not p:
         return None
-    rec = _load(p)
+    rec = _load(p, with_trace=True)
     return _fix_workdir(rec, p.parent) if rec else None
 
 def messages(run_id, scope=None):
@@ -391,6 +509,10 @@ def delete(run_id, scope=None):
     p = _file_of(run_id, scope)
     try:
         if p:
+            try:
+                trace_path_for(str(run_id), p.parent).unlink(missing_ok=True)
+            except OSError:
+                pass
             p.unlink(missing_ok=True)
         return {"ok": True}
     except OSError as e:
@@ -402,6 +524,10 @@ def clear(scope=None):
     try:
         if d.is_dir():
             for p in d.glob("*.json"):
+                try:
+                    trace_path_for(p.stem, d).unlink(missing_ok=True)
+                except OSError:
+                    pass
                 p.unlink(missing_ok=True)
                 n += 1
     except OSError:
@@ -431,6 +557,16 @@ def migrate_once():
                         shutil.move(str(p), str(dst))
                     else:
                         p.unlink(missing_ok=True)
+                    src_t = trace_path_for(p.stem, p.parent)
+                    dst_t = trace_path_for(p.stem, dst.parent)
+                    try:
+                        if src_t.is_file() and not dst_t.exists():
+                            dst_t.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.move(str(src_t), str(dst_t))
+                        else:
+                            src_t.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                     moved += 1
                 except OSError:
                     failed += 1

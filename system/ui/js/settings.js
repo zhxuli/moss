@@ -83,12 +83,28 @@ const MossSettings = {
                 <span v-html="aiSvg('plus')"></span>
                 <span>添加新的 AI 配置</span>
               </div>
-
-              
-
-
-
-
+              <div class="ai-arc" id="ai-archive">
+                <div class="ai-arc-main">
+                  <b title="完整过程保存在本机；清理只删最旧的原始轨迹，摘要、文件清单、验证记录和快照 id 永远保留。">AI 工作台档案</b>
+                  <span class="ai-arc-usage" :class="{over: ai.archive.max_gb && ai.archive.total_bytes > ai.archive.max_gb * 1073741824}" title="任务记录、原始轨迹和检索索引的合计占用 · 任务次数">{{ aiFmtBytes(ai.archive.total_bytes) }} · {{ ai.archive.runs }} 次</span>
+                  <label class="ai-arc-cap" title="原始轨迹上限。0 = 不限制；默认 20 GB。">
+                    上限 <input type="number" min="0" step="1" v-model.number="ai.archive.max_gb"
+                           :disabled="ai.archive.busy" @input="aiArchiveTouched">
+                    GB
+                  </label>
+                  <label class="ai-arc-auto" title="超过上限时清理到上限的 80%，只删最旧的原始轨迹；摘要和元数据永远保留。">
+                    <input type="checkbox" v-model="ai.archive.auto_clean"
+                           :disabled="ai.archive.busy || !ai.archive.max_gb" @change="aiArchiveTouched">
+                    超限自动清理
+                  </label>
+                  <div class="ai-cacts">
+                    <button type="button" class="ai-btn" :disabled="ai.archive.busy"
+                            @click="aiArchiveRebuild" title="重建搜索索引：只重新扫描任务记录和原始轨迹，不删除任何历史。">重建索引</button>
+                    <button type="button" class="ai-btn" :disabled="ai.archive.busy"
+                            @click="aiArchiveClean" title="清理原始轨迹：从最旧的任务开始，清理到上限的 80%；摘要和元数据不删。">清理</button>
+                  </div>
+                </div>
+              </div>
               <div class="ai-snd" id="ai-snd">
                 
 
@@ -429,9 +445,9 @@ const MossSettings = {
                                  : '接口地址 / 密钥 / 模型 都填了才能测'"
               @click="aiTest(ai.name)">测试连接</button>
       <button class="btn primary" id="set-save"
-              :disabled="aiPane ? (!aiFilled() || !aiDirty() || ai.busy) : !canSave"
-              :title="aiPane && !aiFilled() ? '接口地址 / 密钥 / 模型 都填了才能保存' : ''"
-              @click="aiPane ? aiSave() : save()">{{ ai.busy ? "保存中…" : "保存" }}</button>
+              :disabled="aiPane ? (ai.mode === 'list' ? (!aiArchiveDirty() || ai.archive.busy) : (!aiFilled() || !aiDirty() || ai.busy)) : !canSave"
+              :title="aiPane ? (ai.mode === 'list' ? (aiArchiveDirty() ? '保存档案设置' : '档案设置没有改动') : (aiFilled() ? '保存 AI 引擎配置' : '接口地址 / 密钥 / 模型 都填了才能保存')) : ''"
+              @click="aiPane ? (ai.mode === 'list' ? aiArchiveSave() : aiSave()) : save()">{{ (aiPane && ai.mode === 'list') ? (ai.archive.busy ? "处理中…" : "保存") : (ai.busy ? "保存中…" : "保存") }}</button>
     </div>
   </div>
 
@@ -473,7 +489,11 @@ const MossSettings = {
 
            creating: false,
 
-           ping: {running: false, rows: [], seq: 0}},
+           ping: {running: false, rows: [], seq: 0},
+
+           archive: {loaded: false, busy: false, max_gb: 20, auto_clean: false,
+                     total_bytes: 0, run_bytes: 0, trace_bytes: 0, db_bytes: 0,
+                     runs: 0, traces: 0, free_bytes: 0, msg: "", msgOk: true}},
 
       cd: {loaded: false, busy: false, any: false, profiles: []},
 
@@ -529,6 +549,8 @@ const MossSettings = {
     },
     footClass(){
       if (this.errs) return "bad";
+      if (this.aiPane && this.ai.mode === "list")
+        return (this.aiArchiveDirty() || this.ai.archive.msg) ? (this.ai.archive.msgOk === false ? "bad" : "moved") : "";
       return this.changed.length ? "moved" : "";
     },
 
@@ -794,7 +816,105 @@ const MossSettings = {
       return String(((this.ai.summary || {})[n] || {}).base_url || "")
         .replace(/^https?:\/\//, "");
     },
-    aiNewName(base){
+
+    aiFmtBytes(n){
+      n = Number(n || 0);
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let i = 0;
+      while (n >= 1024 && i < units.length - 1){ n /= 1024; i++; }
+      return (i === 0 ? Math.round(n) : n.toFixed(n >= 10 ? 1 : 2)) + " " + units[i];
+    },
+
+    async aiArchiveLoad(keepPolicy){
+      try{
+        const r = await pywebview.api.ai_archive_info();
+        const a = this.ai.archive;
+        if (r && r.ok){
+          a.loaded = true;
+          a.total_bytes = Number(r.total_bytes || 0);
+          a.run_bytes = Number(r.run_bytes || 0);
+          a.trace_bytes = Number(r.trace_bytes || 0);
+          a.db_bytes = Number(r.db_bytes || 0);
+          a.runs = Number(r.runs || 0);
+          a.traces = Number(r.traces || 0);
+          a.free_bytes = Number(r.free_bytes || 0);
+          if (!keepPolicy){
+            a.max_gb = Math.max(0, Math.round(Number(r.max_mb || 0) / 1024 * 100) / 100);
+            a.auto_clean = !!r.auto_clean;
+            a.orig_gb = a.max_gb;
+            a.orig_auto = a.auto_clean;
+          }
+          a.msg = "";
+        }else{
+          a.msg = (r && r.msg) || "读不到档案占用";
+          a.msgOk = false;
+        }
+      }catch(e){
+        this.ai.archive.msg = String(e && e.message ? e.message : e);
+        this.ai.archive.msgOk = false;
+      }
+    },
+
+    aiArchiveDirty(){
+      const a = this.ai.archive;
+      return Math.abs(Number(a.max_gb || 0) - Number(a.orig_gb || 0)) > 0.001 ||
+             !!a.auto_clean !== !!a.orig_auto;
+    },
+    aiArchiveTouched(){
+      this.ai.archive.msg = "";
+      this.ai.archive.msgOk = true;
+    },
+    async aiArchiveSave(){
+      const a = this.ai.archive;
+      a.busy = true; a.msg = "";
+      try{
+        const max_mb = Math.round(Math.max(0, Number(a.max_gb || 0)) * 1024);
+        const r = await pywebview.api.ai_archive_set(max_mb, !!a.auto_clean);
+        if (!r || !r.ok){
+          a.msg = (r && r.msg) || "没存上"; a.msgOk = false;
+        }else{
+          await this.aiArchiveLoad();
+          a.msg = "已保存"; a.msgOk = true;
+        }
+      }catch(e){ a.msg = String(e && e.message ? e.message : e); a.msgOk = false; }
+      a.busy = false;
+    },
+    aiArchiveClean(){
+      const a = this.ai.archive;
+      askConfirm("清理原始轨迹？",
+                 "只删除最旧的原始过程，清理到上限的 80%；摘要、文件清单、验证记录和快照 id 都会保留。",
+                 async () => {
+        a.busy = true; a.msg = "";
+        try{
+          const target_mb = Math.round(Math.max(0, Number(a.max_gb || 0)) * 1024);
+          const r = await pywebview.api.ai_archive_clean(target_mb || null, false, true);
+          if (!r || !r.ok){ a.msg = (r && r.msg) || "清理失败"; a.msgOk = false; }
+          else {
+            await this.aiArchiveLoad();
+            a.msg = r.removed ? ("已清理 " + Number(r.removed) + " 条 · 释放 " + this.aiFmtBytes(r.bytes || 0)) : (r.msg || "没有需要清理的");
+            a.msgOk = true;
+          }
+        }catch(e){ a.msg = String(e && e.message ? e.message : e); a.msgOk = false; }
+        a.busy = false;
+      });
+    },
+    aiArchiveRebuild(){
+      const a = this.ai.archive;
+      askConfirm("重建历史检索索引？",
+                 "会重建搜索索引，不删除任务摘要和原始轨迹。",
+                 async () => {
+        a.busy = true; a.msg = "";
+        try{
+          const r = await pywebview.api.ai_archive_rebuild();
+          if (!r || !r.ok){ a.msg = (r && r.msg) || "重建失败"; a.msgOk = false; }
+          else {
+            await this.aiArchiveLoad();
+            a.msg = "索引已重建 · " + Number(r.indexed || 0) + " 条"; a.msgOk = true;
+          }
+        }catch(e){ a.msg = String(e && e.message ? e.message : e); a.msgOk = false; }
+        a.busy = false;
+      });
+    },    aiNewName(base){
       let n = String(base || "").trim() || "我的AI", i = 2;
       while (this.ai.profiles.indexOf(n) >= 0){ n = base + "-" + i; i++; }
       return n;
@@ -815,6 +935,7 @@ const MossSettings = {
       this.ai.keyReal = false;
 
       this.aiPingReset();
+      this.aiArchiveLoad();
       return true;
     },
     async aiLoadPresets(){
@@ -831,12 +952,16 @@ const MossSettings = {
     async openSeg(s){ if (s && s.path) await pywebview.api.open_path(s.path); },
 
     aiFootText(){
+      if (this.ai.mode === "list"){
+        if (this.ai.archive.busy) return "正在处理…";
+        if (this.aiArchiveDirty()) return "档案设置还没保存";
+        return this.ai.archive.msg || "";
+      }
       if (this.ai.mode !== "edit") return "";
       if (!this.aiFilled()) return "把接口地址 / 密钥 / 模型 填全";
-      if (!this.aiDirty()) return "";        
+      if (!this.aiDirty()) return "";
       return "改动还没保存";
     },
-
     aiToggleKey(){ this.ai.showKey = !this.ai.showKey; },
 
     aiHost(url){
@@ -1174,7 +1299,7 @@ const MossSettings = {
       this.active = gid;
       this.hideTip();
 
-      if (this.isAiName(gid)){ this.aiLoadPresets(); if (!this.ai.loaded) this.aiLoad(""); this.sndLoad(); }
+      if (this.isAiName(gid)){ this.aiLoadPresets(); if (!this.ai.loaded) this.aiLoad(""); else this.aiArchiveLoad(); this.sndLoad(); }
 
       if (this.isAccessName(gid)) this.cdLoad();
     },

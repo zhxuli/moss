@@ -2340,6 +2340,21 @@ class Api:
         import ai_history
         return ai_history
 
+    def _same_work_scope(self, a, b):
+        """两个工作目录是否属于同一个包；都不是包时必须路径完全相同。"""
+        aa, bb = str(a or ""), str(b or "")
+        try:
+            R = self._ai_runs()
+            pa, pb = R.pkg_of(aa), R.pkg_of(bb)
+            if pa and pb:
+                return pa == pb
+        except Exception:
+            pass
+        try:
+            return os.path.normcase(os.path.realpath(aa)) == os.path.normcase(os.path.realpath(bb))
+        except OSError:
+            return aa == bb
+
     def _ai_ask(self):
         self._ai_dir()
         import ai_ask
@@ -2530,13 +2545,7 @@ class Api:
             if not cid and hid:
                 try:
                     hrec = R.get(hid)
-                    same_scope = False
-                    if hrec:
-                        try:
-                            same_scope = bool(R.pkg_of(hrec.get("workdir") or "") == R.pkg_of(wd))
-                        except Exception:
-                            same_scope = False
-                    if hrec and (same_scope or str(hrec.get("workdir") or "") == wd):
+                    if hrec and self._same_work_scope(hrec.get("workdir") or "", wd):
                         handoff_text = R.handoff_text(hrec)
                         handoff_from = hid
                         cont_note = "新会话（带上一任务交接摘要 %s；需要细节可查历史档案）" % hid
@@ -2594,6 +2603,33 @@ class Api:
             run_id = R.new_id()
             scope = R.scope_of(wd)
             M.begin_run(wd)
+            try:
+                _ms = M.summary(wd)
+                _full = bool(_ms.get("full_access") or _ms.get("wildcard"))
+                _allow = []
+                _broad = _full
+                for _it in (_ms.get("allow") or []):
+                    _p = str(_it.get("path") or "")
+                    if not _p or not (_it.get("read") or _it.get("write")):
+                        continue
+                    _allow.append({"path": _p, "read": bool(_it.get("read")),
+                                   "write": bool(_it.get("write"))})
+                    if _full or _p == "*":
+                        continue
+                    try:
+                        if R.pkg_of(_p) and R.pkg_of(_p) == R.pkg_of(wd):
+                            continue
+                    except Exception:
+                        pass
+                    try:
+                        if os.path.normcase(os.path.realpath(_p)) == os.path.normcase(os.path.realpath(wd)):
+                            continue
+                    except OSError:
+                        pass
+                    _broad = True
+                _access = {"full": _full, "broad": bool(_broad), "allow": _allow}
+            except Exception:
+                _access = {"full": False, "broad": True, "allow": []}
             tmp_dir = M.ensure_tmp(run_id, wd)
             started = time.time()
             base = {
@@ -2611,6 +2647,7 @@ class Api:
                 "scope": scope.get("kind"), "scope_id": scope.get("id") or "",
                 "asked_continue": cid, "continue_note": cont_note,
                 "handoff_from": handoff_from,
+                "access": _access,
             }
             AI.update({"task": task, "stop": False, "t0": started,
                        "task_dir": wd,
@@ -2780,7 +2817,10 @@ class Api:
                     got["run_id"] = saved.get("id") or run_id
                     try:
                         rec["id"] = got.get("run_id") or run_id
-                        self._ai_history().index_run(rec)
+                        _H = self._ai_history()
+                        _H.index_run(rec)
+                        if _H.load_settings().get("auto_clean"):
+                            threading.Thread(target=_H.clean, daemon=True).start()
                     except Exception as _idx:
                         got["index_error"] = "%s: %s" % (type(_idx).__name__, _idx)
                 except Exception as exc:
@@ -3088,7 +3128,7 @@ class Api:
             return self._ai_history().search(
                 str(query or ""), workdir=wd, limit=int(limit or 8),
                 all_scope=bool(all_scope), tool=str(tool or ""),
-                run_id=str(run_id or ""))
+                run_id=str(run_id or ""), allow_broad=True)
         except Exception as e:
             return {"ok": False, "hits": [], "msg": "%s: %s" % (type(e).__name__, e)}
 
@@ -3097,9 +3137,35 @@ class Api:
             wd = str(self._ai_last_workdir())
             return self._ai_history().open_run(
                 str(run_id or ""), workdir=wd, seq=int(seq or 0),
-                before=int(before or 0), after=int(after or 0))
+                before=int(before or 0), after=int(after or 0),
+                allow_broad=True)
         except Exception as e:
             return {"ok": False, "events": [], "msg": "%s: %s" % (type(e).__name__, e)}
+
+    def ai_archive_info(self):
+        try:
+            return self._ai_history().stats()
+        except Exception as e:
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
+    def ai_archive_set(self, max_mb=20480, auto_clean=False):
+        try:
+            return self._ai_history().save_settings(int(max_mb or 0), bool(auto_clean))
+        except Exception as e:
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
+    def ai_archive_clean(self, target_mb=None, dry_run=False, force=False):
+        try:
+            return self._ai_history().clean(target_mb=target_mb,
+                                            dry_run=bool(dry_run), force=bool(force))
+        except Exception as e:
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
+    def ai_archive_rebuild(self):
+        try:
+            return self._ai_history().rebuild()
+        except Exception as e:
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
 
     def ai_run(self, run_id=""):
         try:
@@ -3376,12 +3442,18 @@ class Api:
             R = self._ai_runs()
             wd = workdir or self._ai_last_workdir()
             scope = R.scope_of(wd)
+            if not all_of_them:
+                rec = R.get(run_id)
+                if not rec:
+                    return {"ok": False, "msg": "没有这条记录"}
+                if not self._same_work_scope(rec.get("workdir") or "", wd):
+                    return {"ok": False, "msg": "这条记录不属于当前工作区，不能从这里删除"}
             got = R.clear(scope) if all_of_them else R.delete(run_id)
             try:
                 H = self._ai_history()
                 H.clear(wd) if all_of_them else H.forget(run_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                got["index_warning"] = "记录删了，但档案索引没清干净：%s" % exc
             return got
         except Exception as e:
             return {"ok": False, "msg": str(e)}

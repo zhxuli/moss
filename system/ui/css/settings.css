@@ -399,3 +399,18 @@ input[type="password"]::-ms-clear{display:none}
 .ai-snd-switch input:focus-visible + .ai-snd-slider{box-shadow:0 0 0 3px rgba(59,130,246,.25)}
 
 @media (max-width:640px){ .ai-snd-grid{grid-template-columns:1fr} }
+
+/* AI 工作台与历史档案：一行式，说明只在 title 里 */
+.ai-arc{margin-top:10px;padding:9px 11px;border:1px solid var(--hair);border-radius:10px;background:#fff}
+.ai-arc-main{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px}
+.ai-arc-main b{font-size:12.5px;font-weight:600;color:var(--fg);white-space:nowrap}
+.ai-arc-usage{margin-right:auto;font-size:11.5px;color:var(--dim);white-space:nowrap}
+.ai-arc-cap,.ai-arc-auto{display:flex;align-items:center;gap:5px;font-size:11.5px;color:#52525b;white-space:nowrap}
+.ai-arc-cap input{width:56px;padding:4px 6px;border:1px solid #e4e4e7;border-radius:6px;
+  font:inherit;font-size:11.5px;color:#18181b;background:#fff;outline:0}
+.ai-arc-cap input:focus{border-color:#93c5fd;box-shadow:0 0 0 2px rgba(59,130,246,.12)}
+.ai-arc-auto input{width:13px;height:13px;accent-color:#3b82f6}
+@media (max-width:760px){
+  .ai-arc-usage{width:100%;margin-right:0}
+  .ai-arc-main b{width:100%}
+}.ai-arc-usage.over{color:#b91c1c}
