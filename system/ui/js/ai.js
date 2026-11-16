@@ -133,6 +133,10 @@ function aiScopeReset(){
   AIR.sentTask = ""; AIR.muted = 0; AIR.pickId = "";
   AIR.turns = []; AIR.cur = -1;                 
   AIR.liveKey = ""; AIR.liveTask = ""; AIR.liveListFor = "";
+  /* 换包后不能还挂着上一个包的「接着聊 / 带摘要」状态；
+     aiLoadRuns() 会按新包的最近一条记录重新决定默认模式。 */
+  AIR.nextMode = "fresh"; AIR.handoffId = ""; AIR.handoffTask = "";
+  AIR.handoffPkg = ""; AIR.modeOpen = false;
 }
 
 function humanTokens(n){
@@ -1161,6 +1165,7 @@ async function aiStart(opt){
     if (handoff && AIR.handoffPkg && _nowPkg && AIR.handoffPkg !== _nowPkg){
       handoff = "";
       mode = "fresh";
+      aiSetNextMode("fresh");
       toast("上一个任务摘要属于别的包 —— 这条按全新会话跑", true);
     }
   }
@@ -1230,6 +1235,22 @@ const MossAi = {
       this.A.rev;
       return this.A.nextMode === "handoff" ? "file-text"
            : (this.A.nextMode === "continue" ? "message-square" : "sparkles");
+    },
+    canContinue(){
+      this.A.rev;
+      if (this.A.contId) return true;
+      const id = String(this.A.lastId || "");
+      if (!id) return false;
+      const r = (this.A.runs || []).filter(x => x && String(x.id || "") === id)[0];
+      return !!(r && r.cont);
+    },
+    canHandoff(){
+      this.A.rev;
+      if (this.A.handoffId) return true;
+      const id = String(this.A.lastId || "");
+      if (!id) return false;
+      const r = (this.A.runs || []).filter(x => x && String(x.id || "") === id)[0];
+      return !!r && !!r.ok && r.kind !== "chat";
     },
     pkg(){ this.A.rev; return aiPackage(); },
 
@@ -1389,36 +1410,6 @@ const MossAi = {
       return this.sessChains.filter(c => c.head.id !== id && c.tail.id !== id);
     },
 
-    toggleNextMode(){
-      this.A.modeOpen = !this.A.modeOpen;
-      if (this.A.modeOpen){ this.A.histOpen = false; this.A.permPop = false; this.A.modelOpen = false; }
-      this.A.rev++;
-    },
-    chooseNextMode(mode){
-      if (mode === "continue") aiSetNextMode("continue", this.A.contId || this.A.lastId || "", this.A.contTask || "");
-      else if (mode === "handoff") aiSetNextMode("handoff", this.A.handoffId || this.A.lastId || "", this.A.handoffTask || this.A.contTask || "");
-      else aiSetNextMode("fresh");
-    },
-    async searchHistory(){ await aiSearchHistory(); },
-    histInput(){
-      if (AI_HIST_TIMER) { clearTimeout(AI_HIST_TIMER); AI_HIST_TIMER = 0; }
-      if (!String(this.A.histQ || "").trim()){
-        this.A.histSearched = false; this.A.histHits = []; this.A.histErr = "";
-      } else {
-        AI_HIST_TIMER = setTimeout(() => { AI_HIST_TIMER = 0; aiSearchHistory(); }, 350);
-      }
-      this.A.rev++;
-    },
-    async openHistoryHit(h){ await aiOpenHistoryHit(h); },
-    closeHistoryCtx(){ aiCloseHistoryCtx(); },
-    async openHistoryRun(){
-      const c = this.A.histCtx || {};
-      const r = c.run || {};
-      if (!r.id) return;
-      aiCloseHistoryCtx();
-      this.A.histOpen = false;
-      await aiOpenRun(r.id, true);
-    },
 
     logCards(){
       this.A.rev;
@@ -1575,6 +1566,39 @@ const MossAi = {
     "A.task"(){ this.$nextTick(() => this.autoGrow()); },
   },
   methods: {
+    toggleNextMode(){
+      this.A.modeOpen = !this.A.modeOpen;
+      if (this.A.modeOpen){ this.A.histOpen = false; this.A.permPop = false; this.A.modelOpen = false; }
+      this.A.rev++;
+    },
+    chooseNextMode(mode){
+      if (mode === "continue"){
+        if (!this.canContinue){ toast("还没有能接着聊的完整会话", true); return; }
+        aiSetNextMode("continue", this.A.contId || this.A.lastId || "", this.A.contTask || "");
+      } else if (mode === "handoff"){
+        if (!this.canHandoff){ toast("还没有可用的上一任务摘要", true); return; }
+        aiSetNextMode("handoff", this.A.handoffId || this.A.lastId || "", this.A.handoffTask || this.A.contTask || "");
+      }
+    },    async searchHistory(){ await aiSearchHistory(); },
+    histInput(){
+      if (AI_HIST_TIMER) { clearTimeout(AI_HIST_TIMER); AI_HIST_TIMER = 0; }
+      if (!String(this.A.histQ || "").trim()){
+        this.A.histSearched = false; this.A.histHits = []; this.A.histErr = "";
+      } else {
+        AI_HIST_TIMER = setTimeout(() => { AI_HIST_TIMER = 0; aiSearchHistory(); }, 350);
+      }
+      this.A.rev++;
+    },
+    async openHistoryHit(h){ await aiOpenHistoryHit(h); },
+    closeHistoryCtx(){ aiCloseHistoryCtx(); },
+    async openHistoryRun(){
+      const c = this.A.histCtx || {};
+      const r = c.run || {};
+      if (!r.id) return;
+      aiCloseHistoryCtx();
+      this.A.histOpen = false;
+      await aiOpenRun(r.id, true);
+    },
       stop: aiStop,
       async openDir(path){
         if (!path) return;
@@ -3368,7 +3392,7 @@ const MossAi = {
                 <button type="button" class="trigger-btn ai-mini ai-txtbtn ai-nextmode-btn"
                         :class="{active: A.modeOpen, handoff: A.nextMode === 'handoff'}"
                         @click.stop="toggleNextMode()"
-                        :title="'下一条怎么开：' + nextModeLabel + '。点开可切换「带摘要新会话 / 接着本会话 / 全新会话」'">
+                        :title="'下一条怎么开：' + nextModeLabel + '。点开可切换「带摘要新会话 / 接着本会话」'">
                   <span v-html='ico(nextModeIcon, "i")'></span>
                   <span class="ai-btn-txt">{{ nextModeLabel }}</span>
                 </button>
@@ -3378,20 +3402,20 @@ const MossAi = {
                     <span class="popover-hint">摘要不占完整旧对话</span>
                   </div>
                   <button type="button" class="ai-nextmode-it" :class="{on: A.nextMode === 'handoff'}"
-                          @click="chooseNextMode('handoff')">
+                          :disabled="!canHandoff" @click="chooseNextMode('handoff')"
+                          :title="canHandoff ? '新会话只带上一任务的交接摘要' : '还没有可用的上一条任务摘要'">
                     <span v-html='ico("file-text", "i")'></span>
                     <span><b>新会话 + 上次摘要</b><i>推荐：做下一个功能时用</i></span>
                   </button>
                   <button type="button" class="ai-nextmode-it" :class="{on: A.nextMode === 'continue'}"
-                          @click="chooseNextMode('continue')">
+                          :disabled="!canContinue" @click="chooseNextMode('continue')"
+                          :title="canContinue ? '带着当前会话的完整对话继续' : '还没有能接着聊的完整会话'">
                     <span v-html='ico("message-square", "i")'></span>
                     <span><b>接着本会话</b><i>继续修同一个问题，带完整当前对话</i></span>
                   </button>
-                  <button type="button" class="ai-nextmode-it" :class="{on: A.nextMode === 'fresh'}"
-                          @click="chooseNextMode('fresh')">
-                    <span v-html='ico("sparkles", "i")'></span>
-                    <span><b>全新会话</b><i>什么都不带，只靠项目和文件</i></span>
-                  </button>
+                  <div class="ai-nextmode-note">
+                    想不带任何上下文重新开始？点左上角「新会话」。
+                  </div>
                 </div>
               </div>
 
