@@ -2197,6 +2197,29 @@ class Api:
             return {"ok": False, "msg": "这条记录已经不在了（可能刚删过一次）"}
         return {"ok": True, "msg": "已删掉这条记录（%d 行，%s）" % (removed, "、".join(touched))}
 
+    def hist_forget_many(self, keys):
+        """一次清理多条失效历史记录。"""
+        keys = [str(k or "").strip() for k in (keys or [])]
+        keys = [k for k in keys if k]
+        if not keys:
+            return {"ok": False, "msg": "没有要清理的记录"}
+        hist_dir = USER_DATA / "history"
+        if not hist_dir.is_dir():
+            return {"ok": False, "msg": "历史记录目录不存在：%s" % hist_dir}
+        removed, touched = 0, []
+        for f in sorted(hist_dir.glob("*.jsonl")):
+            for key in keys:
+                hit = _hist_drop_lines(f, key)
+                if hit:
+                    removed += hit
+                    if f.name not in touched:
+                        touched.append(f.name)
+        if not removed:
+            return {"ok": False, "msg": "这些记录已经不在了"}
+        return {"ok": True, "removed": removed,
+                "msg": "已删除 %d 行（%d 条记录，%s）"
+                       % (removed, len(keys), "、".join(touched))}
+
     def path_start(self, target, cwd="", args=""):
         argv, workdir = rerun_argv(target, cwd, args)
         if argv is None:

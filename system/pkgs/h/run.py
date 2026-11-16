@@ -321,12 +321,15 @@ def main():
     query = str(params.get("target") or "").strip()
     extra = str(params.get("extra") or "").split()
 
-    rows = recent_rows()
+    # 列表只展示最近 20 条，但查找要覆盖整个历史窗口（最多 READ_RAW 条），
+    # 否则「界面上明明有、moss :h 却找不到」会在列表较长时出现。
+    all_rows = recent_rows(READ_RAW)
+    rows = all_rows[:MAX_SHOW]
 
     if not query:
         return _show_history(rows)
 
-    hits = find(rows, query)
+    hits = find(all_rows, query)
     if not hits:
         print("[错误] 历史里没有叫 '%s' 的记录。" % query)
         if rows:

@@ -222,10 +222,13 @@ function paintBarActs(){
   put("#btn-refresh", "refresh-cw");
   put("#btn-refresh-h", "refresh-cw");
   put("#btn-openfile", "play-circle");
+  put("#btn-clean-hist", "trash-2");
   const rh = $("#btn-refresh-h"), r = $("#btn-refresh");
   if (rh && r) rh.onclick = () => r.click();          
   const of = $("#btn-openfile");
   if (of) of.onclick = () => openFileAndRun();
+  const cleanHist = $("#btn-clean-hist");
+  if (cleanHist) cleanHist.onclick = cleanDeadHist;
 
   const gb = $("#btn-groups");
   if (gb){
@@ -1316,6 +1319,32 @@ function renderDetailHist(it, box){
   const html = renderDetailHistHTML(it);
   if (box) box.innerHTML = html;
   wireDetailHist(it);
+}
+
+async function cleanDeadHist(){
+  const dead = (HIST || []).filter(it => it.exists === false || it.cwd_exists === false);
+  if (!dead.length){
+    toast("没有失效的历史记录");
+    return;
+  }
+  askConfirm2("清理失效记录",
+    "将删除 <b>" + dead.length + "</b> 条失效记录：<br>" +
+    "· 目标文件已经不在了<br>· 或者当时的工作目录已经不在了<br><br>" +
+    "只删历史记录，不会删除任何文件。",
+    {label: "清理", danger: true, cb: async () => {
+      let r = null;
+      try{ r = await pywebview.api.hist_forget_many(dead.map(it => it.key || "")); }
+      catch(e){ r = {ok: false, msg: "清理失败：" + ((e && e.message) || e)}; }
+      if (!r || !r.ok){
+        toast((r && r.msg) || "清理失败", true);
+        return;
+      }
+      const wasCur = !!(curH && dead.some(it => histKey(it) === histKey(curH)));
+      await loadHist();
+      if (wasCur) curH = null;
+      renderHist(); renderDetail();
+      toast(r.msg || ("已清理 " + dead.length + " 条失效记录"));
+    }});
 }
 
 async function cmdForgetHist(it){
