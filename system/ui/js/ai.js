@@ -617,14 +617,10 @@ function aiSetNextMode(mode, runId, task){
 }
 
 function aiNextModeLabel(){
-  if (AIR.nextMode === "handoff"){
-    const t = String(AIR.handoffTask || "").trim();
-    return "带上次摘要" + (t ? ("：" + (t.length > 18 ? t.slice(0, 18) + "…" : t)) : "");
-  }
-  if (AIR.nextMode === "continue") return "接着本会话";
-  return "全新会话";
+  if (AIR.nextMode === "handoff") return "摘要";
+  if (AIR.nextMode === "continue") return "本会话";
+  return "上下文";
 }
-
 async function aiSearchHistory(){
   if (AI_HIST_TIMER){ clearTimeout(AI_HIST_TIMER); AI_HIST_TIMER = 0; }
   const q = String(AIR.histQ || "").trim();
@@ -1166,7 +1162,7 @@ async function aiStart(opt){
       handoff = "";
       mode = "fresh";
       aiSetNextMode("fresh");
-      toast("上一个任务摘要属于别的包 —— 这条按全新会话跑", true);
+      toast("上一个任务摘要属于别的包 —— 这条按新会话跑", true);
     }
   }
 
@@ -1231,6 +1227,14 @@ const MossAi = {
   data(){ return { A: AIR, focused: false, shake: false, stopHover: false }; },
   computed: {
     nextModeLabel(){ this.A.rev; return aiNextModeLabel(); },
+    nextModeTitle(){
+      this.A.rev;
+      let what = this.A.nextMode === "handoff" ? "新会话 + 上次摘要"
+               : (this.A.nextMode === "continue" ? "接着本会话" : "无上下文");
+      if (this.A.nextMode === "handoff" && String(this.A.handoffTask || "").trim())
+        what += "：" + String(this.A.handoffTask).trim();
+      return "下一条怎么开：" + what;
+    },
     nextModeIcon(){
       this.A.rev;
       return this.A.nextMode === "handoff" ? "file-text"
@@ -3387,38 +3391,29 @@ const MossAi = {
                   </div>
                 </div>
               </div>
-              
-              <div class="popover-wrapper ai-nextmode-wrap">
+
+              <div class="popover-wrapper ai-nextmode-wrap" v-if="canHandoff || canContinue">
                 <button type="button" class="trigger-btn ai-mini ai-txtbtn ai-nextmode-btn"
                         :class="{active: A.modeOpen, handoff: A.nextMode === 'handoff'}"
-                        @click.stop="toggleNextMode()"
-                        :title="'下一条怎么开：' + nextModeLabel + '。点开可切换「带摘要新会话 / 接着本会话」'">
+                        @click.stop="toggleNextMode()" :title="nextModeTitle">
                   <span v-html='ico(nextModeIcon, "i")'></span>
                   <span class="ai-btn-txt">{{ nextModeLabel }}</span>
                 </button>
                 <div class="popover-panel ai-nextmode-pop" :class="{show: A.modeOpen}"
                      v-if="A.modeOpen" @click.stop>
-                  <div class="popover-title">下一条指令怎么开
-                    <span class="popover-hint">摘要不占完整旧对话</span>
-                  </div>
+                  <div class="popover-title">下一条</div>
                   <button type="button" class="ai-nextmode-it" :class="{on: A.nextMode === 'handoff'}"
                           :disabled="!canHandoff" @click="chooseNextMode('handoff')"
-                          :title="canHandoff ? '新会话只带上一任务的交接摘要' : '还没有可用的上一条任务摘要'">
-                    <span v-html='ico("file-text", "i")'></span>
-                    <span><b>新会话 + 上次摘要</b><i>推荐：做下一个功能时用</i></span>
+                          :title="canHandoff ? (A.handoffTask ? '上次任务：' + A.handoffTask : '只带上次交接摘要') : '没有可用摘要'">
+                    <span v-html='ico("file-text", "i")'></span><span>上次摘要</span>
                   </button>
                   <button type="button" class="ai-nextmode-it" :class="{on: A.nextMode === 'continue'}"
                           :disabled="!canContinue" @click="chooseNextMode('continue')"
-                          :title="canContinue ? '带着当前会话的完整对话继续' : '还没有能接着聊的完整会话'">
-                    <span v-html='ico("message-square", "i")'></span>
-                    <span><b>接着本会话</b><i>继续修同一个问题，带完整当前对话</i></span>
+                          :title="canContinue ? '带完整当前对话继续' : '没有可继续的完整会话'">
+                    <span v-html='ico("message-square", "i")'></span><span>接着本会话</span>
                   </button>
-                  <div class="ai-nextmode-note">
-                    想不带任何上下文重新开始？点左上角「新会话」。
-                  </div>
                 </div>
               </div>
-
               <button class="trigger-btn ai-mini ai-messages-icon ai-txtbtn" @click="openMessages()"
                       title="查看这条会话的完整提示词历史">
                 <span v-html='ico("book-open", "i")'></span>
