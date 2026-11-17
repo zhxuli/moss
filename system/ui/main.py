@@ -1070,6 +1070,7 @@ def _term_mod():
 
 AI = {"thread": None, "state": None, "task": "", "stop": False, "t0": 0.0}
 AI_LOCK = threading.Lock()
+CARD_LOCK = threading.Lock()
 
 _PERM_DENY = {}
 
@@ -2340,6 +2341,16 @@ class Api:
         import ai_history
         return ai_history
 
+    def _ai_cards(self):
+        self._ai_dir()
+        import ai_cards
+        return ai_cards
+
+    def _ai_roles(self):
+        self._ai_dir()
+        import ai_roles
+        return ai_roles
+
     def _same_work_scope(self, a, b):
         """两个工作目录是否属于同一个包；都不是包时必须路径完全相同。"""
         aa, bb = str(a or ""), str(b or "")
@@ -2485,8 +2496,16 @@ class Api:
         return out
 
     def ai_start(self, task="", workdir="", max_tokens=None, continue_id="", model="",
-                 attachments=None, handoff_id=""):
+                 attachments=None, handoff_id="", role="", strategy="", mounts=None):
         task = str(task or "").strip()
+        role = str(role or "").strip()
+        strategy = str(strategy or "").strip()
+        mount_ids = []
+        if isinstance(mounts, list):
+            for x in mounts[:12]:
+                x = str(x or "").strip()
+                if x and x not in mount_ids:
+                    mount_ids.append(x)
         raw_atts = attachments if isinstance(attachments, list) else []
         atts = []
         for a in raw_atts[:20]:
@@ -2643,6 +2662,9 @@ class Api:
                 "max_tokens": cap, "started": started,
                 "started_text": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)),
                 "mode": "free" if M.wildcard_write(wd) else "limited",
+                "role": role,
+                "strategy": strategy,
+                "mounts": mount_ids,
                 "tmp_dir": str(tmp_dir or ""),
                 "scope": scope.get("kind"), "scope_id": scope.get("id") or "",
                 "asked_continue": cid, "continue_note": cont_note,
@@ -3384,6 +3406,93 @@ class Api:
         import skill_lib
         return skill_lib
 
+    def ai_roles(self):
+        try:
+            R = self._ai_roles()
+            return {"ok": True, "roles": R.note_for_ui(),
+                    "strategies": R.strategies_for_ui(),
+                    "default": R.default_role(),
+                    "default_strategy": R.default_strategy()}
+        except Exception as e:
+            return {"ok": False, "msg": "读角色失败：%s: %s" % (type(e).__name__, e)}
+
+    def ai_prompts(self):
+        try:
+            R = self._ai_roles()
+            return {"ok": True, "prompts": R.prompt_catalog()}
+        except Exception as e:
+            return {"ok": False, "msg": "读提示词失败：%s: %s" % (type(e).__name__, e)}
+
+    def ai_prompt_read(self, name=""):
+        try:
+            R = self._ai_roles()
+            return R.read_prompt(name)
+        except Exception as e:
+            return {"ok": False, "msg": "读提示词失败：%s: %s" % (type(e).__name__, e)}
+
+    def ai_prompt_save(self, name="", text=""):
+        try:
+            R = self._ai_roles()
+            return R.save_prompt(name, text)
+        except Exception as e:
+            return {"ok": False, "msg": "存提示词失败：%s: %s" % (type(e).__name__, e)}
+
+    def ai_prompt_reset(self, name=""):
+        try:
+            R = self._ai_roles()
+            return R.reset_prompt(name)
+        except Exception as e:
+            return {"ok": False, "msg": "恢复提示词失败：%s: %s" % (type(e).__name__, e)}
+
+    def ai_cards_list(self):
+        try:
+            C = self._ai_cards()
+            return {"ok": True, "cards": C.list_cards(),
+                    "icons": list(C.ICON_CHOICES), "accents": list(C.DEFAULT_ACCENTS)}
+        except Exception as e:
+            return {"ok": False, "msg": "读经验卡失败：%s: %s" % (type(e).__name__, e)}
+
+    def ai_card_save(self, card=None):
+        try:
+            C = self._ai_cards()
+            return C.save_card(card if isinstance(card, dict) else {})
+        except Exception as e:
+            return {"ok": False, "msg": "存经验卡失败：%s: %s" % (type(e).__name__, e)}
+
+    def ai_card_delete(self, card_id=""):
+        try:
+            C = self._ai_cards()
+            return C.delete_card(card_id)
+        except Exception as e:
+            return {"ok": False, "msg": "删经验卡失败：%s: %s" % (type(e).__name__, e)}
+
+    def ai_card_studio(self, messages=None, text="", card=None):
+        text = str(text or "").strip()
+        if not text:
+            return {"ok": False, "msg": "先写一句要整理什么"}
+        try:
+            c, _e, _l = self._ai_mods()
+            p = self.ai_params(refresh=True)
+            if not (p.get("base_url") and p.get("model")):
+                return {"ok": False, "msg": p.get("why") or "还没配 AI"}
+            client = c.Client(p.get("base_url"), p.get("api_key") or "", p.get("model"))
+            C = self._ai_cards()
+            msgs = C.studio_messages(messages, text, card if isinstance(card, dict) else None)
+        except Exception as exc:
+            return {"ok": False, "msg": "整理器起不来：%s: %s" % (type(exc).__name__, exc)}
+        if not CARD_LOCK.acquire(blocking=False):
+            return {"ok": False, "msg": "已经在整理另一张卡了，等它回完再发"}
+        try:
+            got = client.chat(msgs)
+            parsed = C.parse_studio((got or {}).get("text") or "")
+            parsed["usage"] = (got or {}).get("usage") or {}
+            parsed["model"] = str(getattr(client, "model", "") or "")
+            return parsed
+        except Exception as exc:
+            return {"ok": False, "msg": "整理失败：%s: %s" % (type(exc).__name__, exc)}
+        finally:
+            CARD_LOCK.release()
+
     def ai_skills(self):
         try:
             return self._skill_lib().summary()
@@ -3457,6 +3566,20 @@ class Api:
             return got
         except Exception as e:
             return {"ok": False, "msg": str(e)}
+
+    def ai_inject(self, text=""):
+        text = str(text or "").strip()
+        if not text:
+            return {"ok": False, "msg": "先写一句纠偏内容"}
+        th = AI.get("thread")
+        loop = AI.get("loop")
+        if not th or not th.is_alive() or loop is None:
+            return {"ok": False, "msg": "现在没有在跑的任务；等它跑完再发下一句"}
+        try:
+            loop.inject(text)
+        except Exception as e:
+            return {"ok": False, "msg": "插话失败：%s: %s" % (type(e).__name__, e)}
+        return {"ok": True, "msg": "已插话：下一轮生效"}
 
     def ai_stop(self):
         AI["stop"] = True
@@ -5109,7 +5232,18 @@ class Api:
         palette = str((data or {}).get("palette") or "") if isinstance(data, dict) else ""
         if not re.match(r"^#[0-9a-fA-F]{6}$", palette):
             palette = ""
-        return {"ok": True, "palette": palette}
+        role = str((data or {}).get("role") or "") if isinstance(data, dict) else ""
+        strategy = str((data or {}).get("strategy") or "") if isinstance(data, dict) else ""
+        mounts = (data or {}).get("mounts") if isinstance(data, dict) else []
+        if not isinstance(mounts, list):
+            mounts = []
+        mounts = [str(x) for x in mounts[:30] if str(x or "").strip()]
+        last_mounts = (data or {}).get("last_mounts") if isinstance(data, dict) else []
+        if not isinstance(last_mounts, list):
+            last_mounts = []
+        last_mounts = [str(x) for x in last_mounts[:30] if str(x or "").strip()]
+        return {"ok": True, "palette": palette, "role": role,
+                "strategy": strategy, "mounts": mounts, "last_mounts": last_mounts}
 
     def ai_ui_state_set(self, values=None):
         try:
@@ -5126,12 +5260,26 @@ class Api:
                 if palette and not re.match(r"^#[0-9a-fA-F]{6}$", palette):
                     return {"ok": False, "msg": "颜色格式不对（要 #RRGGBB）"}
                 data["palette"] = palette
+            if "role" in src:
+                data["role"] = str(src.get("role") or "").strip()[:40]
+            if "strategy" in src:
+                data["strategy"] = str(src.get("strategy") or "").strip()[:40]
+            if "mounts" in src:
+                rows = src.get("mounts") if isinstance(src.get("mounts"), list) else []
+                data["mounts"] = [str(x)[:80] for x in rows[:30] if str(x or "").strip()]
+            if "last_mounts" in src:
+                rows = src.get("last_mounts") if isinstance(src.get("last_mounts"), list) else []
+                data["last_mounts"] = [str(x)[:80] for x in rows[:30] if str(x or "").strip()]
             d = USER_DATA / "state"
             d.mkdir(parents=True, exist_ok=True)
             tmp = f.with_name(f.name + ".tmp")
             tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             os.replace(str(tmp), str(f))
-            return {"ok": True, "palette": str(data.get("palette") or "")}
+            return {"ok": True, "palette": str(data.get("palette") or ""),
+                    "role": str(data.get("role") or ""),
+                    "strategy": str(data.get("strategy") or ""),
+                    "mounts": list(data.get("mounts") or []),
+                    "last_mounts": list(data.get("last_mounts") or [])}
         except Exception as e:
             return {"ok": False, "msg": str(e)}
 

@@ -11,7 +11,7 @@ function stickAfterScroll(st, m){
 
 const AIR = Vue.reactive({
   rev: 0, curId: "", curDir: "", info: null, infoTryAt: 0, err: "",
-  task: "", running: false, steps: [], say: [], result: null,
+  task: "", running: false, injecting: false, steps: [], say: [], result: null,
   seconds: 0, busy: false, tick: null,
   maxTokens: 100000000, warnTokens: 80000000,   
   phase: "",                   
@@ -53,6 +53,15 @@ const AIR = Vue.reactive({
 
   allow: [], full: false, dropHot: false, newPath: "",
 
+  role: "", roleOpen: false, roles: [], strategy: "", strategies: [],
+  cards: [], cardsLoaded: false, cardPickOpen: false, cardQ: "", mounts: [], lastMounts: [],
+  cardIcons: [], cardAccents: [],
+  cardEdit: {open: false, busy: false, err: "", card: null},
+  cardStudio: {open: false, busy: false, input: "", messages: [], card: null,
+               err: "", saving: false, editing: false},
+  promptEditor: {open: false, busy: false, list: [], active: "", text: "",
+                 override: false, path: "", err: "", saving: false},
+
   perm: null,
 
   permHover: false, permPinned: false,
@@ -89,6 +98,16 @@ const AIR = Vue.reactive({
 
   att: null,
 });
+
+const AI_ROLE_FALLBACK = [
+  {id: "creator", name: "创作", icon: "sparkles", desc: "像网页版一样，整篇交付，少轮次"},
+  {id: "engineer", name: "工程", icon: "wrench", desc: "读文件、逐步改、跑验证"},
+];
+const AI_STRATEGY_FALLBACK = [
+  {id: "finish", name: "一次搞完", icon: "rocket", desc: "少问，少回头，直接做到能交付"},
+  {id: "interactive", name: "交互式", icon: "message-square", desc: "关键分叉先问，阶段性对齐"},
+  {id: "handoff", name: "交给你测", icon: "user-check", desc: "少做自动验收，写完告诉用户怎么测"},
+];
 
 const ATTACH_TEXT_MIN = 1000;
 const ATTACH_FILE_MAX = 12 * 1024 * 1024;
@@ -288,6 +307,8 @@ async function aiStartPage(){
   }
   aiLoadRuns();
   aiLoadSkills();
+  aiLoadRoles();
+  aiLoadCards();
   aiPollOnce();
 }
 
@@ -335,6 +356,10 @@ async function aiLoadUiState(){
     if (r && r.ok){
       const c = String(r.palette || "");
       AIR.paletteColor = /^#[0-9a-fA-F]{6}$/.test(c) ? c : "";
+      if (r.role) AIR.role = String(r.role);
+      if (r.strategy) AIR.strategy = String(r.strategy);
+      if (Array.isArray(r.mounts)) AIR.mounts = r.mounts.map(String);
+      if (Array.isArray(r.last_mounts)) AIR.lastMounts = r.last_mounts.map(String);
       AIR.rev++;
     }
   }catch(e){  }
@@ -345,6 +370,54 @@ async function aiSaveUiState(values){
     if (!api || !api.ai_ui_state_set) return null;
     return await api.ai_ui_state_set(values || {});
   }catch(e){ return null; }
+}
+
+async function aiLoadRoles(){
+  try{
+    const api = await aiWaitApi(3000);
+    if (!api || !api.ai_roles) return;
+    const r = await api.ai_roles();
+    if (r && r.ok){
+      AIR.roles = Array.isArray(r.roles) ? r.roles : [];
+      AIR.strategies = Array.isArray(r.strategies) ? r.strategies : [];
+      if (!AIR.roles.length) AIR.roles = AI_ROLE_FALLBACK.slice();
+      if (!AIR.strategies.length) AIR.strategies = AI_STRATEGY_FALLBACK.slice();
+      if (!AIR.role) AIR.role = r.default || (AIR.roles[0] && AIR.roles[0].id) || "creator";
+      if (!AIR.strategy) AIR.strategy = r.default_strategy || (AIR.strategies[0] && AIR.strategies[0].id) || "finish";
+      AIR.rev++;
+    }
+  }catch(e){
+    if (!(AIR.roles || []).length) AirFallbackRoles();
+  }
+}
+
+function AirFallbackRoles(){
+  AIR.roles = AI_ROLE_FALLBACK.slice();
+  AIR.strategies = AI_STRATEGY_FALLBACK.slice();
+  if (!AIR.role) AIR.role = "creator";
+  if (!AIR.strategy) AIR.strategy = "finish";
+  AIR.rev++;
+}
+
+async function aiLoadCards(){
+  try{
+    const api = await aiWaitApi(3000);
+    if (!api || !api.ai_cards_list) return;
+    const r = await api.ai_cards_list();
+    if (r && r.ok){
+      AIR.cards = Array.isArray(r.cards) ? r.cards : [];
+      AIR.cardIcons = Array.isArray(r.icons) ? r.icons : (AIR.cardIcons || []);
+      AIR.cardAccents = Array.isArray(r.accents) ? r.accents : (AIR.cardAccents || []);
+      AIR.cardsLoaded = true;
+      const known = new Set(AIR.cards.map(c => c.id));
+      AIR.mounts = (AIR.mounts || []).filter(id => known.has(id));
+      AIR.rev++;
+    }
+  }catch(e){  }
+}
+
+function aiPersistMountUi(){
+  aiSaveUiState({role: AIR.role || "", strategy: AIR.strategy || "", mounts: (AIR.mounts || []).slice()});
 }
 
 function aiShortBalance(raw){
@@ -1189,9 +1262,14 @@ async function aiStart(opt){
   AIR.snapNoted = "";            
 
   try {
-    const got = await window.pywebview.api.ai_start(task, dir, AIR.maxTokens, cont, AIR.model || "", atts, handoff);
+    const got = await window.pywebview.api.ai_start(task, dir, AIR.maxTokens, cont, AIR.model || "",
+                                                    atts, handoff, AIR.role || "creator",
+                                                    AIR.strategy || "finish",
+                                                    (AIR.mounts || []).slice());
     if (!got || !got.ok) { toast((got && got.msg) || "起不来。", true); AIR.busy = false; return; }
     AIR.running = true;
+    AIR.lastMounts = (AIR.mounts || []).slice();
+    aiSaveUiState({last_mounts: AIR.lastMounts});
 
     AIR.liveRunId = String(got.run_id || "");
     if (AIR.liveRunId) AIR.liveListFor = "";       
@@ -1313,6 +1391,42 @@ const MossAi = {
 
     curStep(){ this.A.rev; return (this.A.steps || []).reduce((m, s) => Math.max(m, s.n || 0), 0); },
     maxTokens(){ this.A.rev; return this.A.maxTokens || 200000; },
+
+    roleCurrent(){
+      this.A.rev;
+      return (this.A.roles || []).find(r => r.id === this.A.role) ||
+             (this.A.roles || [])[0] ||
+             {id: "creator", name: "创作", icon: "sparkles", desc: "整篇交付，少轮次"};
+    },
+    strategyCurrent(){
+      this.A.rev;
+      return (this.A.strategies || []).find(r => r.id === this.A.strategy) ||
+             (this.A.strategies || [])[0] ||
+             {id: "finish", name: "一次搞完", icon: "rocket", desc: ""};
+    },
+    promptActiveTitle(){
+      this.A.rev;
+      const S = this.A.promptEditor || {};
+      const it = (S.list || []).find(x => x.id === S.active);
+      return it ? it.title : (S.active || "提示词");
+    },
+    mountedCards(){
+      this.A.rev;
+      const ids = new Set(this.A.mounts || []);
+      return (this.A.cards || []).filter(c => ids.has(c.id));
+    },
+    mountedTokens(){
+      this.A.rev;
+      return this.mountedCards.reduce((n, c) => n + (Number(c.tokens) || Math.ceil(String(c.body || "").length / 3)), 0);
+    },
+    cardsShown(){
+      this.A.rev;
+      const q = String(this.A.cardQ || "").trim().toLowerCase();
+      const rows = (this.A.cards || []).slice();
+      if (!q) return rows;
+      return rows.filter(c => [c.title, c.body, c.id, (c.tags || []).join(" ")]
+        .join(" ").toLowerCase().indexOf(q) >= 0);
+    },
 
     curTokens(){
       this.A.rev;
@@ -2122,6 +2236,7 @@ const MossAi = {
       if (t === "snap_clean") return "snap";
       if (t === "(思考)") return "think";
       if (["web_search", "web_fetch", "github_api"].indexOf(t) >= 0) return "web";
+      if (t === "(插话)") return "think";
       return "misc";
     },
     toolIcon(t){
@@ -2145,7 +2260,7 @@ const MossAi = {
               edit_file: "file-code", write_file: "file-code", run_moss: "play",
               spec: "book-open", done: "check", snap_clean: "moss-camera",
               web_search: "search", web_fetch: "globe", github_api: "git-branch",
-              "(思考)": "lightbulb"}[t] || "code";
+              "(思考)": "lightbulb", "(插话)": "message-square"}[t] || "code";
     },
     runLine(r){
       const t = (r.started_text || "").slice(11, 19);
@@ -2257,6 +2372,293 @@ const MossAi = {
           if (!r) return;
           await aiAfterTruncate(p, "", false, r.msg);
         }});
+    },
+
+    toggleRolePop(){
+      if (this.A.running) return;
+      AIR.roleOpen = !AIR.roleOpen;
+      if (AIR.roleOpen) AIR.cardPickOpen = false;
+      AIR.rev++;
+    },
+    pickRole(id){
+      id = String(id || "").trim();
+      if (!id) return;
+      AIR.role = id;
+      AIR.roleOpen = false;
+      AIR.rev++;
+      aiPersistMountUi();
+      toast("这次用「" + this.roleCurrent.name + "」跑");
+    },
+    pickStrategy(id){
+      id = String(id || "").trim();
+      if (!id) return;
+      AIR.strategy = id;
+      AIR.rev++;
+      aiPersistMountUi();
+      toast("执行方式：「" + this.strategyCurrent.name + "」");
+    },
+    async openPromptEditor(){
+      AIR.roleOpen = false;
+      const S = AIR.promptEditor;
+      S.open = true;
+      S.busy = true;
+      S.err = "";
+      AIR.rev++;
+      try{
+        const api = await aiWaitApi();
+        if (!api || !api.ai_prompts) throw new Error("宿主桥没连上");
+        const r = await api.ai_prompts();
+        if (!r || !r.ok) throw new Error((r && r.msg) || "读不到提示词");
+        S.list = Array.isArray(r.prompts) ? r.prompts : [];
+        let id = "roles/" + (AIR.role || "creator");
+        if (!S.list.some(x => x.id === id)) id = (S.list[0] && S.list[0].id) || "";
+        await this.promptPick(id);
+      }catch(e){
+        S.err = "读提示词失败：" + ((e && e.message) || e);
+        S.busy = false;
+        AIR.rev++;
+      }
+    },
+    closePromptEditor(){
+      if (AIR.promptEditor.saving) return;
+      AIR.promptEditor.open = false;
+      AIR.rev++;
+    },
+    async promptPick(id){
+      id = String(id || "").trim();
+      if (!id) return;
+      const S = AIR.promptEditor;
+      S.active = id;
+      S.busy = true;
+      S.err = "";
+      AIR.rev++;
+      try{
+        const api = await aiWaitApi();
+        const r = await api.ai_prompt_read(id);
+        if (!r || !r.ok) throw new Error((r && r.msg) || "读不到这份提示词");
+        S.text = r.content || "";
+        S.override = !!r.override;
+        S.path = r.path || "";
+      }catch(e){
+        S.err = "读提示词失败：" + ((e && e.message) || e);
+      }finally{
+        S.busy = false;
+        AIR.rev++;
+      }
+    },
+    async promptSave(){
+      const S = AIR.promptEditor;
+      if (S.busy || S.saving) return;
+      S.saving = true;
+      S.err = "";
+      AIR.rev++;
+      try{
+        const api = await aiWaitApi();
+        const r = await api.ai_prompt_save(S.active, S.text);
+        if (!r || !r.ok) throw new Error((r && r.msg) || "保存失败");
+        S.override = true;
+        S.path = r.path || S.path;
+        toast("提示词已保存到个人覆盖层");
+        const all = await api.ai_prompts();
+        if (all && all.ok) S.list = all.prompts || S.list;
+        await aiLoadRoles();
+      }catch(e){
+        S.err = "保存失败：" + ((e && e.message) || e);
+      }finally{
+        S.saving = false;
+        AIR.rev++;
+      }
+    },
+    async promptReset(){
+      const S = AIR.promptEditor;
+      if (!S.active || S.busy || S.saving) return;
+      askConfirm("恢复系统默认？",
+        "会删掉你在 <b>user_data/ai/prompts</b> 里的这份覆盖，恢复成 moss 自带的版本。",
+        async () => {
+          S.saving = true;
+          S.err = "";
+          AIR.rev++;
+          try{
+            const api = await aiWaitApi();
+            const r = await api.ai_prompt_reset(S.active);
+            if (!r || !r.ok) throw new Error((r && r.msg) || "恢复失败");
+            await this.promptPick(S.active);
+            const all = await api.ai_prompts();
+            if (all && all.ok) S.list = all.prompts || S.list;
+            await aiLoadRoles();
+            toast("已恢复系统默认");
+          }catch(e){
+            S.err = "恢复失败：" + ((e && e.message) || e);
+          }finally{
+            S.saving = false;
+            AIR.rev++;
+          }
+        });
+    },
+    toggleCardsOpen(){
+      AIR.cardPickOpen = !AIR.cardPickOpen;
+      if (AIR.cardPickOpen){
+        AIR.roleOpen = false;
+        AIR.cardQ = "";
+        if (!AIR.cardsLoaded) aiLoadCards();
+      }
+      AIR.rev++;
+    },
+    cardToggle(id){
+      id = String(id || "").trim();
+      if (!id) return;
+      const rows = (AIR.mounts || []).slice();
+      const i = rows.indexOf(id);
+      if (i >= 0) rows.splice(i, 1); else rows.push(id);
+      AIR.mounts = rows;
+      AIR.rev++;
+      aiPersistMountUi();
+    },
+    openCardEdit(c){
+      AIR.cardPickOpen = false;
+      const base = c && c.id ? JSON.parse(JSON.stringify(c)) : {
+        id: "", title: "", body: "", icon: "sparkles", tags: [], accent: "#7C3AED",
+      };
+      if (!Array.isArray(base.tags)) base.tags = [];
+      if (!base.icon) base.icon = "sparkles";
+      if (!base.accent) base.accent = "#7C3AED";
+      AIR.cardEdit = {open: true, busy: false, err: "", card: base};
+      AIR.rev++;
+    },
+    closeCardEdit(){
+      if (AIR.cardEdit.busy) return;
+      AIR.cardEdit.open = false;
+      AIR.rev++;
+    },
+    cardEditTags(e){
+      const txt = String((e && e.target && e.target.value) || "");
+      AIR.cardEdit.card.tags = txt.split(/[,，、|]+/).map(x => x.trim()).filter(Boolean).slice(0, 8);
+      AIR.rev++;
+    },
+    cardEditIcon(ic){
+      AIR.cardEdit.card.icon = String(ic || "sparkles");
+      AIR.rev++;
+    },
+    cardEditAccent(col){
+      AIR.cardEdit.card.accent = String(col || "#7C3AED");
+      AIR.rev++;
+    },
+    async cardEditSave(){
+      const S = AIR.cardEdit;
+      const c = S && S.card;
+      if (!c || S.busy) return;
+      if (!String(c.title || "").trim() || !String(c.body || "").trim()){
+        S.err = "标题和正文都要有";
+        AIR.rev++;
+        return;
+      }
+      S.busy = true;
+      S.err = "";
+      AIR.rev++;
+      try{
+        const api = await aiWaitApi();
+        const r = await api.ai_card_save(c);
+        if (!r || !r.ok) throw new Error((r && r.msg) || "保存失败");
+        await aiLoadCards();
+        toast("经验卡已保存：" + (r.card.title || r.card.id));
+        S.open = false;
+      }catch(e){
+        S.err = "保存失败：" + ((e && e.message) || e);
+      }finally{
+        S.busy = false;
+        AIR.rev++;
+      }
+    },
+    cardDelete(c){
+      if (!c || !c.id) return;
+      askConfirm("删掉这张经验卡？",
+        "「<b>" + esc(c.title || c.id) + "</b>」会从卡片库消失；" +
+        "已经跑过的会话不受影响。",
+        async () => {
+          try{
+            const api = await aiWaitApi();
+            const r = await api.ai_card_delete(c.id);
+            if (!r || !r.ok){ toast((r && r.msg) || "没删掉", true); return; }
+            AIR.mounts = (AIR.mounts || []).filter(x => x !== c.id);
+            await aiLoadCards();
+            aiPersistMountUi();
+            toast("经验卡已删：" + (c.title || c.id));
+          }catch(e){ toast("删卡失败：" + ((e && e.message) || e), true); }
+        });
+    },
+    openCardStudio(c){
+      const cur = (c && c.id) ? c : null;
+      AIR.cardPickOpen = false;
+      AIR.cardStudio = {
+        open: true, busy: false, input: "",
+        messages: cur ? [{role: "assistant", content: "正在编辑「" + (cur.title || cur.id) + "」，告诉我要改哪一条。"}] : [],
+        card: cur ? JSON.parse(JSON.stringify(cur)) : null,
+        err: "", saving: false, editing: !!cur,
+      };
+      AIR.rev++;
+    },
+    closeCardStudio(){
+      if (AIR.cardStudio.busy) return;
+      AIR.cardStudio.open = false;
+      AIR.rev++;
+    },
+    async cardStudioSend(){
+      const S = AIR.cardStudio;
+      const text = String(S.input || "").trim();
+      if (!text || S.busy) return;
+      const history = (S.messages || []).slice();
+      S.messages.push({role: "user", content: text});
+      S.input = "";
+      S.busy = true;
+      S.err = "";
+      AIR.rev++;
+      try{
+        const api = await aiWaitApi();
+        if (!api || !api.ai_card_studio) throw new Error("宿主桥没连上");
+        const r = await api.ai_card_studio(history, text, S.card);
+        if (!r || !r.ok){
+          S.err = (r && r.msg) || "没整理出来";
+          if (r && r.raw) S.err += "\n" + String(r.raw).slice(0, 260);
+        }else{
+          if (r.card) S.card = r.card;
+          S.messages.push({role: "assistant", content: r.reply || "改好了"});
+        }
+      }catch(e){
+        S.err = "整理失败：" + ((e && e.message) || e);
+      }finally{
+        S.busy = false;
+        AIR.rev++;
+      }
+    },
+    async cardStudioSave(){
+      const S = AIR.cardStudio;
+      if (!S.card || S.busy || S.saving) return;
+      S.saving = true;
+      S.err = "";
+      AIR.rev++;
+      try{
+        const api = await aiWaitApi();
+        const r = await api.ai_card_save(S.card);
+        if (!r || !r.ok){ S.err = (r && r.msg) || "保存失败"; return; }
+        S.card = r.card;
+        await aiLoadCards();
+        AIR.mounts = (AIR.mounts || []).slice();
+        if (AIR.mounts.indexOf(r.card.id) < 0) AIR.mounts.push(r.card.id);
+        aiPersistMountUi();
+        toast("经验卡已入库：" + (r.card.title || r.card.id));
+        S.open = false;
+      }catch(e){
+        S.err = "保存失败：" + ((e && e.message) || e);
+      }finally{
+        S.saving = false;
+        AIR.rev++;
+      }
+    },
+    cardStudioKey(e){
+      if (e.key === "Enter" && !e.shiftKey){
+        e.preventDefault();
+        this.cardStudioSend();
+      }
     },
 
     start(){
@@ -2375,7 +2777,7 @@ const MossAi = {
                   write_file: "写文件", run_moss: "跑一遍", spec: "查契约", done: "收尾",
                   snap_clean: "清快照", ask: "问了你一句", allow_path: "请求放行目录",
                   web_search: "搜网页", web_fetch: "抓网页", github_api: "访问 GitHub",
-                  "(思考)": "思考过程"};
+                  "(思考)": "思考过程", "(插话)": "你插了一句"};
       const name = (s && s.tool) || "";
       if (zh[name]) return zh[name];
 
@@ -2446,7 +2848,26 @@ const MossAi = {
     onKey(e){
       if (e.key === "Enter" && !e.shiftKey){
         e.preventDefault();
-        this.start();
+        if (AIR.running) this.inject(); else this.start();
+      }
+    },
+    async inject(){
+      const text = String(AIR.task || "").trim();
+      if (!text || AIR.injecting) return;
+      AIR.injecting = true;
+      AIR.rev++;
+      try{
+        const api = await aiWaitApi();
+        const r = await api.ai_inject(text);
+        if (!r || !r.ok){ toast((r && r.msg) || "插话没送进去", true); return; }
+        AIR.task = "";
+        this.$nextTick(() => { this.autoGrow(); try{ this.$refs.ta && this.$refs.ta.focus(); }catch(e){} });
+        toast(r.msg || "已插话：下一轮生效");
+      }catch(e){
+        toast("插话失败：" + ((e && e.message) || e), true);
+      }finally{
+        AIR.injecting = false;
+        AIR.rev++;
       }
     },
     attachmentIcon(a){
@@ -2712,6 +3133,8 @@ const MossAi = {
       if (AIR.permPop && !(t && t.closest && t.closest(".ai-perm-wrap"))) AIR.permPop = false;
 
       if (AIR.modelOpen && !(t && t.closest && t.closest(".ai-model-pick"))) AIR.modelOpen = false;
+      if (AIR.roleOpen && !(t && t.closest && t.closest(".ai-role-pick"))) AIR.roleOpen = false;
+      if (AIR.cardPickOpen && !(t && t.closest && t.closest(".ai-cards-pick"))) AIR.cardPickOpen = false;
 
       if (AIR.paletteOpen && !(t && t.closest && t.closest(".ai-palette-wrap"))) AIR.paletteOpen = false;
       if (!AIR.altOn) return;
@@ -3215,32 +3638,7 @@ const MossAi = {
                   <p class="ai-palette-note">只在它工作的时候出现；停下来就回到平常的白色背景。</p>
                 </div>
               </div>
-        </div>
-      </div>
-          <div class="ai-atts" v-if="A.attachments.length">
-            <div class="ai-at" v-for="(a, i) in A.attachments" :key="a.key"
-                 :class="{img: attachmentIcon(a) === 'file-image'}">
-              <span class="ai-at-ic" v-html='ico(attachmentIcon(a), "i")'></span>
-              <span class="ai-at-n" :title="a.path || a.name">{{ a.name }}</span>
-              <span class="ai-at-s" v-if="a.size">{{ attachmentSize(a) }}</span>
-              <button class="ai-at-act" type="button" v-if="a.kind === 'text'"
-                      @click="openAtt(a)" title="看这段原文（可复制全文 / 另存为）">查看</button>
-              <button class="ai-at-act" type="button" v-if="a.kind === 'text' && a.source === 'paste'"
-                      @click="pasteAsText(a)" title="把这段原文放回输入框，按普通粘贴发出去">粘贴原文至输入框</button>
-              <button class="ai-at-x" type="button" @click="removeAttachment(i)" title="移除附件"
-                      v-html='ico("x", "i")'></button>
-            </div>
-          </div>
-          <div class="input-area">
-            <textarea class="prompt-textarea ai-task" ref="ta" v-model="A.task" spellcheck="false"
-              :disabled="A.running" @input="autoGrow" @focus="focused = true" @blur="focused = false"
-              @keydown="onKey" @paste="onPaste"
-              placeholder="在此输入指令... (按 Enter 发送，Shift+Enter 换行)"></textarea>
-          </div>
-
-          <div class="toolbar ai-input-toolbar">
-            <div class="toolbar-left ai-input-tools">
-              <div class="popover-wrapper ai-model-pick">
+                            <div class="popover-wrapper ai-model-pick">
                 <button type="button" class="ai-model-btn" :class="{active: A.modelOpen}"
                         :disabled="A.running || !models.length" @click.stop="toggleModelOpen()"
                         :title="'这次用哪个模型。当前「' + currentProvider + '」，'
@@ -3280,7 +3678,148 @@ const MossAi = {
                   </div>
                 </div>
               </div>
-              
+        </div>
+      </div>
+          <div class="ai-atts" v-if="A.attachments.length">
+            <div class="ai-at" v-for="(a, i) in A.attachments" :key="a.key"
+                 :class="{img: attachmentIcon(a) === 'file-image'}">
+              <span class="ai-at-ic" v-html='ico(attachmentIcon(a), "i")'></span>
+              <span class="ai-at-n" :title="a.path || a.name">{{ a.name }}</span>
+              <span class="ai-at-s" v-if="a.size">{{ attachmentSize(a) }}</span>
+              <button class="ai-at-act" type="button" v-if="a.kind === 'text'"
+                      @click="openAtt(a)" title="看这段原文（可复制全文 / 另存为）">查看</button>
+              <button class="ai-at-act" type="button" v-if="a.kind === 'text' && a.source === 'paste'"
+                      @click="pasteAsText(a)" title="把这段原文放回输入框，按普通粘贴发出去">粘贴原文至输入框</button>
+              <button class="ai-at-x" type="button" @click="removeAttachment(i)" title="移除附件"
+                      v-html='ico("x", "i")'></button>
+            </div>
+          </div>
+          <div class="ai-mounts" v-if="mountedCards.length">
+            <span class="ai-mount-label">已挂载 · ≈{{ mountedTokens }} token</span>
+            <button type="button" class="ai-mount-chip" v-for="c in mountedCards" :key="c.id"
+                    :style="{'--card-accent': c.accent || '#7C3AED'}"
+                    @click="cardToggle(c.id)" :title="'点一下卸下：' + (c.title || c.id)">
+              <span class="ai-mount-ic" v-html='ico(c.icon || "sparkles", "i")'></span>
+              <span class="ai-mount-t">{{ c.title }}</span>
+              <span class="ai-mount-x" v-html='ico("x", "i")'></span>
+            </button>
+          </div>
+          <div class="input-area">
+            <textarea class="prompt-textarea ai-task" ref="ta" v-model="A.task" spellcheck="false"
+              @input="autoGrow" @focus="focused = true" @blur="focused = false"
+              @keydown="onKey" @paste="onPaste"
+              :placeholder="A.running ? 'AI 正在跑。写一句纠偏，按 Enter 插话（下一轮生效）' : '在此输入指令... (按 Enter 发送，Shift+Enter 换行)'"></textarea>
+          </div>
+
+          <div class="toolbar ai-input-toolbar">
+            <div class="toolbar-left ai-input-tools">
+              <div class="popover-wrapper ai-role-pick">
+                <button type="button" class="trigger-btn ai-role-btn ai-txtbtn"
+                        :class="{active: A.roleOpen}" :disabled="A.running"
+                        @click.stop="toggleRolePop()"
+                        :title="'角色：' + roleCurrent.name + ' · 执行方式：' + strategyCurrent.name">
+                  <span v-html='ico(roleCurrent.icon || "sparkles", "i")'></span>
+                  <span class="ai-btn-txt">{{ roleCurrent.name }} · {{ strategyCurrent.name }}</span>
+                  <span class="ai-role-cv" v-html='ico("chevron-down", "i")'></span>
+                </button>
+                <div class="popover-panel ai-role-pop" :class="{show: A.roleOpen}"
+                     v-if="A.roleOpen" @click.stop>
+                  <div class="popover-title">
+                    <span>角色与执行方式</span>
+                    <button type="button" class="ai-prompt-edit-btn" @click="openPromptEditor()"
+                            title="查看 / 编辑系统提示词、角色和执行方式">
+                      <span v-html='ico("file-pen", "i")'></span><span>提示词</span>
+                    </button>
+                  </div>
+                  <div class="ai-role-sec">工作角色</div>
+                  <div class="ai-role-list">
+                    <button type="button" class="ai-role-it"
+                            v-for="r in A.roles" :key="r.id"
+                            :class="{on: r.id === A.role}"
+                            @click="pickRole(r.id)">
+                      <span class="ai-role-ic" v-html='ico(r.icon || "sparkles", "i")'></span>
+                      <span class="ai-role-info">
+                        <b>{{ r.name }}</b>
+                        <small>{{ r.desc }}</small>
+                      </span>
+                      <span class="ai-role-tick" v-if="r.id === A.role" v-html='ico("check", "i")'></span>
+                    </button>
+                  </div>
+                  <div class="ai-role-sec">执行方式</div>
+                  <div class="ai-role-list">
+                    <button type="button" class="ai-role-it"
+                            v-for="r in A.strategies" :key="r.id"
+                            :class="{on: r.id === A.strategy}"
+                            @click="pickStrategy(r.id)">
+                      <span class="ai-role-ic" v-html='ico(r.icon || "gauge", "i")'></span>
+                      <span class="ai-role-info">
+                        <b>{{ r.name }}</b>
+                        <small>{{ r.desc }}</small>
+                      </span>
+                      <span class="ai-role-tick" v-if="r.id === A.strategy" v-html='ico("check", "i")'></span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="popover-wrapper ai-cards-pick">
+                <button type="button" class="trigger-btn ai-cards-btn ai-txtbtn"
+                        :class="{active: A.cardPickOpen || mountedCards.length}"
+                        :disabled="A.running" @click.stop="toggleCardsOpen()"
+                        title="挂载经验卡到这次对话的初始上下文">
+                  <span v-html='ico("layers", "i")'></span>
+                  <span class="ai-btn-txt">经验卡</span>
+                  <span class="badge" v-if="mountedCards.length">{{ mountedCards.length }}</span>
+                </button>
+                <div class="popover-panel ai-cards-pop" :class="{show: A.cardPickOpen}"
+                     v-if="A.cardPickOpen" @click.stop>
+                  <div class="popover-title">
+                    <span>经验卡 <span class="popover-hint">已挂载 {{ mountedCards.length }} 张 · ≈{{ mountedTokens }} token</span></span>
+                    <span class="ai-cards-new-wrap">
+                      <button type="button" class="ai-cards-new ghost" @click="openCardEdit(null)"
+                              title="手动新建一张经验卡">
+                        <span v-html='ico("pencil", "i")'></span>
+                      </button>
+                      <button type="button" class="ai-cards-new" @click="openCardStudio()"
+                              title="让 AI 帮你整理一张新经验卡">
+                        <span v-html='ico("moss-plus", "i")'></span>
+                      </button>
+                    </span>
+                  </div>
+                  <label class="ai-cards-search">
+                    <span v-html='ico("search", "i")'></span>
+                    <input v-model="A.cardQ" spellcheck="false" autocomplete="off"
+                           placeholder="搜标题 / 正文 / 标签">
+                  </label>
+                  <div class="ai-cards-grid" v-if="cardsShown.length">
+                    <div class="ai-card" v-for="c in cardsShown" :key="c.id"
+                         :class="{on: (A.mounts || []).indexOf(c.id) >= 0}"
+                         :style="{'--card-accent': c.accent || '#7C3AED'}"
+                         @click="cardToggle(c.id)"
+                         :title="c.body">
+                      <span class="ai-card-corner l" v-html='ico(c.icon || "sparkles", "i")'></span>
+                      <span class="ai-card-corner r" v-html='ico(c.icon || "sparkles", "i")'></span>
+                      <span class="ai-card-orb" v-html='ico(c.icon || "sparkles", "i")'></span>
+                      <span class="ai-card-title">{{ c.title }}</span>
+                      <span class="ai-card-tags">{{ (c.tags || []).slice(0,3).join(" · ") }}</span>
+                      <span class="ai-card-check" v-if="(A.mounts || []).indexOf(c.id) >= 0">✓</span>
+                      <span class="ai-card-last"
+                            v-if="(A.lastMounts || []).indexOf(c.id) >= 0 && (A.mounts || []).indexOf(c.id) < 0">上次用过</span>
+                      <button type="button" class="ai-card-edit" @click.stop="openCardEdit(c)"
+                              title="手动编辑这张卡" v-html='ico("pencil", "i")'></button>
+                      <button type="button" class="ai-card-ai" @click.stop="openCardStudio(c)"
+                              title="让 AI 改这张卡" v-html='ico("sparkles", "i")'></button>
+                      <button type="button" class="ai-card-del" @click.stop="cardDelete(c)"
+                              title="删掉这张卡" v-html='ico("trash-2", "i")'></button>
+                    </div>
+                  </div>
+                  <div class="ai-cards-empty" v-else>
+                    <span v-html='ico("layers", "i")'></span>
+                    <b>{{ A.cardQ ? "没搜到" : "还没有经验卡" }}</b>
+                    <small>{{ A.cardQ ? "换个关键词试试" : "点右上角 + 让 AI 帮你整理第一张" }}</small>
+                  </div>
+                </div>
+              </div>
 
               <div class="popover-wrapper ai-perm-wrap ai-perm" :class="{folded: !A.permPop}">
                 <button ref="permBtn" class="trigger-btn ai-perm-fold"
@@ -3438,6 +3977,13 @@ const MossAi = {
             </div>
 
             
+            <button type="button" class="ai-inject-btn" v-if="A.running"
+                    :disabled="A.injecting || !A.task.trim()"
+                    @click="inject()"
+                    :title="A.task.trim() ? '插话：下一轮生效' : '先在输入框写一句纠偏'">
+              <span v-html='ico("message-square", "i")'></span>
+              <span>{{ A.injecting ? "发送中…" : "插话" }}</span>
+            </button>
             <button type="button" class="ai-send-circle"
                     :disabled="!A.running && (A.busy || !ready)"
                     @click="A.running ? stop() : start()"
@@ -3638,6 +4184,188 @@ const MossAi = {
     </div>
 
     
+
+      <div class="ai-modal-overlay ai-cardedit-overlay" v-if="A.cardEdit.open"
+           @click.self="closeCardEdit()">
+        <div class="ai-cardedit">
+          <div class="ai-cardedit-head">
+            <div>
+              <b>{{ A.cardEdit.card && A.cardEdit.card.id ? "编辑经验卡" : "新建经验卡" }}</b>
+              <span>直接改标题、图标、标签、配色和正文；保存后立即出现在卡片库</span>
+            </div>
+            <button type="button" class="ai-modal-close" @click="closeCardEdit()">&times;</button>
+          </div>
+          <div class="ai-cardedit-body">
+            <div class="ai-cardedit-form">
+              <label class="ai-cardedit-field">
+                <span>标题</span>
+                <input v-model="A.cardEdit.card.title" maxlength="80" placeholder="给这张卡起个短标题">
+              </label>
+              <label class="ai-cardedit-field">
+                <span>标签</span>
+                <input :value="(A.cardEdit.card.tags || []).join('、')" @input="cardEditTags($event)"
+                       placeholder="用逗号或顿号分隔，最多 8 个">
+              </label>
+              <div class="ai-cardedit-field">
+                <span>图标</span>
+                <div class="ai-cardedit-icons">
+                  <button type="button" v-for="ic in A.cardIcons" :key="ic"
+                          class="ai-cardedit-ic" :class="{on: A.cardEdit.card.icon === ic}"
+                          @click="cardEditIcon(ic)" :title="ic"
+                          v-html='ico(ic, "i")'></button>
+                </div>
+              </div>
+              <div class="ai-cardedit-field">
+                <span>配色</span>
+                <div class="ai-cardedit-colors">
+                  <button type="button" v-for="col in A.cardAccents" :key="col"
+                          class="ai-cardedit-color" :class="{on: A.cardEdit.card.accent === col}"
+                          :style="{background: col}" @click="cardEditAccent(col)" :title="col"></button>
+                  <label class="ai-cardedit-custom" title="自定义颜色">
+                    <input type="color" :value="A.cardEdit.card.accent || '#7C3AED'"
+                           @change="cardEditAccent($event.target.value)">
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="ai-cardedit-main">
+              <label class="ai-cardedit-field ai-cardedit-bodyfield">
+                <span>正文（这是 AI 真正会看到的内容）</span>
+                <textarea v-model="A.cardEdit.card.body" spellcheck="false"
+                          placeholder="写清：什么时候用、怎么做、别做什么。"></textarea>
+              </label>
+              <div class="ai-cardedit-preview">
+                <div class="ai-card big" v-if="A.cardEdit.card"
+                     :style="{'--card-accent': A.cardEdit.card.accent || '#7C3AED'}">
+                  <span class="ai-card-corner l" v-html='ico(A.cardEdit.card.icon || "sparkles", "i")'></span>
+                  <span class="ai-card-corner r" v-html='ico(A.cardEdit.card.icon || "sparkles", "i")'></span>
+                  <span class="ai-card-orb" v-html='ico(A.cardEdit.card.icon || "sparkles", "i")'></span>
+                  <span class="ai-card-title">{{ A.cardEdit.card.title || "未命名经验卡" }}</span>
+                  <span class="ai-card-body">{{ A.cardEdit.card.body || "正文预览" }}</span>
+                  <span class="ai-card-tags">{{ (A.cardEdit.card.tags || []).slice(0,3).join(" · ") }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="ai-cardedit-foot">
+            <p class="ai-cardedit-err" v-if="A.cardEdit.err">{{ A.cardEdit.err }}</p>
+            <span style="flex:1"></span>
+            <button type="button" class="ai-prompt-btn" @click="closeCardEdit()"
+                    :disabled="A.cardEdit.busy">取消</button>
+            <button type="button" class="ai-prompt-btn primary" @click="cardEditSave()"
+                    :disabled="A.cardEdit.busy">{{ A.cardEdit.busy ? "保存中…" : "保存" }}</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="ai-modal-overlay ai-prompt-overlay" v-if="A.promptEditor.open"
+           @click.self="closePromptEditor()">
+        <div class="ai-prompt-editor">
+          <div class="ai-prompt-editor-head">
+            <div>
+              <b>提示词</b>
+              <span>在这里看系统提示词、角色和执行方式；保存会写到个人覆盖层，不动系统文件</span>
+            </div>
+            <button type="button" class="ai-modal-close" @click="closePromptEditor()">&times;</button>
+          </div>
+          <div class="ai-prompt-editor-body">
+            <aside class="ai-prompt-list">
+              <button type="button" class="ai-prompt-it"
+                      v-for="p in A.promptEditor.list" :key="p.id"
+                      :class="{on: p.id === A.promptEditor.active}"
+                      @click="promptPick(p.id)">
+                <span class="ai-prompt-it-name">{{ p.title }}</span>
+                <span class="ai-prompt-it-meta">
+                  {{ p.overridden ? "用户覆盖" : "系统默认" }} · {{ p.chars }} 字
+                </span>
+              </button>
+            </aside>
+            <div class="ai-prompt-edit">
+              <div class="ai-prompt-edit-head">
+                <b>{{ promptActiveTitle }}</b>
+                <span class="ai-prompt-badge" :class="{own: A.promptEditor.override}">
+                  {{ A.promptEditor.override ? "用户覆盖" : "系统默认" }}
+                </span>
+              </div>
+              <div class="ai-prompt-path" :title="A.promptEditor.path">{{ A.promptEditor.path }}</div>
+              <textarea class="ai-prompt-text" v-model="A.promptEditor.text"
+                        spellcheck="false" :disabled="A.promptEditor.busy"></textarea>
+              <p class="ai-prompt-err" v-if="A.promptEditor.err">{{ A.promptEditor.err }}</p>
+              <div class="ai-prompt-actions">
+                <button type="button" class="ai-prompt-btn"
+                        :disabled="A.promptEditor.busy || A.promptEditor.saving || !A.promptEditor.override"
+                        @click="promptReset()">恢复默认</button>
+                <button type="button" class="ai-prompt-btn primary"
+                        :disabled="A.promptEditor.busy || A.promptEditor.saving || !A.promptEditor.text.trim()"
+                        @click="promptSave()">{{ A.promptEditor.saving ? "保存中…" : "保存" }}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ai-modal-overlay ai-cardstudio-overlay" v-if="A.cardStudio.open"
+           @click.self="closeCardStudio()">
+        <div class="ai-cardstudio">
+          <div class="ai-cardstudio-head">
+            <div>
+              <b>{{ A.cardStudio.editing ? "编辑经验卡" : "整理经验卡" }}</b>
+              <span>这段对话只在卡片工坊里，不会进入主会话</span>
+            </div>
+            <button type="button" class="ai-modal-close" @click="closeCardStudio()"
+                    :disabled="A.cardStudio.busy">&times;</button>
+          </div>
+          <div class="ai-cardstudio-body">
+            <div class="ai-cardstudio-chat">
+              <div class="ai-cs-msg" v-for="(m, i) in A.cardStudio.messages" :key="i"
+                   :class="{me: m.role === 'user'}">
+                <span class="ai-cs-who">{{ m.role === 'user' ? '你' : 'AI' }}</span>
+                <div class="ai-cs-text">{{ m.content }}</div>
+              </div>
+              <div class="ai-cs-empty" v-if="!A.cardStudio.messages.length">
+                <span v-html='ico("layers", "i")'></span>
+                <b>把一条经验交给它</b>
+                <small>例如：以后做 Canvas 小游戏，先整篇写一版，不要连续截图微调；功能通过就收。</small>
+              </div>
+              <div class="ai-cs-thinking" v-if="A.cardStudio.busy">
+                <span class="ai-cs-dot"></span><span class="ai-cs-dot"></span><span class="ai-cs-dot"></span>
+                正在整理成卡片…
+              </div>
+              <p class="ai-cs-err" v-if="A.cardStudio.err">{{ A.cardStudio.err }}</p>
+            </div>
+            <aside class="ai-cardstudio-preview">
+              <div class="ai-cardstudio-preview-h">预览</div>
+              <div class="ai-card big" v-if="A.cardStudio.card"
+                   :style="{'--card-accent': A.cardStudio.card.accent || '#7C3AED'}">
+                <span class="ai-card-corner l" v-html='ico(A.cardStudio.card.icon || "sparkles", "i")'></span>
+                <span class="ai-card-corner r" v-html='ico(A.cardStudio.card.icon || "sparkles", "i")'></span>
+                <span class="ai-card-orb" v-html='ico(A.cardStudio.card.icon || "sparkles", "i")'></span>
+                <span class="ai-card-title">{{ A.cardStudio.card.title }}</span>
+                <span class="ai-card-body">{{ A.cardStudio.card.body }}</span>
+                <span class="ai-card-tags">{{ (A.cardStudio.card.tags || []).slice(0,3).join(" · ") }}</span>
+              </div>
+              <div class="ai-cs-preview-empty" v-else>
+                <span v-html='ico("sparkles", "i")'></span>
+                先跟它说一句，卡片会出现在这里
+              </div>
+              <button type="button" class="ai-cs-save"
+                      :disabled="!A.cardStudio.card || A.cardStudio.busy || A.cardStudio.saving"
+                      @click="cardStudioSave()">
+                {{ A.cardStudio.saving ? "保存中…" : "保存到经验卡" }}
+              </button>
+            </aside>
+          </div>
+          <div class="ai-cs-input">
+            <textarea v-model="A.cardStudio.input" spellcheck="false"
+                      :disabled="A.cardStudio.busy"
+                      placeholder="告诉它要整理什么，或者继续改：例如「再加一条：先验证一次就收」"
+                      @keydown="cardStudioKey($event)"></textarea>
+            <button type="button" class="ai-cs-send"
+                    :disabled="A.cardStudio.busy || !A.cardStudio.input.trim()"
+                    @click="cardStudioSend()" v-html='ico("arrow-up", "i")'></button>
+          </div>
+        </div>
+      </div>
 
     <div class="ai-jump" v-if="A.altOn && A.turns.length"
          @mouseenter="this._overJump = true" @mouseleave="this._overJump = false">

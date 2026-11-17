@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -79,7 +80,7 @@ def _step_disp(name, args):
     except (TypeError, ValueError):
         return str(a)[:DISP_MAX]
 
-def compose_system(task, extra=(), self_tools=None, workdir=""):
+def compose_system(task, extra=(), self_tools=None, workdir="", role="", strategy="", mounts=None):
     names = list(BASE_PROMPTS)
     parts, used, missing = [], [], []
     for n in dict.fromkeys(names):
@@ -96,6 +97,39 @@ def compose_system(task, extra=(), self_tools=None, workdir=""):
             continue
         used.append("技能 %s ← %s" % (n, got["path"]))
         parts.append(got["body"])
+    role = str(role or "").strip()
+    if role:
+        try:
+            import ai_roles as R
+            rb = R.body(role)
+            if rb:
+                parts.append(rb)
+                used.append("角色 %s" % role)
+            else:
+                missing.append("角色:" + role)
+        except Exception:
+            missing.append("角色:" + role)
+    strategy = str(strategy or "").strip()
+    if strategy:
+        try:
+            import ai_roles as R
+            sb = R.strategy_body(strategy)
+            if sb:
+                parts.append(sb)
+                used.append("策略 %s" % strategy)
+            else:
+                missing.append("策略:" + strategy)
+        except Exception:
+            missing.append("策略:" + strategy)
+    try:
+        import ai_cards as CARDS
+        mt, mounted = CARDS.mount_block(mounts)
+        if mt:
+            parts.append(mt)
+            used.append("经验卡（%d 张：%s）" %
+                        (len(mounted), "、".join(c.get("id") or "" for c in mounted)))
+    except Exception:
+        pass
     note = K.note()
     if note:
         parts.append(note)
@@ -213,9 +247,14 @@ class Loop:
                  compact_at=102400, retain_tokens=20480, stop_check=None,
                  soft_steps=0, max_tokens=100000000, on_phase=None, on_snapshot=None,
                  asker=None, mode_fn=None, on_journal=None, run_id="", tmp_dir=None,
-                 perm_gate=None, on_stream=None):
+                 perm_gate=None, on_stream=None, role="", strategy="", mounts=None):
         self.client = client
         self.on_stream = on_stream
+        self.role = str(role or "")
+        self.strategy = str(strategy or "")
+        self.mounts = [str(x) for x in (mounts or [])]
+        self._inject_q = []
+        self._inject_lock = threading.Lock()
         self._st_c, self._st_r = [], []
         self._st_cn, self._st_rn = 0, 0
         self._st_at = 0.0
@@ -268,6 +307,20 @@ class Loop:
         self.folded = 0
         self.messages = []
         self.continued_from = ""
+
+    def inject(self, text):
+        text = str(text or "").strip()
+        if not text:
+            return False
+        with self._inject_lock:
+            self._inject_q.append(text)
+        return True
+
+    def _drain_injects(self):
+        with self._inject_lock:
+            got = list(self._inject_q)
+            self._inject_q[:] = []
+        return got
 
     def _compact(self, messages):
         if len(messages) <= self.compact_after:
@@ -538,7 +591,9 @@ class Loop:
     def _run(self, task, extra_fragments=(), snapshot=True, history=None, from_id="",
              attachments=None, handoff=""):
         sys_text, used, missing = compose_system(task, extra_fragments, self.self_tools,
-                                                  workdir=str(self.tools.workdir))
+                                                  workdir=str(self.tools.workdir),
+                                                  role=self.role, strategy=self.strategy,
+                                                  mounts=self.mounts)
         self.task = str(task or "")
         self.want_snapshot = bool(snapshot)
         old = [m for m in (history or []) if str(m.get("role")) != "system"]
@@ -598,6 +653,14 @@ class Loop:
                                  % (n - 1,
                                     ("（这次任务的硬顶是 %d 步）" % self.max_steps)
                                     if self.max_steps else "")})
+            injects = self._drain_injects()
+            if injects:
+                self._step(n, "(插话)", "用户插话 / 纠偏", "下一轮生效",
+                           out="\n".join(injects))
+                messages.append({"role": "user", "content":
+                    "【用户在你干活时插话 / 纠偏】\n" + "\n\n".join(injects) +
+                    "\n请把这条当作新的、优先级更高的用户指令；如果它和刚才正在做的路线冲突，"
+                    "按这条调整，不要继续沿错误方向硬做。"})
             folded = self._compact(messages)
             if folded:
                 self.folded += folded

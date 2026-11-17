@@ -462,7 +462,7 @@ class Tools:
         bad = E.check_readable(p, scope=self.workdir)
         if bad:
             return bad
-        got, err = E.read_text(p, args.get("offset") or 1, limit)
+        got, err = E.read_text(p, args.get("offset") or 1, limit, scope=self.workdir)
         if err:
             return err
         key = str(p)
