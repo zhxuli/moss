@@ -55,11 +55,10 @@ const AIR = Vue.reactive({
 
   role: "", roleOpen: false, roles: [], strategy: "", strategies: [],
   cards: [], cardsLoaded: false, cardPickOpen: false, cardQ: "", mounts: [], lastMounts: [],
-  cardIcons: [], cardAccents: [],
+  cardAccents: [],
   cardEdit: {open: false, busy: false, err: "", card: null, iconBusy: false,
-             iconErr: "", iconHint: "", iconPaste: "", iconPasteOpen: false},
-  cardStudio: {open: false, busy: false, input: "", messages: [], card: null,
-               err: "", saving: false, editing: false},
+             iconErr: "", iconHint: "", iconPaste: "", iconPasteOpen: false,
+             aiBusy: false, aiErr: "", aiInput: "", aiLog: []},
   promptEditor: {open: false, busy: false, list: [], active: "", text: "",
                  override: false, path: "", err: "", saving: false},
 
@@ -407,7 +406,6 @@ async function aiLoadCards(){
     const r = await api.ai_cards_list();
     if (r && r.ok){
       AIR.cards = Array.isArray(r.cards) ? r.cards : [];
-      AIR.cardIcons = Array.isArray(r.icons) ? r.icons : (AIR.cardIcons || []);
       AIR.cardAccents = Array.isArray(r.accents) ? r.accents : (AIR.cardAccents || []);
       AIR.cardsLoaded = true;
       const known = new Set(AIR.cards.map(c => c.id));
@@ -421,7 +419,7 @@ function aiSafeSvg(text){
   try{ return (typeof safeSvg === "function") ? safeSvg(text) : ""; }catch(e){ return ""; }
 }
 function aiCardIconHTML(c){
-  const kind = String((c && c.icon_kind) || "builtin");
+  const kind = String((c && c.icon_kind) || "");
   if (kind === "svg" && c && c.icon_svg){
     const s = aiSafeSvg(c.icon_svg);
     if (s) return s;
@@ -431,7 +429,11 @@ function aiCardIconHTML(c){
     if (/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(u))
       return '<img class="ai-card-icoimg" src="' + u + '" alt="">';
   }
-  return ico((c && c.icon) || "sparkles", "i");
+  // 没有内置图标了：没画图标就先用标题首字兜底
+  const ch = Array.from(String((c && c.title) || "?").trim())[0] || "?";
+  const safe = ch.replace(/[&<>"']/g, s => ({"&": "&amp;", "<": "&lt;", ">": "&gt;",
+                                             '"': "&quot;", "'": "&#39;"}[s]));
+  return '<span class="ai-card-fb">' + safe + '</span>';
 }
 function aiReadAsText(file){
   return new Promise((res, rej) => {
@@ -1106,6 +1108,12 @@ async function aiPollOnce(){
       AIR.livePkg = "";          
       aiLoadSkills();
       aiRefreshInfo(true);      
+      // 这一跑里 AI 可能用 card_add 加了经验卡：重新读盘，并告诉用户
+      const _n0 = (AIR.cards || []).length;
+      aiLoadCards().then(() => {
+        const n = (AIR.cards || []).length;
+        if (n > _n0) toast("AI 顺手加了 " + (n - _n0) + " 张经验卡 —— 打开「经验卡」就能看到");
+      }).catch(() => {});
 
       try{
         if (typeof refreshPkgs === "function")
@@ -2534,7 +2542,7 @@ const MossAi = {
       if (AIR.cardPickOpen){
         AIR.roleOpen = false;
         AIR.cardQ = "";
-        if (!AIR.cardsLoaded) aiLoadCards();
+        aiLoadCards();          // 每次打开都重新读盘：AI 可能在上一跑里刚加过卡
       }
       AIR.rev++;
     },
@@ -2551,16 +2559,16 @@ const MossAi = {
     openCardEdit(c){
       AIR.cardPickOpen = false;
       const base = c && c.id ? JSON.parse(JSON.stringify(c)) : {
-        id: "", title: "", body: "", icon: "sparkles", tags: [], accent: "#7C3AED",
+        id: "", title: "", body: "", tags: [], accent: "#7C3AED", icon_kind: "builtin",
       };
       if (!Array.isArray(base.tags)) base.tags = [];
-      if (!base.icon) base.icon = "sparkles";
       if (!base.accent) base.accent = "#7C3AED";
       if (!base.icon_kind)
         base.icon_kind = base.icon_svg ? "svg" : (base.icon_img ? "img" : "builtin");
       AIR.cardEdit = {open: true, busy: false, err: "", card: base,
                       iconBusy: false, iconErr: "", iconHint: "",
-                      iconPaste: "", iconPasteOpen: false};
+                      iconPaste: "", iconPasteOpen: false,
+                      aiBusy: false, aiErr: "", aiInput: "", aiLog: []};
       AIR.rev++;
     },
     closeCardEdit(){
@@ -2575,16 +2583,6 @@ const MossAi = {
     },
     cardIcon(c){
       return aiCardIconHTML(c);
-    },
-    cardEditIcon(ic){
-      const c = AIR.cardEdit.card;
-      c.icon = String(ic || "sparkles");
-      c.icon_kind = "builtin";
-      c.icon_reset = true;
-      delete c.icon_svg;
-      delete c.icon_img;
-      AIR.cardEdit.iconErr = "";
-      AIR.rev++;
     },
     cardEditIconPick(e){
       const inp = e && e.target;
@@ -2727,78 +2725,55 @@ const MossAi = {
           }catch(e){ toast("删卡失败：" + ((e && e.message) || e), true); }
         });
     },
-    openCardStudio(c){
-      const cur = (c && c.id) ? c : null;
-      AIR.cardPickOpen = false;
-      AIR.cardStudio = {
-        open: true, busy: false, input: "",
-        messages: cur ? [{role: "assistant", content: "正在编辑「" + (cur.title || cur.id) + "」，告诉我要改哪一条。"}] : [],
-        card: cur ? JSON.parse(JSON.stringify(cur)) : null,
-        err: "", saving: false, editing: !!cur,
-      };
-      AIR.rev++;
-    },
-    closeCardStudio(){
-      if (AIR.cardStudio.busy) return;
-      AIR.cardStudio.open = false;
-      AIR.rev++;
-    },
-    async cardStudioSend(){
-      const S = AIR.cardStudio;
-      const text = String(S.input || "").trim();
-      if (!text || S.busy) return;
-      const history = (S.messages || []).slice();
-      S.messages.push({role: "user", content: text});
-      S.input = "";
-      S.busy = true;
-      S.err = "";
+    async cardAiSend(){
+      const S = AIR.cardEdit;
+      const text = String(S.aiInput || "").trim();
+      if (!text || S.aiBusy) return;
+      const history = (S.aiLog || []).slice();
+      S.aiLog.push({role: "user", content: text});
+      S.aiInput = "";
+      S.aiBusy = true;
+      S.aiErr = "";
       AIR.rev++;
       try{
         const api = await aiWaitApi();
         if (!api || !api.ai_card_studio) throw new Error("宿主桥没连上");
-        const r = await api.ai_card_studio(history, text, S.card);
-        if (!r || !r.ok){
-          S.err = (r && r.msg) || "没整理出来";
-          if (r && r.raw) S.err += "\n" + String(r.raw).slice(0, 260);
-        }else{
-          if (r.card) S.card = r.card;
-          S.messages.push({role: "assistant", content: r.reply || "改好了"});
+        const r = await api.ai_card_studio(history, text, S.card || {});
+        if (!r || !r.ok) throw new Error((r && r.msg) || "没整理出来");
+        const got = r.card;
+        if (got){
+          const cur = S.card || {};
+          const next = Object.assign({}, cur);
+          for (const k of ["title", "body", "accent"]){
+            if (typeof got[k] === "string" && got[k].trim()) next[k] = got[k];
+          }
+          if (Array.isArray(got.tags)) next.tags = got.tags;
+          if (got.icon_kind === "svg" && got.icon_svg){
+            next.icon_kind = "svg";
+            next.icon_svg = got.icon_svg;
+            next.icon_reset = false;
+            delete next.icon_img;
+          }else if (got.icon_kind === "img" && got.icon_img){
+            next.icon_kind = "img";
+            next.icon_img = got.icon_img;
+            next.icon_reset = false;
+            delete next.icon_svg;
+          }
+          S.card = next;
         }
+        S.aiLog.push({role: "assistant", content: r.reply || "改好了，看看左边/预览"});
       }catch(e){
-        S.err = "整理失败：" + ((e && e.message) || e);
+        S.aiErr = (e && e.message) || String(e);
+        S.aiLog.push({role: "assistant", content: "（没改成：" + S.aiErr + "）"});
       }finally{
-        S.busy = false;
+        S.aiBusy = false;
         AIR.rev++;
       }
     },
-    async cardStudioSave(){
-      const S = AIR.cardStudio;
-      if (!S.card || S.busy || S.saving) return;
-      S.saving = true;
-      S.err = "";
-      AIR.rev++;
-      try{
-        const api = await aiWaitApi();
-        const r = await api.ai_card_save(S.card);
-        if (!r || !r.ok){ S.err = (r && r.msg) || "保存失败"; return; }
-        S.card = r.card;
-        await aiLoadCards();
-        AIR.mounts = (AIR.mounts || []).slice();
-        if (AIR.mounts.indexOf(r.card.id) < 0) AIR.mounts.push(r.card.id);
-        aiPersistMountUi();
-        toast("经验卡已入库：" + (r.card.title || r.card.id));
-        S.open = false;
-      }catch(e){
-        S.err = "保存失败：" + ((e && e.message) || e);
-      }finally{
-        S.saving = false;
-        AIR.rev++;
-      }
-    },
-    cardStudioKey(e){
+    cardAiKey(e){
       if (e.key === "Enter" && !e.shiftKey){
         e.preventDefault();
-        this.cardStudioSend();
+        this.cardAiSend();
       }
     },
 
@@ -3917,12 +3892,8 @@ const MossAi = {
                   <div class="popover-title">
                     <span>经验卡 <span class="popover-hint">已挂载 {{ mountedCards.length }} 张 · ≈{{ mountedTokens }} token</span></span>
                     <span class="ai-cards-new-wrap">
-                      <button type="button" class="ai-cards-new ghost" @click="openCardEdit(null)"
-                              title="手动新建一张经验卡">
-                        <span v-html='ico("pencil", "i")'></span>
-                      </button>
-                      <button type="button" class="ai-cards-new" @click="openCardStudio()"
-                              title="让 AI 帮你整理一张新经验卡">
+                      <button type="button" class="ai-cards-new" @click="openCardEdit(null)"
+                              title="新建一张经验卡（手改 / 让 AI 改都在这一个窗口）">
                         <span v-html='ico("moss-plus", "i")'></span>
                       </button>
                     </span>
@@ -3947,9 +3918,7 @@ const MossAi = {
                       <span class="ai-card-last"
                             v-if="(A.lastMounts || []).indexOf(c.id) >= 0 && (A.mounts || []).indexOf(c.id) < 0">上次用过</span>
                       <button type="button" class="ai-card-edit" @click.stop="openCardEdit(c)"
-                              title="手动编辑这张卡" v-html='ico("pencil", "i")'></button>
-                      <button type="button" class="ai-card-ai" @click.stop="openCardStudio(c)"
-                              title="让 AI 改这张卡" v-html='ico("sparkles", "i")'></button>
+                              title="编辑这张卡（手改 / 让 AI 改）" v-html='ico("pencil", "i")'></button>
                       <button type="button" class="ai-card-del" @click.stop="cardDelete(c)"
                               title="删掉这张卡" v-html='ico("trash-2", "i")'></button>
                     </div>
@@ -3957,7 +3926,7 @@ const MossAi = {
                   <div class="ai-cards-empty" v-else>
                     <span v-html='ico("layers", "i")'></span>
                     <b>{{ A.cardQ ? "没搜到" : "还没有经验卡" }}</b>
-                    <small>{{ A.cardQ ? "换个关键词试试" : "点右上角 + 让 AI 帮你整理第一张" }}</small>
+                    <small>{{ A.cardQ ? "换个关键词试试" : "点右上角 + 新建；也能直接在对话里让 AI 加" }}</small>
                   </div>
                 </div>
               </div>
@@ -4332,7 +4301,7 @@ const MossAi = {
           <div class="ai-cardedit-head">
             <div>
               <b>{{ A.cardEdit.card && A.cardEdit.card.id ? "编辑经验卡" : "新建经验卡" }}</b>
-              <span>直接改标题、图标、标签、配色和正文；保存后立即出现在卡片库</span>
+              <span>左边手改，右边让 AI 改；图标也由 AI 画，保存后进卡片库</span>
             </div>
             <button type="button" class="ai-modal-close" @click="closeCardEdit()">&times;</button>
           </div>
@@ -4348,39 +4317,29 @@ const MossAi = {
                        placeholder="用逗号或顿号分隔，最多 8 个">
               </label>
               <div class="ai-cardedit-field">
-                <span>图标</span>
-                <div class="ai-cardedit-icons">
-                  <button type="button" v-for="ic in A.cardIcons" :key="ic"
-                          class="ai-cardedit-ic"
-                          :class="{on: (A.cardEdit.card.icon_kind || 'builtin') === 'builtin' && A.cardEdit.card.icon === ic}"
-                          @click="cardEditIcon(ic)" :title="ic"
-                          v-html='ico(ic, "i")'></button>
-                </div>
+                <span>图标 <em class="ai-cardedit-tip">AI 画 · 只用于界面，不进上下文</em></span>
                 <div class="ai-cardedit-own">
                   <span class="ai-cardedit-own-prev" v-html="cardIcon(A.cardEdit.card)"></span>
-                  <span class="ai-cardedit-own-t">{{ (A.cardEdit.card.icon_kind === 'svg')
-                    ? '自定义 SVG 图标' : ((A.cardEdit.card.icon_kind === 'img')
-                    ? '自定义图片图标' : '内置图标') }}</span>
-                  <label class="ai-cardedit-own-btn" :class="{busy: A.cardEdit.iconBusy}">
+                  <input class="ai-cardedit-own-hint" v-model="A.cardEdit.iconHint" maxlength="80"
+                         placeholder="画成什么样？可不填">
+                  <button type="button" class="ai-cardedit-own-btn" :disabled="A.cardEdit.iconBusy"
+                          @click="cardEditIconAI">{{ A.cardEdit.iconBusy ? "画图中…" : "AI 画" }}</button>
+                  <label class="ai-cardedit-own-btn ghost" title="传一张自己的 SVG / PNG">
                     <input type="file" accept=".svg,image/svg+xml,image/png,image/webp,image/jpeg,image/gif"
                            @change="cardEditIconPick($event)">
                     <span>上传</span>
                   </label>
-                  <button type="button" class="ai-cardedit-own-btn" :disabled="A.cardEdit.iconBusy"
-                          @click="cardEditIconAI">{{ A.cardEdit.iconBusy ? "画图中…" : "AI 画" }}</button>
                   <button type="button" class="ai-cardedit-own-btn ghost"
-                          v-if="(A.cardEdit.card.icon_kind || 'builtin') !== 'builtin'"
-                          @click="cardEditIconReset">恢复内置</button>
+                          @click="cardEditPasteToggle()">{{ A.cardEdit.iconPasteOpen ? "收起" : "贴 SVG" }}</button>
                   <button type="button" class="ai-cardedit-own-btn ghost"
-                          @click="cardEditPasteToggle()">{{ A.cardEdit.iconPasteOpen ? "收起" : "贴代码" }}</button>
+                          v-if="A.cardEdit.card.icon_kind === 'svg' || A.cardEdit.card.icon_kind === 'img'"
+                          @click="cardEditIconReset">清掉</button>
                 </div>
-                <input class="ai-cardedit-own-hint" v-model="A.cardEdit.iconHint" maxlength="80"
-                       placeholder="让 AI 画什么？（可不填，按标题想）">
                 <textarea class="ai-cardedit-own-paste" v-if="A.cardEdit.iconPasteOpen"
                           v-model="A.cardEdit.iconPaste" spellcheck="false"
                           placeholder="把 SVG 源码贴进来（只取 <svg>…</svg>）"></textarea>
                 <div class="ai-cardedit-own-acts" v-if="A.cardEdit.iconPasteOpen">
-                  <span class="ai-cardedit-own-tip">图标只用于界面，不进 AI 上下文</span>
+                  <span class="ai-cardedit-own-tip">建议 48×48、颜色丰富一点</span>
                   <button type="button" class="ai-cardedit-own-btn" @click="cardEditIconPaste()">套用这段 SVG</button>
                 </div>
                 <p class="ai-cardedit-err" v-if="A.cardEdit.iconErr">{{ A.cardEdit.iconErr }}</p>
@@ -4397,13 +4356,13 @@ const MossAi = {
                   </label>
                 </div>
               </div>
-            </div>
-            <div class="ai-cardedit-main">
               <label class="ai-cardedit-field ai-cardedit-bodyfield">
                 <span>正文（这是 AI 真正会看到的内容）</span>
                 <textarea v-model="A.cardEdit.card.body" spellcheck="false"
                           placeholder="写清：什么时候用、怎么做、别做什么。"></textarea>
               </label>
+            </div>
+            <div class="ai-cardedit-side">
               <div class="ai-cardedit-preview">
                 <div class="ai-card big" v-if="A.cardEdit.card"
                      :style="{'--card-accent': A.cardEdit.card.accent || '#7C3AED'}">
@@ -4413,6 +4372,33 @@ const MossAi = {
                   <span class="ai-card-title">{{ A.cardEdit.card.title || "未命名经验卡" }}</span>
                   <span class="ai-card-body">{{ A.cardEdit.card.body || "正文预览" }}</span>
                   <span class="ai-card-tags">{{ (A.cardEdit.card.tags || []).slice(0,3).join(" · ") }}</span>
+                </div>
+              </div>
+              <div class="ai-cardedit-ai">
+                <div class="ai-cardedit-ai-h">
+                  <span>让 AI 改这张卡</span>
+                  <span class="ai-cardedit-ai-note">{{ A.cardEdit.aiBusy ? "正在想…" : "不进主会话" }}</span>
+                </div>
+                <div class="ai-cardedit-ai-log" v-if="A.cardEdit.aiLog.length">
+                  <div class="ai-cardedit-ai-msg" v-for="(m, i) in A.cardEdit.aiLog" :key="i"
+                       :class="{me: m.role === 'user'}">
+                    <span class="ai-cardedit-ai-who">{{ m.role === 'user' ? '你' : 'AI' }}</span>
+                    <div class="ai-cardedit-ai-t">{{ m.content }}</div>
+                  </div>
+                </div>
+                <div class="ai-cardedit-ai-empty" v-else>
+                  <b>一句话就能改</b>
+                  <small>例如：再加一条「先验证一次就收」<br>或者：图标换成齿轮，颜色再亮一点</small>
+                </div>
+                <p class="ai-cardedit-err" v-if="A.cardEdit.aiErr">{{ A.cardEdit.aiErr }}</p>
+                <div class="ai-cardedit-ai-in">
+                  <textarea v-model="A.cardEdit.aiInput" spellcheck="false"
+                            :disabled="A.cardEdit.aiBusy"
+                            placeholder="要它改什么？Enter 发送，Shift+Enter 换行"
+                            @keydown="cardAiKey($event)"></textarea>
+                  <button type="button" class="ai-cardedit-ai-send"
+                          :disabled="A.cardEdit.aiBusy || !A.cardEdit.aiInput.trim()"
+                          @click="cardAiSend()" v-html='ico("arrow-up", "i")'></button>
                 </div>
               </div>
             </div>
@@ -4470,69 +4456,6 @@ const MossAi = {
                         @click="promptSave()">{{ A.promptEditor.saving ? "保存中…" : "保存" }}</button>
               </div>
             </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="ai-modal-overlay ai-cardstudio-overlay" v-if="A.cardStudio.open"
-           @click.self="closeCardStudio()">
-        <div class="ai-cardstudio">
-          <div class="ai-cardstudio-head">
-            <div>
-              <b>{{ A.cardStudio.editing ? "编辑经验卡" : "整理经验卡" }}</b>
-              <span>这段对话只在卡片工坊里，不会进入主会话</span>
-            </div>
-            <button type="button" class="ai-modal-close" @click="closeCardStudio()"
-                    :disabled="A.cardStudio.busy">&times;</button>
-          </div>
-          <div class="ai-cardstudio-body">
-            <div class="ai-cardstudio-chat">
-              <div class="ai-cs-msg" v-for="(m, i) in A.cardStudio.messages" :key="i"
-                   :class="{me: m.role === 'user'}">
-                <span class="ai-cs-who">{{ m.role === 'user' ? '你' : 'AI' }}</span>
-                <div class="ai-cs-text">{{ m.content }}</div>
-              </div>
-              <div class="ai-cs-empty" v-if="!A.cardStudio.messages.length">
-                <span v-html='ico("layers", "i")'></span>
-                <b>把一条经验交给它</b>
-                <small>例如：以后做 Canvas 小游戏，先整篇写一版，不要连续截图微调；功能通过就收。</small>
-              </div>
-              <div class="ai-cs-thinking" v-if="A.cardStudio.busy">
-                <span class="ai-cs-dot"></span><span class="ai-cs-dot"></span><span class="ai-cs-dot"></span>
-                正在整理成卡片…
-              </div>
-              <p class="ai-cs-err" v-if="A.cardStudio.err">{{ A.cardStudio.err }}</p>
-            </div>
-            <aside class="ai-cardstudio-preview">
-              <div class="ai-cardstudio-preview-h">预览</div>
-              <div class="ai-card big" v-if="A.cardStudio.card"
-                   :style="{'--card-accent': A.cardStudio.card.accent || '#7C3AED'}">
-                <span class="ai-card-corner l" v-html="cardIcon(A.cardStudio.card)"></span>
-                <span class="ai-card-corner r" v-html="cardIcon(A.cardStudio.card)"></span>
-                <span class="ai-card-orb" v-html="cardIcon(A.cardStudio.card)"></span>
-                <span class="ai-card-title">{{ A.cardStudio.card.title }}</span>
-                <span class="ai-card-body">{{ A.cardStudio.card.body }}</span>
-                <span class="ai-card-tags">{{ (A.cardStudio.card.tags || []).slice(0,3).join(" · ") }}</span>
-              </div>
-              <div class="ai-cs-preview-empty" v-else>
-                <span v-html='ico("sparkles", "i")'></span>
-                先跟它说一句，卡片会出现在这里
-              </div>
-              <button type="button" class="ai-cs-save"
-                      :disabled="!A.cardStudio.card || A.cardStudio.busy || A.cardStudio.saving"
-                      @click="cardStudioSave()">
-                {{ A.cardStudio.saving ? "保存中…" : "保存到经验卡" }}
-              </button>
-            </aside>
-          </div>
-          <div class="ai-cs-input">
-            <textarea v-model="A.cardStudio.input" spellcheck="false"
-                      :disabled="A.cardStudio.busy"
-                      placeholder="告诉它要整理什么，或者继续改：例如「再加一条：先验证一次就收」"
-                      @keydown="cardStudioKey($event)"></textarea>
-            <button type="button" class="ai-cs-send"
-                    :disabled="A.cardStudio.busy || !A.cardStudio.input.trim()"
-                    @click="cardStudioSend()" v-html='ico("arrow-up", "i")'></button>
           </div>
         </div>
       </div>

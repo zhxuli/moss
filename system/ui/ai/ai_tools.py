@@ -193,6 +193,25 @@ TOOLS = [
             "max_chars": {"type": "integer", "description": "最多回多少字符，默认 6000"}},
             "required": ["run_id"]}}},
     {"type": "function", "function": {
+        "name": "card_add",
+        "description": ("把一条经验 / 避坑 / 偏好存成 moss 的「经验卡」。经验卡是用户自己挂到 AI 会话上的"
+                        "可复用经验：挂上后正文会作为行为约束进 system prompt（不是新任务，也不改变这次的目标）。"
+                        "用户说「记下来」「存成经验卡」「给我加几张卡」时用它。一次最多加 5 张。"
+                        "卡片是给以后执行任务的 AI 看的：标题≤18 字，正文≤600 字，"
+                        "写清什么时候用、怎么做、别做什么，用短句或分条。"
+                        "图标归你画：可以给 icon_svg（48×48、2~4 种颜色、像游戏技能图标那样的小图，≤2000 字符）；"
+                        "不会画就省掉，用户能在卡片编辑器里让 AI 补。"),
+        "parameters": {"type": "object", "properties": {
+            "title": {"type": "string", "description": "卡片标题，≤18 个汉字"},
+            "body": {"type": "string",
+                     "description": "正文 ≤600 字：什么时候用、怎么做、别做什么。写成命令式短句。"},
+            "tags": {"type": "array", "items": {"type": "string"},
+                     "description": "可选：≤5 个短标签，例如 [\"验证\", \"收尾\"]"},
+            "accent": {"type": "string", "description": "可选：这张卡的主色 #RRGGBB"},
+            "icon_svg": {"type": "string",
+                         "description": "可选：48×48 的 SVG 图标源码（颜色丰富、像游戏技能图标）"}},
+            "required": ["title", "body"]}}},
+    {"type": "function", "function": {
         "name": "done", "description": ("收工。前提：最后一次改动之后**跑过一次且退出码 0**，"
                                         "否则会被打回来。summary 要写成能给下一个任务看的交接："
                                         "改了什么、怎么验的、关键决定；caveats 写没验到的和坑。"),
@@ -284,6 +303,7 @@ class Tools:
         self.perm_gate = perm_gate
         self.procs = {}
         self.killed = []
+        self.cards_added = 0
         self.last_stop_ms = 0.0
 
     def stopped(self):
@@ -838,6 +858,44 @@ class Tools:
         s = str(p)
         if s not in self.changed:
             self.changed.append(s)
+
+    def _t_card_add(self, args):
+        a = args or {}
+        if self.cards_added >= 5:
+            return ("这次已经加了 5 张经验卡，够了 —— 先让用户看看库里那几张，"
+                    "不够再开一轮；别继续刷。")
+        title = str(a.get("title") or "").strip()
+        body = str(a.get("body") or "").strip()
+        if not title or not body:
+            return "标题和正文都要写，否则存不成卡片。"
+        try:
+            import ai_cards as C
+        except Exception as e:
+            return "[错误] 经验卡模块起不来：%s: %s" % (type(e).__name__, e)
+        icon_svg = str(a.get("icon_svg") or "").strip()
+        if not icon_svg and self.client is not None:
+            # 图标一律由 AI 画：它没给就当场补一张（画不出来也不耽误存卡）
+            try:
+                _got = self.client.chat(C.icon_messages(
+                    {"title": title, "body": body, "tags": a.get("tags") or [],
+                     "accent": str(a.get("accent") or "")}, ""))
+                icon_svg = C.parse_icon_svg((_got or {}).get("text") or "")[0]
+            except Exception:
+                icon_svg = ""
+        got = C.save_card({"title": title, "body": body,
+                           "tags": a.get("tags") or [],
+                           "accent": str(a.get("accent") or ""),
+                           "icon_svg": icon_svg})
+        if not got.get("ok"):
+            return "[没存上] %s" % (got.get("msg") or "未知原因")
+        card = got.get("card") or {}
+        self.cards_added += 1
+        icon = {"svg": "已画好图标", "img": "带图标"}.get(
+            str(card.get("icon_kind") or ""), "还没图标（用户可以点「AI 画」补）")
+        return ("已存成经验卡「%s」（id=%s，%s，正文 %d 字）。它现在只在卡片库里 —— "
+                "用户挂在会话上才会进提示词，别把它当成这次任务的一部分。"
+                % (card.get("title"), card.get("id"), icon,
+                   len(str(card.get("body") or ""))))
 
     def verified(self):
         if self.edit_seq == 0:

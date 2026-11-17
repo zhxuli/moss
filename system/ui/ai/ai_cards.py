@@ -52,8 +52,7 @@ STUDIO_SYSTEM = """你是 moss 的「经验卡编辑」。
   "reply": "给用户看的中文回复，说明你改了什么，不超过 120 字",
   "card": {
     "id": "小写字母开头的短 id，可省略；新卡用 title 自动生成",
-    "icon": "从给定图标中选一个",
-    "icon_svg": "可选：48×48 的自绘 SVG 源码，只有用户明确要你画图标时才给",
+    "icon_svg": "48×48 的 SVG 图标源码（颜色丰富、像游戏技能图标）",
     "title": "不超过 18 个汉字，像卡片标题",
     "body": "不超过 600 字。写清：什么时候用、怎么做、别做什么。用短句或分条，必须可执行。",
     "tags": ["最多 5 个短标签"],
@@ -66,12 +65,13 @@ STUDIO_SYSTEM = """你是 moss 的「经验卡编辑」。
 - 不要把密钥、隐私、完整聊天记录写进卡片。
 - 卡片的读者是之后执行任务的 AI；写成第二人称或命令式短句。
 - 如果用户只是讨论、还想继续改，也要返回完整修改后的 card，方便实时预览。
-- icon 只能从这些里选：ICON_CHOICES。
-- icon_svg 只在用户要求画图标时给：根元素 `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">`，
-  只许基础图形标签，不许 script / style / image / use / text / href / 事件属性 / 外链，总长 ≤2000 字符。
-  用户没提图标就把这个字段省掉，不要自己加。
+- 图标全归你画（没有内置图标可选）：根元素 `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">`，
+  只用基础图形标签（svg/g/path/circle/ellipse/rect/line/polyline/polygon/defs/linearGradient/radialGradient/stop/clipPath），
+  不许 script / style / image / use / text / href / 事件属性 / 外链，总长 ≤3000 字符。
+  画风要像**游戏技能图标**：2~4 种颜色、可以渐变/高光、主体占 65%~80%、缩到 24px 还认得出，不要画文字。
+- 当前卡片已经有图标时，只有用户提到图标 / 颜色 / 风格，才重画 icon_svg；否则省掉这个字段。
+- 当前卡片还没有图标时，顺手给一张。
 """
-STUDIO_SYSTEM = STUDIO_SYSTEM.replace("ICON_CHOICES", "、".join(ICON_CHOICES))
 
 ICON_SYSTEM = """你是 moss 经验卡的图标画师。只输出一个 SVG 源码，不要 Markdown 代码块，不要任何解释。
 
@@ -80,10 +80,15 @@ ICON_SYSTEM = """你是 moss 经验卡的图标画师。只输出一个 SVG 源�
 - 只允许这些标签：svg、g、path、circle、ellipse、rect、line、polyline、polygon、defs、linearGradient、radialGradient、stop、clipPath。
 - 禁止：script、style、foreignObject、image、use、text、href / xlink:href、http(s) 外链、任何 on* 事件属性。
 - 不要写 width / height，缩放交给 viewBox。
-- 造型极简、几何化，四周留至少 4px 空白；缩到 20px 还认得出。
-- 默认线性风格：`fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"`；
-  需要强调时最多再加 1 个具体色值（#RRGGBB）。
-- 总长度不超过 2000 字符，不要输出中文说明。"""
+- 不要画文字、数字、字母。
+
+风格（重要）：
+- 像**游戏技能图标**：颜色要丰富 —— 用 2~4 个颜色，可以上 linearGradient / radialGradient 渐变、
+  一层同色系的内阴影或高光；主体边缘清晰，不糊成一团。
+- 主体占画布 65%~80%，四周留至少 3px 空白；外圈可以加一层同色系的环或光晕（半透明即可）。
+- 缩到 24px 还要一眼认得出：靠大色块和粗线条，不要画细节。
+
+总长度不超过 3000 字符，不要输出中文说明。"""
 
 
 def _dir():
@@ -482,10 +487,13 @@ def studio_messages(history, text, card=None):
             msgs.append({"role": role, "content": content[:4000]})
     cur = ""
     if isinstance(card, dict) and (card.get("title") or card.get("body")):
-        slim = {k: card.get(k) for k in ("id", "title", "body", "tags", "icon",
-                                         "accent") if card.get(k)}
+        slim = {k: card.get(k) for k in ("id", "title", "body", "tags", "accent")
+                if card.get(k)}
+        slim["has_icon"] = bool(card.get("icon_svg") or card.get("icon_img"))
         cur = "\n\n当前卡片（请在此基础上修改，不要丢掉仍适用的内容）：\n" + json.dumps(
             slim, ensure_ascii=False)
+        if not slim["has_icon"]:
+            cur += "\n（这张卡还没有图标：这次顺手给一张 icon_svg。）"
     msgs.append({"role": "user", "content": str(text or "").strip() + cur})
     return msgs
 
