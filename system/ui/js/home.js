@@ -283,25 +283,90 @@ const MossHome = {
     async createPlugin(modeOverride){
       const mode = (modeOverride === "manual" || modeOverride === "ai")
         ? modeOverride : this.H.mode;
+      if (this.H.busy) return;
+      this.H.err = "";
 
-      /* AI 创建仍然走原来的标准 AI 新建弹窗（会先让 AI 补全 id/名字/介绍）。 */
+      /* AI 创建：首页一次点击就走完整条链路（定 id/名字 → 建包 → 打开 AI 开工），
+         不再先弹「新建包」让用户点第二次。 */
       if (mode === "ai"){
-        if (typeof cmdNewPkg !== "function") return;
         const idea = String(this.H.idea || "").trim();
-        cmdNewPkg("ai");
-        Vue.nextTick(() => {
+        if (!idea){
+          this.H.err = "先说一句你想让它干什么 —— 一句话就行";
+          return;
+        }
+        const air = window.__AIR;
+        if (air && air.busy){
+          this.H.err = "AI 正在忙，等当前任务结束再生成";
+          return;
+        }
+        const api = window.pywebview && window.pywebview.api;
+        if (!api){
+          this.H.err = "还没连上宿主，稍等一下再试";
+          return;
+        }
+
+        this.H.busy = true;
+        try{
+          let sug = null;
+          try{ sug = await api.ai_suggest_pkg(idea); }
+          catch(e){ sug = {ok: false, msg: "AI 调用失败：" + ((e && e.message) || e)}; }
+          if (!sug || !sug.ok){
+            this.H.err = (sug && sug.msg) || "AI 没给出结果";
+            return;
+          }
+
+          const id = String(sug.id || "").trim().toLowerCase();
+          if (!/^[a-z][a-z0-9_-]{0,31}$/.test(id)){
+            this.H.err = "AI 给出的包 ID 不合法，换个说法再试一次";
+            return;
+          }
+
+          let r = null;
+          try{ r = await api.new_pkg(id, sug.name || "", sug.desc || ""); }
+          catch(e){ r = {ok: false, msg: "创建失败：" + ((e && e.message) || e)}; }
+          if (!r || !r.ok){
+            this.H.err = (r && r.msg) || "创建失败（没有返回原因）";
+            return;
+          }
+
+          this.H.idea = "";
+          toast("已创建 " + PSYM + id + (sug.name ? " · " + sug.name : ""));
+          await init();
+          select(id, true);
+
+          let np = (DATA.packages || []).find(p => p.id === id) || null;
+          if ((!np || !np.dir) && typeof refreshPkgs === "function"){
+            await refreshPkgs(id);
+            np = (DATA.packages || []).find(p => p.id === id) || null;
+          }
+          if (!np || !np.dir){
+            this.H.err = "新包建好了，但包列表里还没刷出来 —— 点一下左上角 ⟳ 再开工。";
+            toast(this.H.err, true);
+            return;
+          }
+          if (!cur || cur.id !== id) select(id, true);
+
+          const task = String(sug.task || "").trim() ||
+                       String(sug.desc || "").trim() ||
+                       ("做一个「" + id + "」的包");
+          setTab("ai");
+          await new Promise(res => setTimeout(res, 250));
+          window.__AIR.task = task;
+          try{ if (typeof aiScopeReset === "function") aiScopeReset(); }catch(e){}
           try{
-            if (idea){
-              const el = document.getElementById("np-idea");
-              if (el) el.value = idea;
-            }
-          }catch(e){}
-        });
+            if (typeof aiStart === "function") await aiStart({dir: np.dir});
+          }catch(e){
+            toast("AI 没起得来：" + ((e && e.message) || e), true);
+          }
+        }catch(e){
+          this.H.err = "生成失败：" + ((e && e.message) || e);
+        }finally{
+          this.H.busy = false;
+        }
         return;
       }
 
       /* 手动编写直接在首页表单里创建，不再弹窗。 */
-      if (this.H.busy) return;
       const id = String(this.H.manual.id || "").trim().toLowerCase();
       const name = String(this.H.manual.name || "").trim();
       const desc = String(this.H.manual.desc || "").trim();
@@ -309,12 +374,11 @@ const MossHome = {
         this.H.err = "包 ID 要小写字母开头，只含 a-z、0-9、-、_（最长 32 位）";
         return;
       }
-      this.H.err = "";
       this.H.busy = true;
       let r = null;
       try{ r = await pywebview.api.new_pkg(id, name, desc); }
       catch(e){ r = {ok: false, msg: "创建失败：" + ((e && e.message) || e)}; }
-      this.H.busy = false;
+      finally{ this.H.busy = false; }
       if (!r || !r.ok){
         this.H.err = (r && r.msg) || "创建失败（没有返回原因）";
         return;
@@ -394,8 +458,9 @@ const MossHome = {
                      spellcheck="false" placeholder="一句话介绍">
               <textarea class="hm-manual-field hm-manual-area" v-model="H.manual.task"
                         spellcheck="false" placeholder="首句任务（可选，创建后可继续编辑）"></textarea>
-              <div v-if="H.err" class="hm-create-status">{{ H.err }}</div>
             </div>
+
+            <div v-if="H.err" class="hm-create-status">{{ H.err }}</div>
 
             <div class="hm-create-bar">
               <div class="hm-modes">
@@ -412,7 +477,7 @@ const MossHome = {
               </div>
               <button type="button" class="hm-create-btn" :disabled="H.busy" @click="createPlugin()">
                 <span style="display:contents" v-html='ico("sparkles","i")'></span>
-                <span>{{ H.mode === 'manual' ? (H.busy ? '创建中…' : '创建插件') : '生成插件' }}</span>
+                <span>{{ H.busy ? (H.mode === 'manual' ? '创建中…' : '生成中…') : (H.mode === 'manual' ? '创建插件' : '生成插件') }}</span>
               </button>
             </div>
           </div>
