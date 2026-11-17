@@ -2321,3 +2321,51 @@
 .aiwrap .ai-inject-btn:hover:not(:disabled){background:#E0E7FF;border-color:#A5B4FC}
 .aiwrap .ai-inject-btn:disabled{opacity:.4;cursor:default}
 .aiwrap .ai-inject-btn svg.i{width:14px;height:14px}
+
+/* ===== 经验卡自定义图标（SVG / PNG，只做界面资源） ===== */
+.aiwrap .ai-card-corner svg{width:11px;height:11px}
+.aiwrap .ai-card-corner img{width:11px;height:11px;object-fit:contain}
+.aiwrap .ai-card-orb svg{width:20px;height:20px}
+.aiwrap .ai-card-orb img{width:26px;height:26px;object-fit:contain}
+.aiwrap .ai-card.big .ai-card-orb svg{width:26px;height:26px}
+.aiwrap .ai-card.big .ai-card-orb img{width:32px;height:32px}
+.aiwrap .ai-mount-ic svg{width:13px;height:13px}
+.aiwrap .ai-mount-ic img{width:13px;height:13px;object-fit:contain}
+
+.aiwrap .ai-cardedit-own{
+  display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  padding:6px 8px;border:1px solid #E2E8F0;border-radius:9px;background:#FBFCFE;
+}
+.aiwrap .ai-cardedit-own-prev{
+  width:28px;height:28px;flex:none;border-radius:7px;background:#fff;
+  border:1px solid #E2E8F0;display:inline-flex;align-items:center;justify-content:center;
+  color:#7C3AED;overflow:hidden;
+}
+.aiwrap .ai-cardedit-own-prev svg{width:18px;height:18px}
+.aiwrap .ai-cardedit-own-prev img{width:22px;height:22px;object-fit:contain;border-radius:5px}
+.aiwrap .ai-cardedit-own-t{flex:1;min-width:70px;font-size:11px;color:#64748B}
+.aiwrap .ai-cardedit-own-btn{
+  position:relative;display:inline-flex;align-items:center;justify-content:center;
+  height:24px;padding:0 9px;border:1px solid #E2E8F0;border-radius:7px;background:#fff;
+  color:#475569;font:11px/1 inherit;cursor:pointer;overflow:hidden;white-space:nowrap;
+}
+.aiwrap .ai-cardedit-own-btn:hover:not(:disabled){background:#EFF6FF;border-color:#BFDBFE;color:#2563EB}
+.aiwrap .ai-cardedit-own-btn:disabled{opacity:.45;cursor:default}
+.aiwrap .ai-cardedit-own-btn.ghost{background:#F1F5F9}
+.aiwrap .ai-cardedit-own-btn.ghost:hover:not(:disabled){background:#E2E8F0;color:#0F172A}
+.aiwrap .ai-cardedit-own-btn input[type="file"]{
+  position:absolute;inset:0;opacity:0;cursor:pointer;font-size:0;border:0;padding:0;
+}
+.aiwrap .ai-cardedit-own-hint{
+  height:30px;padding:0 9px;border:1px solid #E2E8F0;border-radius:8px;outline:none;
+  font:12px/1.4 inherit;color:#0F172A;background:#FBFCFE;
+}
+.aiwrap .ai-cardedit-own-hint:focus{border-color:#93C5FD;box-shadow:0 0 0 3px rgba(59,130,246,.12);background:#fff}
+.aiwrap .ai-cardedit-own-paste{
+  min-height:64px;max-height:130px;resize:vertical;padding:8px 9px;border:1px solid #E2E8F0;
+  border-radius:8px;outline:none;font:11.5px/1.5 ui-monospace,Consolas,monospace;
+  color:#1E293B;background:#FBFCFE;
+}
+.aiwrap .ai-cardedit-own-paste:focus{border-color:#93C5FD;box-shadow:0 0 0 3px rgba(59,130,246,.12);background:#fff}
+.aiwrap .ai-cardedit-own-acts{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.aiwrap .ai-cardedit-own-tip{font-size:10.5px;color:#94A3B8}

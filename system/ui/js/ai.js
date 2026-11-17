@@ -56,7 +56,8 @@ const AIR = Vue.reactive({
   role: "", roleOpen: false, roles: [], strategy: "", strategies: [],
   cards: [], cardsLoaded: false, cardPickOpen: false, cardQ: "", mounts: [], lastMounts: [],
   cardIcons: [], cardAccents: [],
-  cardEdit: {open: false, busy: false, err: "", card: null},
+  cardEdit: {open: false, busy: false, err: "", card: null, iconBusy: false,
+             iconErr: "", iconHint: "", iconPaste: "", iconPasteOpen: false},
   cardStudio: {open: false, busy: false, input: "", messages: [], card: null,
                err: "", saving: false, editing: false},
   promptEditor: {open: false, busy: false, list: [], active: "", text: "",
@@ -414,6 +415,39 @@ async function aiLoadCards(){
       AIR.rev++;
     }
   }catch(e){  }
+}
+
+function aiSafeSvg(text){
+  try{ return (typeof safeSvg === "function") ? safeSvg(text) : ""; }catch(e){ return ""; }
+}
+function aiCardIconHTML(c){
+  const kind = String((c && c.icon_kind) || "builtin");
+  if (kind === "svg" && c && c.icon_svg){
+    const s = aiSafeSvg(c.icon_svg);
+    if (s) return s;
+  }
+  if (kind === "img" && c && c.icon_img){
+    const u = String(c.icon_img || "");
+    if (/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(u))
+      return '<img class="ai-card-icoimg" src="' + u + '" alt="">';
+  }
+  return ico((c && c.icon) || "sparkles", "i");
+}
+function aiReadAsText(file){
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result || ""));
+    r.onerror = () => rej(r.error || new Error("读不出来"));
+    r.readAsText(file);
+  });
+}
+function aiReadAsDataURL(file){
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result || ""));
+    r.onerror = () => rej(r.error || new Error("读不出来"));
+    r.readAsDataURL(file);
+  });
 }
 
 function aiPersistMountUi(){
@@ -2522,7 +2556,11 @@ const MossAi = {
       if (!Array.isArray(base.tags)) base.tags = [];
       if (!base.icon) base.icon = "sparkles";
       if (!base.accent) base.accent = "#7C3AED";
-      AIR.cardEdit = {open: true, busy: false, err: "", card: base};
+      if (!base.icon_kind)
+        base.icon_kind = base.icon_svg ? "svg" : (base.icon_img ? "img" : "builtin");
+      AIR.cardEdit = {open: true, busy: false, err: "", card: base,
+                      iconBusy: false, iconErr: "", iconHint: "",
+                      iconPaste: "", iconPasteOpen: false};
       AIR.rev++;
     },
     closeCardEdit(){
@@ -2535,8 +2573,111 @@ const MossAi = {
       AIR.cardEdit.card.tags = txt.split(/[,，、|]+/).map(x => x.trim()).filter(Boolean).slice(0, 8);
       AIR.rev++;
     },
+    cardIcon(c){
+      return aiCardIconHTML(c);
+    },
     cardEditIcon(ic){
-      AIR.cardEdit.card.icon = String(ic || "sparkles");
+      const c = AIR.cardEdit.card;
+      c.icon = String(ic || "sparkles");
+      c.icon_kind = "builtin";
+      c.icon_reset = true;
+      delete c.icon_svg;
+      delete c.icon_img;
+      AIR.cardEdit.iconErr = "";
+      AIR.rev++;
+    },
+    cardEditIconPick(e){
+      const inp = e && e.target;
+      const f = inp && inp.files && inp.files[0];
+      if (inp) inp.value = "";
+      if (f) this.cardEditIconUseFile(f);
+    },
+    async cardEditIconUseFile(file){
+      const S = AIR.cardEdit;
+      const nm = String(file.name || "").toLowerCase();
+      const isSvg = nm.endsWith(".svg") || String(file.type || "") === "image/svg+xml";
+      S.iconErr = "";
+      AIR.rev++;
+      try{
+        if (isSvg){
+          if (file.size > 24000) throw new Error("SVG 超过 24 KB，把编辑器加的垃圾清掉再传");
+          const txt = await aiReadAsText(file);
+          const ok = aiSafeSvg(txt);
+          if (!ok) throw new Error("这个 SVG 解析不了，或者里面有不安全的东西");
+          S.card.icon_svg = ok;
+          S.card.icon_kind = "svg";
+          S.card.icon_reset = false;
+          delete S.card.icon_img;
+        }else{
+          if (String(file.type || "").indexOf("image/") !== 0)
+            throw new Error("只支持 SVG / PNG / WebP / JPEG / GIF");
+          if (file.size > 96 * 1024) throw new Error("图片超过 96 KB，缩到 48×48 再来");
+          const url = await aiReadAsDataURL(file);
+          if (!/^data:image\/(png|jpeg|webp|gif);base64,/.test(url))
+            throw new Error("这张图宿主认不出来");
+          S.card.icon_img = url;
+          S.card.icon_kind = "img";
+          S.card.icon_reset = false;
+          delete S.card.icon_svg;
+        }
+        toast("图标换好了，保存后生效");
+      }catch(e){
+        S.iconErr = (e && e.message) || String(e);
+      }finally{
+        AIR.rev++;
+      }
+    },
+    async cardEditIconAI(){
+      const S = AIR.cardEdit;
+      if (S.iconBusy) return;
+      S.iconBusy = true;
+      S.iconErr = "";
+      AIR.rev++;
+      try{
+        const api = await aiWaitApi();
+        if (!api || !api.ai_card_icon) throw new Error("宿主桥没连上");
+        const r = await api.ai_card_icon(S.card, String(S.iconHint || ""));
+        if (!r || !r.ok) throw new Error((r && r.msg) || "没画出来");
+        const svg = aiSafeSvg(r.svg || "");
+        if (!svg) throw new Error("AI 给的 SVG 没通过安全检查");
+        S.card.icon_svg = svg;
+        S.card.icon_kind = "svg";
+        S.card.icon_reset = false;
+        delete S.card.icon_img;
+        toast("图标画好了，记得保存");
+      }catch(e){
+        S.iconErr = "画图标失败：" + ((e && e.message) || e);
+      }finally{
+        S.iconBusy = false;
+        AIR.rev++;
+      }
+    },
+    cardEditIconReset(){
+      const c = AIR.cardEdit.card;
+      c.icon_kind = "builtin";
+      c.icon_reset = true;
+      delete c.icon_svg;
+      delete c.icon_img;
+      AIR.cardEdit.iconErr = "";
+      AIR.rev++;
+    },
+    cardEditPasteToggle(){
+      AIR.cardEdit.iconPasteOpen = !AIR.cardEdit.iconPasteOpen;
+      AIR.rev++;
+    },
+    cardEditIconPaste(){
+      const S = AIR.cardEdit;
+      const txt = String(S.iconPaste || "").trim();
+      if (!txt){ S.iconErr = "先把 SVG 代码贴进来"; AIR.rev++; return; }
+      const svg = aiSafeSvg(txt);
+      if (!svg){ S.iconErr = "这段代码不是能用的 SVG"; AIR.rev++; return; }
+      S.card.icon_svg = svg;
+      S.card.icon_kind = "svg";
+      S.card.icon_reset = false;
+      delete S.card.icon_img;
+      S.iconErr = "";
+      S.iconPasteOpen = false;
+      toast("SVG 图标已套上，保存后生效");
       AIR.rev++;
     },
     cardEditAccent(col){
@@ -3699,7 +3840,7 @@ const MossAi = {
             <button type="button" class="ai-mount-chip" v-for="c in mountedCards" :key="c.id"
                     :style="{'--card-accent': c.accent || '#7C3AED'}"
                     @click="cardToggle(c.id)" :title="'点一下卸下：' + (c.title || c.id)">
-              <span class="ai-mount-ic" v-html='ico(c.icon || "sparkles", "i")'></span>
+              <span class="ai-mount-ic" v-html="cardIcon(c)"></span>
               <span class="ai-mount-t">{{ c.title }}</span>
               <span class="ai-mount-x" v-html='ico("x", "i")'></span>
             </button>
@@ -3797,9 +3938,9 @@ const MossAi = {
                          :style="{'--card-accent': c.accent || '#7C3AED'}"
                          @click="cardToggle(c.id)"
                          :title="c.body">
-                      <span class="ai-card-corner l" v-html='ico(c.icon || "sparkles", "i")'></span>
-                      <span class="ai-card-corner r" v-html='ico(c.icon || "sparkles", "i")'></span>
-                      <span class="ai-card-orb" v-html='ico(c.icon || "sparkles", "i")'></span>
+                      <span class="ai-card-corner l" v-html="cardIcon(c)"></span>
+                      <span class="ai-card-corner r" v-html="cardIcon(c)"></span>
+                      <span class="ai-card-orb" v-html="cardIcon(c)"></span>
                       <span class="ai-card-title">{{ c.title }}</span>
                       <span class="ai-card-tags">{{ (c.tags || []).slice(0,3).join(" · ") }}</span>
                       <span class="ai-card-check" v-if="(A.mounts || []).indexOf(c.id) >= 0">✓</span>
@@ -4210,10 +4351,39 @@ const MossAi = {
                 <span>图标</span>
                 <div class="ai-cardedit-icons">
                   <button type="button" v-for="ic in A.cardIcons" :key="ic"
-                          class="ai-cardedit-ic" :class="{on: A.cardEdit.card.icon === ic}"
+                          class="ai-cardedit-ic"
+                          :class="{on: (A.cardEdit.card.icon_kind || 'builtin') === 'builtin' && A.cardEdit.card.icon === ic}"
                           @click="cardEditIcon(ic)" :title="ic"
                           v-html='ico(ic, "i")'></button>
                 </div>
+                <div class="ai-cardedit-own">
+                  <span class="ai-cardedit-own-prev" v-html="cardIcon(A.cardEdit.card)"></span>
+                  <span class="ai-cardedit-own-t">{{ (A.cardEdit.card.icon_kind === 'svg')
+                    ? '自定义 SVG 图标' : ((A.cardEdit.card.icon_kind === 'img')
+                    ? '自定义图片图标' : '内置图标') }}</span>
+                  <label class="ai-cardedit-own-btn" :class="{busy: A.cardEdit.iconBusy}">
+                    <input type="file" accept=".svg,image/svg+xml,image/png,image/webp,image/jpeg,image/gif"
+                           @change="cardEditIconPick($event)">
+                    <span>上传</span>
+                  </label>
+                  <button type="button" class="ai-cardedit-own-btn" :disabled="A.cardEdit.iconBusy"
+                          @click="cardEditIconAI">{{ A.cardEdit.iconBusy ? "画图中…" : "AI 画" }}</button>
+                  <button type="button" class="ai-cardedit-own-btn ghost"
+                          v-if="(A.cardEdit.card.icon_kind || 'builtin') !== 'builtin'"
+                          @click="cardEditIconReset">恢复内置</button>
+                  <button type="button" class="ai-cardedit-own-btn ghost"
+                          @click="cardEditPasteToggle()">{{ A.cardEdit.iconPasteOpen ? "收起" : "贴代码" }}</button>
+                </div>
+                <input class="ai-cardedit-own-hint" v-model="A.cardEdit.iconHint" maxlength="80"
+                       placeholder="让 AI 画什么？（可不填，按标题想）">
+                <textarea class="ai-cardedit-own-paste" v-if="A.cardEdit.iconPasteOpen"
+                          v-model="A.cardEdit.iconPaste" spellcheck="false"
+                          placeholder="把 SVG 源码贴进来（只取 <svg>…</svg>）"></textarea>
+                <div class="ai-cardedit-own-acts" v-if="A.cardEdit.iconPasteOpen">
+                  <span class="ai-cardedit-own-tip">图标只用于界面，不进 AI 上下文</span>
+                  <button type="button" class="ai-cardedit-own-btn" @click="cardEditIconPaste()">套用这段 SVG</button>
+                </div>
+                <p class="ai-cardedit-err" v-if="A.cardEdit.iconErr">{{ A.cardEdit.iconErr }}</p>
               </div>
               <div class="ai-cardedit-field">
                 <span>配色</span>
@@ -4237,9 +4407,9 @@ const MossAi = {
               <div class="ai-cardedit-preview">
                 <div class="ai-card big" v-if="A.cardEdit.card"
                      :style="{'--card-accent': A.cardEdit.card.accent || '#7C3AED'}">
-                  <span class="ai-card-corner l" v-html='ico(A.cardEdit.card.icon || "sparkles", "i")'></span>
-                  <span class="ai-card-corner r" v-html='ico(A.cardEdit.card.icon || "sparkles", "i")'></span>
-                  <span class="ai-card-orb" v-html='ico(A.cardEdit.card.icon || "sparkles", "i")'></span>
+                  <span class="ai-card-corner l" v-html="cardIcon(A.cardEdit.card)"></span>
+                  <span class="ai-card-corner r" v-html="cardIcon(A.cardEdit.card)"></span>
+                  <span class="ai-card-orb" v-html="cardIcon(A.cardEdit.card)"></span>
                   <span class="ai-card-title">{{ A.cardEdit.card.title || "未命名经验卡" }}</span>
                   <span class="ai-card-body">{{ A.cardEdit.card.body || "正文预览" }}</span>
                   <span class="ai-card-tags">{{ (A.cardEdit.card.tags || []).slice(0,3).join(" · ") }}</span>
@@ -4337,9 +4507,9 @@ const MossAi = {
               <div class="ai-cardstudio-preview-h">预览</div>
               <div class="ai-card big" v-if="A.cardStudio.card"
                    :style="{'--card-accent': A.cardStudio.card.accent || '#7C3AED'}">
-                <span class="ai-card-corner l" v-html='ico(A.cardStudio.card.icon || "sparkles", "i")'></span>
-                <span class="ai-card-corner r" v-html='ico(A.cardStudio.card.icon || "sparkles", "i")'></span>
-                <span class="ai-card-orb" v-html='ico(A.cardStudio.card.icon || "sparkles", "i")'></span>
+                <span class="ai-card-corner l" v-html="cardIcon(A.cardStudio.card)"></span>
+                <span class="ai-card-corner r" v-html="cardIcon(A.cardStudio.card)"></span>
+                <span class="ai-card-orb" v-html="cardIcon(A.cardStudio.card)"></span>
                 <span class="ai-card-title">{{ A.cardStudio.card.title }}</span>
                 <span class="ai-card-body">{{ A.cardStudio.card.body }}</span>
                 <span class="ai-card-tags">{{ (A.cardStudio.card.tags || []).slice(0,3).join(" · ") }}</span>

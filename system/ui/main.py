@@ -2780,7 +2780,8 @@ class Api:
                               stop_check=lambda: bool(AI.get("stop")),
                               asker=asker, mode_fn=mode_now, on_journal=on_journal,
                               run_id=run_id, tmp_dir=str(tmp_dir or ""),
-                              perm_gate=perm_gate)
+                              perm_gate=perm_gate,
+                              role=role, strategy=strategy, mounts=mount_ids)
                 AI["loop"] = loop
                 got = {}
                 try:
@@ -3490,6 +3491,35 @@ class Api:
             return parsed
         except Exception as exc:
             return {"ok": False, "msg": "整理失败：%s: %s" % (type(exc).__name__, exc)}
+        finally:
+            CARD_LOCK.release()
+
+    def ai_card_icon(self, card=None, hint=""):
+        if not isinstance(card, dict):
+            card = {}
+        try:
+            c, _e, _l = self._ai_mods()
+            p = self.ai_params(refresh=True)
+            if not (p.get("base_url") and p.get("model")):
+                return {"ok": False, "msg": p.get("why") or "还没配 AI"}
+            client = c.Client(p.get("base_url"), p.get("api_key") or "", p.get("model"))
+            C = self._ai_cards()
+            msgs = C.icon_messages(card, hint)
+        except Exception as exc:
+            return {"ok": False, "msg": "画图标起不来：%s: %s" % (type(exc).__name__, exc)}
+        if not CARD_LOCK.acquire(blocking=False):
+            return {"ok": False, "msg": "AI 正在改另一张卡，等它回完再画"}
+        try:
+            got = client.chat(msgs)
+            text = str((got or {}).get("text") or "")
+            svg, why = C.parse_icon_svg(text)
+            if not svg:
+                return {"ok": False, "msg": why or "AI 没给出能用的 SVG",
+                        "raw": text[:800], "usage": (got or {}).get("usage") or {}}
+            return {"ok": True, "svg": svg, "usage": (got or {}).get("usage") or {},
+                    "model": str(getattr(client, "model", "") or "")}
+        except Exception as exc:
+            return {"ok": False, "msg": "画图标失败：%s: %s" % (type(exc).__name__, exc)}
         finally:
             CARD_LOCK.release()
 
