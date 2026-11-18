@@ -54,10 +54,10 @@ const AIR = Vue.reactive({
   allow: [], full: false, dropHot: false, newPath: "",
 
   role: "", roleOpen: false, roles: [], strategy: "", strategies: [],
-  cards: [], cardsLoaded: false, cardPickOpen: false, cardQ: "", mounts: [], lastMounts: [],
-  cardAccents: [],
+  cards: [], cardsLoaded: false, cardPickOpen: false, cardQ: "", cardCat: "all",
+  mounts: [], lastMounts: [],
   cardEdit: {open: false, busy: false, err: "", card: null, iconBusy: false,
-             iconErr: "", iconHint: "", iconPaste: "", iconPasteOpen: false,
+             iconErr: "", iconHint: "", tagDraft: "", aiSeq: 0, iconSeq: 0,
              aiBusy: false, aiErr: "", aiInput: "", aiLog: []},
   promptEditor: {open: false, busy: false, list: [], active: "", text: "",
                  override: false, path: "", err: "", saving: false},
@@ -406,10 +406,11 @@ async function aiLoadCards(){
     const r = await api.ai_cards_list();
     if (r && r.ok){
       AIR.cards = Array.isArray(r.cards) ? r.cards : [];
-      AIR.cardAccents = Array.isArray(r.accents) ? r.accents : (AIR.cardAccents || []);
       AIR.cardsLoaded = true;
       const known = new Set(AIR.cards.map(c => c.id));
       AIR.mounts = (AIR.mounts || []).filter(id => known.has(id));
+      const cats = new Set(AIR.cards.map(c => String(c.category || "").trim()).filter(Boolean));
+      if (AIR.cardCat !== "all" && !cats.has(AIR.cardCat)) AIR.cardCat = "all";
       AIR.rev++;
     }
   }catch(e){  }
@@ -1464,11 +1465,23 @@ const MossAi = {
     cardsShown(){
       this.A.rev;
       const q = String(this.A.cardQ || "").trim().toLowerCase();
-      const rows = (this.A.cards || []).slice();
+      const cat = String(this.A.cardCat || "all");
+      let rows = (this.A.cards || []).slice();
+      if (cat !== "all") rows = rows.filter(c => String(c.category || "").trim() === cat);
       if (!q) return rows;
-      return rows.filter(c => [c.title, c.body, c.id, (c.tags || []).join(" ")]
+      return rows.filter(c => [c.title, c.body, c.id, c.category, (c.tags || []).join(" ")]
         .join(" ").toLowerCase().indexOf(q) >= 0);
     },
+    cardCats(){
+      this.A.rev;
+      const seen = new Map();
+      for (const c of (this.A.cards || [])){
+        const k = String(c.category || "").trim();
+        if (k) seen.set(k, (seen.get(k) || 0) + 1);
+      }
+      return Array.from(seen.entries()).map(([name, n]) => ({name, n}));
+    },
+    deckCount(){ this.A.rev; return String(this.cardsShown.length).padStart(2, "0"); },
 
     curTokens(){
       this.A.rev;
@@ -2560,14 +2573,16 @@ const MossAi = {
       AIR.cardPickOpen = false;
       const base = c && c.id ? JSON.parse(JSON.stringify(c)) : {
         id: "", title: "", body: "", tags: [], accent: "#7C3AED", icon_kind: "builtin",
+        category: "",
       };
       if (!Array.isArray(base.tags)) base.tags = [];
+      if (typeof base.category !== "string") base.category = "";
       if (!base.accent) base.accent = "#7C3AED";
       if (!base.icon_kind)
         base.icon_kind = base.icon_svg ? "svg" : (base.icon_img ? "img" : "builtin");
       AIR.cardEdit = {open: true, busy: false, err: "", card: base,
-                      iconBusy: false, iconErr: "", iconHint: "",
-                      iconPaste: "", iconPasteOpen: false,
+                      iconBusy: false, iconErr: "", iconHint: "", tagDraft: "",
+                      aiSeq: 0, iconSeq: 0,
                       aiBusy: false, aiErr: "", aiInput: "", aiLog: []};
       AIR.rev++;
     },
@@ -2576,13 +2591,69 @@ const MossAi = {
       AIR.cardEdit.open = false;
       AIR.rev++;
     },
-    cardEditTags(e){
-      const txt = String((e && e.target && e.target.value) || "");
-      AIR.cardEdit.card.tags = txt.split(/[,，、|]+/).map(x => x.trim()).filter(Boolean).slice(0, 8);
+    tagAdd(text){
+      const rows = (AIR.cardEdit.card.tags || []).slice();
+      for (const raw of String(text || "").split(/[\s,，、;；|/]+/)){
+        const t = String(raw || "").trim().slice(0, 24);
+        if (!t) continue;
+        const k = t.toLowerCase();
+        if (rows.some(x => String(x).toLowerCase() === k)) continue;
+        rows.push(t);
+      }
+      AIR.cardEdit.card.tags = rows.slice(0, 8);
+      AIR.rev++;
+    },
+    tagKey(e){
+      if (e.isComposing) return;
+      const k = e.key;
+      if (k === "Backspace" && !String(AIR.cardEdit.tagDraft || "").length){
+        const rows = (AIR.cardEdit.card.tags || []).slice();
+        if (rows.length){
+          rows.pop();
+          AIR.cardEdit.card.tags = rows;
+          AIR.rev++;
+        }
+        return;
+      }
+      if (k === "Enter" || k === "," || k === "，" || k === ";" || k === "；"
+          || k === "、" || k === "|" || k === "/"){
+        e.preventDefault();
+        const v = String(AIR.cardEdit.tagDraft || "");
+        AIR.cardEdit.tagDraft = "";
+        if (v.trim()) this.tagAdd(v);
+      }
+    },
+    tagFlush(){
+      const v = String(AIR.cardEdit.tagDraft || "");
+      if (!v.trim()) return;
+      AIR.cardEdit.tagDraft = "";
+      this.tagAdd(v);
+    },
+    tagRemove(i){
+      const rows = (AIR.cardEdit.card.tags || []).slice();
+      rows.splice(i, 1);
+      AIR.cardEdit.card.tags = rows;
       AIR.rev++;
     },
     cardIcon(c){
       return aiCardIconHTML(c);
+    },
+    catPick(name){
+      AIR.cardCat = String(name || "all");
+      AIR.rev++;
+    },
+    titleChars(c){
+      const raw = Array.from(String((c && c.title) || "?").trim() || "?");
+      const chars = raw.slice(0, 11);
+      if (raw.length > 11) chars[10] = "…";
+      const n = chars.length;
+      const HS = 15;                        // hover 横排字距：紧一点、居中对齐
+      const hx0 = Math.round((200 - n * HS) / 2);
+      return chars.map((ch, i) => ({
+        ch,
+        rx: 12, ry: 46 + i * 18,
+        hx: hx0 + i * HS, hy: 15,
+      }));
     },
     cardEditIconPick(e){
       const inp = e && e.target;
@@ -2628,6 +2699,8 @@ const MossAi = {
     async cardEditIconAI(){
       const S = AIR.cardEdit;
       if (S.iconBusy) return;
+      const seq = (S.iconSeq || 0) + 1;
+      S.iconSeq = seq;
       S.iconBusy = true;
       S.iconErr = "";
       AIR.rev++;
@@ -2635,6 +2708,7 @@ const MossAi = {
         const api = await aiWaitApi();
         if (!api || !api.ai_card_icon) throw new Error("宿主桥没连上");
         const r = await api.ai_card_icon(S.card, String(S.iconHint || ""));
+        if (seq !== S.iconSeq) return;
         if (!r || !r.ok) throw new Error((r && r.msg) || "没画出来");
         const svg = aiSafeSvg(r.svg || "");
         if (!svg) throw new Error("AI 给的 SVG 没通过安全检查");
@@ -2644,42 +2718,44 @@ const MossAi = {
         delete S.card.icon_img;
         toast("图标画好了，记得保存");
       }catch(e){
+        if (seq !== S.iconSeq) return;
         S.iconErr = "画图标失败：" + ((e && e.message) || e);
       }finally{
-        S.iconBusy = false;
-        AIR.rev++;
+        if (seq === S.iconSeq){
+          S.iconBusy = false;
+          AIR.rev++;
+        }
       }
     },
-    cardEditIconReset(){
+    cardEditIconCancel(){
+      const S = AIR.cardEdit;
+      S.iconSeq = (S.iconSeq || 0) + 1;
+      S.iconBusy = false;
+      AIR.rev++;
+    },
+    cardEditIconKey(e){
+      if (e.isComposing) return;
+      if (e.key !== "Enter" || e.shiftKey) return;
+      e.preventDefault();
+      this.cardEditIconAI();
+    },
+    cardEditIconPasteEvent(e){
+      const txt = String((e && e.clipboardData && e.clipboardData.getData("text")) || "");
+      if (!/<svg[\s>]/i.test(txt)) return;          // 不是 SVG 就正常粘贴文字
+      const svg = aiSafeSvg(txt);
+      if (!svg){
+        AIR.cardEdit.iconErr = "这段 SVG 不能用";
+        AIR.rev++;
+        return;
+      }
+      e.preventDefault();
       const c = AIR.cardEdit.card;
-      c.icon_kind = "builtin";
-      c.icon_reset = true;
-      delete c.icon_svg;
+      c.icon_svg = svg;
+      c.icon_kind = "svg";
+      c.icon_reset = false;
       delete c.icon_img;
       AIR.cardEdit.iconErr = "";
-      AIR.rev++;
-    },
-    cardEditPasteToggle(){
-      AIR.cardEdit.iconPasteOpen = !AIR.cardEdit.iconPasteOpen;
-      AIR.rev++;
-    },
-    cardEditIconPaste(){
-      const S = AIR.cardEdit;
-      const txt = String(S.iconPaste || "").trim();
-      if (!txt){ S.iconErr = "先把 SVG 代码贴进来"; AIR.rev++; return; }
-      const svg = aiSafeSvg(txt);
-      if (!svg){ S.iconErr = "这段代码不是能用的 SVG"; AIR.rev++; return; }
-      S.card.icon_svg = svg;
-      S.card.icon_kind = "svg";
-      S.card.icon_reset = false;
-      delete S.card.icon_img;
-      S.iconErr = "";
-      S.iconPasteOpen = false;
-      toast("SVG 图标已套上，保存后生效");
-      AIR.rev++;
-    },
-    cardEditAccent(col){
-      AIR.cardEdit.card.accent = String(col || "#7C3AED");
+      toast("图标已换成粘贴的 SVG");
       AIR.rev++;
     },
     async cardEditSave(){
@@ -2729,9 +2805,17 @@ const MossAi = {
       const S = AIR.cardEdit;
       const text = String(S.aiInput || "").trim();
       if (!text || S.aiBusy) return;
+      if (S.iconBusy){
+        S.aiErr = "正在画图标…等它画完再改卡";
+        AIR.rev++;
+        return;
+      }
       const history = (S.aiLog || []).slice();
+      const seq = (S.aiSeq || 0) + 1;
+      S.aiSeq = seq;
       S.aiLog.push({role: "user", content: text});
       S.aiInput = "";
+      this.$nextTick(() => this.cardAiSize(this.$refs.aiInput));
       S.aiBusy = true;
       S.aiErr = "";
       AIR.rev++;
@@ -2739,6 +2823,7 @@ const MossAi = {
         const api = await aiWaitApi();
         if (!api || !api.ai_card_studio) throw new Error("宿主桥没连上");
         const r = await api.ai_card_studio(history, text, S.card || {});
+        if (seq !== S.aiSeq) return;
         if (!r || !r.ok) throw new Error((r && r.msg) || "没整理出来");
         const got = r.card;
         if (got){
@@ -2747,6 +2832,8 @@ const MossAi = {
           for (const k of ["title", "body", "accent"]){
             if (typeof got[k] === "string" && got[k].trim()) next[k] = got[k];
           }
+          if (typeof got.category === "string" && got.category.trim())
+            next.category = got.category.trim();
           if (Array.isArray(got.tags)) next.tags = got.tags;
           if (got.icon_kind === "svg" && got.icon_svg){
             next.icon_kind = "svg";
@@ -2763,12 +2850,30 @@ const MossAi = {
         }
         S.aiLog.push({role: "assistant", content: r.reply || "改好了，看看左边/预览"});
       }catch(e){
+        if (seq !== S.aiSeq) return;
         S.aiErr = (e && e.message) || String(e);
-        S.aiLog.push({role: "assistant", content: "（没改成：" + S.aiErr + "）"});
       }finally{
-        S.aiBusy = false;
-        AIR.rev++;
+        if (seq === S.aiSeq){
+          S.aiBusy = false;
+          AIR.rev++;
+        }
       }
+    },
+    cardAiCancel(){
+      const S = AIR.cardEdit;
+      S.aiSeq = (S.aiSeq || 0) + 1;
+      S.aiBusy = false;
+      S.aiErr = "";
+      AIR.rev++;
+    },
+    cardAiInput(e){
+      this.cardAiSize((e && e.target) || this.$refs.aiInput);
+    },
+    cardAiSize(el){
+      if (!el) return;
+      el.style.setProperty("--ai-h", "56px");
+      const h = Math.max(56, Math.min(150, el.scrollHeight || 56));
+      el.style.setProperty("--ai-h", h + "px");
     },
     cardAiKey(e){
       if (e.key === "Enter" && !e.shiftKey){
@@ -3250,7 +3355,7 @@ const MossAi = {
 
       if (AIR.modelOpen && !(t && t.closest && t.closest(".ai-model-pick"))) AIR.modelOpen = false;
       if (AIR.roleOpen && !(t && t.closest && t.closest(".ai-role-pick"))) AIR.roleOpen = false;
-      if (AIR.cardPickOpen && !(t && t.closest && t.closest(".ai-cards-pick"))) AIR.cardPickOpen = false;
+      if (AIR.cardPickOpen && !(t && t.closest && t.closest(".ai-cards-panel"))) AIR.cardPickOpen = false;
 
       if (AIR.paletteOpen && !(t && t.closest && t.closest(".ai-palette-wrap"))) AIR.paletteOpen = false;
       if (!AIR.altOn) return;
@@ -3887,48 +3992,6 @@ const MossAi = {
                   <span class="ai-btn-txt">经验卡</span>
                   <span class="badge" v-if="mountedCards.length">{{ mountedCards.length }}</span>
                 </button>
-                <div class="popover-panel ai-cards-pop" :class="{show: A.cardPickOpen}"
-                     v-if="A.cardPickOpen" @click.stop>
-                  <div class="popover-title">
-                    <span>经验卡 <span class="popover-hint">已挂载 {{ mountedCards.length }} 张 · ≈{{ mountedTokens }} token</span></span>
-                    <span class="ai-cards-new-wrap">
-                      <button type="button" class="ai-cards-new" @click="openCardEdit(null)"
-                              title="新建一张经验卡（手改 / 让 AI 改都在这一个窗口）">
-                        <span v-html='ico("moss-plus", "i")'></span>
-                      </button>
-                    </span>
-                  </div>
-                  <label class="ai-cards-search">
-                    <span v-html='ico("search", "i")'></span>
-                    <input v-model="A.cardQ" spellcheck="false" autocomplete="off"
-                           placeholder="搜标题 / 正文 / 标签">
-                  </label>
-                  <div class="ai-cards-grid" v-if="cardsShown.length">
-                    <div class="ai-card" v-for="c in cardsShown" :key="c.id"
-                         :class="{on: (A.mounts || []).indexOf(c.id) >= 0}"
-                         :style="{'--card-accent': c.accent || '#7C3AED'}"
-                         @click="cardToggle(c.id)"
-                         :title="c.body">
-                      <span class="ai-card-corner l" v-html="cardIcon(c)"></span>
-                      <span class="ai-card-corner r" v-html="cardIcon(c)"></span>
-                      <span class="ai-card-orb" v-html="cardIcon(c)"></span>
-                      <span class="ai-card-title">{{ c.title }}</span>
-                      <span class="ai-card-tags">{{ (c.tags || []).slice(0,3).join(" · ") }}</span>
-                      <span class="ai-card-check" v-if="(A.mounts || []).indexOf(c.id) >= 0">✓</span>
-                      <span class="ai-card-last"
-                            v-if="(A.lastMounts || []).indexOf(c.id) >= 0 && (A.mounts || []).indexOf(c.id) < 0">上次用过</span>
-                      <button type="button" class="ai-card-edit" @click.stop="openCardEdit(c)"
-                              title="编辑这张卡（手改 / 让 AI 改）" v-html='ico("pencil", "i")'></button>
-                      <button type="button" class="ai-card-del" @click.stop="cardDelete(c)"
-                              title="删掉这张卡" v-html='ico("trash-2", "i")'></button>
-                    </div>
-                  </div>
-                  <div class="ai-cards-empty" v-else>
-                    <span v-html='ico("layers", "i")'></span>
-                    <b>{{ A.cardQ ? "没搜到" : "还没有经验卡" }}</b>
-                    <small>{{ A.cardQ ? "换个关键词试试" : "点右上角 + 新建；也能直接在对话里让 AI 加" }}</small>
-                  </div>
-                </div>
               </div>
 
               <div class="popover-wrapper ai-perm-wrap ai-perm" :class="{folded: !A.permPop}">
@@ -4295,116 +4358,173 @@ const MossAi = {
 
     
 
+      <div class="ai-modal-overlay ai-cards-overlay" v-if="A.cardPickOpen"
+           @click.self="toggleCardsOpen()">
+        <div class="ai-cards-panel">
+          <div class="ai-cards-h">
+            <span class="ai-cards-h-t">经验卡</span>
+            <span class="ai-cards-count">{{ deckCount }}</span>
+            <span class="ai-cards-h-r">
+              <button type="button" class="ai-cards-add" @click="openCardEdit(null)">+</button>
+            </span>
+          </div>
+          <div class="ai-cards-tabs" role="tablist">
+            <button type="button" class="ai-cards-tab" :class="{on: A.cardCat === 'all'}"
+                    @click="catPick('all')">全部</button>
+            <button type="button" class="ai-cards-tab" v-for="t in cardCats" :key="t.name"
+                    :class="{on: A.cardCat === t.name}" @click="catPick(t.name)">
+              {{ t.name }}<span class="ai-cards-tab-n">{{ t.n }}</span>
+            </button>
+          </div>
+          <input class="ai-cards-search2" v-model="A.cardQ" spellcheck="false"
+                 autocomplete="off" placeholder="搜索">
+          <div class="ai-deck" v-if="cardsShown.length">
+            <article class="dcard" v-for="(c, i) in cardsShown" :key="c.id"
+                     :class="{on: (A.mounts || []).indexOf(c.id) >= 0,
+                              lead: i === cardsShown.length - 1}"
+                     :style="{'--dc-own': c.accent || '#2563EB'}"
+                     tabindex="0" @click="cardToggle(c.id)"
+                     @keydown.enter.prevent="cardToggle(c.id)"
+                     :title="(c.category ? c.category + ' · ' : '') + (c.title || c.id)">
+              <div class="dcard-s">
+                <span class="dcard-logo" v-html="cardIcon(c)"></span>
+                <div class="dcard-title" aria-hidden="true">
+                  <span class="dcard-ch" v-for="(p, ci) in titleChars(c)" :key="ci"
+                        :style="{'--rx': p.rx + 'px', '--ry': p.ry + 'px',
+                                 '--hx': p.hx + 'px', '--hy': p.hy + 'px',
+                                 '--d': (ci * 14) + 'ms'}">{{ p.ch }}</span>
+                </div>
+                <div class="dcard-detail" aria-hidden="true">
+                  <p class="dcard-desc">{{ c.body }}</p>
+                </div>
+                <div class="dcard-acts">
+                  <button type="button" class="dcard-act" @click.stop="openCardEdit(c)"
+                          title="编辑" v-html='ico("pencil", "i")'></button>
+                  <button type="button" class="dcard-act del" @click.stop="cardDelete(c)"
+                          title="删除" v-html='ico("trash-2", "i")'></button>
+                </div>
+              </div>
+            </article>
+          </div>
+          <div class="ai-cards-empty" v-else>
+            <b>{{ (A.cardQ || A.cardCat !== 'all') ? "没有匹配的卡" : "还没有经验卡" }}</b>
+            <small>{{ (A.cardQ || A.cardCat !== 'all') ? "换个关键词或分类" : "点 + 新建" }}</small>
+          </div>
+        </div>
+      </div>
+
       <div class="ai-modal-overlay ai-cardedit-overlay" v-if="A.cardEdit.open"
            @click.self="closeCardEdit()">
         <div class="ai-cardedit">
           <div class="ai-cardedit-head">
-            <div>
-              <b>{{ A.cardEdit.card && A.cardEdit.card.id ? "编辑经验卡" : "新建经验卡" }}</b>
-              <span>左边手改，右边让 AI 改；图标也由 AI 画，保存后进卡片库</span>
-            </div>
+            <b>{{ A.cardEdit.card && A.cardEdit.card.id ? "编辑经验卡" : "新建经验卡" }}</b>
             <button type="button" class="ai-modal-close" @click="closeCardEdit()">&times;</button>
           </div>
           <div class="ai-cardedit-body">
-            <div class="ai-cardedit-form">
-              <label class="ai-cardedit-field">
-                <span>标题</span>
-                <input v-model="A.cardEdit.card.title" maxlength="80" placeholder="给这张卡起个短标题">
-              </label>
-              <label class="ai-cardedit-field">
-                <span>标签</span>
-                <input :value="(A.cardEdit.card.tags || []).join('、')" @input="cardEditTags($event)"
-                       placeholder="用逗号或顿号分隔，最多 8 个">
-              </label>
-              <div class="ai-cardedit-field">
-                <span>图标 <em class="ai-cardedit-tip">AI 画 · 只用于界面，不进上下文</em></span>
-                <div class="ai-cardedit-own">
-                  <span class="ai-cardedit-own-prev" v-html="cardIcon(A.cardEdit.card)"></span>
-                  <input class="ai-cardedit-own-hint" v-model="A.cardEdit.iconHint" maxlength="80"
-                         placeholder="画成什么样？可不填">
-                  <button type="button" class="ai-cardedit-own-btn" :disabled="A.cardEdit.iconBusy"
-                          @click="cardEditIconAI">{{ A.cardEdit.iconBusy ? "画图中…" : "AI 画" }}</button>
-                  <label class="ai-cardedit-own-btn ghost" title="传一张自己的 SVG / PNG">
-                    <input type="file" accept=".svg,image/svg+xml,image/png,image/webp,image/jpeg,image/gif"
-                           @change="cardEditIconPick($event)">
-                    <span>上传</span>
-                  </label>
-                  <button type="button" class="ai-cardedit-own-btn ghost"
-                          @click="cardEditPasteToggle()">{{ A.cardEdit.iconPasteOpen ? "收起" : "贴 SVG" }}</button>
-                  <button type="button" class="ai-cardedit-own-btn ghost"
-                          v-if="A.cardEdit.card.icon_kind === 'svg' || A.cardEdit.card.icon_kind === 'img'"
-                          @click="cardEditIconReset">清掉</button>
-                </div>
-                <textarea class="ai-cardedit-own-paste" v-if="A.cardEdit.iconPasteOpen"
-                          v-model="A.cardEdit.iconPaste" spellcheck="false"
-                          placeholder="把 SVG 源码贴进来（只取 <svg>…</svg>）"></textarea>
-                <div class="ai-cardedit-own-acts" v-if="A.cardEdit.iconPasteOpen">
-                  <span class="ai-cardedit-own-tip">建议 48×48、颜色丰富一点</span>
-                  <button type="button" class="ai-cardedit-own-btn" @click="cardEditIconPaste()">套用这段 SVG</button>
-                </div>
-                <p class="ai-cardedit-err" v-if="A.cardEdit.iconErr">{{ A.cardEdit.iconErr }}</p>
-              </div>
-              <div class="ai-cardedit-field">
-                <span>配色</span>
-                <div class="ai-cardedit-colors">
-                  <button type="button" v-for="col in A.cardAccents" :key="col"
-                          class="ai-cardedit-color" :class="{on: A.cardEdit.card.accent === col}"
-                          :style="{background: col}" @click="cardEditAccent(col)" :title="col"></button>
-                  <label class="ai-cardedit-custom" title="自定义颜色">
-                    <input type="color" :value="A.cardEdit.card.accent || '#7C3AED'"
-                           @change="cardEditAccent($event.target.value)">
-                  </label>
-                </div>
-              </div>
-              <label class="ai-cardedit-field ai-cardedit-bodyfield">
-                <span>正文（这是 AI 真正会看到的内容）</span>
-                <textarea v-model="A.cardEdit.card.body" spellcheck="false"
-                          placeholder="写清：什么时候用、怎么做、别做什么。"></textarea>
-              </label>
-            </div>
-            <div class="ai-cardedit-side">
+            <div class="ai-cardedit-top">
               <div class="ai-cardedit-preview">
-                <div class="ai-card big" v-if="A.cardEdit.card"
-                     :style="{'--card-accent': A.cardEdit.card.accent || '#7C3AED'}">
-                  <span class="ai-card-corner l" v-html="cardIcon(A.cardEdit.card)"></span>
-                  <span class="ai-card-corner r" v-html="cardIcon(A.cardEdit.card)"></span>
-                  <span class="ai-card-orb" v-html="cardIcon(A.cardEdit.card)"></span>
-                  <span class="ai-card-title">{{ A.cardEdit.card.title || "未命名经验卡" }}</span>
-                  <span class="ai-card-body">{{ A.cardEdit.card.body || "正文预览" }}</span>
-                  <span class="ai-card-tags">{{ (A.cardEdit.card.tags || []).slice(0,3).join(" · ") }}</span>
-                </div>
+                <article class="dcard dcard-preview lead"
+                         :style="{'--dc-accent': A.cardEdit.card.accent || '#2563EB'}">
+                  <div class="dcard-s">
+                    <span class="dcard-logo" v-html="cardIcon(A.cardEdit.card)"></span>
+                    <div class="dcard-title" aria-hidden="true">
+                      <span class="dcard-ch" v-for="(p, ci) in titleChars(A.cardEdit.card)" :key="ci"
+                            :style="{'--rx': p.rx + 'px', '--ry': p.ry + 'px',
+                                     '--hx': p.hx + 'px', '--hy': p.hy + 'px'}">{{ p.ch }}</span>
+                    </div>
+                    <div class="dcard-detail" aria-hidden="true">
+                      <p class="dcard-desc">{{ A.cardEdit.card.body || "正文预览" }}</p>
+                    </div>
+                  </div>
+                </article>
               </div>
-              <div class="ai-cardedit-ai">
-                <div class="ai-cardedit-ai-h">
-                  <span>让 AI 改这张卡</span>
-                  <span class="ai-cardedit-ai-note">{{ A.cardEdit.aiBusy ? "正在想…" : "不进主会话" }}</span>
-                </div>
+              <div class="ai-cardedit-ai" :class="{solo: !(A.cardEdit.aiLog && A.cardEdit.aiLog.length)}">
                 <div class="ai-cardedit-ai-log" v-if="A.cardEdit.aiLog.length">
                   <div class="ai-cardedit-ai-msg" v-for="(m, i) in A.cardEdit.aiLog" :key="i"
                        :class="{me: m.role === 'user'}">
-                    <span class="ai-cardedit-ai-who">{{ m.role === 'user' ? '你' : 'AI' }}</span>
                     <div class="ai-cardedit-ai-t">{{ m.content }}</div>
                   </div>
                 </div>
-                <div class="ai-cardedit-ai-empty" v-else>
-                  <b>一句话就能改</b>
-                  <small>例如：再加一条「先验证一次就收」<br>或者：图标换成齿轮，颜色再亮一点</small>
+                <div class="ai-cardedit-run" v-if="A.cardEdit.aiBusy">
+                  <span class="ai-cardedit-spin"></span>
+                  <span>AI 正在改这张卡…</span>
+                  <button type="button" class="ai-cardedit-run-x" @click="cardAiCancel()">停止</button>
                 </div>
-                <p class="ai-cardedit-err" v-if="A.cardEdit.aiErr">{{ A.cardEdit.aiErr }}</p>
-                <div class="ai-cardedit-ai-in">
-                  <textarea v-model="A.cardEdit.aiInput" spellcheck="false"
+                <div class="ai-cardedit-ai-box">
+                  <textarea ref="aiInput" v-model="A.cardEdit.aiInput" spellcheck="false"
                             :disabled="A.cardEdit.aiBusy"
-                            placeholder="要它改什么？Enter 发送，Shift+Enter 换行"
+                            placeholder="让 AI 改这张卡…（Enter 发送，Shift+Enter 换行）"
+                            @input="cardAiInput($event)"
                             @keydown="cardAiKey($event)"></textarea>
                   <button type="button" class="ai-cardedit-ai-send"
                           :disabled="A.cardEdit.aiBusy || !A.cardEdit.aiInput.trim()"
                           @click="cardAiSend()" v-html='ico("arrow-up", "i")'></button>
                 </div>
+                <p class="ai-cardedit-err" v-if="A.cardEdit.aiErr">{{ A.cardEdit.aiErr }}</p>
+              </div>
+            </div>
+            <div class="ai-cardedit-bottom">
+              <label class="ai-cardedit-field ai-cardedit-bodyfield">
+                <span>正文</span>
+                <textarea v-model="A.cardEdit.card.body"
+                          placeholder="什么时候用、怎么做、别做什么"></textarea>
+              </label>
+              <div class="ai-cardedit-form">
+                <label class="ai-cardedit-field">
+                  <span>标题</span>
+                  <input v-model="A.cardEdit.card.title" maxlength="80" placeholder="短标题">
+                </label>
+                <label class="ai-cardedit-field">
+                  <span>分类</span>
+                  <input v-model="A.cardEdit.card.category" maxlength="12" list="ai-card-cats"
+                         placeholder="可留空">
+                  <datalist id="ai-card-cats">
+                    <option v-for="t in cardCats" :key="t.name" :value="t.name"></option>
+                  </datalist>
+                </label>
+                <div class="ai-cardedit-field ai-cardedit-tagsfield">
+                  <span>标签</span>
+                  <div class="ai-cardedit-tags">
+                    <span class="ai-tag" v-for="(t, ti) in (A.cardEdit.card.tags || [])"
+                          :key="t + ti">
+                      <span class="ai-tag-t">{{ t }}</span>
+                      <button type="button" class="ai-tag-x" title="移除"
+                              @click="tagRemove(ti)">&times;</button>
+                    </span>
+                    <input class="ai-tag-in" v-model="A.cardEdit.tagDraft" maxlength="24"
+                           @keydown="tagKey($event)" @blur="tagFlush()"
+                           placeholder="回车添加">
+                  </div>
+                </div>
+                <div class="ai-cardedit-field ai-cardedit-iconfield">
+                  <span>图标</span>
+                  <div class="ai-cardedit-iconrow">
+                    <label class="ai-cardedit-iconbtn" :class="{busy: A.cardEdit.iconBusy}"
+                           :style="{color: A.cardEdit.card.accent || '#2563EB'}"
+                           :title="A.cardEdit.iconBusy ? '正在画图标…' : '点击上传 SVG / PNG'">
+                      <span v-html="cardIcon(A.cardEdit.card)"></span>
+                      <input type="file" accept=".svg,image/svg+xml,image/png,image/webp,image/jpeg,image/gif"
+                             @change="cardEditIconPick($event)">
+                    </label>
+                    <textarea class="ai-cardedit-iconhint" v-model="A.cardEdit.iconHint"
+                              spellcheck="false" :disabled="A.cardEdit.iconBusy"
+                              :placeholder="A.cardEdit.iconBusy ? '正在画图标…'
+                                            : '描述图标，Enter 让它画；粘贴 SVG 直接换'"
+                              @keydown="cardEditIconKey($event)"
+                              @paste="cardEditIconPasteEvent($event)"></textarea>
+                  </div>
+                  <div class="ai-cardedit-run" v-if="A.cardEdit.iconBusy">
+                    <span class="ai-cardedit-spin"></span>
+                    <span>正在画图标…</span>
+                    <button type="button" class="ai-cardedit-run-x" @click="cardEditIconCancel()">停止</button>
+                  </div>
+                  <p class="ai-cardedit-err" v-if="A.cardEdit.iconErr">{{ A.cardEdit.iconErr }}</p>
+                </div>
               </div>
             </div>
           </div>
           <div class="ai-cardedit-foot">
-            <p class="ai-cardedit-err" v-if="A.cardEdit.err">{{ A.cardEdit.err }}</p>
+            <span class="ai-cardedit-err" v-if="A.cardEdit.err">{{ A.cardEdit.err }}</span>
             <span style="flex:1"></span>
             <button type="button" class="ai-prompt-btn" @click="closeCardEdit()"
                     :disabled="A.cardEdit.busy">取消</button>

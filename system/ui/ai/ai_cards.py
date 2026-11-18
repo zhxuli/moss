@@ -52,8 +52,9 @@ STUDIO_SYSTEM = """你是 moss 的「经验卡编辑」。
   "reply": "给用户看的中文回复，说明你改了什么，不超过 120 字",
   "card": {
     "id": "小写字母开头的短 id，可省略；新卡用 title 自动生成",
-    "icon_svg": "48×48 的 SVG 图标源码（颜色丰富、像游戏技能图标）",
+    "icon_svg": "24×24 的线性 SVG（透明背景、currentColor，见下）",
     "title": "不超过 18 个汉字，像卡片标题",
+    "category": "分类，≤8 个字，例如 UI 规范 / 代码经验 / 收尾；用户没提就留空",
     "body": "不超过 600 字。写清：什么时候用、怎么做、别做什么。用短句或分条，必须可执行。",
     "tags": ["最多 5 个短标签"],
     "accent": "#RRGGBB 颜色"
@@ -65,10 +66,13 @@ STUDIO_SYSTEM = """你是 moss 的「经验卡编辑」。
 - 不要把密钥、隐私、完整聊天记录写进卡片。
 - 卡片的读者是之后执行任务的 AI；写成第二人称或命令式短句。
 - 如果用户只是讨论、还想继续改，也要返回完整修改后的 card，方便实时预览。
-- 图标全归你画（没有内置图标可选）：根元素 `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">`，
-  只用基础图形标签（svg/g/path/circle/ellipse/rect/line/polyline/polygon/defs/linearGradient/radialGradient/stop/clipPath），
-  不许 script / style / image / use / text / href / 事件属性 / 外链，总长 ≤3000 字符。
-  画风要像**游戏技能图标**：2~4 种颜色、可以渐变/高光、主体占 65%~80%、缩到 24px 还认得出，不要画文字。
+- 图标全归你画（没有内置图标可选），而且必须**透明背景**：
+  根元素 `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">`。
+  只用基础图形（svg/g/path/circle/ellipse/rect/line/polyline/polygon），
+  不许底板/底色块/铺满画布的矩形、不许 defs/渐变/script/style/image/use/text/href/事件属性/外链，总长 ≤1500 字符。
+  线条用 `currentColor`（会自动适配浅色卡和选中的深色卡），最多再补 1 个中调强调色；不要画很深或很浅的颜色。
+  形态要极简、粗线、几何化，缩到 20px 还认得出，不要画文字。
 - 当前卡片已经有图标时，只有用户提到图标 / 颜色 / 风格，才重画 icon_svg；否则省掉这个字段。
 - 当前卡片还没有图标时，顺手给一张。
 """
@@ -76,19 +80,23 @@ STUDIO_SYSTEM = """你是 moss 的「经验卡编辑」。
 ICON_SYSTEM = """你是 moss 经验卡的图标画师。只输出一个 SVG 源码，不要 Markdown 代码块，不要任何解释。
 
 硬性要求：
-- 根元素写成 `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">`，画布就是 48×48。
-- 只允许这些标签：svg、g、path、circle、ellipse、rect、line、polyline、polygon、defs、linearGradient、radialGradient、stop、clipPath。
-- 禁止：script、style、foreignObject、image、use、text、href / xlink:href、http(s) 外链、任何 on* 事件属性。
+- 根元素写成 `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">`，画布 24×24。
+- 只允许这些标签：svg、g、path、circle、ellipse、rect、line、polyline、polygon。
+- 禁止：script、style、foreignObject、image、use、text、defs、渐变、href / xlink:href、外链、任何 on* 事件属性。
 - 不要写 width / height，缩放交给 viewBox。
 - 不要画文字、数字、字母。
 
-风格（重要）：
-- 像**游戏技能图标**：颜色要丰富 —— 用 2~4 个颜色，可以上 linearGradient / radialGradient 渐变、
-  一层同色系的内阴影或高光；主体边缘清晰，不糊成一团。
-- 主体占画布 65%~80%，四周留至少 3px 空白；外圈可以加一层同色系的环或光晕（半透明即可）。
-- 缩到 24px 还要一眼认得出：靠大色块和粗线条，不要画细节。
+颜色与背景（最重要）：
+- **透明背景：不许画底板、底色块、铺满画布的矩形/圆形、外圈光晕**。只画图形本身。
+- 线条和填充统一用 `currentColor`：它会自动跟随卡片配色（浅色卡上是卡片主色，选中的深色卡上会变成茶金）。
+- 最多再补 1 个中调强调色（例如 #F59E0B / #38BDF8 这一档），要能在白底和深橄榄底上都看得清；
+  不要用很深的颜色（#111、深蓝、深紫），深色卡上会糊掉。
 
-总长度不超过 3000 字符，不要输出中文说明。"""
+风格：
+- 线性极简图标：粗线（stroke-width 2）、圆头圆角、形态几何化，别画细节。
+- 主体占画布 70%~85%，四周留 2~3px 空白；缩到 20px 还要一眼认得出。
+- 总长度不超过 1500 字符，不要输出中文说明。"""
 
 
 def _dir():
@@ -320,13 +328,26 @@ def _clean_card(raw, old=None):
     body = str(raw.get("body") or old.get("body") or "").strip()[:MAX_BODY]
     tags = raw.get("tags", old.get("tags", []))
     if isinstance(tags, str):
-        tags = [x.strip() for x in re.split(r"[,，、|]+", tags) if x.strip()]
+        tags = [x.strip() for x in re.split(r"[\s,，、;；|/]+", tags) if x.strip()]
     if not isinstance(tags, list):
         tags = []
-    tags = [str(x).strip()[:24] for x in tags if str(x).strip()][:8]
+    # 去重按小写比（A 和 a 算同一个），保留第一次出现的大小写
+    _seen, _out = set(), []
+    for x in tags:
+        t = str(x).strip()[:24]
+        k = t.lower()
+        if t and k not in _seen:
+            _seen.add(k)
+            _out.append(t)
+    tags = _out[:8]
     icon = str(raw.get("icon") or old.get("icon") or "sparkles").strip()
     if icon not in ICON_CHOICES:
         icon = "sparkles"
+    # 分类：显式给空串 = 清空；字段缺席才沿用老值
+    if "category" in raw:
+        category = str(raw.get("category") or "").strip()[:12]
+    else:
+        category = str(old.get("category") or "").strip()[:12]
     accent = str(raw.get("accent") or old.get("accent") or _accent_for(cid)).strip()
     if not re.match(r"^#[0-9a-fA-F]{6}$", accent):
         accent = _accent_for(cid)
@@ -338,6 +359,7 @@ def _clean_card(raw, old=None):
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     card = {"id": cid, "title": title, "body": body, "tags": tags,
             "icon": icon, "icon_kind": kind, "accent": accent,
+            "category": category,
             "created": str(old.get("created") or raw.get("created") or now),
             "updated": now}
     if str(raw.get("icon_svg") or "").strip():

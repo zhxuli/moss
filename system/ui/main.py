@@ -3482,7 +3482,7 @@ class Api:
         except Exception as exc:
             return {"ok": False, "msg": "整理器起不来：%s: %s" % (type(exc).__name__, exc)}
         if not CARD_LOCK.acquire(blocking=False):
-            return {"ok": False, "msg": "已经在整理另一张卡了，等它回完再发"}
+            return {"ok": False, "msg": "上一张卡还在处理（改卡 / 画图标），等它回完再发"}
         try:
             got = client.chat(msgs)
             parsed = C.parse_studio((got or {}).get("text") or "")
@@ -3508,7 +3508,7 @@ class Api:
         except Exception as exc:
             return {"ok": False, "msg": "画图标起不来：%s: %s" % (type(exc).__name__, exc)}
         if not CARD_LOCK.acquire(blocking=False):
-            return {"ok": False, "msg": "AI 正在改另一张卡，等它回完再画"}
+            return {"ok": False, "msg": "上一张卡还在处理（改卡 / 画图标），等它回完再画"}
         try:
             got = client.chat(msgs)
             text = str((got or {}).get("text") or "")

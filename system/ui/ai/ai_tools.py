@@ -207,6 +207,8 @@ TOOLS = [
                      "description": "正文 ≤600 字：什么时候用、怎么做、别做什么。写成命令式短句。"},
             "tags": {"type": "array", "items": {"type": "string"},
                      "description": "可选：≤5 个短标签，例如 [\"验证\", \"收尾\"]"},
+            "category": {"type": "string",
+                         "description": "可选：分类名 ≤8 字（例如 UI 规范 / 代码经验 / 收尾）。用户没提就留空。"},
             "accent": {"type": "string", "description": "可选：这张卡的主色 #RRGGBB"},
             "icon_svg": {"type": "string",
                          "description": "可选：48×48 的 SVG 图标源码（颜色丰富、像游戏技能图标）"}},
@@ -884,6 +886,7 @@ class Tools:
                 icon_svg = ""
         got = C.save_card({"title": title, "body": body,
                            "tags": a.get("tags") or [],
+                           "category": str(a.get("category") or ""),
                            "accent": str(a.get("accent") or ""),
                            "icon_svg": icon_svg})
         if not got.get("ok"):
