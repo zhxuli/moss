@@ -3422,10 +3422,18 @@ class Core:
                                '回来再点这里。'}
             name = str(p.get('name') or '').strip() or os.path.basename(root.rstrip('\\/'))
             remote = str(p.get('remote') or 'origin').strip() or 'origin'
+            # 默认建成私有仓库：只认显式给"公开"才公开（private=0/false/no/off/public）。
+            # 命令行传进来的是字符串，不能直接 bool()（'0' 也是真）。
+            want_public = p.get('private')
+            if isinstance(want_public, str):
+                want_public = want_public.strip().lower() in ('0', 'false', 'no', 'off', 'public')
+            else:
+                want_public = want_public is False
             steps.append(self._step(root, ['gh', 'repo', 'create', name, '--source', root,
                                            '--remote', remote, '--push',
-                                           '--private' if p.get('private') else '--public'],
-                                    '在 GitHub 上建 %s 并把本地推上去' % name, 300))
+                                           '--public' if want_public else '--private'],
+                                    '在 GitHub 上建 %s（%s）并把本地推上去'
+                                    % (name, '公开' if want_public else '私有'), 300))
         elif mode == 'local_clone':
             dest = str(p.get('dest') or '').strip() or os.path.join(
                 os.path.dirname(root), os.path.basename(root.rstrip('\\/')) + '-mirror.git')

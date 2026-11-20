@@ -2436,8 +2436,9 @@ function mirrorForm(mode) {
     var name = baseName(((S.snap || {}).repo || {}).root || S.path) || 'my-project';
     openModal('在 GitHub 上建一个仓库',
       field('仓库名', name, 'my-project', false, 'name') +
-      '<label class="chk"><input type="checkbox" id="priv"> 建成私有的（别人看不到）</label>' +
-      '<div class="note">会在这个账号下建好仓库，并把现在的文件传上去。</div>',
+      '<label class="chk"><input type="checkbox" id="priv" checked> 建成私有的（默认，别人看不到）</label>' +
+      '<div class="note">会在这个账号下建好仓库，并把现在的文件传上去。' +
+      '默认建私有仓库；勾掉才会建成公开的。</div>',
       [{ text: '取消', key: 'close', kind: 'ghost' },
        { text: '建好并上传', key: 'ok', kind: 'primary' }]);
     S.modalActs.ok = function () {

@@ -129,7 +129,7 @@ moss :github action=disks
 | `sync` | 一键同步：fetch →（落后且干净就）pull --ff-only →（领先就）push | `git fetch --all --prune` / `git pull --ff-only` / `git push` |
 | `commit_all` | 全部改动一次提交（`push=true` 顺手推） | `git add -A` + `git commit -m` +（可选）`git push` |
 | `restore` | 恢复某条提交。`mode=branch`（默认）= 检出成 `restore-…` 新分支；`mode=worktree` = 工作区拉回去 | `git checkout -b restore-…` / 先 `git stash push -u` 备份再 `git reset --hard` |
-| `mirror` | 镜像：`gh_create`（GitHub 建仓库并推）/ `local_clone`（`clone --mirror` 本地备份）/ `add_remote`（加镜像远端 + 推分支标签） | `gh repo create …` / `git clone --mirror` / `git remote add` + `push --all` + `push --tags` |
+| `mirror` | 镜像：`gh_create`（GitHub 建仓库并推，**默认建私有仓库**；只有显式 `private=0` 才建公开）/ `local_clone`（`clone --mirror` 本地备份）/ `add_remote`（加镜像远端 + 推分支标签） | `gh repo create …` / `git clone --mirror` / `git remote add` + `push --all` + `push --tags` |
 | `remote_repo` | GitHub 上这个仓库长什么样（描述 / ★ / 默认分支 / 最后推送） | `gh repo view --json …` |
 | `pull_overwrite` | **「从 GitHub 覆盖下载」**：fetch →（有改动先 stash 备份）→ reset --hard 上游。本地变得和 GitHub 一模一样 | `git fetch --all --prune` +（脏时）`git stash push -u` + `git reset --hard <upstream>` |
 
